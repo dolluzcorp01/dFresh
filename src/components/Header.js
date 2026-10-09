@@ -40,11 +40,28 @@ export default function Header({ overHero }) {
   const needed = useRef(0); // wrap width the full nav needed when it last overflowed (0 = unknown)
   const [compact, setCompact] = useState(() => window.innerWidth <= NARROW);
 
-  // New language = new text widths: start from the full layout again and re-measure.
-  useLayoutEffect(() => {
+  const [measureTick, setMeasureTick] = useState(0);
+
+  // New text widths: start from the full layout again and re-measure.
+  const remeasure = useCallback(() => {
     needed.current = 0;
     setCompact(window.innerWidth <= NARROW);
-  }, [lang]);
+    setMeasureTick((n) => n + 1);
+  }, []);
+
+  useLayoutEffect(remeasure, [lang, remeasure]);
+
+  // The script type tuning (<html data-script>, --f-lang) is applied by I18nProvider after this component
+  // has measured, and the script font arrives later still: both change the nav width, so measure again.
+  useEffect(() => {
+    const mo = new MutationObserver(remeasure);
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['lang', 'data-script', 'style'] });
+    document.fonts?.addEventListener('loadingdone', remeasure);
+    return () => {
+      mo.disconnect();
+      document.fonts?.removeEventListener('loadingdone', remeasure);
+    };
+  }, [remeasure]);
 
   // Runs before paint after every layout change, so an overflowing full nav is never shown.
   useLayoutEffect(() => {
@@ -54,7 +71,7 @@ export default function Header({ overHero }) {
       needed.current = span;
       setCompact(true);
     }
-  }, [compact, lang]);
+  }, [compact, lang, measureTick]);
 
   useEffect(() => {
     const wrap = wrapRef.current;

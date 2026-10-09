@@ -5,6 +5,9 @@
 .brand { flex: none; border-radius: 10px; }
 .brand img { height: 44px; width: auto; }
 .nav { display: flex; gap: 28px; margin-inline-start: auto; font-size: 15px; font-weight: 500; }
+/* scripts with a taller, wider font (data-script="long", from languages.font_family): smaller nav so the
+   links fit inline on desktop; Header.js still falls back to the menu button when they do not */
+:root[data-script="long"] .nav { font-size: 14px; gap: 18px; }
 .nav a { text-decoration: none; color: var(--ink-2); position: relative; padding-block: 6px; white-space: nowrap; }
 .nav a::after { content: ""; position: absolute; inset-inline: 0; bottom: 0; height: 2px; background: var(--ink); transform: scaleX(0); transform-origin: left; transition: transform .3s var(--ease); }
 .nav a:hover { color: var(--ink); }

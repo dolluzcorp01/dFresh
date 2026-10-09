@@ -28,6 +28,10 @@
 # visual QA screenshots
 /visual-output
 
+# editor: only the shared F5 "Run Backend" config is committed
+/.vscode/*
+!/.vscode/launch.json
+
 # misc
 .DS_Store
 npm-debug.log*

@@ -22,14 +22,21 @@ Phase task files are in `docs/claude-tasks/` (finished ones in `docs/claude-task
    creates `dfresh_app` with SELECT/INSERT/UPDATE/DELETE on `dfresh.*`, and adds the `dadmin` grants when a
    local `dadmin` database exists. Refuses when `NODE_ENV=production`.
 4. `npm run media:sync` - copies `assets/` into `media/` (not in git) and builds the 400 / 800 image sizes.
-5. `npm run dev` - API on http://localhost:4012 and React on http://localhost:3000.
+5. Start the two servers (Inside D pattern), in two terminals:
+   - Backend: `node server.js` (or F5 in VS Code, "Run Backend" in `.vscode/launch.json`) - API on
+     http://localhost:4012 (`PORT` in `.env`).
+   - Frontend: `npm start` - React on http://localhost:3000. If 3000 is busy it moves to the next free port
+     (3001, 3002 ...) by itself and prints the one it picked. It never takes the API port 4012.
+   - Or both in one terminal: `npm run dev`.
+   In development the API accepts any `http://localhost:<port>` origin (CORS), so React on 3001 works too.
 
 ## Commands
 | Command | What |
 |---|---|
 | `npm run dev` | API (nodemon) + React dev server together |
-| `npm run server` | API only |
-| `npm start` | React dev server only |
+| `node server.js` | API only on 4012 (same as F5 "Run Backend" in VS Code) |
+| `npm run server` | API only, restarts on change (nodemon) |
+| `npm start` | React dev server only, 3000 or the next free port |
 | `npm run build` | Production React build |
 | `npm run db:reset` | Local only: drop + create + schema + seed + app user |
 | `npm run media:sync` | Copy `assets/` to `media/`, then `media:build` |
