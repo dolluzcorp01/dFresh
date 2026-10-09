@@ -85,6 +85,19 @@ if (!isProd) {
 
 app.use('/api/dfresh', publicRoutes);
 
-app.listen(PORT, () => {
+// Express 5 hands listen errors (e.g. EADDRINUSE) to this callback instead of throwing: never log success
+// on failure, and exit non-zero so F5 / pm2 / the terminal show that it did not start.
+function failListen(err) {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`Port ${PORT} is already in use - stop the other dFresh API (or whatever holds the port) and try again.`);
+  } else {
+    console.error(`dFresh API could not start on port ${PORT}: ${err.code || err.message}`);
+  }
+  process.exit(1);
+}
+
+const server = app.listen(PORT, (err) => {
+  if (err) return failListen(err);
   console.log(`dFresh API listening on http://localhost:${PORT}`);
 });
+server.on('error', failListen);
