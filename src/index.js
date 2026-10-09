@@ -3,7 +3,10 @@ import ReactDOM from 'react-dom/client';
 import './styles/tokens.css';
 import './styles/base.css';
 import App from './App';
+import { prefetchContent } from './i18n/I18nProvider';
 import reportWebVitals from './reportWebVitals';
+
+prefetchContent(window.location.pathname);
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(

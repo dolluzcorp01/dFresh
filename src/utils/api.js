@@ -18,3 +18,8 @@ export async function getJSON(endpoint) {
 export function mediaUrl(path) {
   return `${API_BASE}${path}`;
 }
+
+// "/media/a 400w, /media/b 800w" -> the same list with every URL on the API host.
+export function mediaSrcSet(srcset) {
+  return srcset ? srcset.split(', ').map((s) => mediaUrl(s.trim())).join(', ') : undefined;
+}

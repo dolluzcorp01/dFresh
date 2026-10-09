@@ -8,7 +8,7 @@ export function useLanguages() {
   return useContext(LanguagesContext);
 }
 
-// { lang, info, data (bootstrap), settings, t }
+// { lang, info, data (bootstrap), settings, t, longScript (font differs from the default language's) }
 export function useI18n() {
   return useContext(I18nContext);
 }

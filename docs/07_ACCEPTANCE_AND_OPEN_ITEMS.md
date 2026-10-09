@@ -40,3 +40,4 @@
 | 13 | Missing Appendix of 25 reference websites in the brief PDF | Dolluz | none (design approved via preview) |
 | 14 | Staff WhatsApp alert for new leads needs WhatsApp Business API; Phase 1 = e-mail alert only | Dolluz | none |
 | 15 | Confirm dev/prod API port 4012 is free on the droplet | Pavithran | Phase 0 |
+| 16 | Lighthouse mobile >= 85 - measured 66 median locally (unreliable Windows runs; Phase 2 shell = 88). Hard gate in Phase 8, verified on PageSpeed Insights after staging deploy. | Pavithran | Phase 8 |

@@ -1,0 +1,33 @@
+/* doors (preview: .doors, .door, with the v3 real-photo overrides folded in) */
+.doors .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.door { position: relative; display: flex; flex-direction: column; justify-content: space-between; gap: 30px; min-height: 290px; padding: clamp(26px, 3.4vw, 42px); border-radius: var(--r); text-decoration: none; overflow: hidden; isolation: isolate; transition: transform .45s var(--ease), box-shadow .45s; }
+.door:hover { transform: translateY(-6px); box-shadow: 0 30px 50px -36px rgba(60, 45, 10, .6); }
+.door.home { background: #fff; border: 1px solid var(--line); }
+.door.biz { background: var(--ink); color: var(--paper); }
+.door h3 { position: relative; z-index: 1; font-size: clamp(28px, 3vw, 40px); font-weight: 700; margin-block-start: 14px; letter-spacing: -.01em; max-width: 62%; }
+:root[data-script="long"] .door h3 { font-size: clamp(22px, 2.4vw, 30px); line-height: 1.25; letter-spacing: 0; }
+.door.biz h3 { color: var(--gold-l); }
+.door.biz .k { color: #A9A497; }
+.door p { position: relative; z-index: 1; max-width: 62%; margin-block-start: 12px; opacity: .86; }
+.door .go { display: inline-flex; align-items: center; gap: 12px; font-weight: 600; }
+.door .go i { display: grid; place-items: center; width: 46px; height: 46px; border-radius: 50%; background: var(--ink); color: var(--paper); font-style: normal; transition: transform .35s var(--ease); }
+.door.biz .go i { background: var(--gold); color: var(--ink); }
+.door:hover .go i { transform: translateX(8px); }
+:root[dir="rtl"] .door .go i { transform: scaleX(-1); }
+.door .art { position: absolute; inset-inline-end: 26px; bottom: 26px; width: min(30%, 190px); z-index: -1; transition: transform .6s var(--ease); }
+.door:hover .art { transform: translateY(-10px) rotate(-4deg); }
+.door .art .ph { display: block; width: 100%; height: auto; border-radius: 20px; box-shadow: 0 24px 40px -22px rgba(0, 0, 0, .45); pointer-events: none; }
+.door.biz .art .ph { box-shadow: 0 0 0 1px rgba(255, 255, 255, .08), 0 24px 40px -22px rgba(0, 0, 0, .8); }
+
+@media (max-width: 760px) {
+  .door p { max-width: 100%; }
+  .door h3 { max-width: calc(100% - 96px); }
+  .door .art { top: 18px; bottom: auto; inset-inline-end: 18px; width: 86px; opacity: .95; }
+}
+@media (max-width: 620px) {
+  .doors .grid { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .door, .door .art, .door .go i { transition: none; }
+  .door:hover, .door:hover .art, .door:hover .go i { transform: none; }
+}

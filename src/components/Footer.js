@@ -1,4 +1,4 @@
-// Dark footer (spec A3). The big letters are static here; the spring "lift near the pointer" lands in Phase 3.
+// Dark footer (spec A3). The big letters are static here; the spring "lift near the pointer" lands in Phase 5.
 import { Link } from 'react-router-dom';
 import { useI18n } from '../i18n/useT';
 import { useOpenForm } from '../forms/FormsProvider';

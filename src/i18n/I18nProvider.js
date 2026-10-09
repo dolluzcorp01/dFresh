@@ -33,6 +33,16 @@ function fetchBootstrap(lang) {
   return bootRequests.get(lang);
 }
 
+// Called once at startup: /languages and the URL language's bootstrap start together instead of one
+// after the other (the first screen waits for both). A guess that is not an active language only costs
+// one unused request; LangGate still decides.
+export function prefetchContent(pathname) {
+  const first = pathname.split('/')[1] || '';
+  if (first === 'admin') return;
+  fetchLanguages().catch(() => {});
+  if (/^[a-z]{2,3}(-[a-z]{2,4})?$/i.test(first)) fetchBootstrap(first).catch(() => {});
+}
+
 export function LanguagesProvider({ children }) {
   const [state, setState] = useState({ status: 'loading' });
   const [attempt, setAttempt] = useState(0);
@@ -75,12 +85,16 @@ function makeT(ui) {
   };
 }
 
+// A script whose font differs from the default language's gets the "long script" type tuning.
+function isLongScript(info, defaultInfo) {
+  return Boolean(info.fontFamily && defaultInfo && info.fontFamily !== defaultInfo.fontFamily);
+}
+
 function applyLanguage(info, defaultInfo) {
   const root = document.documentElement;
   root.lang = info.htmlLang;
   root.dir = info.dir === 'rtl' ? 'rtl' : 'ltr';
-  // A script whose font differs from the default language's gets the "long script" type tuning.
-  if (info.fontFamily && info.fontFamily !== defaultInfo.fontFamily) root.dataset.script = 'long';
+  if (isLongScript(info, defaultInfo)) root.dataset.script = 'long';
   else delete root.dataset.script;
   const f = fontVar(info.fontFamily);
   if (f) root.style.setProperty('--f-lang', f);
@@ -117,10 +131,11 @@ export function I18nProvider({ lang, children }) {
     initAnalytics(data.settings.ga4_measurement_id);
   }, [info, data, languages, defaultLang]);
 
-  const value = useMemo(
-    () => (data && info ? { lang: data.lang, info, data, settings: data.settings, t: makeT(data.ui) } : null),
-    [data, info]
-  );
+  const value = useMemo(() => {
+    if (!data || !info) return null;
+    const longScript = isLongScript(info, languages.find((l) => l.code === defaultLang));
+    return { lang: data.lang, info, data, settings: data.settings, t: makeT(data.ui), longScript };
+  }, [data, info, languages, defaultLang]);
 
   const retry = useCallback(() => {
     setState((s) => ({ ...s, status: 'loading' }));

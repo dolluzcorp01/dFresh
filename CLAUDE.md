@@ -46,7 +46,7 @@ The approved look, copy, animations and interactions come from that preview. Mat
 9. **Secrets live in `.env` only** (never committed). `.env.example` lists every key with a dummy value.
 10. **House style: never use the long dash characters (en dash, em dash)** in code, comments, copy, e-mails or docs. Use "-".
 11. **No prices anywhere** on the public site in Phase 1.
-12. **Gold text only on dark backgrounds** (accessibility). On white/beige, gold is a fill, text is ink.
+12. **Gold text only on dark backgrounds** (accessibility). On white/beige, gold is a fill, text is ink. Hover tints on light backgrounds must keep 4.5:1.
 13. **Respect `prefers-reduced-motion`**: every animation has a still fallback.
 14. **Content protection** (brief): right click, copy, image drag/save blocked site-wide except inside form fields.
 15. **No claims** we cannot prove: no "medical grade", "100% eco-friendly", "bamboo range", certifications,

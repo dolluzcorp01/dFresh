@@ -1,0 +1,52 @@
+/* hero (preview: .hero, .sheet, .stats, #petals, .trail, .burst). The sticky header sits over it. */
+.hero { position: relative; margin-block-start: calc(-1 * var(--top-h)); padding-block-start: var(--top-h); background: radial-gradient(110% 90% at 80% 32%, #fff 0%, var(--paper) 42%, var(--beige) 100%); overflow: hidden; }
+.hero > .wrap { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: center; padding-block: clamp(36px, 5vw, 72px) clamp(36px, 5vw, 64px); }
+.hero .copy { position: relative; z-index: 2; }
+.hero h1 { font-size: clamp(56px, 8.4vw, 124px); font-weight: 800; letter-spacing: -.045em; line-height: .9; margin-block: 22px 26px; }
+.hero h1 .ln { display: block; }
+.hero h1 .ln2 { font-weight: 300; letter-spacing: -.03em; color: var(--ink-2); }
+.hero h1 .w { display: inline-block; white-space: nowrap; }
+.hero h1 .ch { display: inline-block; cursor: default; transform-origin: 50% 100%; will-change: transform; }
+:root[data-script="long"] .hero h1 { font-size: clamp(38px, 5vw, 70px); letter-spacing: 0; line-height: 1.2; }
+:root[data-script="long"] .hero h1 .w { white-space: normal; }
+.hero .lede { font-size: clamp(16.5px, 1.5vw, 18.5px); color: var(--ink-2); max-width: 30em; }
+.hero .ctas { display: flex; flex-wrap: wrap; gap: 12px; margin-block-start: 32px; }
+
+.sheet { position: relative; aspect-ratio: 1 / .92; width: 100%; max-width: 100%; touch-action: pan-y; cursor: grab; }
+.sheet:active { cursor: grabbing; }
+.sheet.still { cursor: default; }
+.sheet canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.sheet .floor { position: absolute; inset-inline: 12%; bottom: 4%; height: 12%; border-radius: 50%; background: radial-gradient(closest-side, rgba(130, 100, 30, .22), rgba(130, 100, 30, 0)); animation: breathe 6s ease-in-out infinite; }
+@keyframes breathe { 50% { transform: scaleX(.92); opacity: .8; } }
+.sheet .hint { position: absolute; z-index: 1; left: 50%; bottom: 2%; transform: translateX(-50%); display: inline-flex; align-items: center; gap: 8px; background: var(--ink); color: var(--gold-l); font-size: 12.5px; font-weight: 600; letter-spacing: .06em; padding: 9px 14px; border-radius: 999px; transition: opacity .5s; pointer-events: none; white-space: nowrap; }
+.sheet .hint i { width: 8px; height: 8px; border-radius: 50%; background: var(--gold-l); animation: blink 1.6s ease-in-out infinite; }
+.sheet.touched .hint { opacity: 0; }
+@keyframes blink { 50% { opacity: .25; } }
+
+.stats { position: relative; z-index: 2; border-block-start: 1px solid var(--line); background: color-mix(in srgb, #fff 55%, transparent); }
+.stats .wrap { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; padding-block: clamp(36px, 5vw, 72px) clamp(36px, 5vw, 64px); }
+/* ^ the preview's `.hero .wrap` rule also reaches the stats strip; that spacing is the approved look */
+.stat { padding-block: 24px; display: flex; flex-direction: column; align-items: center; gap: 2px; text-align: center; }
+.stat + .stat { border-inline-start: 1px solid var(--line); }
+.stat b { font: 800 clamp(30px, 3.2vw, 42px)/1 var(--f-num); font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+.stat span { font-size: 12.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); }
+:root[data-script="long"] .stat span { letter-spacing: 0; font-size: 13.5px; }
+
+.petals { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; }
+.trail { position: fixed; left: 0; top: 0; width: 34px; height: 22px; pointer-events: none; z-index: 90; margin: -11px 0 0 -17px; }
+.burst { position: fixed; left: 0; top: 0; pointer-events: none; z-index: 95; width: 14px; height: 14px; border-radius: 3px 9px 3px 9px; background: #fff; box-shadow: 0 2px 6px rgba(120, 90, 0, .25); }
+.burst.g { background: var(--gold); }
+
+@media (max-width: 900px) {
+  .hero > .wrap { grid-template-columns: minmax(0, 1fr); }
+  .sheet { max-width: 520px; margin-inline: auto; order: -1; margin-block: -6px -18px; }
+  .stats .wrap { grid-template-columns: repeat(2, 1fr); }
+  .stat:nth-child(3) { border-inline-start: 0; }
+  .stat:nth-child(n+3) { border-block-start: 1px solid var(--line); }
+}
+@media (max-width: 620px) {
+  .hero .ctas .btn { flex: 1 1 auto; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sheet .floor, .sheet .hint i { animation: none; }
+}
