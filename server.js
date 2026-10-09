@@ -6,6 +6,7 @@ const express = require('express');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const { getDBConnection } = require('./config/db');
+const publicRoutes = require('./src/backend_routes/Public_server');
 const { version } = require('./package.json');
 
 const app = express();
@@ -24,6 +25,18 @@ app.use(cors({
   },
 }));
 app.use(express.json({ limit: '1mb' }));
+
+// Development only: one line per request (method, URL, status, time).
+if (!isProd) {
+  app.use((req, res, next) => {
+    const start = process.hrtime.bigint();
+    res.on('finish', () => {
+      const ms = Number(process.hrtime.bigint() - start) / 1e6;
+      console.log(`${req.method} ${req.originalUrl} ${res.statusCode} ${ms.toFixed(1)}ms`);
+    });
+    next();
+  });
+}
 app.use(cookieParser());
 
 // Media file names never change content in place (new upload = new size build), so cache hard.
@@ -55,6 +68,8 @@ app.get('/api/dfresh/health', async (req, res) => {
     res.status(503).json({ success: false, message: 'Database unavailable' });
   }
 });
+
+app.use('/api/dfresh', publicRoutes);
 
 app.listen(PORT, () => {
   console.log(`dFresh API listening on http://localhost:${PORT}`);

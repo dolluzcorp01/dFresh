@@ -33,7 +33,8 @@
     "test": "react-scripts test",
     "db:reset": "node scripts/db-reset.js",
     "media:sync": "node scripts/media-sync.js && npm run media:build",
-    "media:build": "node scripts/media-build.js"
+    "media:build": "node scripts/media-build.js",
+    "test:api": "node --test \"tests/api/*.test.js\""
   },
   "eslintConfig": {
     "extends": [
