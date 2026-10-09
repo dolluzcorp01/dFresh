@@ -55,6 +55,9 @@ The approved look, copy, animations and interactions come from that preview. Mat
     library without asking. Small focused packages are fine if the phase file allows them.
 17. Mobile first: the main audience opens links from WhatsApp on a phone. Every screen must work at 360px wide
     with no sideways scroll.
+18. **File safety.** Never create links/junctions to project folders, and never run delete commands on paths
+    outside a folder you created in this session. Never touch node_modules, .git, .env, media or private
+    except through npm or git commands.
 
 ## Commands (after Phase 0)
 - `npm run dev` - API (nodemon server.js) + React dev server together
