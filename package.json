@@ -34,6 +34,7 @@
     "db:reset": "node scripts/db-reset.js",
     "media:sync": "node scripts/media-sync.js && npm run media:build",
     "media:build": "node scripts/media-build.js",
+    "cache:bust": "node scripts/cache-bust.js",
     "test:api": "node --test \"tests/api/*.test.js\""
   },
   "eslintConfig": {

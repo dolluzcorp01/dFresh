@@ -7,6 +7,7 @@ const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const { getDBConnection } = require('./config/db');
 const publicRoutes = require('./src/backend_routes/Public_server');
+const contentCache = require('./src/backend_routes/content-cache');
 const { version } = require('./package.json');
 
 const app = express();
@@ -68,6 +69,19 @@ app.get('/api/dfresh/health', async (req, res) => {
     res.status(503).json({ success: false, message: 'Database unavailable' });
   }
 });
+
+// Development only, loopback only: `npm run cache:bust` clears the content cache after a hand edit in the DB
+// (otherwise it shows up within the cache TTL). Not registered at all in production.
+if (!isProd) {
+  const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+  app.post('/api/dfresh/dev/cache-bust', (req, res) => {
+    if (!LOOPBACK.has(req.socket.remoteAddress)) {
+      return res.status(404).json({ success: false, message: 'Not found' });
+    }
+    contentCache.bust();
+    res.json({ success: true, data: { contentVersion: contentCache.getContentVersion() } });
+  });
+}
 
 app.use('/api/dfresh', publicRoutes);
 

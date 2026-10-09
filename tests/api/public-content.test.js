@@ -2,13 +2,18 @@
 // Run: npm run test:api   (needs a seeded DB: npm run db:reset)
 // Temporary rows use the language code 'zt'; translation rows go with it (ON DELETE CASCADE).
 require('dotenv').config({ quiet: true });
+
+// These tests write to the DB. Refuse BEFORE any module below opens a pool.
+if (process.env.NODE_ENV === 'production') {
+  console.error('refusing to run DB tests with NODE_ENV=production');
+  process.exit(1);
+}
+
 const { test, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 const { getDBConnection } = require('../../config/db');
 const cache = require('../../src/backend_routes/content-cache');
 const { content } = require('../../src/backend_routes/Public_server');
-
-if (process.env.NODE_ENV === 'production') throw new Error('refusing to run DB tests with NODE_ENV=production');
 
 const pool = getDBConnection(process.env.DB_NAME || 'dfresh');
 const db = pool.promise();
@@ -38,6 +43,38 @@ before(async () => {
 });
 
 beforeEach(() => cache.bust());
+
+test('cache entries are rebuilt after the TTL; a failed rebuild serves the expired copy', async () => {
+  const realNow = Date.now;
+  let now = realNow();
+  Date.now = () => now;
+  try {
+    let builds = 0;
+    let failNext = false;
+    const builder = async () => {
+      builds += 1;
+      if (failNext) throw new Error('db down');
+      return { n: builds };
+    };
+    assert.equal((await cache.getOrBuild('ttl-test', builder)).data.n, 1);
+    now += cache.TTL_MS - 1000;
+    assert.equal((await cache.getOrBuild('ttl-test', builder)).data.n, 1, 'rebuilt before the TTL');
+    now += 2000;
+    assert.equal((await cache.getOrBuild('ttl-test', builder)).data.n, 2, 'not rebuilt after the TTL');
+
+    now += cache.TTL_MS + 1;
+    failNext = true;
+    assert.equal((await cache.getOrBuild('ttl-test', builder)).data.n, 2, 'expired copy not served on failure');
+    failNext = false;
+    assert.equal((await cache.getOrBuild('ttl-test', builder)).data.n, 4, 'failed rebuild not retried');
+
+    cache.bust();
+    failNext = true;
+    await assert.rejects(cache.getOrBuild('ttl-test', builder), /db down/);
+  } finally {
+    Date.now = realNow;
+  }
+});
 
 after(async () => {
   await removeTmpLanguage();

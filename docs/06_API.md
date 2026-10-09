@@ -6,14 +6,20 @@ Public endpoints never return internal columns (`spec_status`, `staff_notes`, `i
 ## Public (no auth, cached)
 | Method | Path | Returns |
 |---|---|---|
-| GET | `/health` | `{ db: 'ok', counts: { products, languages } , version }` (no secrets) |
-| GET | `/languages` | active languages ordered: code, native_name, switch_label, html_lang, dir, font_family, is_default |
+| GET | `/health` | `{ db: 'ok', counts: { products, variants, languages }, version }` (no secrets) |
+| GET | `/languages` | `{ languages: [{ code, nativeName, switchLabel, htmlLang, dir, fontFamily, isDefault }], default }` (active only, ordered by sort_order; `default` is the default language code) |
 | GET | `/bootstrap?lang=xx` | ONE payload for the site in that language (English fallback applied): `{ lang, ui: {key: value}, settings: {public keys}, categories[], products[] (cards with variants[], images[]), banners[], kits[], towns[], formOptions: {list_key: [{value,label}]}, sizePicker[], stats: {products, categories, towns, languages}, contentVersion }` |
 | GET | `/legal/:page?lang=xx` | `{ title, html, isEnglishFallback }` for `privacy` / `terms` |
 
+Category shape: `{ key, sort, repProductId, name, count }` where `count` = active product cards in that category
+(variants not counted). Image `width` / `height` are pixels from `product_images`, `null` when unknown.
+
 Caching: build bootstrap once per language, keep in memory with `contentVersion`; send `ETag` and
 `Cache-Control: public, max-age=60, stale-while-revalidate=600`. Any admin write increments `contentVersion`
-and clears the cache.
+and clears the cache. Safety TTL: an entry older than 5 minutes is rebuilt on the next request, so DB changes
+made outside the admin show up without a restart (if that rebuild fails, the expired copy is served).
+Local dev: `npm run cache:bust` clears the cache now (calls `POST /dev/cache-bust`, which exists only when
+NODE_ENV is not production and answers loopback callers only).
 
 Product shape (card):
 ```json
@@ -21,7 +27,9 @@ Product shape (card):
   "forHome": true, "swatch": "#FFFFFF", "spec": "...", "pack": "...",
   "name": "...", "oneLiner": "...", "keywords": ["2-ply","29×30 cm","Quarter-fold"], "description": "...",
   "bestFor": "...", "colourName": "White", "alt": "...", "whatsapp": "...",
-  "images": [{ "pos": 1, "src": "/media/products/1200/DZIND-DF008_1.webp", "srcset": "..." }],
+  "images": [{ "pos": 1, "src": "/media/products/1200/DZIND-DF008_1.webp",
+               "srcset": "/media/products/400/DZIND-DF008_1.webp 400w, ... 800w, ... 1200w",
+               "width": 1200, "height": 1200 }],
   "variants": [ { "id": "DZIND-DF008-BLK", "swatch": "#1B1B1D", "colourName": "Black", "...same text fields...", "images": [] } ] }
 ```
 
