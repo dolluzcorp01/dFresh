@@ -1,22 +1,17 @@
-// TEMPORARY (Phase 0): proves the React app can reach the API. Replaced by the real site in Phase 2.
-import { useEffect, useState } from 'react';
-import { apiFetch } from './utils/api';
+// Top-level routes. The admin console is a separate lazy chunk: it adds nothing to the public bundle.
+import { lazy, Suspense } from 'react';
+import { BrowserRouter, Route, Routes } from 'react-router-dom';
+import PublicApp from './PublicApp';
 
-function App() {
-  const [result, setResult] = useState(null);
+const AdminApp = lazy(() => import(/* webpackChunkName: "admin" */ './admin/AdminApp'));
 
-  useEffect(() => {
-    apiFetch('/api/dfresh/health')
-      .then((res) => res.json())
-      .then(setResult)
-      .catch((err) => setResult({ success: false, message: err.message }));
-  }, []);
-
+export default function App() {
   return (
-    <pre style={{ margin: 16, fontSize: 14, whiteSpace: 'pre-wrap' }} data-testid="health">
-      {result ? JSON.stringify(result, null, 2) : '...'}
-    </pre>
+    <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      <Routes>
+        <Route path="/admin/*" element={<Suspense fallback={null}><AdminApp /></Suspense>} />
+        <Route path="*" element={<PublicApp />} />
+      </Routes>
+    </BrowserRouter>
   );
 }
-
-export default App;

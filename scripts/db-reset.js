@@ -1,4 +1,4 @@
-// LOCAL DEV ONLY: drop + create the dfresh database, load schema + seed.
+// LOCAL DEV ONLY: drop + create the dfresh database, load schema + seed + database/migrations/*.sql.
 // Connects with DB_ADMIN_USER / DB_ADMIN_PASSWORD when both are set (a limited app user cannot DROP / CREATE
 // databases), else with DB_USER / DB_PASSWORD.
 // --create-app-user also (re)creates the limited app user named by APP_DB_USER / APP_DB_PASSWORD
@@ -58,9 +58,14 @@ async function main() {
     console.log(`server: MySQL ${v}`);
 
     await conn.query(`DROP DATABASE IF EXISTS \`${DB_NAME}\``);
-    for (const file of ['01_schema.sql', '02_seed.sql']) {
-      const sql = fs.readFileSync(path.join(__dirname, '..', 'database', file), 'utf8');
-      await conn.query(sql);
+    // Schema + seed, then every migration in name order (YYYYMMDD_name.sql), as production gets them.
+    const dbDir = path.join(__dirname, '..', 'database');
+    const migrations = fs.readdirSync(path.join(dbDir, 'migrations'))
+      .filter((f) => f.endsWith('.sql'))
+      .sort()
+      .map((f) => `migrations/${f}`);
+    for (const file of ['01_schema.sql', '02_seed.sql', ...migrations]) {
+      await conn.query(fs.readFileSync(path.join(dbDir, file), 'utf8'));
       console.log(`loaded: database/${file}`);
     }
 

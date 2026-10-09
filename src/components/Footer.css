@@ -1,0 +1,28 @@
+/* black footer (preview: footer.dark, .bigf). Gold text only here, on the dark background. */
+footer.dark { background: var(--ink); color: var(--dark-text); font-size: 14px; overflow: hidden; }
+footer.dark .wrap { display: grid; grid-template-columns: 1.4fr 1fr 1fr 1fr; gap: 28px; padding-block: 64px 24px; }
+footer.dark .flogo { height: 56px; width: auto; }
+footer.dark .ftag { height: 26px; width: auto; margin-block-start: 14px; }
+footer.dark .bl { color: var(--gold-l); margin-block-start: 14px; max-width: 24em; }
+footer.dark h4 { font: 600 17px/1 var(--f-disp); color: var(--paper); margin: 0 0 16px; padding-block-end: 14px; border-block-end: 1px solid var(--dark-line); }
+footer.dark ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+footer.dark a { text-decoration: none; transition: color .2s; }
+footer.dark a:hover, footer.dark .lnk:hover { color: var(--gold-l); }
+footer.dark .g { color: var(--gold-l); }
+footer.dark .lnk { border: 0; background: none; padding: 0; cursor: pointer; font: inherit; color: inherit; text-align: start; transition: color .2s; }
+footer.dark .legal { grid-column: 1 / -1; border-block-start: 1px solid var(--dark-line); padding-block-start: 20px; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px; font-size: 12.5px; color: var(--dark-muted); }
+footer.dark .legal a { color: var(--dark-text); border-block-end: 1px solid #3A383C; }
+footer.dark .legal a:hover { color: var(--gold-l); }
+.bigf { display: flex; justify-content: center; font: 800 clamp(78px, 24vw, 330px)/.78 var(--f-num); letter-spacing: -.05em; color: #1E1D21; user-select: none; padding-block-start: 10px; margin-block-end: -.06em; }
+.bigf span { display: inline-block; transition: color .3s; cursor: default; }
+.bigf span:first-child { color: var(--gold); }
+.bigf span:hover { color: #2A292E; }
+.bigf span:first-child:hover { color: var(--gold-l); }
+
+@media (max-width: 900px) {
+  footer.dark .wrap { grid-template-columns: 1fr 1fr; }
+  footer.dark .wrap > :first-child { grid-column: 1 / -1; }
+}
+@media (max-width: 620px) {
+  footer.dark .wrap { grid-template-columns: 1fr; }
+}

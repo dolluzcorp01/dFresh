@@ -1,0 +1,44 @@
+{
+  "default": "en",
+  "languages": [
+    {
+      "code": "en",
+      "htmlLang": "en-IN",
+      "dir": "ltr"
+    },
+    {
+      "code": "ta",
+      "htmlLang": "ta-IN",
+      "dir": "ltr"
+    },
+    {
+      "code": "hi",
+      "htmlLang": "hi-IN",
+      "dir": "ltr"
+    }
+  ],
+  "whatsappNumber": "919330259330",
+  "text": {
+    "en": {
+      "load_err_h": "This page did not load",
+      "load_err_p": "Please check your internet connection and try again, or send us a WhatsApp message.",
+      "retry": "Try again",
+      "whatsapp_us": "WhatsApp us",
+      "wa_general": "Hi dFresh, I'd like to know more about your products."
+    },
+    "ta": {
+      "load_err_h": "இந்தப் பக்கம் ஏற்றப்படவில்லை",
+      "load_err_p": "உங்கள் இணைய இணைப்பைச் சரிபார்த்து மீண்டும் முயற்சிக்கவும், அல்லது WhatsApp-இல் செய்தி அனுப்புங்கள்.",
+      "retry": "மீண்டும் முயற்சிக்கவும்",
+      "whatsapp_us": "வாட்ஸ்அப்பில் தொடர்பு கொள்ள",
+      "wa_general": "வணக்கம் dFresh, உங்கள் பொருட்களைப் பற்றி மேலும் அறிய விரும்புகிறேன்."
+    },
+    "hi": {
+      "load_err_h": "यह पेज लोड नहीं हुआ",
+      "load_err_p": "कृपया अपना इंटरनेट कनेक्शन जाँचें और फिर से कोशिश करें, या हमें WhatsApp पर संदेश भेजें।",
+      "retry": "फिर से कोशिश करें",
+      "whatsapp_us": "व्हाट्सऐप करें",
+      "wa_general": "नमस्ते dFresh, मैं आपके उत्पादों के बारे में और जानना चाहता/चाहती हूँ।"
+    }
+  }
+}

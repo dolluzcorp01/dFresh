@@ -52,6 +52,10 @@ transaction (`SELECT ... FOR UPDATE` on a counter row or `MAX()` within the year
 
 ## Rules
 - Never edit `02_seed.sql` by hand after Phase 0. Content changes go through the admin or the Excel import.
-- Every schema change = `database/migrations/YYYYMMDD_short_name.sql` + update this file.
+- Every schema change = `database/migrations/YYYYMMDD_short_name.sql` + update this file. Data added outside the
+  admin (e.g. new UI keys a phase needs) also goes in a migration, with `INSERT IGNORE` so admin edits survive.
+- Migrations so far: `20261009_shell_ui_text.sql` (Phase 2: 9 UI keys `wa_float`, `lang_label`, `home_link`,
+  `lbl_whatsapp`, `legal1_gst`, `copyright`, `load_err_h`, `load_err_p`, `retry`; EN + TA/HI drafts).
+  After it: 163 UI keys (EN 163 rows, TA 161, HI 161).
 - `01_schema.sql` is for a fresh database only (it adds one FK with ALTER at the end).
 - The dAdmin database (`dadmin`) is read-only from dFresh except `login_otp` rows for app_key `dFresh`.

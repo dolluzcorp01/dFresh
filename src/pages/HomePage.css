@@ -1,0 +1,11 @@
+/* hero background from the preview; the header (sticky) sits over it, transparent until scrolled */
+.hero { position: relative; margin-block-start: calc(-1 * var(--top-h)); padding-block-start: var(--top-h); background: radial-gradient(110% 90% at 80% 32%, #fff 0%, var(--paper) 42%, var(--beige) 100%); overflow: hidden; }
+.hero h1 { font-size: clamp(56px, 8.4vw, 124px); font-weight: 800; letter-spacing: -.045em; line-height: .9; margin-block: 22px 26px; }
+.hero h1 .ln { display: block; }
+.hero h1 .ln2 { font-weight: 300; letter-spacing: -.03em; color: var(--ink-2); }
+:root[data-script="long"] .hero h1 { font-size: clamp(38px, 5vw, 70px); letter-spacing: 0; line-height: 1.2; }
+.hero .lede { font-size: clamp(16.5px, 1.5vw, 18.5px); color: var(--ink-2); max-width: 30em; }
+
+/* Phase 2 placeholders: enough height to scroll, header states and reveal */
+.ph-hero .wrap { min-height: min(82vh, 760px); display: flex; flex-direction: column; justify-content: center; padding-block: clamp(36px, 5vw, 72px); }
+.sec.ph { min-height: 46vh; }

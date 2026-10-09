@@ -1,0 +1,72 @@
+/* Base rules, buttons, section rhythm and reveal, ported from the preview. Logical properties
+   (inline / block) throughout so a right-to-left language works without rewrites. */
+*, *::before, *::after { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--f-body);
+  font-size: 16px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+img { max-width: 100%; display: block; }
+a { color: inherit; }
+button { font: inherit; color: inherit; }
+h1, h2, h3, h4 { font-family: var(--f-disp); line-height: 1.04; text-wrap: balance; margin: 0; }
+p { margin: 0; }
+.wrap { max-width: var(--wrap); margin-inline: auto; padding-inline: var(--gut); }
+section[id] { scroll-margin-top: 84px; }
+:focus-visible { outline: 3px solid var(--gold-d); outline-offset: 3px; border-radius: 10px; }
+
+.k { font: 600 12.5px/1 var(--f-body); letter-spacing: .16em; text-transform: uppercase; color: var(--ink-3); }
+.h2 { font-size: clamp(34px, 4.8vw, 60px); font-weight: 700; letter-spacing: -.02em; margin-top: 14px; }
+.lead { color: var(--ink-2); font-size: 17px; max-width: 36em; margin-top: 14px; }
+:root[data-script="long"] .k { letter-spacing: .04em; font-size: 13.5px; }
+:root[data-script="long"] .h2 { font-size: clamp(28px, 3.6vw, 44px); letter-spacing: 0; line-height: 1.2; }
+
+/* buttons */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 10px;
+  border: 0; cursor: pointer; text-decoration: none;
+  font: 600 15px/1 var(--f-body); padding: 16px 24px; border-radius: 999px;
+  transition: transform .4s var(--ease), box-shadow .25s, background .25s; white-space: nowrap;
+}
+.btn:hover { transform: translateY(-2px); }
+.btn:active { transform: translateY(0) scale(.98); }
+.btn svg { width: 18px; height: 18px; flex: none; }
+.b-ink { background: var(--ink); color: var(--gold-l); }
+.b-ink:hover { box-shadow: 0 12px 26px -12px rgba(18, 18, 20, .6); }
+.b-wa { background: var(--wa); color: #fff; }
+.b-wa:hover { box-shadow: 0 12px 26px -10px rgba(31, 168, 85, .65); }
+.b-line { background: transparent; color: var(--ink); box-shadow: inset 0 0 0 1.5px var(--ink); }
+.b-gold { background: var(--gold); color: var(--ink); }
+.b-gold:hover { background: var(--gold-l); }
+.b-sm { padding: 12px 18px; font-size: 14px; }
+
+/* one section rhythm for the whole page */
+.sec { padding-block: clamp(72px, 9vw, 120px); }
+.sec + .sec { border-block-start: 1px solid var(--line); }
+.sh { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 14px; margin-block-end: clamp(36px, 4.4vw, 56px); }
+.sh.left { align-items: flex-start; text-align: start; }
+.sh h2 { font-size: clamp(34px, 4.6vw, 58px); font-weight: 700; letter-spacing: -.02em; }
+.sh p { color: var(--ink-2); font-size: 17px; max-width: 34em; }
+:root[data-script="long"] .sh h2 { font-size: clamp(28px, 3.4vw, 44px); letter-spacing: 0; line-height: 1.2; }
+
+/* content protection (A4): text selection and image drag off outside form fields. protect.js adds the class. */
+html.protect body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+html.protect input, html.protect textarea, html.protect select, html.protect [contenteditable] { -webkit-user-select: text; user-select: text; }
+img, svg, picture { -webkit-user-drag: none; }
+
+/* reveal (A5): .pre is only ever added by JS, so content is visible without it */
+.rv { transition: transform .9s var(--ease), opacity .9s var(--ease); }
+.rv.pre { transform: translateY(26px); opacity: .001; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+  html { scroll-behavior: auto; }
+  .rv.pre { transform: none; opacity: 1; }
+}

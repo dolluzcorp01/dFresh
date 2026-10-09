@@ -1,0 +1,36 @@
+/* Design tokens, ported from the approved preview (docs/reference/dfresh-preview-v3.html). */
+:root {
+  color-scheme: light;
+  --paper: #FCFBF6;
+  --beige: #F3EBDB;
+  --beige-2: #EADFC8;
+  --line: #E4DBC8;
+  --ink: #121214;
+  --ink-2: #47443D;
+  --ink-3: #7A766C;
+  --gold: #E5BF24;
+  --gold-l: #F4CF2C;
+  --gold-d: #C79714;
+  --wa: #1FA855;
+  --dark-text: #B9B5AA;
+  --dark-muted: #8E897F;
+  --dark-line: #2B2A2D;
+
+  /* --f-lang is the active language's languages.font_family, set by I18nProvider. */
+  --f-lang: "Open Sans";
+  --f-body: var(--f-lang), "Open Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --f-disp: "Saira", "Rajdhani", "Arial Narrow", system-ui, sans-serif;
+  --f-num: "Saira", sans-serif;
+
+  --r: 24px;
+  --wrap: 1200px;
+  --gut: clamp(16px, 4vw, 44px);
+  --ease: cubic-bezier(.22, 1, .36, 1);
+  --top-h: 68px;
+}
+
+/* Scripts whose font differs from the default language's (I18nProvider sets data-script="long"):
+   the script font leads the display stack too, and headline sizes are tuned in base.css. */
+:root[data-script="long"] {
+  --f-disp: var(--f-lang), "Saira", system-ui, sans-serif;
+}

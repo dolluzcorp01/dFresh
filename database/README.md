@@ -4,7 +4,7 @@
 |---|---|
 | `01_schema.sql` | Creates database `dfresh` and all tables (fresh install only) |
 | `02_seed.sql` | All launch content: 3 languages, 154 UI texts, 6 categories, 25 products + 3 colour variants, 84 images, 11 banners, 4 kits, 6 towns, form options, settings, 2 admin users |
-| `migrations/` | Every later change, named `YYYYMMDD_short_name.sql` (created from Phase 1 on) |
+| `migrations/` | Every later change, named `YYYYMMDD_short_name.sql`, applied in name order. `20261009_shell_ui_text.sql`: 9 UI keys for the site frame (EN + TA/HI drafts) |
 
 Both files were executed and verified on MariaDB 10.11 (MySQL 8 compatible) before handover.
 
@@ -15,7 +15,9 @@ mysql -u root -p --default-character-set=utf8mb4 < database/02_seed.sql
 ```
 Always use `--default-character-set=utf8mb4` or Tamil / Hindi text turns into `????`.
 
-Or run `npm run db:reset`, which does both (local only, refuses when `NODE_ENV=production`).
+Then apply every file in `migrations/` in name order (same `--default-character-set=utf8mb4`).
+
+Or run `npm run db:reset`, which does all of it (local only, refuses when `NODE_ENV=production`).
 
 Create an app user. Production MUST use this limited user, never root. Locally,
 `npm run db:reset -- --create-app-user` runs the same steps (user from `APP_DB_USER` / `APP_DB_PASSWORD`,
