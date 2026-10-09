@@ -25,6 +25,13 @@ The approved look, copy, animations and interactions come from that preview. Mat
 - Work ONE phase file at a time. Do only what that file asks. Do not start the next phase.
 - At the end of a phase: run the acceptance checks in the file, show real output (not "tests pass"),
   commit with the given message, move the phase file into `docs/claude-tasks/done/`, then STOP and report.
+- **Every phase ends with a side-by-side visual parity check** for the sections it builds: the preview and our
+  /en page in the same browser at 1920, 1440 and 390. Measure container width, font sizes, line heights,
+  spacing, section padding, image/sheet sizes, button sizes and radii, animation timing. List every difference
+  larger than 4px or 5% (preview vs ours), fix them to match the preview, re-measure and show the table again
+  with the "after" values. Screenshots go to `/visual-output/<phase>/parity-*.png`.
+  Tool: `scripts/visual-parity/` (add the phase's sections to `measure.js`; usage in its header).
+  A difference that is data, not layout (e.g. fewer active banners), is listed with its reason, not "fixed".
 - If something in a phase conflicts with these rules or the docs, STOP and ask. Do not guess.
 - "Be careful" standard: check end to end before and after. Never state a count or result without
   re-checking it against the actual file, DB row or screen. A check that could not run is "not verified", never "pass".

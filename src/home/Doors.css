@@ -1,6 +1,8 @@
 /* doors (preview: .doors, .door, with the v3 real-photo overrides folded in) */
 .doors .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
 .door { position: relative; display: flex; flex-direction: column; justify-content: space-between; gap: 30px; min-height: 290px; padding: clamp(26px, 3.4vw, 42px); border-radius: var(--r); text-decoration: none; overflow: hidden; isolation: isolate; transition: transform .45s var(--ease), box-shadow .45s; }
+/* preview parity: there the later .rv rule wins, so the hover lift runs at the reveal's .9s and the shadow snaps */
+.door.rv { transition: transform .9s var(--ease), opacity .9s var(--ease); }
 .door:hover { transform: translateY(-6px); box-shadow: 0 30px 50px -36px rgba(60, 45, 10, .6); }
 .door.home { background: #fff; border: 1px solid var(--line); }
 .door.biz { background: var(--ink); color: var(--paper); }
@@ -28,6 +30,6 @@
   .doors .grid { grid-template-columns: 1fr; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .door, .door .art, .door .go i { transition: none; }
+  .door, .door.rv, .door .art, .door .go i { transition: none; }
   .door:hover, .door:hover .art, .door:hover .go i { transform: none; }
 }
