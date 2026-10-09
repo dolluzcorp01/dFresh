@@ -1,24 +1,21 @@
-import logo from './logo.svg';
-import './App.css';
+// TEMPORARY (Phase 0): proves the React app can reach the API. Replaced by the real site in Phase 2.
+import { useEffect, useState } from 'react';
+import { apiFetch } from './utils/api';
 
 function App() {
+  const [result, setResult] = useState(null);
+
+  useEffect(() => {
+    apiFetch('/api/dfresh/health')
+      .then((res) => res.json())
+      .then(setResult)
+      .catch((err) => setResult({ success: false, message: err.message }));
+  }, []);
+
   return (
-    <div className="App">
-      <header className="App-header">
-        <img src={logo} className="App-logo" alt="logo" />
-        <p>
-          Edit <code>src/App.js</code> and save to reload.
-        </p>
-        <a
-          className="App-link"
-          href="https://reactjs.org"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Learn React
-        </a>
-      </header>
-    </div>
+    <pre style={{ margin: 16, fontSize: 14, whiteSpace: 'pre-wrap' }} data-testid="health">
+      {result ? JSON.stringify(result, null, 2) : '...'}
+    </pre>
   );
 }
 

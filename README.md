@@ -1,70 +1,45 @@
-# Getting Started with Create React App
+# dFresh website
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+Catalogue + lead website and admin console for dFresh ("Gentle, Like You"), the tissue and hygiene paper
+brand of Dolluz Corporation (OPC) Pvt Ltd. Stack: React (CRA) + Express 5 + MySQL 8 + SendGrid.
 
-## Available Scripts
+Start with `CLAUDE.md` (standing rules) and `docs/01_PROJECT_BRIEF.md` to `docs/07_ACCEPTANCE_AND_OPEN_ITEMS.md`.
+Phase task files are in `docs/claude-tasks/` (finished ones in `docs/claude-tasks/done/`).
 
-In the project directory, you can run:
+## Requirements
+- Node.js 22, npm 10
+- MySQL 8 running locally (the client must use utf8mb4, or Tamil / Hindi text breaks)
 
-### `npm start`
+## First-time setup
+1. `npm install`
+2. Copy `.env.example` to `.env` and fill it in:
+   - `DB_ADMIN_USER` / `DB_ADMIN_PASSWORD`: a MySQL login that can create databases and users (e.g. root).
+     Used ONLY by `npm run db:reset`, never by the app.
+   - `DB_USER` / `DB_PASSWORD`: the app login (`dfresh_app`). Pick a long random password;
+     `db:reset` creates the user with it.
+   - `IP_HASH_SALT`: a long random string.
+3. `npm run db:reset` - drops and recreates `dfresh`, loads `database/01_schema.sql` + `02_seed.sql`,
+   creates `dfresh_app` with SELECT/INSERT/UPDATE/DELETE on `dfresh.*`, and adds the `dadmin` grants when a
+   local `dadmin` database exists. Refuses when `NODE_ENV=production`.
+4. `npm run media:sync` - copies `assets/` into `media/` (not in git) and builds the 400 / 800 image sizes.
+5. `npm run dev` - API on http://localhost:4012 and React on http://localhost:3000.
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+## Commands
+| Command | What |
+|---|---|
+| `npm run dev` | API (nodemon) + React dev server together |
+| `npm run server` | API only |
+| `npm start` | React dev server only |
+| `npm run build` | Production React build |
+| `npm run db:reset` | Local only: drop + create + schema + seed + app user |
+| `npm run media:sync` | Copy `assets/` to `media/`, then `media:build` |
+| `npm run media:build` | Generate product sizes and check every DB-referenced media file exists |
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+## Folders
+- `assets/` - source of truth for logos, product photos and banners (committed)
+- `media/` - served at `/media`, rebuilt from `assets/` (ignored by git; production media comes from the admin)
+- `private/brochures/` - brochure PDFs, never public, never committed
+- `database/` - schema, seed, and later `migrations/`
+- `docs/` - spec, task phases, reference preview; `docs/kit/` has the kit's kickoff notes
 
-### `npm test`
-
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
-
-### `npm run build`
-
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
-
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
-
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
-
-### `npm run eject`
-
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
-
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
-
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
-
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
-
-## Learn More
-
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
-
-To learn React, check out the [React documentation](https://reactjs.org/).
-
-### Code Splitting
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
-
-### Analyzing the Bundle Size
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
-
-### Making a Progressive Web App
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
-
-### Advanced Configuration
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `npm run build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+Health check: `GET http://localhost:4012/api/dfresh/health`

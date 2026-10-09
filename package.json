@@ -3,20 +3,37 @@
   "version": "0.1.0",
   "private": true,
   "dependencies": {
+    "@sendgrid/mail": "^8.1.6",
     "@testing-library/dom": "^10.4.2",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.3",
     "@testing-library/user-event": "^13.5.0",
+    "bcryptjs": "^3.0.3",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.6",
+    "dotenv": "^18.0.6",
+    "exceljs": "^4.4.0",
+    "express": "^5.2.1",
+    "googleapis": "^185.0.0",
+    "jsonwebtoken": "^9.0.3",
+    "multer": "^2.4.0",
+    "mysql2": "^3.24.5",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
+    "react-router-dom": "^6.30.6",
     "react-scripts": "5.0.1",
+    "sharp": "^0.35.5",
     "web-vitals": "^2.1.4"
   },
   "scripts": {
-    "start": "react-scripts start",
+    "dev": "concurrently -k -n api,web -c yellow,cyan \"npm:server\" \"npm:start\"",
+    "server": "nodemon server.js",
+    "start": "node scripts/start-web.js",
     "build": "react-scripts build",
     "test": "react-scripts test",
-    "eject": "react-scripts eject"
+    "db:reset": "node scripts/db-reset.js",
+    "media:sync": "node scripts/media-sync.js && npm run media:build",
+    "media:build": "node scripts/media-build.js"
   },
   "eslintConfig": {
     "extends": [
@@ -35,5 +52,18 @@
       "last 1 firefox version",
       "last 1 safari version"
     ]
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.6",
+    "nodemon": "^3.1.14"
+  },
+  "nodemonConfig": {
+    "watch": [
+      "server.js",
+      "config/",
+      "src/backend_routes/",
+      "src/shared/"
+    ],
+    "ext": "js,json"
   }
 }
