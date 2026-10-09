@@ -3,21 +3,15 @@
 import { useEffect, useId, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useT } from '../i18n/useT';
+import { lockScroll, unlockScroll } from '../utils/scrollLock';
 import './Modal.css';
 
 const stack = []; // open modal ids, top-most last
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-function lockScroll(lock) {
-  const { body, documentElement } = document;
-  if (lock && stack.length === 1) {
-    const bar = window.innerWidth - documentElement.clientWidth;
-    body.style.overflow = 'hidden';
-    if (bar > 0) body.style.paddingInlineEnd = `${bar}px`;
-  } else if (!lock && stack.length === 0) {
-    body.style.overflow = '';
-    body.style.paddingInlineEnd = '';
-  }
+// true while any modal is open (the products drawer leaves Esc and Tab to the modal on top of it)
+export function isModalOpen() {
+  return stack.length > 0;
 }
 
 export default function Modal({ open, onClose, title, className = '', children }) {
@@ -31,7 +25,7 @@ export default function Modal({ open, onClose, title, className = '', children }
     if (!open) return undefined;
     const opener = document.activeElement;
     stack.push(id);
-    lockScroll(true);
+    lockScroll();
     const dialog = dialogRef.current;
     const first = dialog.querySelector('[data-autofocus]') || dialog.querySelector(FOCUSABLE) || dialog;
     first.focus({ preventScroll: true });
@@ -62,7 +56,7 @@ export default function Modal({ open, onClose, title, className = '', children }
     return () => {
       document.removeEventListener('keydown', onKey);
       stack.splice(stack.indexOf(id), 1);
-      lockScroll(false);
+      unlockScroll();
       if (opener && document.contains(opener)) opener.focus({ preventScroll: true });
     };
   }, [open, id]);

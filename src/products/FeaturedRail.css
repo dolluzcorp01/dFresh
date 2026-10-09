@@ -1,0 +1,19 @@
+/* featured rail (preview: .featured, .rail, .rail-ctrl) */
+.featured { background: #fff; }
+.rail { display: flex; gap: 20px; overflow-x: auto; scroll-snap-type: x mandatory; padding: 6px var(--gut) 30px; margin-inline: calc(var(--gut) * -1); scrollbar-width: none; }
+.rail::-webkit-scrollbar { display: none; }
+.rail .card { flex: 0 0 clamp(272px, 22vw, 292px); scroll-snap-align: start; }
+.rail-ctrl { display: flex; justify-content: center; gap: 10px; margin-top: 8px; }
+.rail-ctrl button { width: 48px; height: 48px; border-radius: 50%; border: 1.5px solid var(--ink); background: none; color: var(--ink); cursor: pointer; font-size: 18px; transition: background .2s, color .2s; }
+.rail-ctrl button:hover { background: var(--ink); color: var(--paper); }
+:root[dir="rtl"] .rail-ctrl span { display: inline-block; transform: scaleX(-1); }
+@media (min-width: 901px) {
+  .rail { margin-inline: 0; padding-inline: 0; }
+  .rail .card { flex: 0 0 calc((100% - 60px) / 4); }
+}
+@media (min-width: 901px) and (max-width: 1199px) {
+  .rail .card { flex: 0 0 calc((100% - 40px) / 3); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rail-ctrl button { transition: none; }
+}

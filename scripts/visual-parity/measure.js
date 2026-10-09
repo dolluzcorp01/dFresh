@@ -20,6 +20,14 @@ const OURS = `${process.env.WEB_URL || 'http://localhost:3000'}/en`;
 const VIEWS = [[1920, 1080], [1440, 900], [390, 844]];
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// The front of the first flip card inside scope (Phase 4).
+function CARD_FRONT(scope, items) {
+  const c = `${scope} .card`;
+  return [...items, ['card', c], ['carousel', `${c} .car`], ['photo dot', `${c} .dots button:not([aria-current="true"])`], ['photo dot on', `${c} .dots button[aria-current="true"]`], ['body', `${c} .fb`],
+    ['id chip', `${c} .idc`], ['name', `${c} h3`], ['one-liner', `${c} .one`], ['chips', `${c} .chips`],
+    ['kw chip', `${c} .chips span`], ['know more', `${c} .km`], ['know more icon', `${c} .km i`]];
+}
+
 // [section, sectionSelector, [[name, selector]...]]. Each phase adds the sections it builds.
 const SECTIONS = [
   ['header', '.top', [
@@ -50,6 +58,49 @@ const SECTIONS = [
     ['ringwrap', '#range .ringwrap'], ['item', '#range .ri'], ['pack', '#range .ri .pa'], ['item name', '#range .ri b'],
     ['item count', '#range .ri small'], ['controls', '#range .ringctl'], ['ctl btn', '#range .ringctl button'], ['ctl hint', '#range .ringctl span'],
   ]],
+  ['featured', '#featured', CARD_FRONT('#featured', [
+    ['section', '#featured'], ['h2', '#featured .sh h2'], ['p', '#featured .sh p:not(.k)'], ['rail', '#featured .rail'],
+    ['rail btn', '#featured .rail-ctrl button'],
+  ])],
+];
+
+// Phase 4: the drawer (opened from the hero's "See all products") and a flipped card's back.
+const DRAWER = [
+  ['drawer', '.drawer', CARD_FRONT('.drawer', [
+    ['head', '.drawer .dh'], ['head wrap', '.drawer .dh .wrap'], ['h2', '.drawer .dh h2'], ['search', '.drawer .search'],
+    ['search input', '.drawer .search input'], ['close', '.drawer .xbtn'], ['filters', '.drawer .filters'],
+    ['chip', '.drawer .filters button'], ['chip count', '.drawer .filters button span'], ['grid', '.drawer .grid4'],
+    ['swatches', '.drawer .sw'], ['swatch', '.drawer .sw button'], ['swatch name', '.drawer .sw .swn'],
+  ])],
+];
+const FLIPPED = [
+  ['card back', '.drawer .card', [
+    ['back', '.drawer .card .back'], ['id chip', '.drawer .card .back .idc'], ['h3', '.drawer .card .back h3'],
+    ['desc', '.drawer .card .back .desc'], ['spec', '.drawer .card .back .spec'], ['dt', '.drawer .card .back .spec dt'],
+    ['dd', '.drawer .card .back .spec dd'], ['buttons', '.drawer .card .back .bb'], ['wa btn', '.drawer .card .back .bb .btn'],
+    ['quote btn', '.drawer .card .back .bb .btn:nth-child(2)'], ['back btn', '.drawer .card .back .bk'],
+  ]],
+];
+const STAGES = [
+  { name: 'page', sections: SECTIONS, setup: async (page) => {
+    // every card on photo 1 right before measuring (auto-advance keeps ticking after a dot click)
+    await page.evaluate(() => document.querySelectorAll('.card .dots button:first-child').forEach((b) => b.click()));
+    await wait(250);
+  } },
+  { name: 'drawer', sections: DRAWER, fixed: true, setup: async (page) => {
+    // fresh load: nothing left over from the page stage (scroll, hero confetti widening a mobile viewport)
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.reload({ waitUntil: 'networkidle2' });
+    await wait(2500);
+    await page.evaluate(() => document.querySelector('.hero .ctas .btn:nth-child(2)').click());
+    await wait(1800);
+    await page.evaluate(() => document.querySelectorAll('.drawer .card .dots button:first-child').forEach((b) => b.click()));
+    await wait(900);
+  } },
+  { name: 'flipped', sections: FLIPPED, setup: async (page) => {
+    await page.evaluate(() => document.querySelector('.drawer .card .km').click());
+    await wait(1400);
+  } },
 ];
 
 function measure(sections) {
@@ -99,10 +150,11 @@ async function settle(page, w) {
   await page.evaluate(() => document.fonts.ready);
   // walk the page so every reveal has fired, then come back to the top
   const H = await page.evaluate(() => document.body.scrollHeight);
-  for (let y = 0; y < Math.min(H, 9000); y += 400) { await page.evaluate((yy) => scrollTo(0, yy), y); await wait(60); }
-  // both pages on banner 1, pointer away from the slider
+  for (let y = 0; y < Math.min(H, 9000); y += 400) { await page.evaluate((yy) => window.scrollTo(0, yy), y); await wait(60); }
+  // both pages on banner 1 and every card on photo 1, pointer away from the slider
   await page.evaluate(() => { const d = document.querySelector('.bnr-dots button'); if (d) d.click(); });
-  await page.evaluate(() => scrollTo(0, 0));
+  await page.evaluate(() => document.querySelectorAll('.card .dots button:first-child').forEach((b) => b.click()));
+  await page.evaluate(() => window.scrollTo(0, 0));
   await wait(2500);
 }
 
@@ -119,7 +171,7 @@ async function shotSection(page, sel, file) {
   // a fixed 1200ms after scrolling, top of section at top of viewport (header sticky is hidden for the shot)
   await page.evaluate((s) => {
     const t = document.querySelector('.top'); if (t && s !== '.top') t.style.visibility = 'hidden'; else if (t) t.style.visibility = '';
-    const el = document.querySelector(s); scrollTo(0, el.getBoundingClientRect().top + scrollY - (s === '.top' ? 0 : 0));
+    const el = document.querySelector(s); window.scrollTo(0, el.getBoundingClientRect().top + window.scrollY - (s === '.top' ? 0 : 0));
   }, sel);
   await wait(1200);
   const el = await page.$(sel);
@@ -131,24 +183,34 @@ async function shotSection(page, sel, file) {
   const browser = await puppeteer.launch({ executablePath: process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true,
     args: ['--use-gl=angle', '--enable-webgl', '--ignore-gpu-blocklist', '--allow-file-access-from-files'] });
   const result = {};
+  const shots = []; // [stage, section]
   for (const [w, h] of VIEWS) {
     result[w] = {};
     for (const which of ['preview', 'ours']) {
       const page = await open(browser, which, w, h);
-      result[w][which] = await page.evaluate(measure, SECTIONS);
-      result[w][which].__doc = await page.evaluate(() => ({ scrollW: document.documentElement.scrollWidth }));
-      if (mode === 'shots') {
-        fs.mkdirSync(OUT, { recursive: true });
-        for (const [sec, ssel] of SECTIONS) await shotSection(page, ssel, path.join(SCR, `_${which}-${sec}-${w}.png`));
+      result[w][which] = { __doc: await page.evaluate(() => ({ scrollW: document.documentElement.scrollWidth })) };
+      for (const st of STAGES) {
+        if (st.setup) await st.setup(page);
+        Object.assign(result[w][which], await page.evaluate(measure, st.sections));
+        if (mode === 'shots') {
+          fs.mkdirSync(OUT, { recursive: true });
+          for (const [sec, ssel] of st.sections) {
+            const file = path.join(SCR, `_${which}-${sec}-${w}.png`);
+            if (st.name === 'page') await shotSection(page, ssel, file);
+            else if (st.fixed) await page.screenshot({ path: file });
+            else await (await page.$(ssel)).screenshot({ path: file });
+            if (which === 'ours' && w === VIEWS[0][0]) shots.push(sec);
+          }
+        }
       }
       await page.close();
     }
     if (mode === 'shots') {
-      for (const [sec] of SECTIONS) {
+      for (const sec of shots) {
         const a = path.join(SCR, `_preview-${sec}-${w}.png`), b = path.join(SCR, `_ours-${sec}-${w}.png`);
         const [ma, mb] = await Promise.all([sharp(a).metadata(), sharp(b).metadata()]);
         const H = Math.max(ma.height, mb.height);
-        const file = path.join(OUT, `parity-${label}-${sec}-${w}.png`);
+        const file = path.join(OUT, `parity-${label}-${sec.replace(/ /g, '-')}-${w}.png`);
         await sharp({ create: { width: ma.width + mb.width + 24, height: H, channels: 3, background: '#d0d0d0' } })
           .composite([{ input: a, left: 0, top: 0 }, { input: b, left: ma.width + 24, top: 0 }]).png().toFile(file);
         fs.unlinkSync(a); fs.unlinkSync(b); // the two halves this run just wrote

@@ -9,7 +9,8 @@ import { mediaUrl } from '../utils/api';
 import { DownloadIcon } from './Icons';
 import LanguageSwitch from './LanguageSwitch';
 import MobileMenu from './MobileMenu';
-import { MAIN_LINKS, linkTarget } from './navLinks';
+import { MAIN_LINKS } from './navLinks';
+import NavLink from './NavLink';
 import './Header.css';
 
 const MENU_ID = 'msheet';
@@ -127,7 +128,7 @@ export default function Header({ overHero }) {
           </Link>
           <nav className="nav" aria-label={t('menu')}>
             {MAIN_LINKS.map((l) => (
-              <Link key={l.key} to={linkTarget(lang, l)}>{t(l.key)}</Link>
+              <NavLink key={l.key} link={l}>{t(l.key)}</NavLink>
             ))}
           </nav>
           <LanguageSwitch />

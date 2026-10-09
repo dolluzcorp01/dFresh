@@ -1,13 +1,13 @@
 // Menu sheet for the compact header (spec A1). Closes on link tap, outside tap, Esc, and when the header
 // leaves compact mode (resize above 900px with room for the full nav).
 import { useEffect, useRef } from 'react';
-import { Link } from 'react-router-dom';
 import { useI18n } from '../i18n/useT';
 import { useOpenForm } from '../forms/FormsProvider';
-import { MAIN_LINKS, linkTarget } from './navLinks';
+import { MAIN_LINKS } from './navLinks';
+import NavLink from './NavLink';
 
 export default function MobileMenu({ id, open, onClose, buttonRef, compact }) {
-  const { lang, t } = useI18n();
+  const { t } = useI18n();
   const openForm = useOpenForm();
   const ref = useRef(null);
 
@@ -42,7 +42,7 @@ export default function MobileMenu({ id, open, onClose, buttonRef, compact }) {
   return (
     <nav id={id} ref={ref} className="msheet" aria-label={t('menu')} hidden={!open}>
       {MAIN_LINKS.map((l) => (
-        <Link key={l.key} to={linkTarget(lang, l)} onClick={onClose}>{t(l.key)}</Link>
+        <NavLink key={l.key} link={l} onClick={onClose}>{t(l.key)}</NavLink>
       ))}
       <button type="button" onClick={form('quote')}>{t('request_quote')}</button>
       <button type="button" onClick={form('distributor')}>{t('become_distributor')}</button>

@@ -25,7 +25,7 @@ Product shape (card):
 ```json
 { "id": "DZIND-DF008", "category": "napkins", "sort": 5, "featured": false, "featuredOrder": null,
   "forHome": true, "swatch": "#FFFFFF", "spec": "...", "pack": "...",
-  "name": "...", "oneLiner": "...", "keywords": ["2-ply","29×30 cm","Quarter-fold"], "description": "...",
+  "name": "...", "nameEn": "... (default-language name, for search)", "oneLiner": "...", "keywords": ["2-ply","29×30 cm","Quarter-fold"], "description": "...",
   "bestFor": "...", "colourName": "White", "alt": "...", "whatsapp": "...",
   "images": [{ "pos": 1, "src": "/media/products/1200/DZIND-DF008_1.webp",
                "srcset": "/media/products/400/DZIND-DF008_1.webp 400w, ... 800w, ... 1200w",

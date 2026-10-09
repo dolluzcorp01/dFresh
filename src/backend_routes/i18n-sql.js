@@ -26,6 +26,8 @@ function ident(name) {
  * @param {Array<string|[string,string]>} o.baseCols  base columns, or [column, alias]
  * @param {Array<{col:string, as?:string, baseFallback?:string}>} o.trCols  translated columns;
  *        baseFallback = a base column used when neither translation row has a value
+ * @param {Array<{col:string, as:string}>} [o.defaultCols] translated columns taken from the default
+ *        language row only (e.g. the English name, for search in another language)
  * @param {string}   [o.where]   extra condition on base alias b (no user input; use ? + whereParams)
  * @param {Array}    [o.whereParams]
  * @param {string}   [o.presenceAs] alias for a 0/1 column telling whether the requested language
@@ -47,6 +49,7 @@ function translatedSelect(o, lang, fallback) {
     if (c.baseFallback) parts.push(`b.${ident(c.baseFallback)}`);
     cols.push(`COALESCE(${parts.join(', ')}) AS ${ident(c.as || c.col)}`);
   }
+  for (const c of o.defaultCols || []) cols.push(`e.${ident(c.col)} AS ${ident(c.as)}`);
   if (o.presenceAs) cols.push(`(t.lang_code IS NOT NULL) AS ${ident(o.presenceAs)}`);
 
   const sql = [

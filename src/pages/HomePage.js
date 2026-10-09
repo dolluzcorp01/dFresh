@@ -1,5 +1,5 @@
 // Home page, sections in spec order (docs/05_FEATURES_SPEC.md B1-B10). Phase 3: hero, banners, doors,
-// range ring. The rest are placeholders (real headings from the DB) until Phases 4-5 replace them.
+// range ring. Phase 4: featured rail. The rest are placeholders (real headings from the DB) until Phase 5.
 import { startTransition, useEffect, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useT } from '../i18n/useT';
@@ -8,10 +8,10 @@ import Hero from '../home/Hero';
 import BannerSlider from '../home/BannerSlider';
 import Doors from '../home/Doors';
 import RangeRing from '../home/RangeRing';
+import FeaturedRail from '../products/FeaturedRail';
 import './HomePage.css';
 
 const PLACEHOLDERS = [
-  { id: 'featured', k: 'feat_k', h: 'feat_h' },
   { id: 'play', k: 'tryit', h: 'ur_h' },
   { id: 'business', k: 'for_business', h: 'biz_h' },
   { id: 'where', k: 'where_k', h: 'where_h' },
@@ -44,6 +44,7 @@ export default function HomePage() {
       {below && <BannerSlider />}
       {below && <Doors />}
       {below && <RangeRing />}
+      {below && <FeaturedRail />}
       {below && PLACEHOLDERS.map((s) => (
         <section key={s.h} className="sec ph" id={s.id}>
           <Reveal className="wrap sh">

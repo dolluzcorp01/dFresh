@@ -1,0 +1,56 @@
+/* flip card (preview: .card, .face, .car, .fb, .sw, .back with the v3 real-photo overrides folded in) */
+.card { height: 556px; perspective: 1600px; }
+.card-in { position: relative; width: 100%; height: 100%; transition: transform .85s cubic-bezier(.3, .9, .25, 1); transform-style: preserve-3d; }
+.card.flipped .card-in { transform: rotateY(180deg); }
+.face { position: absolute; inset: 0; backface-visibility: hidden; -webkit-backface-visibility: hidden; border-radius: var(--r); background: #fff; border: 1px solid var(--line); display: flex; flex-direction: column; overflow: hidden; transition: box-shadow .35s; }
+.card:hover .front { box-shadow: 0 24px 40px -28px rgba(80, 60, 10, .45); }
+.back { transform: rotateY(180deg); padding: 22px; gap: 10px; overflow-y: auto; scrollbar-width: thin; }
+
+.car { position: relative; flex: 1 1 auto; min-height: 200px; overflow: hidden; background: #FFF8E6; user-select: none; -webkit-user-select: none; }
+.track { display: flex; height: 100%; transform: translateX(calc(var(--k, 0) * -100%)); transition: transform .7s var(--ease); }
+:root[dir="rtl"] .track { transform: translateX(calc(var(--k, 0) * 100%)); }
+.slide { flex: 0 0 100%; height: 100%; }
+.slide svg { width: 100%; height: 100%; display: block; pointer-events: none; }
+.slide .ph { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; -webkit-user-drag: none; }
+.ss-name { font: 700 22px var(--f-disp); fill: var(--paper); }
+.ss-line { font: 600 17px var(--f-body); fill: var(--gold-l); }
+.dots { position: absolute; left: 0; right: 0; bottom: 10px; display: flex; justify-content: center; gap: 6px; }
+.dots button { width: 7px; height: 7px; padding: 0; border: 0; border-radius: 4px; background: var(--ink); opacity: .22; cursor: pointer; transition: width .3s, opacity .3s; }
+.dots button[aria-current="true"] { width: 20px; opacity: .85; }
+
+.fb { padding: 18px 20px 20px; display: flex; flex-direction: column; gap: 9px; flex: none; min-height: 246px; }
+.idc { align-self: flex-start; font: 600 11px/1 "Open Sans", sans-serif; letter-spacing: .06em; background: var(--ink); color: var(--gold-l); padding: 6px 9px; border-radius: 6px; font-variant-numeric: tabular-nums; }
+.card h3 { font-size: 22px; font-weight: 700; letter-spacing: -.01em; }
+:root[data-script="long"] .card h3 { font-size: 18px; line-height: 1.3; letter-spacing: 0; }
+.one { font-size: 14px; color: var(--ink-2); line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin: 0; }
+.chips { display: flex; gap: 6px; overflow: hidden; flex-wrap: nowrap; }
+.chips span { font-size: 12px; font-weight: 500; padding: 4px 10px; border-radius: 999px; background: var(--beige); white-space: nowrap; }
+.km { margin-top: auto; align-self: flex-start; background: none; border: 0; padding: 0; font: inherit; font-weight: 600; font-size: 14px; color: var(--ink); display: inline-flex; align-items: center; gap: 9px; cursor: pointer; }
+.km i { font-style: normal; width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; background: var(--gold); transition: transform .45s var(--ease); }
+.km:hover i { transform: rotate(180deg); }
+
+.sw { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; font-size: 12.5px; color: var(--ink-3); }
+.sw button { width: 22px; height: 22px; border-radius: 50%; border: 2px solid #fff; background: var(--c); box-shadow: 0 0 0 1.5px var(--line); cursor: pointer; padding: 0; transition: transform .2s, box-shadow .2s; }
+.sw button:hover { transform: scale(1.12); }
+.sw button[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--ink); }
+.sw .swn { font-weight: 600; color: var(--ink-2); }
+
+.back h3 { font-size: 20px; }
+.back .desc { font-size: 13.5px; color: var(--ink-2); line-height: 1.55; margin: 0; }
+/* minmax(0, 1fr): a long label (Tamil "Specifications") must not push the values out of the card */
+.spec { margin: 0; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0 14px; font-size: 13px; }
+.spec dt { color: var(--ink-3); padding-block: 7px; border-bottom: 1px solid var(--line); }
+.spec dd { margin: 0; padding-block: 7px; border-bottom: 1px solid var(--line); font-weight: 600; text-align: end; overflow-wrap: break-word; }
+/* long scripts: a label like Tamil "Specifications" leaves too little room beside it, so label above value */
+:root[data-script="long"] .spec { grid-template-columns: minmax(0, 1fr); }
+:root[data-script="long"] .spec dt { padding-block: 7px 0; border-bottom: 0; font-size: 12px; }
+:root[data-script="long"] .spec dd { text-align: start; padding-block: 2px 7px; }
+.bb { margin-top: auto; display: flex; flex-direction: column; gap: 7px; padding-top: 6px; }
+.bb .btn { width: 100%; padding-block: 13px; }
+.bk { background: none; border: 0; cursor: pointer; font: inherit; font-weight: 600; font-size: 13px; color: var(--ink-3); padding: 6px; align-self: center; }
+:root[dir="rtl"] .bk span { display: inline-block; transform: scaleX(-1); }
+
+@media (prefers-reduced-motion: reduce) {
+  .card-in, .track, .dots button, .km i, .sw button, .face { transition: none; }
+  .km:hover i, .sw button:hover { transform: none; }
+}

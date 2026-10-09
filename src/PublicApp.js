@@ -13,6 +13,8 @@ import WhatsAppFab from './components/WhatsAppFab';
 import HomePage from './pages/HomePage';
 import ProductsPage from './pages/ProductsPage';
 import LegalPage from './pages/LegalPage';
+import ProductsOverlay from './products/ProductsOverlay';
+import { isProductsPath } from './products/useOpenProducts';
 
 export default function PublicApp() {
   return (
@@ -53,20 +55,25 @@ function LangGate() {
 function Layout() {
   const { lang } = useI18n();
   const location = useLocation();
-  const isHome = splitPath(location.pathname).rest.replace(/\/$/, '') === '';
+  // Products drawer opened from inside the site: the URL is /:lang/products, the page under it is state.bg.
+  const bg = location.state && location.state.bg;
+  const overlay = Boolean(bg) && isProductsPath(location.pathname);
+  const page = overlay ? bg : location;
+  const isHome = splitPath(page.pathname).rest.replace(/\/$/, '') === '';
 
   useEffect(() => installProtection(), []);
 
-  // New page -> top. Not for a language switch (keepScroll) or a #section link (HomePage scrolls to it).
+  // New page -> top. Not for a language switch (keepScroll), a #section link (HomePage scrolls to it), or
+  // the products overlay opening / closing over the same page.
   useLayoutEffect(() => {
-    if (!location.hash && !(location.state && location.state.keepScroll)) window.scrollTo(0, 0);
-  }, [location.pathname]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!page.hash && !(location.state && location.state.keepScroll)) window.scrollTo(0, 0);
+  }, [page.pathname]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <>
       <Header overHero={isHome} />
       <main id="main">
-        <Routes>
+        <Routes location={page}>
           <Route index element={<HomePage />} />
           <Route path="products" element={<ProductsPage />} />
           <Route path="privacy" element={<LegalPage page="privacy" />} />
@@ -76,6 +83,7 @@ function Layout() {
       </main>
       <Footer />
       <WhatsAppFab />
+      <ProductsOverlay active={overlay} />
     </>
   );
 }

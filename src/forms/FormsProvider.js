@@ -1,5 +1,6 @@
-// openForm(type) from anywhere (header, menu, footer, sections). Phase 2: the modal shell with the
-// form's title and subtitle; the fields, validation and submit arrive in Phase 6 (FormModal).
+// openForm(type, prefill?) from anywhere (header, menu, footer, sections, product cards). Phase 2: the modal
+// shell with the form's title and subtitle; the fields, validation and submit arrive in Phase 6 (FormModal).
+// prefill: e.g. { products: ['DZIND-DF008-BUR'] } from a card's "Request a quote" (that product ticked).
 import { createContext, useCallback, useContext, useMemo, useState } from 'react';
 import Modal from '../components/Modal';
 import { useT } from '../i18n/useT';
@@ -22,20 +23,20 @@ export function useOpenForm() {
 
 export function FormsProvider({ children }) {
   const t = useT();
-  const [form, setForm] = useState(null);
-  const openForm = useCallback((type) => {
+  const [{ form, prefill }, setState] = useState({ form: null, prefill: null });
+  const openForm = useCallback((type, pre = null) => {
     if (!FORMS[type]) return;
     track('form_open', { form: type });
-    setForm(type);
+    setState({ form: type, prefill: pre });
   }, []);
-  const close = useCallback(() => setForm(null), []);
+  const close = useCallback(() => setState({ form: null, prefill: null }), []);
   const keys = form && FORMS[form];
 
   return (
     <FormsContext.Provider value={useMemo(() => openForm, [openForm])}>
       {children}
       <Modal open={Boolean(form)} onClose={close} title={keys ? t(keys[0]) : ''}>
-        {keys && <p className="sub">{t(keys[1])}</p>}
+        {keys && <p className="sub" data-prefill={prefill && prefill.products ? prefill.products.join(' ') : undefined}>{t(keys[1])}</p>}
       </Modal>
     </FormsContext.Provider>
   );

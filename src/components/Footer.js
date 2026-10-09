@@ -4,7 +4,8 @@ import { useI18n } from '../i18n/useT';
 import { useOpenForm } from '../forms/FormsProvider';
 import { mediaUrl } from '../utils/api';
 import { trackWhatsApp, waHref } from '../utils/whatsapp';
-import { MAIN_LINKS, linkTarget } from './navLinks';
+import { MAIN_LINKS } from './navLinks';
+import NavLink from './NavLink';
 import './Footer.css';
 
 const SHOP_LINKS = [...MAIN_LINKS.slice(0, 3), { key: 'f_range', hash: 'range' }, MAIN_LINKS[3]];
@@ -34,7 +35,7 @@ export default function Footer() {
           <h4>{t('f_shop')}</h4>
           <ul>
             {SHOP_LINKS.map((l) => (
-              <li key={l.key}><Link to={linkTarget(lang, l)}>{t(l.key)}</Link></li>
+              <li key={l.key}><NavLink link={l}>{t(l.key)}</NavLink></li>
             ))}
           </ul>
         </div>
