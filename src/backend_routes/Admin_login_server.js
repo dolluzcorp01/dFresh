@@ -5,6 +5,8 @@
 //    Wrong e-mail, wrong password and "not a dFresh admin" all get the same 401, so the form reveals nothing.
 //    Outside production, when mail cannot be sent, the code is printed to the server console (Inside D).
 // 2. POST /admin/login/verify { code } with the challenge cookie -> session cookie; the code row is deleted.
+// 3. POST /admin/login/resend with the challenge cookie: a new code (the old one stops working), at most one per
+//    30 s and 3 per employee per 15 minutes (each resend gives 5 fresh tries, so this caps the guessing).
 // Password tries are limited per e-mail + IP in memory (10 per 15 minutes).
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
@@ -20,11 +22,14 @@ const db = getDBConnection(process.env.DB_NAME || 'dfresh').promise();
 const isProd = process.env.NODE_ENV === 'production';
 const CODE_MIN = 10;
 const CODE_TRIES = 5;
+const RESEND_GAP_S = 30;
+const RESENDS = 3;
 const PW_TRIES = 10;
 const PW_WINDOW_MS = 15 * 60 * 1000;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 const failures = new Map(); // `${email}|${ip}` -> [timestamps]
+const resends = new Map(); // emp_id -> [timestamps]
 
 function throttled(key) {
   const now = Date.now();
@@ -39,6 +44,32 @@ function noteFailure(key) {
 }
 
 const deny = (res) => res.status(401).json({ success: false, message: 'E-mail or password is not correct' });
+const expired = (res, message = 'This code has expired. Sign in again to get a new one.') => (
+  res.status(401).json({ success: false, message, data: { restart: true } }));
+
+// New code for emp (row in dadmin.login_otp, mail queued, sent now when mail is on); returns the masked e-mail.
+async function issueCode(emp) {
+  const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+  await db.query(
+    `INSERT INTO \`${auth.DADMIN}\`.login_otp (app_key, emp_id, email, otp_hash, expires_at, attempts)
+     VALUES (?, ?, ?, ?, NOW() + INTERVAL ? MINUTE, 0)
+     ON DUPLICATE KEY UPDATE email = VALUES(email), otp_hash = VALUES(otp_hash), expires_at = VALUES(expires_at), attempts = 0`,
+    [auth.APP_KEY, emp.emp_id, emp.emp_mail_id, await bcrypt.hash(code, 10), CODE_MIN]
+  );
+  const [[company]] = await db.query("SELECT setting_value FROM site_settings WHERE setting_key = 'company_name'");
+  const m = mailer.renderLoginCode({
+    name: emp.emp_first_name || emp.emp_id, code, minutes: CODE_MIN, companyName: company ? company.setting_value : '',
+  });
+  await db.query(
+    "INSERT INTO mail_outbox (to_email, subject, html_body, text_body, purpose) VALUES (?, ?, ?, ?, 'admin_otp')",
+    [emp.emp_mail_id, m.subject, m.html, m.text]
+  );
+  const ready = mailer.readiness();
+  if (ready.ok) outboxWorker.tick(); // send now instead of on the next 15 s pass
+  else if (!isProd) console.log(`[dev] admin sign-in code for ${emp.emp_id}: ${code} (mail not sent: ${ready.reason})`);
+  const [local, domain] = emp.emp_mail_id.split('@');
+  return `${local.slice(0, 2)}***@${domain}`;
+}
 
 router.post('/admin/login', async (req, res) => {
   const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
@@ -65,28 +96,9 @@ router.post('/admin/login', async (req, res) => {
     }
     failures.delete(key);
 
-    const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
-    await db.query(
-      `INSERT INTO \`${auth.DADMIN}\`.login_otp (app_key, emp_id, email, otp_hash, expires_at, attempts)
-       VALUES (?, ?, ?, ?, NOW() + INTERVAL ? MINUTE, 0)
-       ON DUPLICATE KEY UPDATE email = VALUES(email), otp_hash = VALUES(otp_hash), expires_at = VALUES(expires_at), attempts = 0`,
-      [auth.APP_KEY, emp.emp_id, emp.emp_mail_id, await bcrypt.hash(code, 10), CODE_MIN]
-    );
-    const [[company]] = await db.query("SELECT setting_value FROM site_settings WHERE setting_key = 'company_name'");
-    const m = mailer.renderLoginCode({
-      name: emp.emp_first_name || emp.emp_id, code, minutes: CODE_MIN, companyName: company ? company.setting_value : '',
-    });
-    await db.query(
-      "INSERT INTO mail_outbox (to_email, subject, html_body, text_body, purpose) VALUES (?, ?, ?, ?, 'admin_otp')",
-      [emp.emp_mail_id, m.subject, m.html, m.text]
-    );
-    const ready = mailer.readiness();
-    if (ready.ok) outboxWorker.tick(); // send now instead of on the next 15 s pass
-    else if (!isProd) console.log(`[dev] admin sign-in code for ${emp.emp_id}: ${code} (mail not sent: ${ready.reason})`);
-
+    const sentTo = await issueCode(emp);
     auth.setChallenge(res, emp.emp_id);
-    const [local, domain] = emp.emp_mail_id.split('@');
-    return res.json({ success: true, data: { sentTo: `${local.slice(0, 2)}***@${domain}` } });
+    return res.json({ success: true, data: { sentTo, resendAfter: RESEND_GAP_S } });
   } catch (err) {
     console.error('admin login failed:', err.code || err.message);
     return res.status(500).json({ success: false, message: 'Sign-in is not available right now' });
@@ -95,32 +107,68 @@ router.post('/admin/login', async (req, res) => {
 
 router.post('/admin/login/verify', async (req, res) => {
   const challenge = auth.readChallenge(req);
-  if (!challenge) return res.status(401).json({ success: false, message: 'The code expired. Sign in again.' });
+  if (!challenge) return expired(res, 'This sign-in timed out. Sign in again to get a new code.');
   const code = typeof req.body?.code === 'string' ? req.body.code.trim() : '';
   try {
     const [[row]] = await db.query(
       `SELECT otp_hash, attempts, expires_at > NOW() AS live FROM \`${auth.DADMIN}\`.login_otp WHERE app_key = ? AND emp_id = ?`,
       [auth.APP_KEY, challenge.sub]
     );
-    if (!row || !Number(row.live) || row.attempts >= CODE_TRIES) {
-      return res.status(401).json({ success: false, message: 'The code expired. Sign in again.' });
-    }
+    if (!row || !Number(row.live)) return expired(res);
+    if (row.attempts >= CODE_TRIES) return expired(res, 'Too many wrong codes. Sign in again to get a new one.');
     if (!/^\d{6}$/.test(code) || !(await bcrypt.compare(code, row.otp_hash))) {
       await db.query(
         `UPDATE \`${auth.DADMIN}\`.login_otp SET attempts = attempts + 1 WHERE app_key = ? AND emp_id = ?`,
         [auth.APP_KEY, challenge.sub]
       );
       const left = CODE_TRIES - row.attempts - 1;
-      return res.status(401).json({ success: false, message: left > 0 ? `Wrong code. ${left} tries left.` : 'Wrong code. Sign in again.' });
+      if (left <= 0) return expired(res, 'Wrong code, and that was the last try. Sign in again to get a new one.');
+      return res.status(401).json({ success: false, message: `Wrong code. ${left} ${left === 1 ? 'try' : 'tries'} left.`, data: { left } });
     }
     const [[user]] = await db.query('SELECT role FROM admin_users WHERE emp_id = ? AND is_active = 1', [challenge.sub]);
-    if (!user) return res.status(401).json({ success: false, message: 'E-mail or password is not correct' });
+    if (!user) return expired(res, 'This account can no longer sign in to dFresh admin.');
     await db.query(`DELETE FROM \`${auth.DADMIN}\`.login_otp WHERE app_key = ? AND emp_id = ?`, [auth.APP_KEY, challenge.sub]);
     auth.startSession(res, challenge.sub);
     await audit(null, { empId: challenge.sub, action: 'login', entity: 'admin_user', entityId: challenge.sub });
     return res.json({ success: true, data: { emp_id: challenge.sub, role: user.role } });
   } catch (err) {
     console.error('admin code check failed:', err.code || err.message);
+    return res.status(500).json({ success: false, message: 'Sign-in is not available right now' });
+  }
+});
+
+router.post('/admin/login/resend', async (req, res) => {
+  const challenge = auth.readChallenge(req);
+  if (!challenge) return expired(res, 'This sign-in timed out. Sign in again to get a new code.');
+  try {
+    const [[row]] = await db.query(
+      `SELECT TIMESTAMPDIFF(SECOND, expires_at - INTERVAL ? MINUTE, NOW()) AS age FROM \`${auth.DADMIN}\`.login_otp
+        WHERE app_key = ? AND emp_id = ?`,
+      [CODE_MIN, auth.APP_KEY, challenge.sub]
+    );
+    if (!row) return expired(res);
+    const wait = RESEND_GAP_S - Number(row.age);
+    if (wait > 0) {
+      return res.status(429).json({ success: false, message: `Wait ${wait} s before asking for a new code.`, data: { resendAfter: wait } });
+    }
+    const now = Date.now();
+    const recent = (resends.get(challenge.sub) || []).filter((t) => now - t < PW_WINDOW_MS);
+    if (recent.length >= RESENDS) {
+      return res.status(429).json({ success: false, message: 'Too many new codes. Wait 15 minutes and sign in again.' });
+    }
+    const [[emp]] = await db.query(
+      `SELECT e.emp_id, e.emp_first_name, e.emp_mail_id FROM \`${auth.DADMIN}\`.employee e
+         JOIN admin_users a ON a.emp_id = e.emp_id AND a.is_active = 1
+        WHERE e.emp_id = ? AND e.deleted_time IS NULL`,
+      [challenge.sub]
+    );
+    if (!emp) return expired(res, 'This account can no longer sign in to dFresh admin.');
+    resends.set(challenge.sub, [...recent, now]);
+    const sentTo = await issueCode(emp);
+    auth.setChallenge(res, emp.emp_id);
+    return res.json({ success: true, data: { sentTo, resendAfter: RESEND_GAP_S } });
+  } catch (err) {
+    console.error('admin code resend failed:', err.code || err.message);
     return res.status(500).json({ success: false, message: 'Sign-in is not available right now' });
   }
 });

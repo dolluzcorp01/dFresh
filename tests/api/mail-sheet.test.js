@@ -48,12 +48,13 @@ const worst = {
   login_code: mailer.renderLoginCode({ name: '&'.repeat(120), code: '123456', minutes: 10, companyName: 'Dolluz' }),
 };
 
-test('every template uses the CID logo (never a URL / SVG) and stays under 60 KB at worst case', () => {
+test('every template uses the CID logo over a wordmark (never a URL / SVG) and stays under 60 KB at worst case', () => {
   for (const [name, m] of Object.entries(worst)) {
     const bytes = Buffer.byteLength(m.html);
     console.log(`  ${name}: html ${bytes} B, text ${Buffer.byteLength(m.text)} B (worst case)`);
     assert.ok(m.html.includes(`src="${mailer.LOGO_SRC}"`), `${name}: CID logo`);
-    assert.ok(m.html.includes('alt="dFresh"'), `${name}: alt fallback`);
+    assert.ok(/<img src="cid:[^"]+" alt="" width="62" height="34"/.test(m.html), `${name}: fixed-size logo, no shift`);
+    assert.ok(/>dfresh<\/div><!--<!\[endif\]--><img src="cid:/.test(m.html), `${name}: gold wordmark under the logo while it loads`);
     assert.ok(!/\/media\/logo|\.svg/i.test(m.html), `${name}: no logo URL / SVG`);
     assert.ok(bytes < mailer.MAX_HTML_BYTES, `${name}: ${bytes} B >= 60 KB`);
   }

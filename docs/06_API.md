@@ -60,6 +60,7 @@ The client IP is `req.ip` with `trust proxy = loopback` (nginx on the same host 
 |---|---|---|
 | POST | `/admin/login` (email, password) -> e-mails a 6-digit code, sets the challenge cookie | - |
 | POST | `/admin/login/verify` (code) -> sets the session cookie | - |
+| POST | `/admin/login/resend` (challenge cookie) -> a new code (old one stops working); 30 s apart, max 3 per 15 min; 401 with `data.restart` when the sign-in must start again | - |
 | POST | `/admin/logout` | any |
 | GET | `/admin/me` | any |
 | GET | `/admin/dashboard` | viewer+ |

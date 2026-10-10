@@ -127,7 +127,15 @@ function button(href, label) {
 }
 
 // Branded shell: ink header with the on-dark logo (inline CID attachment, 62x34 shown, 2x file) and a gold
-// rule, paper body, beige footer. The styled alt text stays as the fallback when images are off.
+// rule, paper body, beige footer. Gmail fetches images after the text, so the logo slot is a fixed 62x34 box
+// with a gold text wordmark in it; the (opaque, ink-backed) logo is pulled up over it by a negative margin and
+// covers it once loaded, so nothing shifts. Outlook desktop ignores negative margins, so it gets the image only
+// (the wordmark is inside a not-mso comment). alt is empty: the wordmark already names the brand.
+const LOGO_SLOT = `<div style="width:62px;height:34px;overflow:hidden;background:${C.ink}">`
+  + `<!--[if !mso]><!--><div style="height:34px;font:700 20px/34px ${HEAD};color:${C.goldL};white-space:nowrap">dfresh</div><!--<![endif]-->`
+  + `<img src="${LOGO_SRC}" alt="" width="62" height="34" style="display:block;width:62px;height:34px;border:0;margin-top:-34px;background:${C.ink}">`
+  + '</div>';
+
 function shell({ htmlLang = 'en', title, preheader = '', body, footer }) {
   return `<!doctype html>
 <html lang="${esc(htmlLang)}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title></head>
@@ -135,7 +143,7 @@ function shell({ htmlLang = 'en', title, preheader = '', body, footer }) {
 <div style="display:none;max-height:0;overflow:hidden;opacity:0">${esc(preheader)}</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${C.beige}"><tr><td align="center" style="padding:24px 12px">
 <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:${C.paper};border-radius:16px;overflow:hidden;border:1px solid ${C.line}">
-<tr><td style="background:${C.ink};padding:22px 28px;border-bottom:4px solid ${C.gold}"><img src="${LOGO_SRC}" alt="dFresh" width="62" height="34" style="display:block;width:62px;height:34px;border:0;color:${C.goldL};font:700 24px ${FONT}"></td></tr>
+<tr><td style="background:${C.ink};padding:22px 28px;border-bottom:4px solid ${C.gold}">${LOGO_SLOT}</td></tr>
 <tr><td style="padding:28px;font:15px/1.6 ${FONT};color:${C.ink}">${body}</td></tr>
 <tr><td style="padding:16px 28px;background:#F3EEDF;font:12px/1.5 ${FONT};color:${C.ink2}">${footer}</td></tr>
 </table></td></tr></table></body></html>`;

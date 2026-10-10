@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from 'react';
 // Only router exports the public site already uses (Link, useLocation...), so this chunk adds 0 KB to main.js.
 import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { api } from './adminApi';
+import { mediaUrl } from '../utils/api';
 import { AdminContext, Notice } from './ui';
 import Login from './Login';
 import Dashboard from './Dashboard';
@@ -29,6 +30,18 @@ const NAV = [
   ['settings', 'Settings', 'admin'], ['users', 'Admin users', 'admin'], ['audit', 'Audit log', 'admin'],
 ];
 const RANK = { viewer: 1, editor: 2, admin: 3 };
+const LOGO_ON_DARK = '/media/logo/dfresh-logo-on-dark.webp';
+
+// The site's favicon links (index.html), added if a page ever lacks them.
+function ensureFavicon() {
+  if (document.querySelector('link[rel~="icon"]')) return null;
+  const link = document.createElement('link');
+  link.rel = 'icon';
+  link.type = 'image/png';
+  link.href = mediaUrl('/media/logo/favicon-32.png');
+  document.head.appendChild(link);
+  return link;
+}
 
 export default function AdminApp() {
   const [me, setMe] = useState(undefined); // undefined = checking, null = signed out
@@ -43,10 +56,17 @@ export default function AdminApp() {
     meta.content = 'noindex, nofollow';
     document.head.appendChild(meta);
     document.title = 'dFresh admin';
+    // Body font of the site (Saira is in index.html; the admin is English only). A plain link, not i18n/fonts.js:
+    // importing that here would make webpack keep its exports in main.js (+77 B for the public site).
+    const font = document.createElement('link');
+    font.rel = 'stylesheet';
+    font.href = 'https://fonts.googleapis.com/css2?family=Open+Sans:wght@400..700&display=swap';
+    document.head.appendChild(font);
+    const icon = ensureFavicon();
     const style = document.createElement('style');
     style.textContent = css;
     document.head.appendChild(style);
-    return () => { meta.remove(); style.remove(); };
+    return () => { meta.remove(); style.remove(); font.remove(); if (icon) icon.remove(); };
   }, []);
 
   const loadLanguages = useCallback(() => api.get('/languages').then(setLanguages, (e) => setError(e.message)), []);
@@ -76,7 +96,10 @@ export default function AdminApp() {
       <div className="adm a-shell">
         <header className="a-top">
           <button type="button" className="a-burger" aria-expanded={menuOpen} aria-controls="a-nav" onClick={() => setMenuOpen((o) => !o)}>Menu</button>
-          <strong>dFresh admin</strong>
+          <Link to="/admin" className="a-brand" aria-label="dFresh admin - dashboard">
+            <img src={mediaUrl(LOGO_ON_DARK)} alt="" width="900" height="498" />
+            <span className="a-brand-tag" aria-hidden="true">Admin</span>
+          </Link>
           <span className="a-who">{me.name} <code>{me.emp_id}</code> · {me.role}</span>
           <button type="button" className="a-btn a-btn-ghost" onClick={logout}>Sign out</button>
         </header>

@@ -72,6 +72,21 @@ test('no cookie, a challenge token or a token of another app is never a session'
   assert.equal(me.json.data.role, 'admin');
 });
 
+test('code step: no challenge or no live code sends the user back to sign in (resend too)', async () => {
+  for (const path of ['/admin/login/verify', '/admin/login/resend']) {
+    const none = await call('POST', path, { body: { code: '123456' } });
+    assert.equal(none.status, 401, `${path} without challenge`);
+    assert.equal(none.json.data.restart, true);
+    assert.match(none.json.message, /timed out\. Sign in again/);
+    // A valid challenge for an employee with no login_otp row (ZZU-ADMIN never got a code): read-only on dadmin.
+    const challenge = jwt.sign({ sub: USERS.admin, app: APP, stage: 'otp' }, process.env.JWT_SECRET, { expiresIn: '5m' });
+    const stale = await call('POST', path, { cookie: `${COOKIE}_otp=${challenge}`, body: { code: '123456' } });
+    assert.equal(stale.status, 401, `${path} without a code row`);
+    assert.equal(stale.json.data.restart, true);
+    assert.match(stale.json.message, /expired\. Sign in again/);
+  }
+});
+
 test('viewer reads but every write is 403 from the API', async () => {
   assert.equal((await call('GET', '/admin/leads', { as: 'viewer' })).status, 200);
   assert.equal((await call('GET', '/admin/products', { as: 'viewer' })).status, 200);
