@@ -31,7 +31,7 @@
 | 4 | Exact office and godown addresses / Google Maps pins | Dolluz | contact maps, JSON-LD |
 | 5 | GA4 measurement id + Search Console access | Dolluz | analytics |
 | 6 | Google Sheet + service account for leads | Dolluz | sheet sync (outbox keeps rows meanwhile) |
-| 7 | Verified SendGrid sender for dFresh mail (`mail_from`) | Dolluz IT | all e-mail |
+| 7 | Verified SendGrid sender for dFresh mail: `mail_from` = `connect@dolluzcorp.com` (owner, Phase 6). Confirm it is verified in SendGrid + the production API key; first real test send only to the approved test inbox | Dolluz IT | all e-mail |
 | 8 | Register app_key `dFresh` in dAdmin (login_otp / login config / revoke) | Pavithran | admin login |
 | 9 | Native-speaker review of all Tamil and Hindi text | Dolluz | go-live |
 | 10 | Approve About copy, Quality-check wording, Privacy and Terms drafts | Director | go-live |

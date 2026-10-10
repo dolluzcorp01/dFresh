@@ -116,6 +116,42 @@ const FLIPPED = [
     ['quote btn', '.drawer .card .back .bb .btn:nth-child(2)'], ['back btn', '.drawer .card .back .bk'],
   ]],
 ];
+// Phase 6: the quote form (contact band "free sample" button), its error state and its success state.
+// Scoped to the visible scrim: the preview keeps its (hidden) legal modal in the page too.
+const FORM = [['form', '.scrim:not([hidden]) .modal', [
+  ['scrim', '.scrim:not([hidden])'], ['modal', '.scrim:not([hidden]) .modal'], ['logo', '.scrim:not([hidden]) .modal .mlogo'], ['close', '.scrim:not([hidden]) .modal .xbtn'], ['h3', '.scrim:not([hidden]) .modal h3'],
+  ['sub', '.scrim:not([hidden]) .modal .sub'], ['form', '.scrim:not([hidden]) .modal .form'], ['field', '.scrim:not([hidden]) .modal .f'], ['field full', '.scrim:not([hidden]) .modal .f.full'], ['label', '.scrim:not([hidden]) .modal .f label'],
+  ['optional', '.scrim:not([hidden]) .modal .f label span'], ['input', '.scrim:not([hidden]) .modal .f input'], ['select', '.scrim:not([hidden]) .modal .f select'], ['textarea', '.scrim:not([hidden]) .modal .f textarea'],
+  ['pick', '.scrim:not([hidden]) .modal .pick'], ['chip', '.scrim:not([hidden]) .modal .pick span'], ['consent', '.scrim:not([hidden]) .modal .consent'], ['consent box', '.scrim:not([hidden]) .modal .consent input'],
+  ['submit', '.scrim:not([hidden]) .modal .form .btn'],
+]]];
+const FORM_BAD = [['form errors', '.scrim:not([hidden]) .modal', [
+  ['bad field', '.scrim:not([hidden]) .modal .f.bad'], ['bad input', '.scrim:not([hidden]) .modal .f.bad input'], ['err', '.scrim:not([hidden]) .modal .f.bad .err'], ['bad consent', '.scrim:not([hidden]) .modal .consent.bad'],
+]]];
+const FORM_DONE = [['form done', '.scrim:not([hidden]) .modal', [
+  ['modal', '.scrim:not([hidden]) .modal'], ['done', '.scrim:not([hidden]) .modal .done'], ['tick', '.scrim:not([hidden]) .modal .done .tick'], ['tick svg', '.scrim:not([hidden]) .modal .done .tick svg'], ['h3', '.scrim:not([hidden]) .modal .done h3'],
+  ['sub', '.scrim:not([hidden]) .modal .done .sub'], ['wa btn', '.scrim:not([hidden]) .modal .done .btn'],
+]]];
+// Valid values by field type, the same on both pages (ours really submits: one lead per width, from 127.0.0.1,
+// so run it at most once per 10 minutes or the rate limit answers the 6th).
+async function fillForm(page) {
+  await page.evaluate(() => {
+    const set = (el, v) => {
+      const proto = el.tagName === 'SELECT' ? HTMLSelectElement : el.tagName === 'TEXTAREA' ? HTMLTextAreaElement : HTMLInputElement;
+      Object.getOwnPropertyDescriptor(proto.prototype, 'value').set.call(el, v);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    document.querySelectorAll('.modal .f input:not([type=checkbox]), .modal .f textarea').forEach((el) => {
+      set(el, el.type === 'email' ? 'parity@example.com' : el.type === 'tel' ? '98765 43210' : 'Parity');
+    });
+    document.querySelectorAll('.modal .f select').forEach((el) => set(el, el.options[1].value));
+    const chip = document.querySelector('.modal .pick input:not(:checked)');
+    if (chip) chip.click();
+    const c = document.querySelector('.modal .consent input');
+    if (!c.checked) c.click();
+  });
+}
 const ONLY = process.env.ONLY ? process.env.ONLY.split(',') : null;
 const pick = (sections) => (ONLY ? sections.filter(([name]) => ONLY.includes(name)) : sections);
 const STAGES = [
@@ -137,6 +173,22 @@ const STAGES = [
   { name: 'flipped', sections: FLIPPED, setup: async (page) => {
     await page.evaluate(() => document.querySelector('.drawer .card .km').click());
     await wait(1400);
+  } },
+  { name: 'form', sections: FORM, fixed: true, setup: async (page) => {
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.reload({ waitUntil: 'networkidle2' });
+    await wait(2500);
+    await page.evaluate(() => document.querySelector('#contact .acts .btn').click());
+    await wait(900);
+  } },
+  { name: 'form errors', sections: FORM_BAD, fixed: true, setup: async (page) => {
+    await page.evaluate(() => document.querySelector('.modal .form .btn').click());
+    await wait(500);
+  } },
+  { name: 'form done', sections: FORM_DONE, fixed: true, setup: async (page) => {
+    await fillForm(page);
+    await page.evaluate(() => document.querySelector('.modal .form .btn').click());
+    await wait(1600);
   } },
 ];
 

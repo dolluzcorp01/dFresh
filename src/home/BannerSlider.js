@@ -29,7 +29,7 @@ function BannerCta({ banner, lang, tabIndex }) {
   }
   const onClick = (e) => {
     onTrack();
-    if (ctaAction === 'form') openForm(ctaTarget);
+    if (ctaAction === 'form') openForm(ctaTarget, { ref: key });
     else if (ctaAction === 'products_home') openProducts({ filter: 'home' }, e.currentTarget);
     else if (ctaAction === 'products_category') openProducts({ category: ctaTarget }, e.currentTarget);
     else openProducts({}, e.currentTarget);

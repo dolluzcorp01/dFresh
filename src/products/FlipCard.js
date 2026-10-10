@@ -107,7 +107,7 @@ export default function FlipCard({ product: p, index = 0 }) {
             >
               <WhatsAppIcon /> {t('lbl_whatsapp')}
             </a>
-            <button className="btn b-ink b-sm" type="button" onClick={() => openForm('quote', { products: [d.id] })}>
+            <button className="btn b-ink b-sm" type="button" onClick={() => openForm('quote', { products: [d.id], ref: d.id })}>
               {t('request_quote')}
             </button>
             <button ref={backRef} className="bk" type="button" onClick={() => flip(false)}>

@@ -7,12 +7,17 @@ const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const { getDBConnection } = require('./config/db');
 const publicRoutes = require('./src/backend_routes/Public_server');
+const leadRoutes = require('./src/backend_routes/Leads_server');
+const brochureRoutes = require('./src/backend_routes/Brochure_server');
+const outboxWorker = require('./src/backend_routes/outbox-worker');
 const contentCache = require('./src/backend_routes/content-cache');
 const { version } = require('./package.json');
 
 const app = express();
 const isProd = process.env.NODE_ENV === 'production';
 const PORT = process.env.PORT || 4012;
+// nginx on the same host forwards the visitor's address; req.ip (lead rate limit) reads it only from there.
+app.set('trust proxy', 'loopback');
 
 // Production: only the public site URL. Dev: any localhost port (CRA may pick 3001, 3002 ...).
 const allowedOrigins = [process.env.PUBLIC_SITE_URL].filter(Boolean);
@@ -25,7 +30,7 @@ app.use(cors({
     return cb(null, false);
   },
 }));
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '100kb' }));
 
 // Development only: one line per request (method, URL, status, time).
 if (!isProd) {
@@ -84,6 +89,15 @@ if (!isProd) {
 }
 
 app.use('/api/dfresh', publicRoutes);
+app.use('/api/dfresh', leadRoutes);
+app.use('/api/dfresh', brochureRoutes);
+
+// Malformed JSON, oversized body or any error a route did not handle: JSON, never a stack trace.
+app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars
+  const status = err.status || err.statusCode || 500;
+  if (status >= 500) console.error(`${req.method} ${req.originalUrl} failed:`, err.code || err.message);
+  res.status(status).json({ success: false, message: status === 413 ? 'Request too large' : status < 500 ? 'Bad request' : 'Server error' });
+});
 
 // Express 5 hands listen errors (e.g. EADDRINUSE) to this callback instead of throwing: never log success
 // on failure, and exit non-zero so F5 / pm2 / the terminal show that it did not start.
@@ -99,5 +113,6 @@ function failListen(err) {
 const server = app.listen(PORT, (err) => {
   if (err) return failListen(err);
   console.log(`dFresh API listening on http://localhost:${PORT}`);
+  outboxWorker.start();
 });
 server.on('error', failListen);

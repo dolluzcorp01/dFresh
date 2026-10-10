@@ -116,7 +116,7 @@ export default function BusinessKits() {
                         onClick={() => trackWhatsApp(kit.key, 'kits')}>
                         {t('kit_cta')} →
                       </a>
-                      <button type="button" className="btn b-sm b-line" onClick={() => openForm('sample', { products: kit.products, businessType: kit.businessType })}>
+                      <button type="button" className="btn b-sm b-line" onClick={() => openForm('sample', { products: kit.products, businessType: kit.businessType, ref: kit.key })}>
                         {t('sample')}
                       </button>
                     </div>

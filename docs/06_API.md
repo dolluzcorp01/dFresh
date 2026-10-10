@@ -38,15 +38,20 @@ Product shape (card):
 ## Leads
 | Method | Path | Body | Returns |
 |---|---|---|---|
-| POST | `/leads` | `{ form_type, lang, source_page, source_ref, consent: true, website: '' (honeypot), ...fields }` | `{ lead_ref, brochure_token? , brochure_available }` |
-| GET | `/brochure/download?token=` | - | PDF stream, or 404 `{message}` when none uploaded, 410 when token expired |
+| POST | `/leads` | `{ form_type, lang, source_page, source_ref, consent: true, website: '' (honeypot), ...fields }` | 201 `{ lead_ref, brochure_available?, brochure_token? }` (brochure only: `brochure_token` when a PDF exists) |
+| GET | `/brochure/download?token=` | - | PDF stream (`attachment; filename="dFresh_Brochure_<LANG>.pdf"`), 400 bad token, 410 expired, 404 none uploaded. JSON `{message}`; a browser (Accept: text/html) gets a small page with `bro_expired` / `bro_pending` in the token's language |
 
 Field names per form_type:
 - brochure: `first_name, last_name, email, phone`
 - quote / sample: `full_name, business_name, business_type, town, phone, email, products[] (product ids), monthly_quantity?, message?`
 - distributor: `full_name, firm_name, gst_no?, areas, godown_vehicles (yes/no), brands?, monthly_sales, phone, email`
 - contact: `full_name, phone, email, message`
-Status codes: 400 validation (with `fields: {name: errorKey}`), 429 rate limit, 500 never leaks details.
+Status codes: 400 validation (with `fields: {name: errorKey}`; `consent` appears there too), 429 rate limit
+(`errorKey: 'e_rate'`; 5 per 10 min per `ip_hash`, from `rules.json`, env `LEAD_RATE_LIMIT_PER_10MIN` overrides),
+500 never leaks details. Honeypot filled: 200 `{ lead_ref: null }`, nothing saved.
+Tokens: JWT (purpose `brochure`, HS256) signed with a key derived from `JWT_SECRET`, so they can never pass as an
+admin session; 15 min (`BROCHURE_TOKEN_TTL_MIN`) for the in-page download, 7 days for the e-mailed link.
+The client IP is `req.ip` with `trust proxy = loopback` (nginx on the same host must set `X-Forwarded-For`).
 
 ## Admin (cookie `dfresh_admin_token`, role-checked)
 | Method | Path | Role |

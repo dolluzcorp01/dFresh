@@ -1,22 +1,12 @@
-// openForm(type, prefill?) from anywhere (header, menu, footer, sections, product cards). Phase 2: the modal
-// shell with the form's title and subtitle; the fields, validation and submit arrive in Phase 6 (FormModal).
-// prefill: e.g. { products: ['DZIND-DF008-BUR'] } from a card's "Request a quote" (that product ticked), or
-// { products: [...kit ids], businessType: 'hotel' } from a kit's "free sample" (form 'sample').
-// The consent line's privacy link opens the policy over the form (LegalProvider), so typed data stays.
+// openForm(type, prefill?) from anywhere (header, menu, footer, sections, product cards) -> FormModal.
+// prefill: e.g. { products: ['DZIND-DF008-BUR'], ref: 'DZIND-DF008-BUR' } from a card's "Request a quote"
+// (that product ticked), or { products: [...kit ids], businessType: 'hotel', ref: 'hotels' } from a kit's
+// "free sample" (form 'sample'). ref = the product or kit that opened it (leads.source_ref); the page and
+// section are recorded too (leads.source_page). Every open mounts a fresh form.
 import { createContext, useCallback, useContext, useMemo, useState } from 'react';
-import Modal from '../components/Modal';
-import { useT } from '../i18n/useT';
 import { track } from '../utils/track';
-import { useOpenLegal } from '../legal/LegalProvider';
-
-// form_type (docs/06_API.md) -> title / subtitle keys
-const FORMS = {
-  brochure: ['m_brochure', 'm_brochure_s'],
-  quote: ['m_quote', 'm_quote_s'],
-  sample: ['m_quote', 'm_quote_s'],
-  distributor: ['m_dist', 'm_dist_s'],
-  contact: ['m_contact', 'm_contact_s'],
-};
+import FormModal from './FormModal';
+import { FORM_TYPES } from './formConfig';
 
 const FormsContext = createContext(() => {});
 
@@ -25,37 +15,22 @@ export function useOpenForm() {
 }
 
 export function FormsProvider({ children }) {
-  const t = useT();
-  const openLegal = useOpenLegal();
-  const [{ form, prefill }, setState] = useState({ form: null, prefill: null });
-  const openForm = useCallback((type, pre = null) => {
-    if (!FORMS[type]) return;
+  const [state, setState] = useState(null); // { type, prefill, source, n }
+  const openForm = useCallback((type, prefill = null) => {
+    if (!FORM_TYPES.includes(type)) return;
     track('form_open', { form: type });
-    setState({ form: type, prefill: pre });
+    const source = {
+      page: `${window.location.pathname}${window.location.hash}`.slice(0, 150),
+      ref: prefill && typeof prefill.ref === 'string' ? prefill.ref : null,
+    };
+    setState((s) => ({ type, prefill, source, n: (s ? s.n : 0) + 1 }));
   }, []);
-  const close = useCallback(() => setState({ form: null, prefill: null }), []);
-  const keys = form && FORMS[form];
+  const close = useCallback(() => setState(null), []);
 
   return (
     <FormsContext.Provider value={useMemo(() => openForm, [openForm])}>
       {children}
-      <Modal open={Boolean(form)} onClose={close} title={keys ? t(keys[0]) : ''}>
-        {keys && (
-          <>
-            <p
-              className="sub"
-              data-prefill={prefill && prefill.products ? prefill.products.join(' ') : undefined}
-              data-business-type={prefill && prefill.businessType ? prefill.businessType : undefined}
-            >
-              {t(keys[1])}
-            </p>
-            <p className="consent">
-              {t('consent')}{' '}
-              <button type="button" className="lnk" onClick={() => openLegal('privacy')}>{t('lg_priv_s')}</button>
-            </p>
-          </>
-        )}
-      </Modal>
+      {state && <FormModal key={state.n} type={state.type} prefill={state.prefill} source={state.source} onClose={close} />}
     </FormsContext.Provider>
   );
 }

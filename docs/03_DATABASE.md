@@ -34,16 +34,19 @@ Put this pattern in ONE helper (`src/backend_routes/i18n-sql.js`) and reuse it. 
 | `towns` / `town_translations` | 6 delivery towns | `is_base` = Kanchipuram; `map_x/map_y` for the illustrated map, `label_dx/label_dy/label_anchor` place the name; lat/lng for later real maps |
 | `form_options` / `form_option_translations` | Drop-downs (business type, monthly sales, yes/no) | leads store the English `option_value` |
 | `site_settings` | Phones, e-mails, company, CIN, GSTIN, addresses, GA4 id, sheet id, About photo (`about_image`) | `is_public = 1` rows only go to the browser |
-| `brochures` | One PDF per language | file in `private/brochures/`; English fallback |
+| `brochures` | One PDF per language | file at `private/brochures/<lang_code>/<file_name>`; English fallback |
 | `leads` + `lead_products` | Every form submission | one table, `form_type` enum; distributor extras in `details_json`; status workflow; `staff_notes`, `ip_hash` INTERNAL |
-| `mail_outbox` | E-mails waiting to be sent | worker retries with back-off; never lose a lead e-mail |
+| `lead_counters` | Running lead number per year | one row per 2-digit year (IST); bumped inside the lead transaction (row lock = unique `lead_ref`, also serialises the rate-limit count) |
+| `mail_outbox` | E-mails waiting to be sent | worker retries with back-off; never lose a lead e-mail. Sender is read at send time from `site_settings.mail_from` / `mail_from_name` (not stored per row) |
 | `sync_outbox` | Google Sheet rows waiting | same retry model |
 | `admin_users` | Who may use the admin + role | `emp_id` VARCHAR(20); seeded DZIND002 + DZIND148 as admin |
 | `audit_log` | Every admin change | before/after JSON |
 
 ## Lead reference
-`lead_ref` = `DFL-` + 2-digit year + 4-digit running number per year, e.g. `DFL-260001`. Generate inside a
-transaction (`SELECT ... FOR UPDATE` on a counter row or `MAX()` within the year) so two requests never clash.
+`lead_ref` = `DFL-` + 2-digit year + 4-digit running number per year, e.g. `DFL-260001`. Generated inside the
+lead transaction: `INSERT INTO lead_counters ... ON DUPLICATE KEY UPDATE last_no = last_no + 1`, then read back
+(the row stays locked until commit; a rollback, e.g. on 429, gives the number back). Proven with 20 parallel
+submits in Phase 6: 20 unique, consecutive refs.
 
 ## Seed numbers (verified)
 25 product cards + 3 variants, 84 translations rows, 84 images, 6 categories (7/6/2/5/4/1), 5 featured
@@ -67,5 +70,9 @@ transaction (`SELECT ... FOR UPDATE` on a counter row or `MAX()` within the year
   `map_frame`, `ab_alt`). After it: 181 UI keys (EN 181 rows, TA 179, HI 179).
   `20261010_about_image.sql` (data: public site setting `about_image` = path under /media of the About photo,
   default the about banner's desktop file; the About section no longer depends on that banner being active).
+  `20261010_phase6_forms_leads.sql` (**schema**: table `lead_counters`, index `leads.idx_leads_ip (ip_hash, created_at)`;
+  data: `mail_from` = `connect@dolluzcorp.com` (plain address, the verified SendGrid sender), new `mail_from_name` =
+  `dFresh`; 5 keys `sending`, `thanks_name`, `e_net`, `e_rate`, `bro_expired`; `ok_bro` reworded without the preview's
+  "On the live site" (EN/TA/HI, only where the seeded text was unchanged)). After it: 186 UI keys (EN 186 rows, TA 184, HI 184).
 - `01_schema.sql` is for a fresh database only (it adds one FK with ALTER at the end).
 - The dAdmin database (`dadmin`) is read-only from dFresh except `login_otp` rows for app_key `dFresh`.

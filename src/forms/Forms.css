@@ -1,0 +1,43 @@
+/* Lead forms (preview: .form, .f, .pick, .consent, .hp, .done) */
+.form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; margin-block-start: 22px; }
+.form .f { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.form .f.full { grid-column: 1 / -1; }
+.form .f label, .form .f .lb { font-size: 13px; font-weight: 600; }
+.form .f .opt { font-weight: 400; color: var(--ink-3); }
+.form .f input, .form .f select, .form .f textarea { font: inherit; font-size: 15px; padding: 12px 14px; border-radius: 12px; border: 1.5px solid var(--line); background: #fff; color: var(--ink); width: 100%; }
+.form .f textarea { min-height: 84px; resize: vertical; }
+.form .f input:focus, .form .f select:focus, .form .f textarea:focus { outline: none; border-color: var(--ink); }
+.form .f input:focus-visible, .form .f select:focus-visible, .form .f textarea:focus-visible { box-shadow: 0 0 0 3px rgba(199, 151, 20, .35); }
+.form .f.bad input, .form .f.bad select, .form .f.bad textarea, .form .f.bad .pick { border-color: #C0392B; }
+.form .f .err { font-size: 12px; color: #B03224; }
+.form .f .err:empty { display: none; }
+
+.form .pick { display: flex; flex-wrap: wrap; gap: 6px; max-height: 150px; overflow: auto; padding: 8px; border: 1.5px solid var(--line); border-radius: 12px; background: #fff; }
+.form .pick label { display: inline-flex; cursor: pointer; position: relative; font-weight: 500; }
+.form .pick input { position: absolute; opacity: 0; pointer-events: none; width: 1px; height: 1px; }
+.form .pick span { font-size: 12.5px; font-weight: 500; padding: 6px 10px; border-radius: 999px; background: var(--beige); transition: background .2s, color .2s; }
+.form .pick input:checked + span { background: var(--ink); color: var(--gold-l); }
+.form .pick input:focus-visible + span { outline: 2px solid var(--gold-d); outline-offset: 2px; }
+
+.form .consent { grid-column: 1 / -1; display: flex; gap: 10px; align-items: flex-start; font-size: 13px; color: var(--ink-2); margin: 0; }
+.form .consent input { margin-block-start: 3px; width: 18px; height: 18px; accent-color: var(--ink); flex: none; }
+.form .consent.bad { color: #B03224; }
+.form .consent .lnk { border: 0; background: none; padding: 0; font: inherit; color: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.form > .btn { grid-column: 1 / -1; }
+.form > .btn:disabled { opacity: .7; cursor: progress; transform: none; }
+.form .ferr { grid-column: 1 / -1; font-size: 13.5px; color: #B03224; background: #FBEDEA; border-radius: 12px; padding: 10px 14px; margin: 0; }
+.form .hp { position: absolute; inset-inline-start: -9999px; width: 1px; height: 1px; overflow: hidden; }
+
+.done { text-align: center; padding-block: 8px; }
+.done .tick { width: 76px; height: 76px; margin: 6px auto 14px; border-radius: 50%; background: var(--ink); display: grid; place-items: center; }
+.done .tick svg { width: 36px; height: 36px; stroke: var(--gold-l); stroke-dasharray: 40; stroke-dashoffset: 40; animation: draw .6s .15s ease forwards; }
+@keyframes draw { to { stroke-dashoffset: 0; } }
+.done h3 { font-size: 28px; font-weight: 700; }
+.done .btn { margin-block-start: 20px; }
+
+@media (max-width: 620px) {
+  .form { grid-template-columns: minmax(0, 1fr); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .done .tick svg { stroke-dashoffset: 0; }
+}

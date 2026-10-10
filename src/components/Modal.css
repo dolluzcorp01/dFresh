@@ -5,7 +5,4 @@
 .modal .mlogo { height: 38px; width: auto; margin-block-end: 16px; }
 .modal h3 { font-size: 28px; font-weight: 700; padding-inline-end: 40px; }
 .modal .sub { color: var(--ink-2); font-size: 14.5px; margin-block-start: 6px; }
-.modal .xbtn { position: absolute; inset-block-start: 16px; inset-inline-end: 16px; width: 40px; height: 40px; padding: 0; font-size: 20px; }
-/* consent line (preview: .consent); the link opens the privacy policy over the form */
-.modal .consent { font-size: 13px; color: var(--ink-2); margin-block-start: 18px; }
-.modal .consent .lnk { border: 0; background: none; padding: 0; font: inherit; color: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.modal .xbtn { position: absolute; inset-block-start: 16px; inset-inline-end: 16px; width: 40px; height: 40px; padding: 1px 6px; font-size: 20px; font-weight: 400; line-height: 32px; gap: normal; }

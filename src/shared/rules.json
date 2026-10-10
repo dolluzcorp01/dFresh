@@ -1,0 +1,56 @@
+{
+  "_comment": "Form rules used by BOTH the React forms (src/forms) and the API (src/backend_routes/validation.js). Field types: text, email, tel, gst, select (list = form_options list_key), pick (product ids), textarea. max = characters (matches the leads / details_json columns).",
+  "patterns": {
+    "email": { "source": "^[^\\s@]+@[^\\s@]+\\.[^\\s@]{2,}$", "flags": "" },
+    "tel": { "source": "^(\\+?91[\\s-]?)?[6-9]\\d{4}\\s?\\d{5}$", "flags": "" },
+    "gst": { "source": "^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$", "flags": "i" }
+  },
+  "errors": {
+    "required": "e_fill",
+    "requiredChoice": "e_choose",
+    "requiredPick": "e_pick",
+    "email": "e_email",
+    "tel": "e_tel",
+    "gst": "e_gst",
+    "consent": "e_fill"
+  },
+  "rateLimit": { "max": 5, "windowMinutes": 10 },
+  "maxProducts": 40,
+  "forms": {
+    "brochure": [
+      { "name": "first_name", "type": "text", "required": true, "max": 60 },
+      { "name": "last_name", "type": "text", "required": true, "max": 60 },
+      { "name": "email", "type": "email", "required": true, "max": 150 },
+      { "name": "phone", "type": "tel", "required": true, "max": 20 }
+    ],
+    "quote": [
+      { "name": "full_name", "type": "text", "required": true, "max": 120 },
+      { "name": "business_name", "type": "text", "required": true, "max": 150 },
+      { "name": "business_type", "type": "select", "list": "business_type", "required": true, "max": 80 },
+      { "name": "town", "type": "text", "required": true, "max": 120 },
+      { "name": "phone", "type": "tel", "required": true, "max": 20 },
+      { "name": "email", "type": "email", "required": true, "max": 150 },
+      { "name": "products", "type": "pick", "required": true },
+      { "name": "monthly_quantity", "type": "text", "required": false, "max": 150 },
+      { "name": "message", "type": "textarea", "required": false, "max": 2000 }
+    ],
+    "sample": "quote",
+    "distributor": [
+      { "name": "full_name", "type": "text", "required": true, "max": 120 },
+      { "name": "firm_name", "type": "text", "required": true, "max": 150 },
+      { "name": "gst_no", "type": "gst", "required": false, "max": 15 },
+      { "name": "areas", "type": "text", "required": true, "max": 255 },
+      { "name": "godown_vehicles", "type": "select", "list": "yes_no", "required": true, "max": 80 },
+      { "name": "brands", "type": "text", "required": false, "max": 255 },
+      { "name": "monthly_sales", "type": "select", "list": "monthly_sales", "required": true, "max": 80 },
+      { "name": "phone", "type": "tel", "required": true, "max": 20 },
+      { "name": "email", "type": "email", "required": true, "max": 150 }
+    ],
+    "contact": [
+      { "name": "full_name", "type": "text", "required": true, "max": 120 },
+      { "name": "phone", "type": "tel", "required": true, "max": 20 },
+      { "name": "email", "type": "email", "required": true, "max": 150 },
+      { "name": "message", "type": "textarea", "required": true, "max": 2000 }
+    ]
+  }
+}

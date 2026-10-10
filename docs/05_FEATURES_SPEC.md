@@ -189,8 +189,9 @@ Common to all forms:
   required text; at least one product where required. Messages: `e_fill e_choose e_email e_tel e_gst e_pick`.
   First invalid field gets focus. Labels marked `(optional)` with `optional`.
 - Submit -> `POST /api/dfresh/leads`. Button shows `sending`, disabled. On success: tick animation,
-  `thanks` + first name, `ok_bro` or `ok_other`, WhatsApp button. On network error: keep the data, show a retry
-  message (never lose what they typed).
+  `thanks_name` (`{name}` = first name), `ok_bro` / `bro_pending` / `ok_other`, WhatsApp button. On network or
+  server error: keep the data, show `e_net` above the button (never lose what they typed); 429 shows `e_rate`.
+- The first field takes focus on open where there is a mouse; on touch devices the dialog does (phone keyboard).
 - Esc / X / backdrop closes; focus is trapped inside and returned to the opener.
 
 | Form | Title / sub | Fields (required unless marked) | form_type |
@@ -206,7 +207,8 @@ Common to all forms:
   streams the PDF for the visitor's language (fallback English) from `private/brochures/` with
   `Content-Disposition: attachment; filename="dFresh_Brochure_<LANG>.pdf"`.
 - A copy link (7-day token) is e-mailed to the visitor (`mail_bro_subject`, `mail_bro_intro`) via the outbox.
-- If no brochure is uploaded yet: still save the lead, show `bro_pending` instead of downloading.
+- If no brochure is uploaded yet: still save the lead, show `bro_pending` instead of downloading. No visitor
+  e-mail is queued then (there is nothing to link to); the staff alert says the brochure is still to be sent.
 - GA4 `brochure_download`.
 
 ### D2. What happens to a lead (server)
@@ -216,7 +218,10 @@ Common to all forms:
 3. In ONE transaction: insert `leads` (+ `lead_products`), generate `lead_ref`, enqueue `mail_outbox`
    (staff alert to `lead_email` with every field, product IDs+names, language, page; and brochure copy if
    brochure) and `sync_outbox` (Google Sheet, tab per form_type, columns: date, lead_ref, names, phone, e-mail,
-   business, type, town, products, quantity, message, extras, language, page).
+   business, type, town, products, quantity, message, extras, language, page, opened from).
+   Every e-mail is sent FROM `site_settings.mail_from` (`connect@dolluzcorp.com`, the verified SendGrid sender);
+   staff alerts go TO `site_settings.lead_email` (`info@dolluzcorp.com`). `MAIL_TEST_TO` (local only, never on the
+   server) redirects every mail to one test inbox; outside production a real send is refused without it.
 4. Respond `{ success, data: { lead_ref, brochure_token? } }`.
 5. Workers (every 15 s inside server.js, guarded so only one run at a time) send pending rows; on failure
    `attempts + 1`, `next_attempt_at` back-off 1, 5, 15, 60 min, give up after 8 -> status `failed` (visible in admin).

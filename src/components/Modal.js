@@ -14,8 +14,9 @@ export function isModalOpen() {
   return stack.length > 0;
 }
 
-// `before`: shown above the title (e.g. the logo).
-export default function Modal({ open, onClose, title, className = '', before = null, children }) {
+// `before`: shown above the title (e.g. the logo). `labelledBy`: the id of a heading the children render
+// themselves (e.g. a form's success view); the modal then renders no title of its own.
+export default function Modal({ open, onClose, title, className = '', before = null, labelledBy = null, children }) {
   const t = useT();
   const id = useId();
   const dialogRef = useRef(null);
@@ -75,12 +76,12 @@ export default function Modal({ open, onClose, title, className = '', before = n
         className={`modal${className ? ` ${className}` : ''}`}
         role="dialog"
         aria-modal="true"
-        aria-labelledby={`${id}-h`}
+        aria-labelledby={labelledBy || `${id}-h`}
         tabIndex={-1}
       >
         <button type="button" className="btn b-line xbtn" onClick={onClose} aria-label={t('close')}>×</button>
         {before}
-        <h3 id={`${id}-h`}>{title}</h3>
+        {!labelledBy && <h3 id={`${id}-h`}>{title}</h3>}
         {children}
       </div>
     </div>,
