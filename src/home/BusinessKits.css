@@ -1,0 +1,43 @@
+/* For Business accordion (preview: .acc, .ac, with the v3 real-photo overrides folded in).
+   Kit colours by position: gold, ink, beige, white (repeats for more kits). Gold text only on the ink kit. */
+.acc { display: flex; gap: 14px; height: min(460px, 70vh); }
+.ac { position: relative; flex: 1; border-radius: 28px; overflow: hidden; padding: 28px; display: flex; flex-direction: column; justify-content: flex-end; transition: flex .62s cubic-bezier(.25, .9, .3, 1); cursor: pointer; min-width: 0; text-align: start; }
+.ac:nth-child(4n+1) { background: var(--gold); }
+.ac:nth-child(4n+2) { background: var(--ink); color: var(--paper); }
+.ac:nth-child(4n+3) { background: var(--beige); }
+.ac:nth-child(4n+4) { background: #fff; border: 1px solid var(--line); }
+.ac.open { flex: 3.4; cursor: default; }
+.ac:has(.ac-t:focus-visible) { outline: 3px solid var(--gold-d); outline-offset: 4px; }
+.ac .n { position: absolute; inset-inline-start: 28px; top: 26px; font: 700 14px/1 var(--f-num); letter-spacing: .16em; opacity: .7; }
+.ac:nth-child(4n+2) .n, .ac:nth-child(4n+2) h3 { color: var(--gold-l); }
+.ac h3 { font-size: clamp(24px, 2.6vw, 38px); font-weight: 700; letter-spacing: -.02em; line-height: 1.05; transition: font-size .4s; }
+:root[data-script="long"] .ac h3 { letter-spacing: 0; line-height: 1.25; }
+.ac-t { display: block; border: 0; background: none; padding: 0; margin: 0; font: inherit; color: inherit; letter-spacing: inherit; text-align: inherit; cursor: inherit; }
+.ac-t:focus-visible { outline: none; }
+.ac .more { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows .4s cubic-bezier(.25, .9, .3, 1), opacity .18s ease; }
+.ac .more > div { overflow: hidden; }
+.ac.open .more { grid-template-rows: 1fr; opacity: 1; transition: grid-template-rows .5s cubic-bezier(.25, .9, .3, 1) .06s, opacity .45s ease .16s; }
+.ac .more p { margin-block-start: 10px; opacity: .82; max-width: 28em; }
+.ac .more ul { margin: 14px 0 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 6px; max-width: 30em; }
+.ac .more li { font-size: 12.5px; font-weight: 600; padding: 6px 11px; border-radius: 999px; background: rgba(18, 18, 20, .08); }
+.ac:nth-child(4n+2) .more li { background: rgba(255, 255, 255, .12); }
+.ac .more .acts { display: flex; flex-wrap: wrap; gap: 10px; margin-block-start: 18px; }
+.ac:nth-child(4n+2) .more .b-line { color: var(--paper); box-shadow: inset 0 0 0 1.5px #5F5B53; }
+.ac .im { position: absolute; inset-inline-end: -6px; top: 24px; width: min(30%, 190px); opacity: 0; transform: translateX(50px) rotate(12deg); transition: opacity .2s ease, transform .45s ease; }
+.ac.open .im { opacity: 1; transform: none; transition: opacity .45s ease .12s, transform .7s cubic-bezier(.3, 1.25, .5, 1) .08s; }
+.ac .im .ph { display: block; width: 100%; height: auto; border-radius: 18px; box-shadow: 0 20px 34px -20px rgba(0, 0, 0, .45); pointer-events: none; }
+@media (min-width: 821px) {
+  .ac:not(.open) h3 { writing-mode: vertical-rl; transform: rotate(180deg); font-size: clamp(20px, 1.9vw, 26px); white-space: nowrap; }
+  /* long scripts: a closed kit's name wraps into a second column instead of running off the card
+     (the preview clips it); max-height is the line length in vertical writing */
+  :root[data-script="long"] .ac:not(.open) h3 { white-space: normal; max-height: calc(min(460px, 70vh) - 110px); line-height: 1.2; }
+}
+@media (max-width: 820px) {
+  .acc { flex-direction: column; height: auto; }
+  .ac { flex: none; min-height: 96px; padding: 24px; }
+  .ac.open { flex: none; }
+  .ac .n { top: 20px; inset-inline-start: 24px; }
+  .ac h3 { padding-inline-end: 100px; margin-block-start: 22px; }
+  .ac.open h3 { min-height: 78px; }
+  .ac .im { top: 16px; inset-inline-end: 10px; }
+}

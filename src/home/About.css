@@ -1,0 +1,22 @@
+/* About (preview: .about) */
+.about .ab { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: clamp(28px, 4vw, 56px); align-items: center; }
+.about .pic { border-radius: var(--r); overflow: hidden; aspect-ratio: 5 / 4; background: var(--beige); box-shadow: 0 30px 60px -40px rgba(80, 60, 10, .55); }
+.about .pic img { width: 100%; height: 100%; object-fit: cover; object-position: 74% 62%; display: block; transform: scale(1.02); transition: transform 1.4s var(--ease); pointer-events: none; }
+.about .pic:hover img { transform: scale(1.06); }
+.about .txt h2 { font-size: clamp(32px, 4.2vw, 52px); font-weight: 700; letter-spacing: -.02em; margin-block-start: 14px; }
+:root[data-script="long"] .about .txt h2 { font-size: clamp(26px, 3.2vw, 40px); letter-spacing: 0; line-height: 1.25; }
+.about .txt .k { display: inline-flex; align-items: center; gap: 10px; }
+.about .txt .k img { width: 26px; height: auto; }
+/* preview parity: this also styles the kicker (p.k), which there is 17px ink-2 with a 16px top margin */
+.about .txt > p { color: var(--ink-2); font-size: 17px; margin-block-start: 16px; max-width: 34em; }
+.about .pts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-block-start: clamp(28px, 4vw, 44px); }
+.about .pt { background: #fff; border: 1px solid var(--line); border-radius: 20px; padding: 22px; display: grid; gap: 8px; align-content: start; transition: transform .5s var(--ease), box-shadow .5s var(--ease); }
+.about .pt:hover { transform: translateY(-4px); box-shadow: 0 22px 36px -28px rgba(80, 60, 10, .5); }
+.about .pt i { width: 40px; height: 40px; border-radius: 12px; background: var(--beige); display: grid; place-items: center; font-style: normal; font-size: 18px; }
+.about .pt b { font: 700 17px/1.25 var(--f-disp); }
+.about .pt p { font-size: 14.5px; color: var(--ink-2); }
+
+@media (max-width: 760px) {
+  .about .ab { grid-template-columns: 1fr; }
+  .about .pts { grid-template-columns: 1fr; }
+}

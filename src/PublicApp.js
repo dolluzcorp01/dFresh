@@ -6,6 +6,7 @@ import { I18nProvider, LanguagesProvider } from './i18n/I18nProvider';
 import { useI18n, useLanguages } from './i18n/useT';
 import { fixLangPath, pickStartLang, splitPath } from './i18n/langRoutes';
 import { FormsProvider } from './forms/FormsProvider';
+import { LegalProvider } from './legal/LegalProvider';
 import { installProtection } from './utils/protect';
 import Header from './components/Header';
 import Footer from './components/Footer';
@@ -45,9 +46,11 @@ function LangGate() {
   }
   return (
     <I18nProvider lang={lang}>
-      <FormsProvider>
-        <Layout />
-      </FormsProvider>
+      <LegalProvider>
+        <FormsProvider>
+          <Layout />
+        </FormsProvider>
+      </LegalProvider>
     </I18nProvider>
   );
 }

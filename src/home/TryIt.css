@@ -1,0 +1,50 @@
+/* Try it (preview: .duo, .tile, .urb, .nap, .szr, .szb with the v3 "#play" overrides folded in) */
+.duo { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
+#play .tile { border-radius: 30px; padding: clamp(22px, 2.6vw, 34px); position: relative; overflow: hidden; }
+.t-roll { background: var(--ink); color: var(--paper); }
+.t-roll .k { color: var(--gold-l); }
+.t-nap { background: #fff; border: 1px solid var(--line); }
+#play .tile h3 { font-size: clamp(28px, 3.3vw, 44px); font-weight: 800; letter-spacing: -.03em; margin-block-start: 14px; }
+:root[data-script="long"] #play .tile h3 { letter-spacing: 0; line-height: 1.2; }
+#play .tile p { opacity: .72; margin-block-start: 8px; font-weight: 500; }
+#play .tile .hint { position: absolute; inset-inline-end: 26px; top: 26px; font-size: 12px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; opacity: .6; }
+
+/* the roll: SVG roll (z 2) over the paper canvas (z 1); the canvas reaches into the tile's bottom margin */
+.urb { position: relative; height: 130px; margin-block: 22px 100px; user-select: none; -webkit-user-select: none; }
+.urb .roll { position: absolute; left: 0; top: 0; width: 130px; height: 130px; z-index: 2; border-radius: 50%; touch-action: none; cursor: grab; transform-origin: 50% 50%; will-change: transform; }
+.urb .roll svg { width: 100%; height: 100%; overflow: visible; display: block; }
+.urb .roll .spin { transform-box: view-box; transform-origin: 100px 100px; }
+.urb .paper { position: absolute; left: 0; top: 0; z-index: 1; touch-action: pan-y; }
+.urb.grab .roll { cursor: grabbing; }
+.urb .tab { position: absolute; left: 0; bottom: 22px; width: 28px; height: 44px; border-radius: 10px; background: #fff; box-shadow: 0 6px 16px rgba(0, 0, 0, .35); display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 4px; z-index: 3; cursor: grab; touch-action: pan-y; transition: opacity .3s; }
+.urb .tab i { width: 12px; height: 2px; border-radius: 2px; background: #C9C1AE; }
+
+/* the napkin: three quarters, two of them fold open */
+.napbox { display: grid; grid-template-columns: auto 1fr; gap: 20px; align-items: center; margin-block-start: 18px; }
+.nap { position: relative; width: clamp(130px, 13vw, 170px); aspect-ratio: 1; perspective: 1000px; }
+.nap .wrapN { position: absolute; inset: 0; transform-style: preserve-3d; transition: transform .6s cubic-bezier(.3, 1.4, .5, 1); filter: drop-shadow(0 18px 20px rgba(120, 90, 0, .2)); }
+.nap .q { position: absolute; width: 50%; height: 50%; background: linear-gradient(135deg, #fff, #F5F0E3); box-shadow: inset 0 0 0 1px #e7dfca; backface-visibility: hidden; }
+.nap .q1 { left: 0; top: 0; z-index: 4; }
+.nap .q2 { left: 50%; top: 0; transform-origin: 0 50%; }
+.nap .q3 { left: 0; top: 50%; width: 100%; transform-origin: 50% 0; background: linear-gradient(135deg, #FBF7EC, #F2ECDD); }
+.nap .emb { position: absolute; inset: 0; display: grid; place-items: center; z-index: 5; pointer-events: none; }
+.nap .emb img { width: 44%; height: auto; opacity: .22; }
+.szr b { font: 800 clamp(38px, 4vw, 54px)/1 var(--f-num); letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
+.szr b small { font-size: .34em; color: var(--ink-3); margin-inline-start: 2px; font-family: var(--f-disp); }
+.szr .pn { color: var(--ink-2); font-weight: 600; font-size: 14px; margin-block-start: 6px; min-height: 2.6em; }
+.szb { display: flex; gap: 6px; flex-wrap: wrap; margin-block-start: 24px; }
+.szb button { border: 0; border-radius: 999px; padding: 10px 15px; font-weight: 700; font-size: 13.5px; background: var(--beige); cursor: pointer; transition: transform .2s, background .2s, color .2s; }
+.szb button:hover { transform: translateY(-2px); }
+.szb button[aria-pressed="true"] { background: var(--ink); color: var(--gold-l); }
+
+@media (max-width: 900px) {
+  .duo { grid-template-columns: 1fr; }
+}
+@media (max-width: 820px) {
+  .urb .tab { height: 40px; }
+  .urb { margin-block-end: 110px; }
+}
+@media (max-width: 620px) {
+  .napbox { grid-template-columns: 1fr; justify-items: center; text-align: center; }
+  .szb { justify-content: center; }
+}

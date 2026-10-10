@@ -31,7 +31,7 @@ Put this pattern in ONE helper (`src/backend_routes/i18n-sql.js`) and reuse it. 
 | `size_picker` | "Pick a size" napkin widget | 5 sizes, 30x30 is default |
 | `banners` / `banner_translations` | 11 "dFresh moods" slides | text-free images; headline + CTA translated; `cta_action` + `cta_target`; funky/neon/rainbow seeded **inactive** pending Director approval |
 | `kits` / `kit_translations` / `kit_products` | 4 business kits | `business_type` prefills the quote form |
-| `towns` / `town_translations` | 6 delivery towns | `is_base` = Kanchipuram; `map_x/map_y` for the illustrated map; lat/lng for later real maps |
+| `towns` / `town_translations` | 6 delivery towns | `is_base` = Kanchipuram; `map_x/map_y` for the illustrated map, `label_dx/label_dy/label_anchor` place the name; lat/lng for later real maps |
 | `form_options` / `form_option_translations` | Drop-downs (business type, monthly sales, yes/no) | leads store the English `option_value` |
 | `site_settings` | Phones, e-mails, company, CIN, GSTIN, addresses, GA4 id, sheet id | `is_public = 1` rows only go to the browser |
 | `brochures` | One PDF per language | file in `private/brochures/`; English fallback |
@@ -57,5 +57,13 @@ transaction (`SELECT ... FOR UPDATE` on a counter row or `MAX()` within the year
 - Migrations so far: `20261009_shell_ui_text.sql` (Phase 2: 9 UI keys `wa_float`, `lang_label`, `home_link`,
   `lbl_whatsapp`, `legal1_gst`, `copyright`, `load_err_h`, `load_err_p`, `retry`; EN + TA/HI drafts).
   After it: 163 UI keys (EN 163 rows, TA 161, HI 161).
+  `20261009_short_ta_nav.sql` (shorter Tamil nav labels, data only).
+  `20261009_phase3_home_ui_text.sql` (8 keys: `bn_k`, `bn_label`, `bn_prev`, `bn_next`, `bn_goto`, `ring_prev`,
+  `ring_next`, `sheet_label`). `20261009_phase4_products_ui_text.sql` (4 keys: `feat_prev`, `feat_next`,
+  `card_photo`, `search_label`).
+  `20261010_phase5_home_rest.sql` (**schema**: `towns.label_dx`, `label_dy` SMALLINT and `label_anchor`
+  ENUM('start','middle','end'), default 0 / -20 / middle = name centred above the pin, the preview's placements
+  set for Kanchipuram, Chennai, Wallajabad, Ambur; 6 keys: `roll_aria`, `size_aria`, `unit_cm`, `map_aria`,
+  `map_frame`, `ab_alt`). After it: 181 UI keys (EN 181 rows, TA 179, HI 179).
 - `01_schema.sql` is for a fresh database only (it adds one FK with ALTER at the end).
 - The dAdmin database (`dadmin`) is read-only from dFresh except `login_otp` rows for app_key `dFresh`.

@@ -96,9 +96,14 @@ horizontal snap rail with prev/next buttons.
   paper comes off; paper runs along a shelf, drapes over the edge and piles in soft folds; perforation lines and
   labels `rl_ply rl_soft rl_pulls rl_perf rl_tear rl_fits` travel with the paper; pull tab at the paper end;
   tap = quick roll out/back; auto-unrolls once when first seen. GA4 `roll_play` (once per visit).
+  Labels are translated; a label wider than one sheet (122 px) wraps onto two lines (the preview never
+  translated them). Screen-reader label `roll_aria`. Physics steps at a fixed 60 Hz (same constants as the
+  preview), so it behaves the same on 120 Hz screens. Reduced motion: no inertia or sway; tap and auto-unroll
+  jump straight to the end state.
 - **The napkin** (`fo_k`, `fo_h`, `fo_p`): buttons from `size_picker`; picking a size unfolds the napkin
   (fold animation), the size counter animates to the new number, and the matching product name shows
-  (translated). Auto-cycles every 2.6 s until the visitor touches it. GA4 `size_pick`.
+  (translated). Auto-cycles every 2.6 s until the visitor touches it (paused off screen). Unit `unit_cm`,
+  group label `size_aria`. GA4 `size_pick`.
 
 ### B7. For Business - kits accordion (`#business`)
 `for_business`, `biz_h`, `biz_p`. Four cards from `kits` (01-04). One is open at a time: desktop opens on hover
@@ -106,21 +111,32 @@ horizontal snap rail with prev/next buttons.
 number, rep product photo, name, tagline, list of kit products (translated names),
 `kit_cta` -> WhatsApp with `wa_kit` message, and `sample` -> Quote form in **sample** mode with the kit's
 products pre-ticked and business type pre-selected.
+Hover intent: the kit under the mouse opens after 70 ms, never sooner than 300 ms after the last change.
+Each kit name is a heading holding the expand button (accordion pattern); closed panels are `inert`.
+Kit colours follow position (gold, ink, beige, white, repeating). `wa_kit` uses the current language's kit and
+product names, with the product IDs. Long scripts (desktop): a closed kit's vertical name wraps into a second
+column instead of running off the card (the preview clips it).
 
 ### B8. Where we deliver (`#where`)
 `where_k`, `where_h`, `where_p`. Illustrated SVG map (600x360) with pins at `towns.map_x/map_y`, the base
 (Kanchipuram) marked with a star; curved routes draw in when visible; a small dFresh van drives each route in
 turn. Town names translated. Town chips list below the text. Button `become_distributor` -> Distributor form.
+Each name sits at `towns.label_dx / label_dy / label_anchor` from its pin (default: centred above). Routes draw
+when 30% of the map is visible (0.5 s each, staggered 0.22 s); the van starts 1.5 s later, drives 1.7 s per route
+(ease-in-out) with a 0.45 s stop, and pauses off screen. Map description for screen readers: `map_aria`.
 
 ### B9. About (`#about`)
 `ab_k`, `ab_h`, `ab_p` + the "about" banner photo (object-position right so the product shows) +
-three points (`ab1_*`, `ab2_*`, `ab3_*`).
+three points (`ab1_*`, `ab2_*`, `ab3_*`). Photo alt `ab_alt`. The photo is the `about` banner's desktop file
+and only shows while that banner is active.
 
 ### B10. Contact band (`#contact`)
 Big headline `band_h`, `band_p`, soft animated yellow blob; buttons: `sample` (Quote form, sample mode),
 WhatsApp, `download_brochure`, `msg_btn` (Contact form). Numbers line (WhatsApp, `lbl_office`, e-mail).
 Two visit cards: `c_office` / `c_office_a` and `c_godown` / `c_godown_a`, each with an embedded Google map
 (lazy iframe, `map_load` placeholder underneath) and `c_map` link (opens Google Maps in a new tab).
+Map place = `site_settings.office_map_query` / `godown_map_query`; iframe title `map_frame`. The numbers are
+links (wa.me, tel:, mailto:).
 
 ---------------------------------------------------------------------------------------------------
 ## C. Products
@@ -144,6 +160,8 @@ Rules:
   White = the parent row. The choice is remembered per product while the page is open, including across a
   language switch. GA4 `variant_pick`.
 - No prices. If `pack`/`spec` contains "to be confirmed", show it as is (it is the truth).
+- Long scripts (Tamil, Hindi): on the back, each spec row shows its label above its value, because a long label
+  beside the value left too little room (approved deviation from the preview).
 
 ### C2. Products drawer (route `/:lang/products`, also opened as an overlay from anywhere)
 - Opens with a growing circle animation from the clicked element; body scroll locked; Esc / X closes and
@@ -153,7 +171,10 @@ Rules:
   (translated name + count). Query param `?cat=napkins` / `?cat=home` deep-links a filter.
 - Search: matches product ID (with or without "DZIND-"), English name, current-language name, spec and keywords;
   "x" and "×" are treated the same (so "30x30" finds "30×30"). Empty result -> `none` message.
-- Grid: 4 columns desktop, 3 at <= 1100px, 2 at <= 900px, 1 at <= 560px. Cards = C1.
+- Grid: 4 columns desktop, 3 at <= 1100px, 2 at <= 900px, 1 at <= 560px (the preview goes to 1 column at
+  620px; approved: 2 columns stay usable down to 561px). Cards = C1.
+- The search box gets focus on open only where there is a mouse; on touch devices the dialog itself takes focus,
+  so the phone keyboard does not cover the grid (approved deviation from the preview).
 
 ---------------------------------------------------------------------------------------------------
 ## D. Forms (modal; one component, five configs)
@@ -204,6 +225,8 @@ Common to all forms:
 Routes `/:lang/privacy` and `/:lang/terms` (also openable as an overlay from form consent links).
 Title `lg_priv` / `lg_terms_h`; body `legal_privacy_body` / `legal_terms_body` (HTML, English;
 other languages show `lg_en` note + English body). Marked "Draft for review by Dolluz" in admin until approved.
+Footer links go to the pages; consent links use the overlay (`useOpenLegal()`), which stacks over the form.
+Both fetch `GET /legal/:page` (cached in memory per page and language).
 
 ---------------------------------------------------------------------------------------------------
 ## F. Admin console (`/admin`, lazy chunk, noindex)

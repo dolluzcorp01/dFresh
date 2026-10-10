@@ -1,0 +1,15 @@
+/* Legal text (preview: .legaltxt in the legal modal) + the page version */
+.legaltxt { display: grid; gap: 12px; margin-block-start: 14px; font-size: 14.5px; color: var(--ink-2); line-height: 1.6; }
+.legaltxt h3, .legaltxt h4 { font: 700 17px/1.2 var(--f-disp); color: var(--ink); margin: 10px 0 0; }
+.legaltxt ul, .legaltxt ol { margin: 0; padding-inline-start: 1.2em; display: grid; gap: 6px; }
+.modal.legal-m { width: min(720px, 100%); }
+.legal-load { display: grid; gap: 14px; margin-block-start: 22px; }
+.legal-err { display: grid; justify-items: start; gap: 12px; margin-block-start: 18px; color: var(--ink-2); }
+
+.legal-page .wrap { max-width: calc(760px + 2 * var(--gut)); }
+.legal-page { padding-block-start: clamp(32px, 5vw, 64px); }
+.legal-page h1 { font-size: clamp(30px, 4vw, 44px); font-weight: 700; letter-spacing: -.01em; }
+:root[data-script="long"] .legal-page h1 { letter-spacing: 0; line-height: 1.25; }
+.legal-page .sub { color: var(--ink-2); font-size: 14.5px; margin-block-start: 10px; }
+.legal-page .legaltxt { font-size: 16px; margin-block-start: 22px; }
+.legal-page .legaltxt h3, .legal-page .legaltxt h4 { font-size: 20px; margin-block-start: 16px; }

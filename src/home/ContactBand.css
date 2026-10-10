@@ -1,0 +1,26 @@
+/* Contact band (preview: .cta light call to action, .visit / .vc cards) */
+.cta { position: relative; overflow: hidden; text-align: center; isolation: isolate; }
+.cta .blob { position: absolute; left: 50%; top: 50%; width: min(880px, 120vw); aspect-ratio: 1; transform: translate(-50%, -50%); border-radius: 50%; background: radial-gradient(circle at 50% 40%, #FFF0B0 0%, #FBE07A 55%, rgba(251, 224, 122, 0) 71%); z-index: -1; animation: blobp 9s ease-in-out infinite; }
+@keyframes blobp { 50% { transform: translate(-50%, -50%) scale(1.05); } }
+.cta h2 { font-size: clamp(46px, 8vw, 112px); font-weight: 800; letter-spacing: -.045em; line-height: .95; }
+:root[data-script="long"] .cta h2 { font-size: clamp(34px, 5vw, 66px); letter-spacing: 0; line-height: 1.2; }
+.cta p { color: var(--ink-2); font-size: 18px; max-width: 30em; margin: 18px auto 0; }
+.cta .acts { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; margin-block-start: 30px; }
+.cta .b-white { background: #fff; color: var(--ink); box-shadow: 0 0 0 1.5px var(--line); }
+.cta .nums { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px 26px; margin-block-start: 30px; font-size: 15px; color: var(--ink-2); }
+.cta .nums a { text-decoration: none; }
+.cta .nums b { font-family: var(--f-num); font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
+
+.visit { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 36px auto 0; max-width: 880px; text-align: start; }
+.vc { background: rgba(255, 255, 255, .82); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); border: 1px solid var(--line); border-radius: 20px; overflow: hidden; display: flex; flex-direction: column; }
+.vc .mapf { position: relative; height: 170px; background: linear-gradient(135deg, var(--beige), #fff); }
+.vc .mapf iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; filter: saturate(.75) contrast(.95); }
+.vc .mapf span { position: absolute; inset: 0; display: grid; place-items: center; font-size: 13px; color: var(--ink-3); }
+.vc .vb { padding: 16px 18px 18px; display: grid; gap: 6px; }
+.vc .vb b { font: 700 18px/1.2 var(--f-disp); }
+.cta .vc .vb p { font-size: 14px; color: var(--ink-2); margin: 0; max-width: none; text-align: start; }
+.vc .vb a { justify-self: start; margin-block-start: 6px; }
+
+@media (max-width: 760px) {
+  .visit { grid-template-columns: 1fr; }
+}

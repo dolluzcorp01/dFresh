@@ -148,7 +148,8 @@ async function buildBootstrap(lang, fallback, activeLanguages) {
       .then(([r]) => r),
     q({
       base: 'towns', tr: 'town_translations', keys: ['town_key'],
-      baseCols: ['town_key', 'is_base', 'map_x', 'map_y', 'lat', 'lng'], trCols: [{ col: 'name' }],
+      baseCols: ['town_key', 'is_base', 'map_x', 'map_y', 'label_dx', 'label_dy', 'label_anchor', 'lat', 'lng'],
+      trCols: [{ col: 'name' }],
       where: 'b.is_active = 1', orderBy: 'b.sort_order, b.town_key',
     }),
     q({
@@ -253,6 +254,7 @@ async function buildBootstrap(lang, fallback, activeLanguages) {
     isBase: bool(r.is_base),
     mapX: num(r.map_x),
     mapY: num(r.map_y),
+    label: { dx: Number(r.label_dx), dy: Number(r.label_dy), anchor: r.label_anchor },
     lat: num(r.lat),
     lng: num(r.lng),
     name: r.name,

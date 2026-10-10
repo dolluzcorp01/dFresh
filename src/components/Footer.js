@@ -1,4 +1,5 @@
-// Dark footer (spec A3). The big letters are static here; the spring "lift near the pointer" lands in Phase 5.
+// Dark footer (spec A3). The big "dFresh" letters lift softly near the pointer (spring field, preview bigF).
+import { useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { useI18n } from '../i18n/useT';
 import { useOpenForm } from '../forms/FormsProvider';
@@ -6,6 +7,7 @@ import { mediaUrl } from '../utils/api';
 import { trackWhatsApp, waHref } from '../utils/whatsapp';
 import { MAIN_LINKS } from './navLinks';
 import NavLink from './NavLink';
+import useSpringField from '../utils/useSpringField';
 import './Footer.css';
 
 const SHOP_LINKS = [...MAIN_LINKS.slice(0, 3), { key: 'f_range', hash: 'range' }, MAIN_LINKS[3]];
@@ -15,10 +17,13 @@ const WORK_FORMS = [
   { key: 'download_brochure', form: 'brochure' },
 ];
 const WORDMARK = 'dFresh'; // decorative artwork (aria-hidden), like the logo image
+const SPRING = { lift: 0.12, reach: 0.55, k: 140, c: 13, tilt: 4 }; // preview bigF()
 
 export default function Footer() {
   const { lang, t, settings } = useI18n();
   const openForm = useOpenForm();
+  const bigRef = useRef(null);
+  useSpringField(bigRef, 'span', SPRING, []);
   const legal = settings.gstin
     ? t('legal1_gst', { cin: settings.cin, gstin: settings.gstin })
     : t('legal1');
@@ -69,7 +74,7 @@ export default function Footer() {
           </span>
         </div>
       </div>
-      <div className="bigf" aria-hidden="true">
+      <div className="bigf" ref={bigRef} aria-hidden="true">
         {[...WORDMARK].map((ch, i) => <span key={i}>{ch}</span>)}
       </div>
     </footer>

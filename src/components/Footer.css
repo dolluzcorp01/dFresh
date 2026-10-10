@@ -4,7 +4,8 @@ footer.dark .wrap { display: grid; grid-template-columns: 1.4fr 1fr 1fr 1fr; gap
 footer.dark .flogo { height: 56px; width: auto; }
 footer.dark .ftag { height: 26px; width: auto; margin-block-start: 14px; }
 footer.dark .bl { color: var(--gold-l); margin-block-start: 14px; max-width: 24em; }
-footer.dark h4 { font: 600 17px/1 var(--f-disp); color: var(--paper); margin: 0 0 16px; padding-block-end: 14px; border-block-end: 1px solid var(--dark-line); }
+footer.dark h4 { font: 600 17px/1 var(--f-disp); letter-spacing: .14em; text-transform: uppercase; color: var(--paper); margin: 0 0 16px; padding-block-end: 14px; border-block-end: 1px solid var(--dark-line); }
+:root[data-script="long"] footer.dark h4 { letter-spacing: 0; }
 footer.dark ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
 footer.dark a { text-decoration: none; transition: color .2s; }
 footer.dark a:hover, footer.dark .lnk:hover { color: var(--gold-l); }

@@ -14,7 +14,8 @@ export function isModalOpen() {
   return stack.length > 0;
 }
 
-export default function Modal({ open, onClose, title, className = '', children }) {
+// `before`: shown above the title (e.g. the logo).
+export default function Modal({ open, onClose, title, className = '', before = null, children }) {
   const t = useT();
   const id = useId();
   const dialogRef = useRef(null);
@@ -78,6 +79,7 @@ export default function Modal({ open, onClose, title, className = '', children }
         tabIndex={-1}
       >
         <button type="button" className="btn b-line xbtn" onClick={onClose} aria-label={t('close')}>×</button>
+        {before}
         <h3 id={`${id}-h`}>{title}</h3>
         {children}
       </div>

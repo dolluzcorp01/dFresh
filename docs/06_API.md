@@ -11,6 +11,8 @@ Public endpoints never return internal columns (`spec_status`, `staff_notes`, `i
 | GET | `/bootstrap?lang=xx` | ONE payload for the site in that language (English fallback applied): `{ lang, ui: {key: value}, settings: {public keys}, categories[], products[] (cards with variants[], images[]), banners[], kits[], towns[], formOptions: {list_key: [{value,label}]}, sizePicker[], stats: {products, categories, towns, languages}, contentVersion }` |
 | GET | `/legal/:page?lang=xx` | `{ title, html, isEnglishFallback }` for `privacy` / `terms` |
 
+Town shape: `{ key, isBase, mapX, mapY, label: { dx, dy, anchor }, lat, lng, name }` (label = where the name sits
+on the illustrated map, relative to the pin).
 Category shape: `{ key, sort, repProductId, name, count }` where `count` = active product cards in that category
 (variants not counted). Image `width` / `height` are pixels from `product_images`, `null` when unknown.
 

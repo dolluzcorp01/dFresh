@@ -7,6 +7,7 @@
 // NODE_PATH at it; Chrome must be installed (CHROME_PATH overrides the default location). Web server on WEB_URL.
 //   npm i --prefix <scratch> puppeteer-core@24
 //   NODE_PATH=<scratch>/node_modules node scripts/visual-parity/measure.js phase-04 before shots
+// ONLY=play,business,... limits the run to those sections (a stage with none of them is skipped).
 const puppeteer = require('puppeteer-core');
 const path = require('path');
 const fs = require('fs');
@@ -62,6 +63,40 @@ const SECTIONS = [
     ['section', '#featured'], ['h2', '#featured .sh h2'], ['p', '#featured .sh p:not(.k)'], ['rail', '#featured .rail'],
     ['rail btn', '#featured .rail-ctrl button'],
   ])],
+  // Phase 5
+  ['play', '#play', [
+    ['section', '#play'], ['duo', '#play .duo'], ['roll tile', '#play .t-roll'], ['nap tile', '#play .t-nap'], ['hint', '#play .t-roll .hint'],
+    ['kicker', '#play .t-roll .k'], ['h3', '#play .t-roll h3'], ['p', '#play .t-roll p'], ['urb', '#play .urb'], ['roll', '#play .urb .roll'],
+    ['paper canvas', '#play .urb canvas'], ['napbox', '#play .napbox'], ['napkin', '#play .nap'], ['size', '#play .szr b'],
+    ['size unit', '#play .szr b small'], ['product', '#play .szr .pn'], ['size btns', '#play .szb'], ['size btn', '#play .szb button'],
+  ]],
+  ['business', '#business', [
+    ['section', '#business'], ['h2', '#business .sh h2'], ['p', '#business .sh p:not(.k)'], ['acc', '#business .acc'],
+    ['kit open', '#business .ac.open'], ['kit closed', '#business .ac:not(.open)'], ['num', '#business .ac.open .n'], ['photo', '#business .ac.open .im'],
+    ['h3 open', '#business .ac.open h3'], ['h3 closed', '#business .ac:not(.open) h3'], ['tagline', '#business .ac.open .more p'],
+    ['item', '#business .ac.open .more li'], ['acts', '#business .ac.open .acts'], ['wa btn', '#business .ac.open .acts .btn'],
+    ['sample btn', '#business .ac.open .acts .btn:nth-child(2)'],
+  ]],
+  ['where', '#where', [
+    ['section', '#where'], ['grid', '#where .grid'], ['kicker', '#where .sh .k'], ['h2', '#where .sh h2'], ['p', '#where .sh p:not(.k)'],
+    ['towns', '#where .townlist'], ['town', '#where .townlist span'], ['btn', '#where .btn'], ['map', '#where .fmap'], ['map svg', '#where .fmap svg'],
+    ['label', '#where .fmap text'],
+  ]],
+  ['about', '#about', [
+    ['section', '#about'], ['ab', '#about .ab'], ['kicker', '#about .txt .k'], ['h2', '#about .txt h2'], ['p', '#about .txt > p:not(.k)'],
+    ['pic', '#about .pic'], ['points', '#about .pts'], ['point', '#about .pt'], ['icon', '#about .pt i'], ['point h', '#about .pt b'], ['point p', '#about .pt p'],
+  ]],
+  ['contact', '#contact', [
+    ['section', '#contact'], ['blob', '#contact .blob'], ['h2', '#contact h2'], ['p', '#contact > .wrap > p'], ['acts', '#contact .acts'],
+    ['sample btn', '#contact .acts .btn:nth-child(1)'], ['wa btn', '#contact .acts .btn:nth-child(2)'], ['brochure btn', '#contact .acts .btn:nth-child(3)'],
+    ['msg btn', '#contact .acts .btn:nth-child(4)'], ['nums', '#contact .nums'], ['num', '#contact .nums b'], ['visit', '#contact .visit'],
+    ['card', '#contact .vc'], ['map frame', '#contact .vc .mapf'], ['card body', '#contact .vc .vb'], ['card h', '#contact .vc .vb b'],
+    ['card p', '#contact .vc .vb p'], ['card btn', '#contact .vc .vb .btn'],
+  ]],
+  ['footer', 'footer.dark', [
+    ['footer', 'footer.dark'], ['wrap', 'footer.dark .wrap'], ['logo', 'footer.dark .flogo'], ['h4', 'footer.dark h4'], ['legal', 'footer.dark .legal'],
+    ['bigf', '.bigf'], ['letter', '.bigf span'],
+  ]],
 ];
 
 // Phase 4: the drawer (opened from the hero's "See all products") and a flipped card's back.
@@ -81,6 +116,8 @@ const FLIPPED = [
     ['quote btn', '.drawer .card .back .bb .btn:nth-child(2)'], ['back btn', '.drawer .card .back .bk'],
   ]],
 ];
+const ONLY = process.env.ONLY ? process.env.ONLY.split(',') : null;
+const pick = (sections) => (ONLY ? sections.filter(([name]) => ONLY.includes(name)) : sections);
 const STAGES = [
   { name: 'page', sections: SECTIONS, setup: async (page) => {
     // every card on photo 1 right before measuring (auto-advance keeps ticking after a dot click)
@@ -150,7 +187,7 @@ async function settle(page, w) {
   await page.evaluate(() => document.fonts.ready);
   // walk the page so every reveal has fired, then come back to the top
   const H = await page.evaluate(() => document.body.scrollHeight);
-  for (let y = 0; y < Math.min(H, 9000); y += 400) { await page.evaluate((yy) => window.scrollTo(0, yy), y); await wait(60); }
+  for (let y = 0; y < H; y += 400) { await page.evaluate((yy) => window.scrollTo(0, yy), y); await wait(60); }
   // both pages on banner 1 and every card on photo 1, pointer away from the slider
   await page.evaluate(() => { const d = document.querySelector('.bnr-dots button'); if (d) d.click(); });
   await page.evaluate(() => document.querySelectorAll('.card .dots button:first-child').forEach((b) => b.click()));
@@ -189,7 +226,9 @@ async function shotSection(page, sel, file) {
     for (const which of ['preview', 'ours']) {
       const page = await open(browser, which, w, h);
       result[w][which] = { __doc: await page.evaluate(() => ({ scrollW: document.documentElement.scrollWidth })) };
-      for (const st of STAGES) {
+      for (const st0 of STAGES) {
+        const st = { ...st0, sections: pick(st0.sections) };
+        if (!st.sections.length) continue;
         if (st.setup) await st.setup(page);
         Object.assign(result[w][which], await page.evaluate(measure, st.sections));
         if (mode === 'shots') {

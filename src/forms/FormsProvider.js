@@ -1,10 +1,13 @@
 // openForm(type, prefill?) from anywhere (header, menu, footer, sections, product cards). Phase 2: the modal
 // shell with the form's title and subtitle; the fields, validation and submit arrive in Phase 6 (FormModal).
-// prefill: e.g. { products: ['DZIND-DF008-BUR'] } from a card's "Request a quote" (that product ticked).
+// prefill: e.g. { products: ['DZIND-DF008-BUR'] } from a card's "Request a quote" (that product ticked), or
+// { products: [...kit ids], businessType: 'hotel' } from a kit's "free sample" (form 'sample').
+// The consent line's privacy link opens the policy over the form (LegalProvider), so typed data stays.
 import { createContext, useCallback, useContext, useMemo, useState } from 'react';
 import Modal from '../components/Modal';
 import { useT } from '../i18n/useT';
 import { track } from '../utils/track';
+import { useOpenLegal } from '../legal/LegalProvider';
 
 // form_type (docs/06_API.md) -> title / subtitle keys
 const FORMS = {
@@ -23,6 +26,7 @@ export function useOpenForm() {
 
 export function FormsProvider({ children }) {
   const t = useT();
+  const openLegal = useOpenLegal();
   const [{ form, prefill }, setState] = useState({ form: null, prefill: null });
   const openForm = useCallback((type, pre = null) => {
     if (!FORMS[type]) return;
@@ -36,7 +40,21 @@ export function FormsProvider({ children }) {
     <FormsContext.Provider value={useMemo(() => openForm, [openForm])}>
       {children}
       <Modal open={Boolean(form)} onClose={close} title={keys ? t(keys[0]) : ''}>
-        {keys && <p className="sub" data-prefill={prefill && prefill.products ? prefill.products.join(' ') : undefined}>{t(keys[1])}</p>}
+        {keys && (
+          <>
+            <p
+              className="sub"
+              data-prefill={prefill && prefill.products ? prefill.products.join(' ') : undefined}
+              data-business-type={prefill && prefill.businessType ? prefill.businessType : undefined}
+            >
+              {t(keys[1])}
+            </p>
+            <p className="consent">
+              {t('consent')}{' '}
+              <button type="button" className="lnk" onClick={() => openLegal('privacy')}>{t('lg_priv_s')}</button>
+            </p>
+          </>
+        )}
       </Modal>
     </FormsContext.Provider>
   );

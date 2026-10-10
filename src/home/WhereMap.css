@@ -1,0 +1,18 @@
+/* Where we deliver (preview: .where .grid, .townlist, .fmap) */
+.where .grid { display: grid; grid-template-columns: .85fr 1.15fr; gap: clamp(24px, 4vw, 56px); align-items: center; }
+.where .sh { margin-block-end: 0; }
+.townlist { display: flex; flex-wrap: wrap; gap: 8px; margin-block-start: 24px; }
+.townlist span { background: var(--beige); border-radius: 999px; padding: 8px 14px; font-size: 14px; font-weight: 500; }
+.where .acts { margin-block-start: 28px; display: flex; flex-wrap: wrap; gap: 12px; }
+.fmap svg { width: 100%; height: auto; display: block; overflow: visible; }
+.fmap .land { fill: #FFF3CF; stroke: #EEE4C8; stroke-width: 2; }
+.fmap .route { fill: none; stroke: var(--gold); stroke-width: 3; stroke-linecap: round; }
+.fmap .route.on { transition: stroke-dashoffset .5s ease; }
+.fmap .halo { fill: var(--gold); opacity: .25; transform-box: fill-box; transform-origin: center; animation: halo 2.2s ease-out infinite; }
+@keyframes halo { from { transform: scale(.6); opacity: .5; } to { transform: scale(2.4); opacity: 0; } }
+.fmap text { font-family: var(--f-disp); font-weight: 700; font-size: 18px; fill: var(--ink); }
+.fmap .pin { transform-box: fill-box; transform-origin: center; }
+
+@media (max-width: 900px) {
+  .where .grid { grid-template-columns: 1fr; }
+}
