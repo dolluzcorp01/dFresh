@@ -33,7 +33,7 @@ Put this pattern in ONE helper (`src/backend_routes/i18n-sql.js`) and reuse it. 
 | `kits` / `kit_translations` / `kit_products` | 4 business kits | `business_type` prefills the quote form |
 | `towns` / `town_translations` | 6 delivery towns | `is_base` = Kanchipuram; `map_x/map_y` for the illustrated map, `label_dx/label_dy/label_anchor` place the name; lat/lng for later real maps |
 | `form_options` / `form_option_translations` | Drop-downs (business type, monthly sales, yes/no) | leads store the English `option_value` |
-| `site_settings` | Phones, e-mails, company, CIN, GSTIN, addresses, GA4 id, sheet id | `is_public = 1` rows only go to the browser |
+| `site_settings` | Phones, e-mails, company, CIN, GSTIN, addresses, GA4 id, sheet id, About photo (`about_image`) | `is_public = 1` rows only go to the browser |
 | `brochures` | One PDF per language | file in `private/brochures/`; English fallback |
 | `leads` + `lead_products` | Every form submission | one table, `form_type` enum; distributor extras in `details_json`; status workflow; `staff_notes`, `ip_hash` INTERNAL |
 | `mail_outbox` | E-mails waiting to be sent | worker retries with back-off; never lose a lead e-mail |
@@ -65,5 +65,7 @@ transaction (`SELECT ... FOR UPDATE` on a counter row or `MAX()` within the year
   ENUM('start','middle','end'), default 0 / -20 / middle = name centred above the pin, the preview's placements
   set for Kanchipuram, Chennai, Wallajabad, Ambur; 6 keys: `roll_aria`, `size_aria`, `unit_cm`, `map_aria`,
   `map_frame`, `ab_alt`). After it: 181 UI keys (EN 181 rows, TA 179, HI 179).
+  `20261010_about_image.sql` (data: public site setting `about_image` = path under /media of the About photo,
+  default the about banner's desktop file; the About section no longer depends on that banner being active).
 - `01_schema.sql` is for a fresh database only (it adds one FK with ALTER at the end).
 - The dAdmin database (`dadmin`) is read-only from dFresh except `login_otp` rows for app_key `dFresh`.

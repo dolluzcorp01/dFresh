@@ -126,9 +126,10 @@ when 30% of the map is visible (0.5 s each, staggered 0.22 s); the van starts 1.
 (ease-in-out) with a 0.45 s stop, and pauses off screen. Map description for screen readers: `map_aria`.
 
 ### B9. About (`#about`)
-`ab_k`, `ab_h`, `ab_p` + the "about" banner photo (object-position right so the product shows) +
-three points (`ab1_*`, `ab2_*`, `ab3_*`). Photo alt `ab_alt`. The photo is the `about` banner's desktop file
-and only shows while that banner is active.
+`ab_k`, `ab_h`, `ab_p` + a photo (object-position right so the product shows) +
+three points (`ab1_*`, `ab2_*`, `ab3_*`). Photo alt `ab_alt`. The photo is site setting `about_image`
+(a path under `/media`, default `banners/desktop/dFresh_Banner_about_1920x800.webp`), independent of the
+`about` banner, so that banner can be switched off without losing the photo. Empty setting = no photo.
 
 ### B10. Contact band (`#contact`)
 Big headline `band_h`, `band_p`, soft animated yellow blob; buttons: `sample` (Quote form, sample mode),
