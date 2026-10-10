@@ -9,6 +9,8 @@
 //   value goes through esc().
 // - Logo: an inline CID attachment (mail-logo.png, built by scripts/mail-logo.js), never a URL or SVG: Gmail
 //   showed only the alt text for the URL logo. send() attaches it to every message whose html uses LOGO_SRC.
+// - Log: logMail() prints one "[mail] #id purpose from .. to .. -> outcome" line per mail and outcome (the
+//   outbox worker calls it); the subject and body are never printed, so a sign-in code never reaches the log.
 // - Size: Gmail clips html over 102 KB. Rendered templates stay far below MAX_HTML_BYTES (60 KB) because every
 //   field is length-capped by rules.json; shared style strings keep the markup small. SendGrid click tracking
 //   is off: it rewrites every link into a long redirect (and would route the brochure token through it).
@@ -71,6 +73,29 @@ async function sender() {
   if (!EMAIL.test(s.mail_from || '')) throw new Error('site_settings.mail_from is empty or not a plain e-mail address');
   return { email: s.mail_from, name: s.mail_from_name || undefined };
 }
+
+/** The sender address for the log line, or why there is none (never throws). */
+async function fromAddress() {
+  try {
+    return (await sender()).email;
+  } catch (err) {
+    return `(no sender: ${err.message})`;
+  }
+}
+
+/**
+ * One terminal line per mail and outcome (the subject is never printed: a sign-in code is in it):
+ * [mail] #<id> <purpose> from <from> to <to> (redirected to <MAIL_TEST_TO>) -> sent <id> | queued (...) | failed <reason>
+ */
+function logMail({ id, purpose, from, to }, outcome) {
+  const redirect = testTo();
+  const line = `[mail] #${id} ${purpose} from ${from} to ${to}${redirect ? ` (redirected to ${redirect})` : ''} -> ${outcome}`;
+  if (outcome.startsWith('failed')) console.error(line);
+  else console.log(line);
+}
+
+/** The "queued" outcome for a not-ready readiness() result. */
+const queuedOutcome = (reason) => (process.env.MAIL_ENABLED !== 'true' ? 'queued (mail off)' : `queued (not sending: ${reason})`);
 
 /**
  * Sends one message. { to, subject, html, text } - text is mandatory.
@@ -295,6 +320,6 @@ It is valid for ${minutes} minutes. If you did not try to sign in, tell the dFre
 }
 
 module.exports = {
-  send, readiness, setTransport, renderLeadAlert, renderBrochureCopy, renderLeadAck, renderLoginCode, esc,
+  send, readiness, setTransport, fromAddress, logMail, queuedOutcome, renderLeadAlert, renderBrochureCopy, renderLeadAck, renderLoginCode, esc,
   LOGO_SRC, MAX_HTML_BYTES,
 };

@@ -97,3 +97,52 @@ test('visitor confirmation: lead_ref in subject and text, values escaped, text p
   assert.ok(!m.html.includes('<b>Kavya</b>'));
   assert.ok(m.html.includes('https://wa.me/919330259330?text=Hi%20dFresh'));
 });
+
+// Runs fn with console.log / console.error captured; returns the lines.
+async function captureLog(fn) {
+  const lines = [];
+  const { log, error } = console;
+  console.log = (...a) => lines.push(a.join(' '));
+  console.error = (...a) => lines.push(a.join(' '));
+  try {
+    await fn();
+  } finally {
+    console.log = log;
+    console.error = error;
+  }
+  return lines;
+}
+
+test('every mail outcome is one [mail] line with id, purpose, from, to, redirect; never the subject', async () => {
+  const leadId = await insertLead('TEST-OBX-LOG');
+  const ids = [];
+  for (let i = 0; i < 3; i += 1) ids.push((await db.query(
+    "INSERT INTO mail_outbox (to_email, subject, html_body, text_body, purpose, lead_id) VALUES ('obx@example.com', 'secret 123456', '<p>x</p>', 'x', 'lead_ack', ?)",
+    [leadId]
+  ))[0].insertId);
+  const [[s]] = await db.query("SELECT setting_value AS v FROM site_settings WHERE setting_key = 'mail_from'");
+  const redirect = (process.env.MAIL_TEST_TO || '').trim();
+  const head = (id) => `[mail] #${id} lead_ack from ${s.v} to obx@example.com${redirect ? ` (redirected to ${redirect})` : ''} -> `;
+
+  let r;
+  const off = await captureLog(async () => { r = await worker.sendMailNow(ids[0]); });
+  assert.equal(r.status, 'off');
+  assert.deepEqual(off, [`${head(ids[0])}queued (mail off)`]);
+
+  process.env.MAIL_ENABLED = 'true';
+  try {
+    mailer.setTransport(async () => ({ id: 'fake-sg-1' }));
+    const ok = await captureLog(async () => { r = await worker.sendMailNow(ids[1]); });
+    assert.equal(r.status, 'sent');
+    assert.deepEqual(ok, [`${head(ids[1])}sent fake-sg-1`]);
+
+    mailer.setTransport(async () => { throw new Error('SendGrid said no'); });
+    const bad = await captureLog(async () => { r = await worker.sendMailNow(ids[2]); });
+    assert.equal(r.status, 'failed');
+    assert.deepEqual(bad, [`${head(ids[2])}failed SendGrid said no (attempt 1, retry in 1 min)`]);
+    for (const line of [...off, ...ok, ...bad]) assert.ok(!line.includes('123456'), line);
+  } finally {
+    process.env.MAIL_ENABLED = 'false';
+    mailer.setTransport(null);
+  }
+});
