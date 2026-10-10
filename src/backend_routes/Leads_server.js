@@ -12,6 +12,7 @@ const { getDBConnection } = require('../../config/db');
 const { rules, isFormType, validateLead } = require('./validation');
 const mailer = require('./mailer');
 const { brochure } = require('./Brochure_server');
+const { apiBase } = require('../../config/urls');
 
 const router = express.Router();
 const db = getDBConnection(process.env.DB_NAME || 'dfresh').promise();
@@ -104,11 +105,16 @@ async function mailContext(conn, { lang, def, productIds, optionPairs }) {
   return { settings, products, options, ui };
 }
 
-// form fields -> leads columns (distributor extras go to details_json; firm name also to business_name for search)
-function toColumns(formType, v) {
+// form fields -> leads columns (distributor extras go to details_json; firm name also to business_name for search).
+// Brochure: details_json.brochure_lang = language code of the PDF actually served (after fallback), null when
+// none is uploaded yet (Google Sheet "Brochure Sent", admin lead detail).
+function toColumns(formType, v, brochureLang) {
   const base = { phone: v.phone, email: v.email };
   if (formType === 'brochure') {
-    return { ...base, first_name: v.first_name, last_name: v.last_name, full_name: `${v.first_name} ${v.last_name}` };
+    return {
+      ...base, first_name: v.first_name, last_name: v.last_name, full_name: `${v.first_name} ${v.last_name}`,
+      details_json: JSON.stringify({ brochure_lang: brochureLang }),
+    };
   }
   if (formType === 'distributor') {
     const details = {
@@ -186,7 +192,7 @@ router.post('/leads', async (req, res) => {
     const cols = {
       lead_ref: leadRef,
       form_type: formType,
-      ...toColumns(formType, v),
+      ...toColumns(formType, v, found ? found.lang : null),
       lang_code: lang,
       source_page: str(body.source_page, 150),
       source_ref: str(body.source_ref, 60),
@@ -208,12 +214,11 @@ router.post('/leads', async (req, res) => {
     // Visitor's brochure copy (only when there is a PDF to link to)
     if (found) {
       const token = brochure.signBrochureToken({ leadId, lang }, MAIL_LINK_TTL);
-      const apiBase = (process.env.PUBLIC_API_URL || `http://localhost:${process.env.PORT || 4012}`).replace(/\/+$/, '');
       const copy = mailer.renderBrochureCopy({
         htmlLang: langRow.html_lang,
         ui: ctx.ui,
         name: v.first_name,
-        link: `${apiBase}/api/dfresh/brochure/download?token=${encodeURIComponent(token)}`,
+        link: `${apiBase()}/api/dfresh/brochure/download?token=${encodeURIComponent(token)}`,
         companyName: ctx.settings.company_name,
         publicEmail: ctx.settings.public_email,
       });

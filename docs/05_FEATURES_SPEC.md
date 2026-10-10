@@ -220,8 +220,10 @@ Common to all forms:
    brochure; for quote, sample, distributor and contact a short visitor confirmation `lead_ack` in the
    visitor's language, English fallback: `thanks_name`, `mail_ack_intro`, the lead_ref under `mail_ack_ref`,
    `mail_ack_next_h` + `ok_other` + `mail_ack_keep`, WhatsApp button `whatsapp_us`) and `sync_outbox`
-   (Google Sheet, tab per form_type, columns: date, lead_ref, names, phone, e-mail,
-   business, type, town, products, quantity, message, extras, language, page, opened from).
+   (Google Sheet from Dolluz's template, tabs Quote / Sample / Distributor / Contact / Brochure, appended under the
+   existing row-1 header in its exact column order, see `gsheet.js` HEADERS; the Overview tab is never touched;
+   a header that does not match keeps the row pending with the error logged; values RAW as text, date
+   "YYYY-MM-DD HH:MM" IST, products "ID Name" joined with ", ", Brochure Sent = language code actually served).
    Every e-mail is sent FROM `site_settings.mail_from` (`connect@dolluzcorp.com`, the verified SendGrid sender);
    staff alerts go TO `site_settings.lead_email` (`info@dolluzcorp.com`). `MAIL_TEST_TO` (local only, never on the
    server) redirects every mail to one test inbox; outside production a real send is refused without it.

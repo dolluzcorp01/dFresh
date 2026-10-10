@@ -6,6 +6,7 @@ const express = require('express');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const { getDBConnection } = require('./config/db');
+const { publicUrlProblems } = require('./config/urls');
 const publicRoutes = require('./src/backend_routes/Public_server');
 const leadRoutes = require('./src/backend_routes/Leads_server');
 const brochureRoutes = require('./src/backend_routes/Brochure_server');
@@ -18,6 +19,13 @@ const { version } = require('./package.json');
 const app = express();
 const isProd = process.env.NODE_ENV === 'production';
 const PORT = process.env.PORT || 4012;
+
+// E-mails carry links built from these URLs: in production never start with a localhost or http one.
+const urlProblems = publicUrlProblems();
+if (urlProblems.length) {
+  console.error(`dFresh API refuses to start: ${urlProblems.join('; ')}. Fix the server .env.`);
+  process.exit(1);
+}
 // nginx on the same host forwards the visitor's address; req.ip (lead rate limit) reads it only from there.
 app.set('trust proxy', 'loopback');
 

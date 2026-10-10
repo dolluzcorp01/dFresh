@@ -7,8 +7,16 @@
 //   can never mail info@ or a visitor.
 // - Every message has a plain-text part (send() throws without one); inline CSS only; every interpolated
 //   value goes through esc().
+// - Logo: an inline CID attachment (mail-logo.png, built by scripts/mail-logo.js), never a URL or SVG: Gmail
+//   showed only the alt text for the URL logo. send() attaches it to every message whose html uses LOGO_SRC.
+// - Size: Gmail clips html over 102 KB. Rendered templates stay far below MAX_HTML_BYTES (60 KB) because every
+//   field is length-capped by rules.json; shared style strings keep the markup small. SendGrid click tracking
+//   is off: it rewrites every link into a long redirect (and would route the brochure token through it).
+const fs = require('fs');
+const path = require('path');
 const sgMail = require('@sendgrid/mail');
 const { getDBConnection } = require('../../config/db');
+const { siteBase } = require('../../config/urls');
 
 const db = getDBConnection(process.env.DB_NAME || 'dfresh').promise();
 const isProd = process.env.NODE_ENV === 'production';
@@ -16,6 +24,26 @@ const EMAIL = /^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]{2,}$/;
 
 const C = { ink: '#121214', gold: '#E5BF24', goldL: '#F4CF2C', paper: '#FCFBF6', beige: '#F6F1E4', line: '#E6DFCB', ink2: '#4A4840', ink3: '#77736A' };
 const FONT = "'Open Sans',Arial,Helvetica,sans-serif";
+const HEAD = 'Saira,Arial,sans-serif';
+const MAX_HTML_BYTES = 60 * 1024;
+
+const LOGO_CID = 'dfresh-logo';
+const LOGO_SRC = `cid:${LOGO_CID}`;
+const LOGO_FILE = path.join(__dirname, 'mail-logo.png');
+let logoAttachment = null; // read once, on the first send
+
+function logo() {
+  if (!logoAttachment) {
+    logoAttachment = {
+      content: fs.readFileSync(LOGO_FILE).toString('base64'),
+      filename: 'dfresh-logo.png',
+      type: 'image/png',
+      disposition: 'inline',
+      content_id: LOGO_CID,
+    };
+  }
+  return logoAttachment;
+}
 
 let transport = null; // (message) => Promise; null = SendGrid
 
@@ -60,6 +88,8 @@ async function send({ to, subject, html, text }) {
     subject: redirect ? `[TEST for ${to}] ${subject}` : subject,
     html,
     text,
+    ...(html.includes(LOGO_SRC) ? { attachments: [logo()] } : {}),
+    trackingSettings: { clickTracking: { enable: false, enableText: false } },
   };
   let providerId = null;
   if (transport) {
@@ -84,28 +114,28 @@ function esc(v) {
 
 const nl2br = (s) => esc(s).replace(/\n/g, '<br>');
 
-function mediaBase() {
-  return (process.env.PUBLIC_API_URL || `http://localhost:${process.env.PORT || 4012}`).replace(/\/+$/, '');
-}
-
-function siteBase() {
-  return (process.env.PUBLIC_SITE_URL || 'http://localhost:3000').replace(/\/+$/, '');
-}
+// Shared inline styles (inline CSS only: many clients drop <style>).
+const S = {
+  h1: `margin:0 0 14px;font:700 24px/1.25 ${HEAD};color:${C.ink}`,
+  small: `font:12px/1.5 ${FONT};color:${C.ink3}`,
+  label: `padding:8px 12px 8px 0;border-bottom:1px solid ${C.line};font:600 13px/1.4 ${FONT};color:${C.ink3};vertical-align:top;white-space:nowrap`,
+  value: `padding:8px 0;border-bottom:1px solid ${C.line};font:14px/1.5 ${FONT};color:${C.ink};vertical-align:top`,
+};
 
 function button(href, label) {
   return `<a href="${esc(href)}" style="display:inline-block;background:${C.ink};color:${C.goldL};font:600 15px/1.3 ${FONT};text-decoration:none;padding:13px 26px;border-radius:999px">${esc(label)}</a>`;
 }
 
-// Branded shell: ink header with the on-dark logo and a gold rule, paper body, beige footer.
+// Branded shell: ink header with the on-dark logo (inline CID attachment, 62x34 shown, 2x file) and a gold
+// rule, paper body, beige footer. The styled alt text stays as the fallback when images are off.
 function shell({ htmlLang = 'en', title, preheader = '', body, footer }) {
-  const logo = `${mediaBase()}/media/logo/dfresh-logo-on-dark.png`;
   return `<!doctype html>
 <html lang="${esc(htmlLang)}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title></head>
 <body style="margin:0;padding:0;background:${C.beige}">
 <div style="display:none;max-height:0;overflow:hidden;opacity:0">${esc(preheader)}</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${C.beige}"><tr><td align="center" style="padding:24px 12px">
 <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:${C.paper};border-radius:16px;overflow:hidden;border:1px solid ${C.line}">
-<tr><td style="background:${C.ink};padding:22px 28px;border-bottom:4px solid ${C.gold}"><img src="${esc(logo)}" alt="dFresh" height="34" style="display:block;height:34px;width:auto;border:0;color:${C.goldL};font:700 24px ${FONT}"></td></tr>
+<tr><td style="background:${C.ink};padding:22px 28px;border-bottom:4px solid ${C.gold}"><img src="${LOGO_SRC}" alt="dFresh" width="62" height="34" style="display:block;width:62px;height:34px;border:0;color:${C.goldL};font:700 24px ${FONT}"></td></tr>
 <tr><td style="padding:28px;font:15px/1.6 ${FONT};color:${C.ink}">${body}</td></tr>
 <tr><td style="padding:16px 28px;background:#F3EEDF;font:12px/1.5 ${FONT};color:${C.ink2}">${footer}</td></tr>
 </table></td></tr></table></body></html>`;
@@ -117,8 +147,7 @@ function alertRows(rows) {
     .filter(([, v]) => v !== null && v !== undefined && String(v).trim() !== '')
     .map(([label, value, href]) => {
       const val = href ? `<a href="${esc(href)}" style="color:${C.ink};font-weight:600">${esc(value)}</a>` : nl2br(value);
-      return `<tr><td style="padding:8px 12px 8px 0;border-bottom:1px solid ${C.line};font:600 13px/1.4 ${FONT};color:${C.ink3};vertical-align:top;white-space:nowrap">${esc(label)}</td>`
-        + `<td style="padding:8px 0;border-bottom:1px solid ${C.line};font:14px/1.5 ${FONT};color:${C.ink};vertical-align:top">${val}</td></tr>`;
+      return `<tr><td style="${S.label}">${esc(label)}</td><td style="${S.value}">${val}</td></tr>`;
     })
     .join('');
 }
@@ -175,7 +204,7 @@ function renderLeadAlert(lead) {
     title: subject,
     preheader: `${form} from ${name}${lead.town ? `, ${lead.town}` : ''}`,
     body: `<p style="margin:0 0 4px;font:600 12px/1 ${FONT};letter-spacing:.14em;text-transform:uppercase;color:${C.ink3}">New lead</p>`
-      + `<h1 style="margin:0 0 18px;font:700 26px/1.2 Saira,Arial,sans-serif;color:${C.ink}">${esc(lead.leadRef)} &middot; ${esc(form)}</h1>`
+      + `<h1 style="margin:0 0 18px;font:700 26px/1.2 ${HEAD};color:${C.ink}">${esc(lead.leadRef)} &middot; ${esc(form)}</h1>`
       + `<table role="presentation" width="100%" cellpadding="0" cellspacing="0">${alertRows(rows)}</table>`
       + `<p style="margin:24px 0 0">${button(adminUrl, 'Open in dFresh admin')}</p>`,
     footer: `dFresh website lead alert &middot; ${esc(lead.companyName)}`,
@@ -195,10 +224,10 @@ function renderBrochureCopy({ htmlLang, ui, name, link, companyName, publicEmail
     htmlLang,
     title: subject,
     preheader: intro,
-    body: `<h1 style="margin:0 0 14px;font:700 24px/1.25 Saira,Arial,sans-serif;color:${C.ink}">${esc(subject)}</h1>`
+    body: `<h1 style="${S.h1}">${esc(subject)}</h1>`
       + `<p style="margin:0 0 22px">${esc(intro)}</p>`
       + `<p style="margin:0 0 18px">${button(link, ui.download_brochure)}</p>`
-      + `<p style="margin:0;font:12px/1.5 ${FONT};color:${C.ink3};word-break:break-all"><a href="${esc(link)}" style="color:${C.ink3}">${esc(link)}</a></p>`,
+      + `<p style="margin:0;${S.small};word-break:break-all"><a href="${esc(link)}" style="color:${C.ink3}">${esc(link)}</a></p>`,
     footer: `${esc(companyName)}${publicEmail ? ` &middot; <a href="mailto:${esc(publicEmail)}" style="color:${C.ink2}">${esc(publicEmail)}</a>` : ''}`,
   });
   const text = `${subject}\n\n${intro}\n\n${ui.download_brochure}: ${link}\n\n${companyName}${publicEmail ? ` - ${publicEmail}` : ''}\n`;
@@ -218,13 +247,13 @@ function renderLeadAck({ htmlLang, ui, name, leadRef, whatsappNumber, whatsappDi
     htmlLang,
     title: subject,
     preheader: `${ui.mail_ack_intro} ${ui.mail_ack_ref}: ${leadRef}`,
-    body: `<h1 style="margin:0 0 10px;font:700 24px/1.25 Saira,Arial,sans-serif;color:${C.ink}">${esc(title)}</h1>`
+    body: `<h1 style="margin:0 0 10px;font:700 24px/1.25 ${HEAD};color:${C.ink}">${esc(title)}</h1>`
       + `<p style="margin:0 0 20px">${esc(ui.mail_ack_intro)}</p>`
       + `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 22px"><tr><td style="background:${C.beige};border:1px solid ${C.line};border-radius:12px;padding:14px 20px">`
       + `<p style="margin:0 0 4px;font:600 12px/1.4 ${FONT};color:${C.ink3}">${esc(ui.mail_ack_ref)}</p>`
-      + `<p style="margin:0;font:700 22px/1.2 Saira,Arial,sans-serif;letter-spacing:.04em;color:${C.ink}">${esc(leadRef)}</p>`
+      + `<p style="margin:0;font:700 22px/1.2 ${HEAD};letter-spacing:.04em;color:${C.ink}">${esc(leadRef)}</p>`
       + '</td></tr></table>'
-      + `<h2 style="margin:0 0 6px;font:700 17px/1.3 Saira,Arial,sans-serif;color:${C.ink}">${esc(ui.mail_ack_next_h)}</h2>`
+      + `<h2 style="margin:0 0 6px;font:700 17px/1.3 ${HEAD};color:${C.ink}">${esc(ui.mail_ack_next_h)}</h2>`
       + `<p style="margin:0 0 6px">${esc(ui.ok_other)}</p>`
       + `<p style="margin:0 0 22px;color:${C.ink2}">${esc(ui.mail_ack_keep)}</p>`
       + (wa ? `<p style="margin:0">${button(wa, `${ui.whatsapp_us}${whatsappDisplay ? ` ${whatsappDisplay}` : ''}`)}</p>` : ''),
@@ -244,7 +273,7 @@ function renderLoginCode({ name, code, minutes, companyName }) {
     preheader: `Your code is valid for ${minutes} minutes.`,
     body: `<p style="margin:0 0 14px">Hello ${esc(name)},</p>`
       + '<p style="margin:0 0 18px">Your dFresh admin sign-in code is:</p>'
-      + `<p style="margin:0 0 18px;font:700 32px/1 Saira,Arial,sans-serif;letter-spacing:.3em;color:${C.ink}">${esc(code)}</p>`
+      + `<p style="margin:0 0 18px;font:700 32px/1 ${HEAD};letter-spacing:.3em;color:${C.ink}">${esc(code)}</p>`
       + `<p style="margin:0;color:${C.ink2}">It is valid for ${esc(minutes)} minutes. If you did not try to sign in, tell the dFresh admin.</p>`,
     footer: `dFresh admin &middot; ${esc(companyName)}`,
   });
@@ -257,4 +286,7 @@ It is valid for ${minutes} minutes. If you did not try to sign in, tell the dFre
   return { subject, html, text };
 }
 
-module.exports = { send, readiness, setTransport, renderLeadAlert, renderBrochureCopy, renderLeadAck, renderLoginCode, esc };
+module.exports = {
+  send, readiness, setTransport, renderLeadAlert, renderBrochureCopy, renderLeadAck, renderLoginCode, esc,
+  LOGO_SRC, MAX_HTML_BYTES,
+};

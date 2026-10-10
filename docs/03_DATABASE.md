@@ -35,7 +35,7 @@ Put this pattern in ONE helper (`src/backend_routes/i18n-sql.js`) and reuse it. 
 | `form_options` / `form_option_translations` | Drop-downs (business type, monthly sales, yes/no) | leads store the English `option_value` |
 | `site_settings` | Phones, e-mails, company, CIN, GSTIN, addresses, GA4 id, sheet id, About photo (`about_image`) | `is_public = 1` rows only go to the browser |
 | `brochures` | One PDF per language | file at `private/brochures/<lang_code>/<file_name>`; English fallback |
-| `leads` + `lead_products` | Every form submission | one table, `form_type` enum; distributor extras in `details_json`; status workflow; `staff_notes`, `ip_hash` INTERNAL |
+| `leads` + `lead_products` | Every form submission | one table, `form_type` enum; distributor extras in `details_json` (brochure: `{ brochure_lang }` = PDF language actually served, null when none); status workflow; `staff_notes`, `ip_hash` INTERNAL |
 | `lead_counters` | Running lead number per year | one row per 2-digit year (IST); bumped inside the lead transaction (row lock = unique `lead_ref`, also serialises the rate-limit count) |
 | `mail_outbox` | E-mails waiting to be sent (`purpose`: `lead_alert`, `brochure_copy`, `lead_ack`, `admin_otp`) | worker retries with back-off; never lose a lead e-mail. Sender is read at send time from `site_settings.mail_from` / `mail_from_name` (not stored per row). `lead_id` -> `leads` ON DELETE CASCADE; status `cancelled` = its lead no longer exists (never sent). `admin_otp` rows (sign-in codes) are wiped once sent, or cancelled and wiped after 10 minutes. `provider_msg_id` = SendGrid x-message-id of a sent row |
 | `sync_outbox` | Google Sheet rows waiting | same retry model, same cascade and `cancelled` rule |

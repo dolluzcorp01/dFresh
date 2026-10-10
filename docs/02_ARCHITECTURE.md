@@ -112,3 +112,13 @@ are generated from the DB. See `seo.js` in Phase 8.
 nginx -> `server.js` (serves API + React build) under pm2 as `dfresh`. Build React on a dev machine or CI
 if the droplet runs out of memory. `media/` and `private/brochures/` live outside git on the server
 (upload via admin), originals backed up.
+
+Server-only settings (never on a dev machine):
+- `.env`: `NODE_ENV=production`, `PUBLIC_API_URL` and `PUBLIC_SITE_URL` = the live https URLs (the API refuses to
+  start with a localhost or http one: e-mail links are built from them), no `MAIL_TEST_TO`.
+- Google Sheet: admin -> Settings `gsheet_spreadsheet_id` = LIVE sheet `1iv8X5AOv5VZ3KlZiRwYjX9-oc5LV16GuomGfDRDa1V4`.
+  Local dev uses the TEST sheet `1M-EB-TULN_GFsvDni_Gne32HljhsBi0OoKhUILyhz1o` (set after every `npm run db:reset`;
+  the seed leaves it empty). Both come from Dolluz's template: tabs Overview (never touched), Quote, Sample,
+  Distributor, Contact, Brochure, headers in row 1 (see `gsheet.js` HEADERS; a changed header stops the sync and
+  keeps rows pending). Share the sheet with the service account's e-mail (Editor); its JSON key goes to
+  `private/google-service-account.json` on the server, path in `GOOGLE_SERVICE_ACCOUNT_JSON`.

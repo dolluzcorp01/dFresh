@@ -13,6 +13,7 @@ const jwt = require('jsonwebtoken');
 const { getDBConnection } = require('../../config/db');
 const { translatedSelect } = require('./i18n-sql');
 const { esc } = require('./mailer');
+const { siteBase } = require('../../config/urls');
 
 const router = express.Router();
 const db = getDBConnection(process.env.DB_NAME || 'dfresh').promise();
@@ -79,7 +80,7 @@ async function sendErrorPage(res, status, lang, messageKey) {
   const { lang: use, ui } = await uiText([messageKey, 'home_link'], lang);
   const { rows } = await languages();
   const htmlLang = (rows.find((r) => r.lang_code === use) || {}).html_lang || use;
-  const home = `${(process.env.PUBLIC_SITE_URL || '').replace(/\/+$/, '')}/${use}`;
+  const home = `${siteBase()}/${use}`;
   res.status(status).type('html').set('Cache-Control', 'no-store').send(`<!doctype html>
 <html lang="${esc(htmlLang)}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>dFresh</title></head>
 <body style="margin:0;min-height:100vh;display:grid;place-items:center;background:#F6F1E4;font:16px/1.6 'Open Sans',Arial,sans-serif;color:#121214;padding:16px;box-sizing:border-box">
