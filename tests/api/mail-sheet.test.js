@@ -118,7 +118,7 @@ function fakeSheets(heads) {
       get: async () => ({ data: { sheets: ['Overview', ...Object.keys(gsheet.HEADERS)].map((title) => ({ properties: { title } })) } }),
       values: {
         get: async (q) => { calls.push(['get', q.range]); return { data: { values: [heads[q.range.split('!')[0].replace(/'/g, '')]] } }; },
-        append: async (q) => { calls.push(['append', q.range, q.valueInputOption, q.requestBody.values[0]]); return { data: { updates: { updatedRange: `${q.range.split('!')[0]}!A2:N2` } } }; },
+        append: async (q) => { calls.push(['append', q.range, q.valueInputOption, q.requestBody.values[0], q.insertDataOption]); return { data: { updates: { updatedRange: `${q.range.split('!')[0]}!A2:N2` } } }; },
       },
     },
   };
@@ -146,6 +146,7 @@ test('sheet rows: exact column order per tab, written RAW under the existing hea
   assert.equal(append[1], "'Brochure'!A1:J1");
   assert.equal(append[2], 'RAW');
   assert.deepEqual(append[3], row.values);
+  assert.equal(append[4], 'OVERWRITE'); // never INSERT_ROWS: inserted rows inherit the header style
   assert.ok(fake.calls.every((c) => !c[1].includes('Overview')));
 });
 

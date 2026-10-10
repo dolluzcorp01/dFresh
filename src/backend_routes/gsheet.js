@@ -5,7 +5,9 @@
 // Brochure, each with its header already in row 1. Before every append row 1 is read and must match HEADERS
 // exactly; otherwise appendLead throws (the outbox row stays pending, the error is logged). A tab or header row
 // is never created or written here.
-// Values are written RAW (as text), so a visitor typing "=..." can never inject a formula.
+// Values are written RAW (as text), so a visitor typing "=..." can never inject a formula. Appends use
+// insertDataOption OVERWRITE (never INSERT_ROWS): the row goes into the existing plain rows below the table, so it
+// does not inherit the black/bold header style.
 const path = require('path');
 const { getDBConnection } = require('../../config/db');
 
@@ -135,7 +137,7 @@ async function appendLead(leadId) {
   }
 
   const res = await api.spreadsheets.values.append({
-    spreadsheetId: id, range: `'${row.tab}'!A1:${lastCol}1`, valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS',
+    spreadsheetId: id, range: `'${row.tab}'!A1:${lastCol}1`, valueInputOption: 'RAW', insertDataOption: 'OVERWRITE',
     requestBody: { values: [row.values] },
   });
   return { tab: row.tab, range: (res.data && res.data.updates && res.data.updates.updatedRange) || null };
