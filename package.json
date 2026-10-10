@@ -40,6 +40,7 @@
     "db:reset": "node scripts/db-reset.js",
     "media:sync": "node scripts/media-sync.js && npm run media:build",
     "media:build": "node scripts/media-build.js",
+    "fonts:build": "node scripts/fonts-build.js",
     "cache:bust": "node scripts/cache-bust.js",
     "test:api": "node --test --test-concurrency=1 \"tests/api/*.test.js\""
   },

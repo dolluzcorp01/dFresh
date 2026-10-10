@@ -1,0 +1,17 @@
+{
+  "families": [
+    "Saira",
+    "Open Sans",
+    "Noto Sans Tamil",
+    "Noto Sans Devanagari"
+  ],
+  "labels": {
+    "Open Sans": "EN",
+    "Noto Sans Tamil": "தமிழ்",
+    "Noto Sans Devanagari": "हिंदी"
+  },
+  "preload": [
+    "saira-latin.woff2",
+    "open-sans-latin.woff2"
+  ]
+}

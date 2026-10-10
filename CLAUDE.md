@@ -76,7 +76,8 @@ The approved look, copy, animations and interactions come from that preview. Mat
 - `npm run server` / `npm start` - API only / React only
 - `npm run db:reset` - drop + create + schema + seed + migrations on LOCAL dev DB only (refuses when NODE_ENV=production)
 - `npm run cache:bust` - clear the running API's content cache after a hand edit in the DB (dev only)
-- `npm run build` - production React build
+- `npm run build` - production React build, then pre-renders every public page into `build-ssr/` (postbuild)
+- `npm run fonts:build` - regenerate the self-hosted fonts (after a new language or text with new script characters)
 - `npm run media:build` - regenerate responsive image sizes from /media originals
 
 ## Brand tokens (from the logo kit)

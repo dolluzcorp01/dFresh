@@ -56,17 +56,12 @@ export default function AdminApp() {
     meta.content = 'noindex, nofollow';
     document.head.appendChild(meta);
     document.title = 'dFresh admin';
-    // Body font of the site (Saira is in index.html; the admin is English only). A plain link, not i18n/fonts.js:
-    // importing that here would make webpack keep its exports in main.js (+77 B for the public site).
-    const font = document.createElement('link');
-    font.rel = 'stylesheet';
-    font.href = 'https://fonts.googleapis.com/css2?family=Open+Sans:wght@400..700&display=swap';
-    document.head.appendChild(font);
+    // Fonts: Saira and Open Sans (the admin is English only) are self-hosted in the main CSS (styles/fonts.css).
     const icon = ensureFavicon();
     const style = document.createElement('style');
     style.textContent = css;
     document.head.appendChild(style);
-    return () => { meta.remove(); style.remove(); font.remove(); if (icon) icon.remove(); };
+    return () => { meta.remove(); style.remove(); if (icon) icon.remove(); };
   }, []);
 
   const loadLanguages = useCallback(() => api.get('/languages').then(setLanguages, (e) => setError(e.message)), []);

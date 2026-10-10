@@ -8,12 +8,8 @@
     <link rel="icon" type="image/png" sizes="32x32" href="%PUBLIC_URL%/favicon-32.png" />
     <link rel="apple-touch-icon" href="%PUBLIC_URL%/favicon-180.png" />
     <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
-    <!-- Saira = brand display font (all scripts, numbers). Body / script fonts load per language from languages.font_family. -->
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <!-- Not render-blocking: text paints at once in the fallback font and swaps to Saira when it arrives. -->
-    <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Saira:wght@300..800&display=swap" onload="this.onload=null;this.rel='stylesheet'" />
-    <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira:wght@300..800&display=swap" /></noscript>
+    <!-- Fonts are self-hosted (src/styles/fonts.css, npm run fonts:build); the production build preloads the Latin
+         files the first screen uses (scripts/prerender.js). -->
     <title>dFresh</title>
   </head>
   <body>

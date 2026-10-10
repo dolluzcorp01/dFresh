@@ -6,6 +6,8 @@
 //    { "<path>": { hash, html } }. hash = sha1 of the #dfresh-data JSON the page is served with (seo.js), so the
 //    server only ever sends HTML that matches the data the browser hydrates with. When the content has changed
 //    since the build (admin edit), seo.js renders that page again with build-ssr/ssr.js and keeps it in memory.
+// 3. Adds <link rel="preload"> to build/index.html for the self-hosted Latin font files the first screen uses
+//    (src/i18n/selfHostedFonts.json preload, hashed names from build/asset-manifest.json).
 // build-ssr/ is not public (server.js serves build/ only) and not in git; deploy copies it next to build/.
 // Without a database the bundle is still built and pages.json is empty: every page is then rendered on its
 // first request.
@@ -81,8 +83,25 @@ async function renderAll() {
   return pages;
 }
 
+// Font preloads in the template every page is served from. Idempotent (an earlier run's links are replaced).
+function preloadFonts() {
+  const index = path.join(ROOT, 'build/index.html');
+  const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'build/asset-manifest.json'), 'utf8')).files;
+  const { preload } = require('../src/i18n/selfHostedFonts.json');
+  const links = preload.map((name) => {
+    const base = name.replace(/\.woff2$/, '');
+    const href = Object.values(manifest).find((v) => new RegExp(`/static/media/${base}\\.[0-9a-f]+\\.woff2$`).test(v));
+    if (!href) throw new Error(`font ${name} is not in the build (run npm run fonts:build)`);
+    return `<link rel="preload" as="font" type="font/woff2" href="${href}" crossorigin>`;
+  });
+  const html = fs.readFileSync(index, 'utf8').replace(/<link rel="preload" as="font"[^>]*>/g, '');
+  fs.writeFileSync(index, html.replace('<title>', `${links.join('')}<title>`));
+  console.log(`prerender: preload ${links.length} font file(s) in build/index.html`);
+}
+
 async function main() {
   const t0 = Date.now();
+  preloadFonts();
   await bundle();
   console.log(`prerender: build-ssr/ssr.js built (${Date.now() - t0} ms)`);
   let pages = {};

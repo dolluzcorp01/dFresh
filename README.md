@@ -44,6 +44,7 @@ Phase task files are in `docs/claude-tasks/` (finished ones in `docs/claude-task
 | `npm run prerender` | Server bundle `build-ssr/ssr.js` + every public page per language pre-rendered into `build-ssr/pages.json` |
 | `npm run db:reset` | Local only: drop + create + schema + seed + app user |
 | `npm run media:sync` | Copy `assets/` to `media/`, then `media:build` |
+| `npm run fonts:build` | Self-hosted fonts from Google into `src/fonts` + `src/styles/fonts.css` (needs the DB + internet; script fonts subset to the characters the content uses: re-run after adding a language or text in a new script) |
 | `npm run media:build` | Generate product sizes and check every DB-referenced media file exists |
 | `npm run test:api` | API tests against the local DB (files one at a time: some add and remove test rows) |
 | `SERVE_BUILD=true PORT=4013 node server.js` | The production build with the SEO HTML, locally (e.g. for Lighthouse; build with `REACT_APP_API=` first) |
