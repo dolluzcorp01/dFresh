@@ -96,9 +96,13 @@ cp .env.example .env && nano .env && chmod 600 .env   # section 2
 
 On a dev machine with the repo at the same commit:
 ```bash
-REACT_APP_API= npm run build          # empty = same origin; prebuild refreshes src/i18n/fallbackText.json from the DB
+REACT_APP_API= npm run build          # empty = same origin; prebuild refreshes src/i18n/fallbackText.json from the DB,
+                                      # postbuild pre-renders every page into build-ssr/ (needs the DB too)
 rsync -az --delete build/ <user>@<droplet>:/var/www/dfresh/build/
+rsync -az --delete build-ssr/ <user>@<droplet>:/var/www/dfresh/build-ssr/
 ```
+`build-ssr/` (server bundle + pre-rendered pages) is not public: server.js reads it, nginx never serves it. Without
+it the site still works (pages render in the browser, slower first paint; pm2 log says "pre-rendering off").
 `media/` (originals + sizes): first time `rsync -az media/ <user>@<droplet>:/var/www/dfresh/media/`; later
 uploads happen in the admin on the server. Brochure PDFs are uploaded in the admin.
 
@@ -145,6 +149,7 @@ Restore: `gunzip -c dfresh.sql.gz | mysql --default-character-set=utf8mb4 dfresh
 
 ## 9. Update / rollback
 
-Update: `git pull`, `npm ci --omit=dev`, apply new `database/migrations/*` in name order, rsync the new build,
+Update: `git pull`, `npm ci --omit=dev`, apply new `database/migrations/*` in name order, rsync the new build
+and build-ssr,
 `pm2 reload dfresh`. Rollback: previous commit + previous build folder (keep the last one as `build.prev`),
 `pm2 reload dfresh`. Migrations are additive; restore the DB backup only if one changed data.

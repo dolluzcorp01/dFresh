@@ -14,6 +14,7 @@ export default function ProductsPage() {
     <ProductsDrawer
       open
       animate={false}
+      inline
       cat={cat}
       onCat={(key) => navigate({ pathname: location.pathname, search: key === 'all' ? '' : `?cat=${encodeURIComponent(key)}` }, { replace: true })}
       onClose={() => navigate(`/${lang}`)}

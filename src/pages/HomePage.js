@@ -16,19 +16,25 @@ export default function HomePage() {
   const location = useLocation();
   // The hero paints first; the sections below the fold mount right after, as an interruptible
   // transition, so the first screen is not one long blocking task. A #section link needs them at once.
-  const [below, setBelow] = useState(() => Boolean(location.hash));
+  // Always false in the first render: the server pre-renders hero + footer and cannot see the #hash.
+  const [below, setBelow] = useState(false);
   useEffect(() => {
     if (below) return undefined;
+    if (location.hash) {
+      setBelow(true);
+      return undefined;
+    }
     const id = requestAnimationFrame(() => startTransition(() => setBelow(true)));
     return () => cancelAnimationFrame(id);
-  }, [below]);
+  }, [below]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // #section links (header, menu, footer, shared URLs). A language switch keeps the scroll position.
+  // #section links (header, menu, footer, shared URLs), once the sections exist. A language switch keeps
+  // the scroll position.
   useEffect(() => {
-    if (!location.hash || (location.state && location.state.keepScroll)) return;
+    if (!below || !location.hash || (location.state && location.state.keepScroll)) return;
     const el = document.getElementById(decodeURIComponent(location.hash.slice(1)));
     if (el) el.scrollIntoView();
-  }, [location.key]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [location.key, below]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <>

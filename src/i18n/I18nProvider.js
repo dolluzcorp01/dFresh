@@ -35,6 +35,13 @@ function fetchBootstrap(lang) {
   return bootRequests.get(lang);
 }
 
+// Server render (src/ssr.js): the data this page is rendered with, the same that seo.js writes into the page
+// as #dfresh-data for the browser, so the browser's first render matches the server's HTML.
+export function primeContent(languages, boot) {
+  ready.languages = languages;
+  if (boot) ready.boot.set(boot.lang, boot);
+}
+
 // Called once at startup: /languages and the URL language's bootstrap start together instead of one
 // after the other (the first screen waits for both). A guess that is not an active language only costs
 // one unused request; LangGate still decides.

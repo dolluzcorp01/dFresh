@@ -33,6 +33,8 @@
     "stop": "node scripts/stop.js",
     "prebuild": "node scripts/i18n-fallback.js",
     "build": "react-scripts build",
+    "postbuild": "node scripts/prerender.js",
+    "prerender": "node scripts/prerender.js",
     "i18n:fallback": "node scripts/i18n-fallback.js",
     "test": "react-scripts test",
     "db:reset": "node scripts/db-reset.js",

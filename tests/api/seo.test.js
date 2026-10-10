@@ -34,7 +34,8 @@ test('every page gets its language, title, description, canonical, hreflang x3 +
   const out = await seo.render(TEMPLATE, '/ta/products', { cat: 'napkins' });
   assert.equal(out.status, 200);
   const h = out.html;
-  assert.match(h, /<html lang="ta-IN" dir="ltr">/);
+  // The script's type tuning and font are on <html> before main.js (same rule as applyLanguage in I18nProvider).
+  assert.match(h, /<html lang="ta-IN" dir="ltr" data-script="long" style="--f-lang: &quot;Noto Sans Tamil&quot;">/);
   assert.match(tag(h, /<title>(.*?)<\/title>/), / \| dFresh$/);
   assert.ok(tag(h, /<meta name="description" content="([^"]+)"/).length > 40);
   assert.equal(tag(h, /<link rel="canonical" href="([^"]+)"/), 'https://site.example/ta/products?cat=napkins');

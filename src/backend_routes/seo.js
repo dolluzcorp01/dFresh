@@ -1,9 +1,12 @@
-// SEO for the CRA site without server rendering (docs/02 "SEO approach", spec G). In production server.js
+// SEO for the CRA site (docs/02 "SEO approach", spec G), plus the pre-rendered page body (see bodyFor below). In production server.js
 // serves build/index.html through render(): per URL and language it sets <html lang>, <title>, meta description,
 // canonical, hreflang for every active language + x-default, Open Graph, and JSON-LD (Organization +
 // LocalBusiness + ItemList of Products, never a price or offer). /sitemap.xml and /robots.txt are built from
 // the DB here too. All words come from ui_text / translations through the cached bootstrap (pageMeta.js).
 // Base URL = PUBLIC_SITE_URL. SEO_NOINDEX=true (staging) adds noindex everywhere and robots.txt disallows all.
+const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const { content } = require('./Public_server');
 const { siteBase } = require('../../config/urls');
 const { BRAND, PAGES, pageMeta } = require('../shared/pageMeta');
@@ -134,17 +137,94 @@ async function headFor(target, langs) {
     graph.push(itemList(base, lang, products, category ? category.name : boot.ui.all_h));
   }
   tags.push(jsonLd({ '@context': 'https://schema.org', '@graph': graph }));
-  return { htmlLang: info.htmlLang, dir: info.dir === 'rtl' ? 'rtl' : 'ltr', title: meta.title, tags, boot };
+  // Same as applyLanguage() in src/i18n/I18nProvider.js, so the pre-rendered page has the script's type tuning
+  // and font before main.js runs: a font that differs from the default language's = "long script".
+  const defaultInfo = langs.languages.find((l) => l.code === langs.default) || info;
+  const font = /^[A-Za-z0-9 ]+$/.test(info.fontFamily || '') ? info.fontFamily : '';
+  return {
+    htmlLang: info.htmlLang,
+    dir: info.dir === 'rtl' ? 'rtl' : 'ltr',
+    longScript: Boolean(info.fontFamily && info.fontFamily !== defaultInfo.fontFamily),
+    font,
+    title: meta.title,
+    tags,
+    boot,
+    cat,
+  };
 }
 
 // The first screen's data (what /languages and /bootstrap would return), so the app renders without waiting for
 // two API round trips after main.js. "<" is escaped: no text can close the script element.
+const dataJson = (langs, boot) => JSON.stringify({ languages: langs, boot });
 const dataTag = (langs, boot) => `<script id="dfresh-data" type="application/json">${
-  JSON.stringify({ languages: langs, boot }).replace(/</g, '\\u003c')}</script>`;
+  dataJson(langs, boot).replace(/</g, '\\u003c')}</script>`;
+/** Fingerprint of the data a page is rendered and hydrated with (pre-rendered HTML is only used when it matches). */
+const dataHash = (langs, boot) => crypto.createHash('sha1').update(dataJson(langs, boot)).digest('hex');
 
-function inject(template, head) {
-  return template
-    .replace(/<html lang="[^"]*"/, `<html lang="${escHtml(head.htmlLang)}" dir="${head.dir}"`)
+// ---------------------------------------------------------------------------------------------
+// Pre-rendered HTML (scripts/prerender.js, `npm run build`): the page body inside <div id="root">, so the first
+// screen paints before main.js; the browser hydrates it (src/index.js) with exactly the #dfresh-data it was
+// rendered from. build-ssr/pages.json holds every page as built; a page whose content changed since (admin
+// edit) is rendered again with build-ssr/ssr.js and kept in memory until the content changes again. Renders run
+// one at a time (they share the bundle's content state). Any failure falls back to the plain shell: the
+// browser then renders the page itself, as before pre-rendering.
+// ---------------------------------------------------------------------------------------------
+const SSR_DIR = process.env.SSR_DIR || path.join(__dirname, '../../build-ssr');
+let ssr = null; // { pages, renderPage } once loaded, false when there is no usable bundle
+const rendered = new Map(); // page path -> { hash, html } (rendered at run time)
+let queue = Promise.resolve();
+
+function loadSsr() {
+  if (ssr !== null) return ssr;
+  try {
+    const { renderPage } = require(path.join(SSR_DIR, 'ssr.js'));
+    let pages = {};
+    try { pages = JSON.parse(fs.readFileSync(path.join(SSR_DIR, 'pages.json'), 'utf8')); } catch { /* render on demand */ }
+    ssr = { renderPage, pages };
+  } catch (err) {
+    console.warn(`pre-rendering off: build-ssr/ssr.js not usable (${err.code || err.message}); run npm run build`);
+    ssr = false;
+  }
+  return ssr;
+}
+
+/** The pre-rendered body for a page and its data, or '' (plain shell). Never throws. */
+async function bodyFor(url, langs, boot) {
+  const s = loadSsr();
+  if (!s) return '';
+  const hash = dataHash(langs, boot);
+  for (const hit of [s.pages[url], rendered.get(url)]) if (hit && hit.hash === hash) return hit.html;
+  const job = queue.then(async () => {
+    const again = rendered.get(url);
+    if (again && again.hash === hash) return again.html;
+    const html = await s.renderPage(url, langs, boot);
+    rendered.set(url, { hash, html });
+    return html;
+  });
+  queue = job.catch(() => {});
+  try {
+    return await job;
+  } catch (err) {
+    console.error(`server render of ${url} failed:`, err.message);
+    return '';
+  }
+}
+
+// A pre-rendered page paints without main.js, so main.js is downloaded at once (preload) but only RUN after
+// the first paint: its parse and the hydration never delay the first screen. A tab that never paints (hidden)
+// still loads it after 1 s. The plain shell keeps CRA's normal <script defer>.
+const afterPaint = (src) => `<link rel="preload" as="script" fetchpriority="low" href="${src}"><script>(function(){var d=0;function go(){if(d)return;d=1;`
+  + `var s=document.createElement("script");s.src="${src}";document.head.appendChild(s)}`
+  + 'addEventListener("DOMContentLoaded",function(){requestAnimationFrame(function(){setTimeout(go,0)});setTimeout(go,1000)})})()</script>';
+
+function inject(template, head, body = '') {
+  const page = body
+    ? template.replace(/<script defer="defer" src="(\/static\/js\/main\.[\w.]+\.js)"><\/script>/, (m, src) => afterPaint(src))
+    : template;
+  return page
+    .replace('<div id="root"></div>', `<div id="root">${body}</div>`)
+    .replace(/<html lang="[^"]*"/, `<html lang="${escHtml(head.htmlLang)}" dir="${head.dir}"${
+      head.longScript ? ' data-script="long"' : ''}${head.font ? ` style="--f-lang: &quot;${head.font}&quot;"` : ''}`)
     .replace(/<title>[^<]*<\/title>/, `<title>${escHtml(head.title)}</title>`)
     .replace('</head>', `${head.tags.join('')}</head>`);
 }
@@ -162,9 +242,10 @@ async function render(template, pathname, query) {
     return { status: 301, location: `${target.redirect}${qs ? `?${qs}` : ''}` };
   }
   const head = await headFor(target.root ? { lang: langs.default, page: '' } : target, langs);
-  // "/" picks the language in the browser, so only the language list is sent along there.
+  // "/" picks the language in the browser, so only the language list is sent along there (and no body).
   head.tags.push(dataTag(langs, target.root ? null : head.boot));
-  return { status: 200, html: inject(template, head) };
+  const body = target.root ? '' : await bodyFor(pagePath(target.lang, target.page, head.cat), langs, head.boot);
+  return { status: 200, html: inject(template, head, body) };
 }
 
 /** /admin/*: the plain shell, never indexed. */
@@ -195,4 +276,4 @@ function robots() {
   return `User-agent: *\nDisallow: /admin\nDisallow: /api/\nSitemap: ${siteBase()}/sitemap.xml\n`;
 }
 
-module.exports = { render, adminHtml, sitemap, robots, resolve, dataTag };
+module.exports = { render, adminHtml, sitemap, robots, resolve, dataTag, dataHash, pagePath };

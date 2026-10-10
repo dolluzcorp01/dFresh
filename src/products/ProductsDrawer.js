@@ -23,7 +23,9 @@ export function rememberOpener(el) {
   opener = el || null;
 }
 
-export default function ProductsDrawer({ open, animate = true, origin, cat, onCat, onClose, onExited }) {
+// inline: rendered in place instead of a portal into <body> (the products page: the server pre-renders it and
+// the browser hydrates it, which a portal cannot do). It is position: fixed either way, so it looks the same.
+export default function ProductsDrawer({ open, animate = true, inline = false, origin, cat, onCat, onClose, onExited }) {
   const { t, data } = useI18n();
   const reduced = useReducedMotion();
   const hId = useId();
@@ -105,7 +107,7 @@ export default function ProductsDrawer({ open, animate = true, origin, cat, onCa
 
   const style = origin ? { '--ox': `${origin.x}px`, '--oy': `${origin.y}px` } : undefined;
 
-  return createPortal(
+  const drawer = (
     <div
       ref={ref}
       className={`drawer${shown ? ' open' : ''}${animate ? '' : ' still'}`}
@@ -152,7 +154,7 @@ export default function ProductsDrawer({ open, animate = true, origin, cat, onCa
             : <p className="empty" role="status">{t('none')}</p>}
         </div>
       </div>
-    </div>,
-    document.body
+    </div>
   );
+  return inline ? drawer : createPortal(drawer, document.body);
 }

@@ -41,7 +41,9 @@ export default function Header({ overHero }) {
   const closeMenu = useCallback(() => setMenuOpen(false), []);
   const wrapRef = useRef(null);
   const needed = useRef(0); // wrap width the full nav needed when it last overflowed (0 = unknown)
-  const [compact, setCompact] = useState(isNarrow);
+  // false on the server and in the hydrating first render (same HTML); the layout effect below sets the real
+  // value before the first paint of the app (Header.css applies the <= 900px layout before that).
+  const [compact, setCompact] = useState(false);
 
   const [measureTick, setMeasureTick] = useState(0);
 

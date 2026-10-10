@@ -34,12 +34,20 @@
 @keyframes msIn { from { opacity: 0; transform: translateY(-8px) scale(.98); } to { opacity: 1; transform: none; } }
 
 /* compact (Header.js sets it at <= 900px or when the nav does not fit): nav hidden, round brochure
-   icon button + menu button (spec A1) */
+   icon button + menu button (spec A1). The <= 900px media query gives the same layout to the pre-rendered
+   page before main.js has run (the server cannot know the width; Header.js adds .compact on hydration). */
 .top.compact .nav { display: none; }
 .top.compact .langs { margin-inline-start: auto; }
 .top.compact .mnav { display: grid; }
 .top.compact .bro { padding: 12px; }
 .top.compact .bro .lb-long { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+@media (max-width: 900px) {
+  .top .nav { display: none; }
+  .top .langs { margin-inline-start: auto; }
+  .top .mnav { display: grid; }
+  .top .bro { padding: 12px; }
+  .top .bro .lb-long { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+}
 .top:not(.compact) + .msheet { display: none !important; }
 @media (max-width: 620px) {
   .brand img { height: 36px; }

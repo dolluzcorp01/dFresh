@@ -1,7 +1,7 @@
 // Hero (spec B1): headline whose letters (words for long scripts) rise in on load and lift / tint gold near
 // the pointer, lede, WhatsApp + all-products buttons, the tissue sheet (lazy chunk), falling petals,
 // a leaf-icon trail on hover devices, and the stats strip from bootstrap.stats.
-import { Fragment, lazy, Suspense, useEffect, useLayoutEffect, useRef } from 'react';
+import { Fragment, lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { useI18n } from '../i18n/useT';
 import { useOpenProducts } from '../products/useOpenProducts';
 import { mediaUrl } from '../utils/api';
@@ -19,14 +19,18 @@ const graphemes = (w) => (segmenter ? [...segmenter.segment(w)].map((s) => s.seg
 
 let introPlayed = false; // the rise-in plays once per page load, not on every language switch
 
-function Line({ text, cls, byChar }) {
+// Letters (or words) of a line; --i = position in the whole headline (the rise-in delay, Hero.css).
+const pieces = (text, byChar) => text.split(' ').map((w) => (byChar ? graphemes(w) : [w]));
+
+function Line({ text, cls, byChar, start }) {
+  let i = start;
   return (
     <span className={`ln ${cls}`} aria-hidden="true">
-      {text.split(' ').map((w, wi) => (
+      {pieces(text, byChar).map((parts, wi) => (
         <Fragment key={wi}>
           {wi > 0 && ' '}
           <span className="w">
-            {byChar ? graphemes(w).map((c, ci) => <span className="ch" key={ci}>{c}</span>) : <span className="ch">{w}</span>}
+            {parts.map((c, ci) => <span className="ch" key={ci} style={{ '--i': i++ }}>{c}</span>)}
           </span>
         </Fragment>
       ))}
@@ -71,7 +75,6 @@ function LeafTrail({ heroRef }) {
 export default function Hero() {
   const { t, settings, data, longScript } = useI18n();
   const openProducts = useOpenProducts();
-  const reduced = useReducedMotion();
   const heroRef = useRef(null);
   const h1Ref = useRef(null);
   const l1 = t('hero_l1');
@@ -80,14 +83,17 @@ export default function Hero() {
 
   useSpringField(h1Ref, '.ch', { lift: 0.22, reach: 0.9, gold: true }, [l1, l2, byChar]);
 
-  useLayoutEffect(() => {
-    if (introPlayed) return;
+  // The rise-in is a CSS animation (h1.intro, Hero.css), so it starts with the first paint of the pre-rendered
+  // page and hydration does not restart it. The class goes once it has played: a language switch later
+  // brings new letters without replaying it.
+  const n1 = pieces(l1, byChar).flat().length;
+  const count = n1 + pieces(l2, byChar).flat().length;
+  const [intro, setIntro] = useState(() => !introPlayed);
+  useEffect(() => {
     introPlayed = true;
-    if (reduced || !Element.prototype.animate) return;
-    h1Ref.current.querySelectorAll('.ch').forEach((el, i) => el.animate(
-      [{ transform: 'translateY(70%) rotate(8deg)', opacity: 0 }, { transform: 'none', opacity: 1 }],
-      { duration: 900, delay: 150 + i * 40, easing: 'cubic-bezier(.22, 1, .36, 1)', fill: 'backwards' }
-    ));
+    if (!intro) return undefined;
+    const id = setTimeout(() => setIntro(false), 150 + count * 40 + 900 + 100);
+    return () => clearTimeout(id);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const { stats } = data;
@@ -100,9 +106,9 @@ export default function Hero() {
       <div className="wrap">
         <div className="copy">
           <p className="k">{t('eyebrow')}</p>
-          <h1 id="h1" ref={h1Ref} aria-label={`${l1} ${l2}`}>
-            <Line text={l1} cls="ln1" byChar={byChar} />
-            <Line text={l2} cls="ln2" byChar={byChar} />
+          <h1 id="h1" ref={h1Ref} className={intro ? 'intro' : undefined} aria-label={`${l1} ${l2}`}>
+            <Line text={l1} cls="ln1" byChar={byChar} start={0} />
+            <Line text={l2} cls="ln2" byChar={byChar} start={n1} />
           </h1>
           <p className="lede">{t('lede')}</p>
           <div className="ctas">

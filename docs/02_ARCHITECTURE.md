@@ -110,11 +110,22 @@ The full server checklist is in `deploy/DEPLOY.md`.
 - Text compression is nginx's job (gzip, deploy/nginx). Measuring locally: put a gzip proxy in front, or the
   "text compression" audit alone costs ~1.8 s.
 
-## SEO approach (CRA without server rendering)
+## SEO approach (CRA + pre-rendered pages)
 In production `server.js` serves `build/index.html` but first injects, per URL and language: `<html lang>`,
 `<title>`, meta description, canonical, `hreflang` alternates for every active language + `x-default`,
 Open Graph tags and JSON-LD (Organization, LocalBusiness, Product list). `/sitemap.xml` and `/robots.txt`
 are generated from the DB. See `src/backend_routes/seo.js`.
+- Pre-rendered body: `npm run build` ends with `scripts/prerender.js` (postbuild). It compiles `src/ssr.js` into a
+  Node bundle `build-ssr/ssr.js` and renders every active language x home / products (+ each `?cat=`) / privacy /
+  terms into `build-ssr/pages.json`, each with a hash of the data it was rendered from. seo.js puts that HTML inside
+  `<div id="root">` only when the hash matches the `#dfresh-data` the page carries; after an admin edit the page
+  is rendered again with the bundle (in memory, until the content changes again). The browser hydrates it
+  (`src/index.js`, `hydrateRoot`), so the first screen paints before main.js. `/`, `/admin` and the dev server get
+  the empty shell and render in the browser as before.
+- Rules for public components (or hydration breaks): nothing read from window / document / media queries
+  during render (only in effects); `useSyncExternalStore` always gets a server snapshot; no portals in a page that
+  is pre-rendered (`ProductsDrawer inline`); the first render may not depend on the #hash, the width or saved
+  state. Width-dependent layout that must be right before JS (header compact <= 900px) is done in CSS.
 - Titles and descriptions come from existing ui_text keys only (`src/shared/pageMeta.js`, shared with the client,
   which updates `document.title` on in-app navigation): home `dFresh - {tagline} | {eyebrow}`, products
   `{all_h or category name} | dFresh`, legal `{lg_priv_s / lg_terms_h} | dFresh`; description = `lede`.

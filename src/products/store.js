@@ -24,9 +24,13 @@ function createStore(initial) {
 
 const variants = createStore({}); // { 'DZIND-DF008': 'DZIND-DF008-BUR' }
 const flipped = createStore(null); // card key or null
+// Server render and hydration: every page starts with no colour picked and no card flipped.
+const NO_VARIANTS = {};
+const noVariants = () => NO_VARIANTS;
+const notFlipped = () => false;
 
 export function useVariantChoice(productId) {
-  const map = useSyncExternalStore(variants.subscribe, variants.get);
+  const map = useSyncExternalStore(variants.subscribe, variants.get, noVariants);
   return map[productId] || '';
 }
 
@@ -35,7 +39,7 @@ export function setVariantChoice(productId, variantId) {
 }
 
 export function useFlipped(cardKey) {
-  return useSyncExternalStore(flipped.subscribe, () => flipped.get() === cardKey);
+  return useSyncExternalStore(flipped.subscribe, () => flipped.get() === cardKey, notFlipped);
 }
 
 export function setFlipped(cardKey, on) {

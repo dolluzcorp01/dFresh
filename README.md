@@ -40,7 +40,8 @@ Phase task files are in `docs/claude-tasks/` (finished ones in `docs/claude-task
 | `node server.js` | API only on 4012 (same as F5 "Run Backend" in VS Code) |
 | `npm run server` | API only, restarts on change (nodemon) |
 | `npm start` | React dev server only, always on 3000 (fails with the PID if 3000 is busy) |
-| `npm run build` | Production React build |
+| `npm run build` | Production React build, then `prerender` (postbuild) |
+| `npm run prerender` | Server bundle `build-ssr/ssr.js` + every public page per language pre-rendered into `build-ssr/pages.json` |
 | `npm run db:reset` | Local only: drop + create + schema + seed + app user |
 | `npm run media:sync` | Copy `assets/` to `media/`, then `media:build` |
 | `npm run media:build` | Generate product sizes and check every DB-referenced media file exists |
