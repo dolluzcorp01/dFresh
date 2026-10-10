@@ -150,7 +150,7 @@ export default function ProductsDrawer({ open, animate = true, inline = false, o
       <div className="wrap">
         <div className="grid4">
           {list.length
-            ? list.map((p, i) => <FlipCard key={p.id} product={p} index={i} />)
+            ? list.map((p, i) => <FlipCard key={p.id} product={p} index={i} eager={inline && i === 0} />)
             : <p className="empty" role="status">{t('none')}</p>}
         </div>
       </div>

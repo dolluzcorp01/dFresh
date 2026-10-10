@@ -31,7 +31,7 @@ function SpecSlide({ product: d }) {
   );
 }
 
-export default function ProductCarousel({ product: d, index, paused: flipped }) {
+export default function ProductCarousel({ product: d, index, eager = false, paused: flipped }) {
   const { t } = useI18n();
   const reduced = useReducedMotion();
   const ref = useRef(null);
@@ -111,7 +111,9 @@ export default function ProductCarousel({ product: d, index, paused: flipped }) 
               width={im.width || undefined}
               height={im.height || undefined}
               alt={i === 0 ? d.alt : `${d.alt} - ${t('card_photo', { n: i + 1 })}`}
-              loading="lazy"
+              // First photo of the products page's first card (its LCP image): not lazy, high priority.
+              loading={eager && i === 0 ? 'eager' : 'lazy'}
+              fetchPriority={eager && i === 0 ? 'high' : undefined}
               decoding="async"
               draggable="false"
             />

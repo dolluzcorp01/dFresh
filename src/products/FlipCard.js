@@ -20,7 +20,9 @@ export function resolveVariant(p, choice) {
   return { ...p, ...v, images: v.images && v.images.length ? v.images : p.images };
 }
 
-export default function FlipCard({ product: p, index = 0 }) {
+// eager: the first card of the products page: its first photo (the page's LCP image) loads at once, high priority.
+// Only that one: more eager photos measured slower first paint (Lighthouse mobile).
+export default function FlipCard({ product: p, index = 0, eager = false }) {
   const { t, settings } = useI18n();
   const openForm = useOpenForm();
   const key = useId();
@@ -58,7 +60,7 @@ export default function FlipCard({ product: p, index = 0 }) {
     <article className={`card${flipped ? ' flipped' : ''}`} data-id={p.id}>
       <div className="card-in">
         <div className="face front" aria-hidden={flipped} inert={flipped}>
-          <ProductCarousel product={d} index={index} paused={flipped} />
+          <ProductCarousel product={d} index={index} eager={eager} paused={flipped} />
           <div className="fb">
             <span className="idc">{d.id}</span>
             <h3>{d.name}</h3>

@@ -215,7 +215,7 @@ async function bodyFor(url, langs, boot) {
 // still loads it after 1 s. The plain shell keeps CRA's normal <script defer>.
 const afterPaint = (src) => `<link rel="preload" as="script" fetchpriority="low" href="${src}"><script>(function(){var d=0;function go(){if(d)return;d=1;`
   + `var s=document.createElement("script");s.src="${src}";document.head.appendChild(s)}`
-  + 'addEventListener("DOMContentLoaded",function(){requestAnimationFrame(function(){setTimeout(go,0)});setTimeout(go,1000)})})()</script>';
+  + 'addEventListener("DOMContentLoaded",function(){requestAnimationFrame(function(){setTimeout(go,0)});setTimeout(go,50)})})()</script>';
 
 function inject(template, head, body = '') {
   const page = body

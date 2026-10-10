@@ -27,7 +27,7 @@ if (container.firstElementChild) {
     ReactDOM.hydrateRoot(container, app);
   };
   requestAnimationFrame(() => setTimeout(hydrate, 0));
-  setTimeout(hydrate, 300);
+  setTimeout(hydrate, 50);
 } else {
   ReactDOM.createRoot(container).render(app);
 }

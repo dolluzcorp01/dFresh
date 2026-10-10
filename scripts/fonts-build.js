@@ -10,7 +10,10 @@
 //   (src/i18n/fonts.js labelFamily), so the switch shows every script without loading that script's font.
 // Output: src/fonts/*.woff2 (webpack fingerprints them into /static/media), src/styles/fonts.css (@font-face),
 // src/i18n/selfHostedFonts.json (what is self-hosted; fonts.js asks Google only for anything else, e.g. a new
-// language before this ran; preload = the Latin files the first screen uses, linked by scripts/prerender.js).
+// language before this ran).
+// No <link rel="preload"> for fonts: measured with Lighthouse mobile, preloading the two Latin files held the
+// first paint back (observed FCP ~2.2 s instead of ~0.4 s); with font-display: swap the text paints at once in
+// the fallback font instead.
 // Languages are data: nothing here names a language.
 require('dotenv').config({ quiet: true });
 
@@ -51,6 +54,20 @@ function faces(css) {
   return out;
 }
 
+// Symbols the public UI code itself renders (arrows, stars, ticks): every non-ASCII character in src/ outside
+// the admin. In a script font's subset (when the font has the glyph), they no longer pull in the Latin font.
+function uiSymbols() {
+  let out = '';
+  const walk = (dir) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) { if (e.name !== 'admin' && e.name !== 'fonts') walk(p); } else if (/\.(js|css)$/.test(e.name)) out += fs.readFileSync(p, 'utf8');
+    }
+  };
+  walk(path.join(ROOT, 'src'));
+  return [...new Set(out.match(/[\u0080-\u{10ffff}]/gu) || [])].join('');
+}
+
 const written = new Set();
 async function save(name, url) {
   const buf = await get(url, 'buffer');
@@ -79,7 +96,8 @@ async function latinFamily(family, report) {
 
 // One file with exactly the characters in text (Google `text=` subsetting, unicode-range included).
 async function subsetFamily(family, text, weights, cssFamily, file, report) {
-  const chars = [...new Set([...text])].filter((c) => c.trim()).sort().join('');
+  // Spaces too (a space missing from the subset would pull in the whole fallback font); no control characters.
+  const chars = [...new Set([...text])].filter((c) => c >= ' ' && c !== '\u007f').sort().join('');
   const css = await get(`https://fonts.googleapis.com/css2?family=${plus(family)}:wght@${weights}&text=${encodeURIComponent(chars)}&display=swap`);
   const [f] = faces(css);
   if (!f || !f.url) throw new Error(`no subset for ${family}`);
@@ -109,7 +127,7 @@ async function main() {
     for (const page of ['privacy', 'terms']) {
       try { legal.push((await content.getLegal(page, l.code)).data); } catch { /* no legal page: nothing to add */ }
     }
-    byFont.set(l.fontFamily, (byFont.get(l.fontFamily) || '') + JSON.stringify([boot, legal, langs]));
+    byFont.set(l.fontFamily, (byFont.get(l.fontFamily) || '') + JSON.stringify([boot, legal, langs]) + uiSymbols());
   }
   for (const [family, text] of byFont) {
     families.push(family);
@@ -120,7 +138,9 @@ async function main() {
   const labels = {};
   for (const l of langs.languages) {
     if (!l.fontFamily) continue;
-    labels[l.fontFamily] = (labels[l.fontFamily] || '') + l.switchLabel;
+    // + a space: the first font in a stack that covers U+0020 is the one CSS loads for line metrics, so a
+    // label face without it would pull in the full script font of every language on every page.
+    labels[l.fontFamily] = `${labels[l.fontFamily] || ' '}${l.switchLabel}`;
   }
   for (const [family, text] of Object.entries(labels)) {
     css += await subsetFamily(family, text, '600', `dFresh label ${family}`, `label-${slug(family)}.woff2`, report);
@@ -129,11 +149,7 @@ async function main() {
 
   for (const f of fs.readdirSync(FONTS)) if (f.endsWith('.woff2') && !written.has(f)) fs.unlinkSync(path.join(FONTS, f));
   fs.writeFileSync(CSS, css);
-  fs.writeFileSync(JSON_OUT, `${JSON.stringify({
-    families,
-    labels,
-    preload: [`${slug(BRAND)}-latin.woff2`, `${slug(def.fontFamily)}-latin.woff2`],
-  }, null, 2)}\n`);
+  fs.writeFileSync(JSON_OUT, `${JSON.stringify({ families, labels }, null, 2)}\n`);
   for (const [file, bytes, n] of report) console.log(`  ${file.padEnd(36)} ${String(Math.round(bytes / 102.4) / 10).padStart(6)} KB${n ? `  (${n} characters)` : ''}`);
   console.log(`fonts: ${report.length} files in src/fonts, src/styles/fonts.css, src/i18n/selfHostedFonts.json`);
   process.exit(0);
