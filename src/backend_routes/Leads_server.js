@@ -1,6 +1,8 @@
 // POST /api/dfresh/leads (spec D2, docs/06_API.md). Every lead is saved to MySQL first; e-mail and the Google
 // Sheet row are only queued here (mail_outbox / sync_outbox) in the SAME transaction, so a SendGrid or Google
 // outage can never lose a lead or show the visitor an error.
+// Visitor e-mail: brochure -> the copy link (when a PDF exists); every other form -> a confirmation with the
+// lead_ref (lead_ack). Both in the visitor's language, English fallback.
 // Order: form type -> honeypot (fake success, nothing saved) -> validation (rules.json) -> transaction:
 //   bump the year's lead_counters row (row lock: unique lead_ref, and it serialises the rate-limit count)
 //   -> rate limit by ip_hash -> leads + lead_products -> outbox rows -> commit.
@@ -59,7 +61,7 @@ async function loadLanguages() {
 // Everything the e-mails need besides the lead itself, read inside the transaction.
 async function mailContext(conn, { lang, def, productIds, optionPairs }) {
   const [settingRows] = await conn.query(
-    "SELECT setting_key, setting_value FROM site_settings WHERE setting_key IN ('lead_email', 'company_name', 'public_email')"
+    "SELECT setting_key, setting_value FROM site_settings WHERE setting_key IN ('lead_email', 'company_name', 'public_email', 'whatsapp_number', 'whatsapp_display')"
   );
   const settings = Object.fromEntries(settingRows.map((r) => [r.setting_key, (r.setting_value || '').trim()]));
 
@@ -85,7 +87,11 @@ async function mailContext(conn, { lang, def, productIds, optionPairs }) {
     if (row) options[field] = row.label;
   }
 
-  const uiKeys = ['mail_bro_subject', 'mail_bro_intro', 'download_brochure', 'consent'];
+  const uiKeys = [
+    'mail_bro_subject', 'mail_bro_intro', 'download_brochure', 'consent',
+    'thanks_name', 'mail_ack_subject', 'mail_ack_intro', 'mail_ack_ref', 'mail_ack_next_h', 'mail_ack_keep',
+    'ok_other', 'whatsapp_us', 'wa_general',
+  ];
   const [uiRows] = await conn.query(
     `SELECT k.text_key, COALESCE(t.value, e.value) AS value
        FROM ui_text_keys k
@@ -212,6 +218,21 @@ router.post('/leads', async (req, res) => {
         publicEmail: ctx.settings.public_email,
       });
       await outboxMail(conn, leadId, 'brochure_copy', v.email, copy);
+    }
+
+    // Visitor's confirmation with their lead_ref (every form except brochure, which gets the copy link above)
+    if (formType !== 'brochure') {
+      const ack = mailer.renderLeadAck({
+        htmlLang: langRow.html_lang,
+        ui: ctx.ui,
+        name: cols.full_name.split(/\s+/)[0],
+        leadRef,
+        whatsappNumber: ctx.settings.whatsapp_number,
+        whatsappDisplay: ctx.settings.whatsapp_display,
+        companyName: ctx.settings.company_name,
+        publicEmail: ctx.settings.public_email,
+      });
+      await outboxMail(conn, leadId, 'lead_ack', v.email, ack);
     }
 
     // Staff alert

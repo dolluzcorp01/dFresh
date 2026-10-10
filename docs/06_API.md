@@ -49,6 +49,8 @@ Field names per form_type:
 Status codes: 400 validation (with `fields: {name: errorKey}`; `consent` appears there too), 429 rate limit
 (`errorKey: 'e_rate'`; 5 per 10 min per `ip_hash`, from `rules.json`, env `LEAD_RATE_LIMIT_PER_10MIN` overrides),
 500 never leaks details. Honeypot filled: 200 `{ lead_ref: null }`, nothing saved.
+Queued with the lead (mail_outbox): staff alert; visitor brochure copy (brochure, when a PDF exists) or visitor
+confirmation `lead_ack` with the lead_ref (quote, sample, distributor, contact), in the visitor's language.
 Tokens: JWT (purpose `brochure`, HS256) signed with a key derived from `JWT_SECRET`, so they can never pass as an
 admin session; 15 min (`BROCHURE_TOKEN_TTL_MIN`) for the in-page download, 7 days for the e-mailed link.
 The client IP is `req.ip` with `trust proxy = loopback` (nginx on the same host must set `X-Forwarded-For`).

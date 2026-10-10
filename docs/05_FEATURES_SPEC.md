@@ -216,8 +216,11 @@ Common to all forms:
    (e.g. 5 submissions / 10 min / IP) -> 429 with `e_` style message.
 2. Normalise: trim, phone to 10 digits, GST upper, e-mail lower.
 3. In ONE transaction: insert `leads` (+ `lead_products`), generate `lead_ref`, enqueue `mail_outbox`
-   (staff alert to `lead_email` with every field, product IDs+names, language, page; and brochure copy if
-   brochure) and `sync_outbox` (Google Sheet, tab per form_type, columns: date, lead_ref, names, phone, e-mail,
+   (staff alert to `lead_email` with every field, product IDs+names, language, page; brochure copy if
+   brochure; for quote, sample, distributor and contact a short visitor confirmation `lead_ack` in the
+   visitor's language, English fallback: `thanks_name`, `mail_ack_intro`, the lead_ref under `mail_ack_ref`,
+   `mail_ack_next_h` + `ok_other` + `mail_ack_keep`, WhatsApp button `whatsapp_us`) and `sync_outbox`
+   (Google Sheet, tab per form_type, columns: date, lead_ref, names, phone, e-mail,
    business, type, town, products, quantity, message, extras, language, page, opened from).
    Every e-mail is sent FROM `site_settings.mail_from` (`connect@dolluzcorp.com`, the verified SendGrid sender);
    staff alerts go TO `site_settings.lead_email` (`info@dolluzcorp.com`). `MAIL_TEST_TO` (local only, never on the
@@ -225,6 +228,8 @@ Common to all forms:
 4. Respond `{ success, data: { lead_ref, brochure_token? } }`.
 5. Workers (every 15 s inside server.js, guarded so only one run at a time) send pending rows; on failure
    `attempts + 1`, `next_attempt_at` back-off 1, 5, 15, 60 min, give up after 8 -> status `failed` (visible in admin).
+   Outbox rows are deleted with their lead (FK cascade); a pending row whose lead is missing is marked
+   `cancelled` and never sent.
 
 ---------------------------------------------------------------------------------------------------
 ## E. Legal pages

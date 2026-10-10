@@ -7,6 +7,9 @@
 // - Disabled (MAIL_ENABLED / GSHEET_ENABLED not true, or not ready): rows stay 'pending'; the reason is
 //   logged once until it changes.
 // - A row left in 'sending' by a crash is released back to 'pending' after 10 minutes.
+// - A row whose lead no longer exists is never sent: every pass marks such pending rows 'cancelled', and each
+//   row is checked again right after it is claimed. (Both outboxes cascade-delete with their lead, so this
+//   only catches rows written with foreign keys off, e.g. a restore, or a lead deleted mid-pass.)
 const { getDBConnection } = require('../../config/db');
 const mailer = require('./mailer');
 const gsheet = require('./gsheet');
@@ -22,9 +25,10 @@ const STUCK_MIN = 10;
 const OUTBOXES = {
   mail: {
     table: 'mail_outbox', id: 'mail_id', doneStatus: 'sent', doneAt: 'sent_at',
-    cols: 'mail_id, to_email, subject, html_body, text_body',
+    cols: 'mail_id, lead_id, to_email, subject, html_body, text_body',
     ready: async () => mailer.readiness(),
     run: (r) => mailer.send({ to: r.to_email, subject: r.subject, html: r.html_body, text: r.text_body }),
+    doneCols: (sent) => ({ provider_msg_id: sent.providerId }),
   },
   sync: {
     table: 'sync_outbox', id: 'sync_id', doneStatus: 'done', doneAt: 'done_at',
@@ -41,6 +45,17 @@ const lastReason = {}; // outbox -> last logged "not ready" reason
 let running = false;
 let timer = null;
 
+const leadGone = (leadId) => `lead ${leadId} no longer exists`;
+
+async function cancelOrphans(table) {
+  const [r] = await db.query(
+    `UPDATE ${table} o LEFT JOIN leads l ON l.lead_id = o.lead_id
+        SET o.status = 'cancelled', o.last_error = CONCAT('lead ', o.lead_id, ' no longer exists')
+      WHERE o.status = 'pending' AND o.lead_id IS NOT NULL AND l.lead_id IS NULL`
+  );
+  if (r.affectedRows) console.warn(`${table}: ${r.affectedRows} row(s) cancelled, their lead no longer exists`);
+}
+
 const backoffMinutes = (attempts) => BACKOFF_MIN[Math.min(attempts, BACKOFF_MIN.length) - 1];
 
 async function processOutbox(name) {
@@ -50,6 +65,7 @@ async function processOutbox(name) {
     `UPDATE ${table} SET status = 'pending' WHERE status = 'sending' AND next_attempt_at < NOW() - INTERVAL ? MINUTE`,
     [STUCK_MIN]
   );
+  await cancelOrphans(table);
 
   const state = await o.ready();
   if (!state.ok) {
@@ -77,11 +93,20 @@ async function processOutbox(name) {
       [row[id]]
     );
     if (claim.affectedRows !== 1) continue;
+    if (row.lead_id !== null) {
+      const [[lead]] = await db.query('SELECT 1 AS ok FROM leads WHERE lead_id = ?', [row.lead_id]);
+      if (!lead) {
+        await db.query(`UPDATE ${table} SET status = 'cancelled', last_error = ? WHERE ${id} = ?`, [leadGone(row.lead_id), row[id]]);
+        console.warn(`${table} #${row[id]} cancelled: ${leadGone(row.lead_id)}`);
+        continue;
+      }
+    }
     try {
-      await o.run(row);
+      const result = await o.run(row);
+      const extra = o.doneCols ? o.doneCols(result) : {};
       await db.query(
-        `UPDATE ${table} SET status = ?, ${o.doneAt} = NOW(), attempts = attempts + 1, last_error = NULL WHERE ${id} = ?`,
-        [o.doneStatus, row[id]]
+        `UPDATE ${table} SET status = ?, ${o.doneAt} = NOW(), attempts = attempts + 1, last_error = NULL${Object.keys(extra).map((c) => `, ${c} = ?`).join('')} WHERE ${id} = ?`,
+        [o.doneStatus, ...Object.values(extra), row[id]]
       );
       sent += 1;
     } catch (err) {

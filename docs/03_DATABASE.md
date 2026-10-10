@@ -37,8 +37,8 @@ Put this pattern in ONE helper (`src/backend_routes/i18n-sql.js`) and reuse it. 
 | `brochures` | One PDF per language | file at `private/brochures/<lang_code>/<file_name>`; English fallback |
 | `leads` + `lead_products` | Every form submission | one table, `form_type` enum; distributor extras in `details_json`; status workflow; `staff_notes`, `ip_hash` INTERNAL |
 | `lead_counters` | Running lead number per year | one row per 2-digit year (IST); bumped inside the lead transaction (row lock = unique `lead_ref`, also serialises the rate-limit count) |
-| `mail_outbox` | E-mails waiting to be sent | worker retries with back-off; never lose a lead e-mail. Sender is read at send time from `site_settings.mail_from` / `mail_from_name` (not stored per row) |
-| `sync_outbox` | Google Sheet rows waiting | same retry model |
+| `mail_outbox` | E-mails waiting to be sent (`purpose`: `lead_alert`, `brochure_copy`, `lead_ack`) | worker retries with back-off; never lose a lead e-mail. Sender is read at send time from `site_settings.mail_from` / `mail_from_name` (not stored per row). `lead_id` -> `leads` ON DELETE CASCADE; status `cancelled` = its lead no longer exists (never sent). `provider_msg_id` = SendGrid x-message-id of a sent row |
+| `sync_outbox` | Google Sheet rows waiting | same retry model, same cascade and `cancelled` rule |
 | `admin_users` | Who may use the admin + role | `emp_id` VARCHAR(20); seeded DZIND002 + DZIND148 as admin |
 | `audit_log` | Every admin change | before/after JSON |
 

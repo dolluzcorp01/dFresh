@@ -46,7 +46,8 @@ async function sender() {
 
 /**
  * Sends one message. { to, subject, html, text } - text is mandatory.
- * Returns the message as handed to the transport (from / to after the MAIL_TEST_TO redirect).
+ * Returns the message as handed to the transport (from / to after the MAIL_TEST_TO redirect) plus providerId
+ * (SendGrid's x-message-id; a test transport may return { id }).
  */
 async function send({ to, subject, html, text }) {
   if (!text || !String(text).trim()) throw new Error('mailer: plain-text part is mandatory');
@@ -60,13 +61,16 @@ async function send({ to, subject, html, text }) {
     html,
     text,
   };
+  let providerId = null;
   if (transport) {
-    await transport(message);
+    const r = await transport(message);
+    providerId = (r && r.id) || null;
   } else {
     sgMail.setApiKey(process.env.SENDGRID_API_KEY);
-    await sgMail.send(message);
+    const [response] = await sgMail.send(message);
+    providerId = (response && response.headers && response.headers['x-message-id']) || null;
   }
-  return message;
+  return { ...message, providerId };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -89,7 +93,7 @@ function siteBase() {
 }
 
 function button(href, label) {
-  return `<a href="${esc(href)}" style="display:inline-block;background:${C.ink};color:${C.goldL};font:600 15px/1 ${FONT};text-decoration:none;padding:15px 26px;border-radius:999px">${esc(label)}</a>`;
+  return `<a href="${esc(href)}" style="display:inline-block;background:${C.ink};color:${C.goldL};font:600 15px/1.3 ${FONT};text-decoration:none;padding:13px 26px;border-radius:999px">${esc(label)}</a>`;
 }
 
 // Branded shell: ink header with the on-dark logo and a gold rule, paper body, beige footer.
@@ -201,4 +205,35 @@ function renderBrochureCopy({ htmlLang, ui, name, link, companyName, publicEmail
   return { subject, html, text };
 }
 
-module.exports = { send, readiness, setTransport, renderLeadAlert, renderBrochureCopy, esc };
+/**
+ * Visitor confirmation (quote, sample, distributor, contact), in the visitor's language: ui_text thanks_name
+ * ({name}), mail_ack_subject ({ref}), mail_ack_intro, mail_ack_ref, mail_ack_next_h, ok_other, mail_ack_keep,
+ * whatsapp_us, wa_general. { htmlLang, ui, name, leadRef, whatsappNumber, whatsappDisplay, companyName, publicEmail }
+ */
+function renderLeadAck({ htmlLang, ui, name, leadRef, whatsappNumber, whatsappDisplay, companyName, publicEmail }) {
+  const subject = String(ui.mail_ack_subject).replace(/\{ref\}/g, leadRef);
+  const title = String(ui.thanks_name).replace(/\{name\}/g, name);
+  const wa = whatsappNumber ? `https://wa.me/${encodeURIComponent(whatsappNumber)}?text=${encodeURIComponent(ui.wa_general || '')}` : null;
+  const html = shell({
+    htmlLang,
+    title: subject,
+    preheader: `${ui.mail_ack_intro} ${ui.mail_ack_ref}: ${leadRef}`,
+    body: `<h1 style="margin:0 0 10px;font:700 24px/1.25 Saira,Arial,sans-serif;color:${C.ink}">${esc(title)}</h1>`
+      + `<p style="margin:0 0 20px">${esc(ui.mail_ack_intro)}</p>`
+      + `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 22px"><tr><td style="background:${C.beige};border:1px solid ${C.line};border-radius:12px;padding:14px 20px">`
+      + `<p style="margin:0 0 4px;font:600 12px/1.4 ${FONT};color:${C.ink3}">${esc(ui.mail_ack_ref)}</p>`
+      + `<p style="margin:0;font:700 22px/1.2 Saira,Arial,sans-serif;letter-spacing:.04em;color:${C.ink}">${esc(leadRef)}</p>`
+      + '</td></tr></table>'
+      + `<h2 style="margin:0 0 6px;font:700 17px/1.3 Saira,Arial,sans-serif;color:${C.ink}">${esc(ui.mail_ack_next_h)}</h2>`
+      + `<p style="margin:0 0 6px">${esc(ui.ok_other)}</p>`
+      + `<p style="margin:0 0 22px;color:${C.ink2}">${esc(ui.mail_ack_keep)}</p>`
+      + (wa ? `<p style="margin:0">${button(wa, `${ui.whatsapp_us}${whatsappDisplay ? ` ${whatsappDisplay}` : ''}`)}</p>` : ''),
+    footer: `${esc(companyName)}${publicEmail ? ` &middot; <a href="mailto:${esc(publicEmail)}" style="color:${C.ink2}">${esc(publicEmail)}</a>` : ''}`,
+  });
+  const text = `${title}\n\n${ui.mail_ack_intro}\n\n${ui.mail_ack_ref}: ${leadRef}\n\n${ui.mail_ack_next_h}\n${ui.ok_other}\n${ui.mail_ack_keep}\n`
+    + (wa ? `\n${ui.whatsapp_us}${whatsappDisplay ? ` ${whatsappDisplay}` : ''}: ${wa}\n` : '')
+    + `\n${companyName}${publicEmail ? ` - ${publicEmail}` : ''}\n`;
+  return { subject, html, text };
+}
+
+module.exports = { send, readiness, setTransport, renderLeadAlert, renderBrochureCopy, renderLeadAck, esc };
