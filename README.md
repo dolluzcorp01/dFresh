@@ -28,15 +28,18 @@ Phase task files are in `docs/claude-tasks/` (finished ones in `docs/claude-task
    - Frontend: `npm start` - React on http://localhost:3000. If 3000 is busy it moves to the next free port
      (3001, 3002 ...) by itself and prints the one it picked. It never takes the API port 4012.
    - Or both in one terminal: `npm run dev`.
-   In development the API accepts any `http://localhost:<port>` origin (CORS), so React on 3001 works too.
+   React always runs on 3000: if 3000 (or the API's 4012) is busy, it stops and prints the PID holding the port
+  and the command that frees it. `npm run stop` frees both; `npm run dev:fresh` = stop, then dev.
 
 ## Commands
 | Command | What |
 |---|---|
 | `npm run dev` | API (nodemon) + React dev server together |
+| `npm run dev:fresh` | `npm run stop`, then `npm run dev` |
+| `npm run stop` | Stop whatever listens on 4012 (API) and 3000 (React dev); prints what it stopped |
 | `node server.js` | API only on 4012 (same as F5 "Run Backend" in VS Code) |
 | `npm run server` | API only, restarts on change (nodemon) |
-| `npm start` | React dev server only, 3000 or the next free port |
+| `npm start` | React dev server only, always on 3000 (fails with the PID if 3000 is busy) |
 | `npm run build` | Production React build |
 | `npm run db:reset` | Local only: drop + create + schema + seed + app user |
 | `npm run media:sync` | Copy `assets/` to `media/`, then `media:build` |

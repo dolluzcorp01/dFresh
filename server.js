@@ -8,6 +8,7 @@ const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const { getDBConnection } = require('./config/db');
 const { publicUrlProblems } = require('./config/urls');
+const { busyMessage } = require('./config/ports');
 const publicRoutes = require('./src/backend_routes/Public_server');
 const leadRoutes = require('./src/backend_routes/Leads_server');
 const brochureRoutes = require('./src/backend_routes/Brochure_server');
@@ -31,7 +32,7 @@ if (urlProblems.length) {
 // nginx on the same host forwards the visitor's address; req.ip (lead rate limit) reads it only from there.
 app.set('trust proxy', 'loopback');
 
-// Production: only the public site URL. Dev: any localhost port (CRA may pick 3001, 3002 ...).
+// Production: only the public site URL. Dev: any localhost port (React dev 3000, a local build on 4013 ...).
 const allowedOrigins = [process.env.PUBLIC_SITE_URL].filter(Boolean);
 app.use(cors({
   credentials: true,
@@ -159,7 +160,7 @@ app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars
 // on failure, and exit non-zero so F5 / pm2 / the terminal show that it did not start.
 function failListen(err) {
   if (err.code === 'EADDRINUSE') {
-    console.error(`Port ${PORT} is already in use - stop the other dFresh API (or whatever holds the port) and try again.`);
+    busyMessage(PORT, 'dFresh API').forEach((l) => console.error(l));
   } else {
     console.error(`dFresh API could not start on port ${PORT}: ${err.code || err.message}`);
   }

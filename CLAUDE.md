@@ -33,6 +33,10 @@ The approved look, copy, animations and interactions come from that preview. Mat
   Tool: `scripts/visual-parity/` (add the phase's sections to `measure.js`; usage in its header).
   A difference that is data, not layout (e.g. fewer active banners), is listed with its reason, not "fixed".
 - If something in a phase conflicts with these rules or the docs, STOP and ask. Do not guess.
+- **Process hygiene.** Before finishing ANY turn, stop every process you started (API, web dev server, preview /
+  build servers, browsers you launched) and end the turn with a line `Stopped: ...` naming each one and its port
+  (`npm run stop` frees 4012 + 3000; stop any other port you used by its PID). Never leave a background server
+  running between turns. If you started nothing, say `Stopped: nothing started this turn`.
 - "Be careful" standard: check end to end before and after. Never state a count or result without
   re-checking it against the actual file, DB row or screen. A check that could not run is "not verified", never "pass".
 
@@ -67,7 +71,8 @@ The approved look, copy, animations and interactions come from that preview. Mat
     except through npm or git commands.
 
 ## Commands (after Phase 0)
-- `npm run dev` - API (nodemon server.js) + React dev server together
+- `npm run dev` - API (nodemon server.js) + React dev server together (React always on 3000, never moves)
+- `npm run stop` - stop whatever listens on 4012 and 3000; `npm run dev:fresh` - stop, then dev
 - `npm run server` / `npm start` - API only / React only
 - `npm run db:reset` - drop + create + schema + seed + migrations on LOCAL dev DB only (refuses when NODE_ENV=production)
 - `npm run cache:bust` - clear the running API's content cache after a hand edit in the DB (dev only)

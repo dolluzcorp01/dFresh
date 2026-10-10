@@ -27,8 +27,10 @@
   },
   "scripts": {
     "dev": "concurrently -k -n api,web -c yellow,cyan \"npm:server\" \"npm:start\"",
+    "dev:fresh": "npm run stop && npm run dev",
     "server": "nodemon server.js",
     "start": "node scripts/start-web.js",
+    "stop": "node scripts/stop.js",
     "prebuild": "node scripts/i18n-fallback.js",
     "build": "react-scripts build",
     "i18n:fallback": "node scripts/i18n-fallback.js",
