@@ -35,7 +35,6 @@ dfresh/
   scripts/
     db-reset.js                 # local only: drop/create/schema/seed (refuses in production)
     media-build.js              # sharp: originals -> /media/<type>/<size>/...
-    import-excel.js             # Product List Excel -> DB (also used by admin import)
   media/                        # PUBLIC, served at /media (copied from kit /assets)
     products/  banners/desktop/  banners/mobile/  logo/
   private/
@@ -61,7 +60,11 @@ dfresh/
       Brochure_server.js        # /api/dfresh/brochure     (token download)
       Admin_login_server.js     # /api/dfresh/admin/login  (password + OTP, logout, me)
       Admin_server.js           # /api/dfresh/admin/*      (CRUD, import/export, leads)
-      auth.js                   # readSession, requireAdmin(role)
+      admin-entities.js         # admin CRUD definitions + generic translated load/create/update/delete
+      admin-media.js            # uploads: magic bytes, sharp WebP (products, banners), brochure PDFs
+      product-excel.js          # Product List Excel (v0.2 layout) export, dry-run diff, apply
+      audit.js  csv.js          # audit_log writer; CSV for exports / translators
+      auth.js                   # sessions, challenge tokens, revoke check, requireAuth / requireRole
       mailer.js                 # THE ONLY place that talks to SendGrid
       outbox-worker.js          # mail_outbox + sync_outbox processors (setInterval inside server.js)
       gsheet.js                 # Google Sheets append

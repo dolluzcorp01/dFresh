@@ -7,6 +7,8 @@
 // - Disabled (MAIL_ENABLED / GSHEET_ENABLED not true, or not ready): rows stay 'pending'; the reason is
 //   logged once until it changes.
 // - A row left in 'sending' by a crash is released back to 'pending' after 10 minutes.
+// - Sign-in codes (purpose 'admin_otp') are wiped from the row once sent: the outbox must not keep a code.
+//   One still pending after the code's 10 minutes is cancelled and wiped instead (a late code is useless).
 // - A row whose lead no longer exists is never sent: every pass marks such pending rows 'cancelled', and each
 //   row is checked again right after it is claimed. (Both outboxes cascade-delete with their lead, so this
 //   only catches rows written with foreign keys off, e.g. a restore, or a lead deleted mid-pass.)
@@ -25,10 +27,18 @@ const STUCK_MIN = 10;
 const OUTBOXES = {
   mail: {
     table: 'mail_outbox', id: 'mail_id', doneStatus: 'sent', doneAt: 'sent_at',
-    cols: 'mail_id, lead_id, to_email, subject, html_body, text_body',
+    cols: 'mail_id, lead_id, purpose, to_email, subject, html_body, text_body',
     ready: async () => mailer.readiness(),
+    cleanup: () => db.query(
+      `UPDATE mail_outbox SET status = 'cancelled', subject = 'dFresh admin sign-in code (expired, removed)',
+              html_body = '-', text_body = '-', last_error = 'sign-in code expired before it was sent'
+        WHERE purpose = 'admin_otp' AND status = 'pending' AND created_at < NOW() - INTERVAL 10 MINUTE`
+    ),
     run: (r) => mailer.send({ to: r.to_email, subject: r.subject, html: r.html_body, text: r.text_body }),
-    doneCols: (sent) => ({ provider_msg_id: sent.providerId }),
+    doneCols: (sent, r) => ({
+      provider_msg_id: sent.providerId,
+      ...(r.purpose === 'admin_otp' ? { subject: 'dFresh admin sign-in code (removed after sending)', html_body: '-', text_body: '-' } : {}),
+    }),
   },
   sync: {
     table: 'sync_outbox', id: 'sync_id', doneStatus: 'done', doneAt: 'done_at',
@@ -66,6 +76,7 @@ async function processOutbox(name) {
     [STUCK_MIN]
   );
   await cancelOrphans(table);
+  if (o.cleanup) await o.cleanup();
 
   const state = await o.ready();
   if (!state.ok) {
@@ -103,7 +114,7 @@ async function processOutbox(name) {
     }
     try {
       const result = await o.run(row);
-      const extra = o.doneCols ? o.doneCols(result) : {};
+      const extra = o.doneCols ? o.doneCols(result, row) : {};
       await db.query(
         `UPDATE ${table} SET status = ?, ${o.doneAt} = NOW(), attempts = attempts + 1, last_error = NULL${Object.keys(extra).map((c) => `, ${c} = ?`).join('')} WHERE ${id} = ?`,
         [o.doneStatus, ...Object.values(extra), row[id]]

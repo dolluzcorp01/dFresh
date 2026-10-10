@@ -9,6 +9,8 @@ const { getDBConnection } = require('./config/db');
 const publicRoutes = require('./src/backend_routes/Public_server');
 const leadRoutes = require('./src/backend_routes/Leads_server');
 const brochureRoutes = require('./src/backend_routes/Brochure_server');
+const adminLoginRoutes = require('./src/backend_routes/Admin_login_server');
+const adminRoutes = require('./src/backend_routes/Admin_server');
 const outboxWorker = require('./src/backend_routes/outbox-worker');
 const contentCache = require('./src/backend_routes/content-cache');
 const { version } = require('./package.json');
@@ -91,6 +93,9 @@ if (!isProd) {
 app.use('/api/dfresh', publicRoutes);
 app.use('/api/dfresh', leadRoutes);
 app.use('/api/dfresh', brochureRoutes);
+// Sign-in first: /admin/login and /admin/login/verify must not hit the session check of Admin_server.
+app.use('/api/dfresh', adminLoginRoutes);
+app.use('/api/dfresh', adminRoutes);
 
 // Malformed JSON, oversized body or any error a route did not handle: JSON, never a stack trace.
 app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars

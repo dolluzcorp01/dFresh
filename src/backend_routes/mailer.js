@@ -236,4 +236,25 @@ function renderLeadAck({ htmlLang, ui, name, leadRef, whatsappNumber, whatsappDi
   return { subject, html, text };
 }
 
-module.exports = { send, readiness, setTransport, renderLeadAlert, renderBrochureCopy, renderLeadAck, esc };
+/** Admin sign-in code (English, staff only). { name, code, minutes, companyName } */
+function renderLoginCode({ name, code, minutes, companyName }) {
+  const subject = `dFresh admin sign-in code: ${code}`;
+  const html = shell({
+    title: subject,
+    preheader: `Your code is valid for ${minutes} minutes.`,
+    body: `<p style="margin:0 0 14px">Hello ${esc(name)},</p>`
+      + '<p style="margin:0 0 18px">Your dFresh admin sign-in code is:</p>'
+      + `<p style="margin:0 0 18px;font:700 32px/1 Saira,Arial,sans-serif;letter-spacing:.3em;color:${C.ink}">${esc(code)}</p>`
+      + `<p style="margin:0;color:${C.ink2}">It is valid for ${esc(minutes)} minutes. If you did not try to sign in, tell the dFresh admin.</p>`,
+    footer: `dFresh admin &middot; ${esc(companyName)}`,
+  });
+  const text = `Hello ${name},
+
+Your dFresh admin sign-in code is: ${code}
+
+It is valid for ${minutes} minutes. If you did not try to sign in, tell the dFresh admin.
+`;
+  return { subject, html, text };
+}
+
+module.exports = { send, readiness, setTransport, renderLeadAlert, renderBrochureCopy, renderLeadAck, renderLoginCode, esc };

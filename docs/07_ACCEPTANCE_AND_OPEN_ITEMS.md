@@ -41,3 +41,5 @@
 | 14 | Staff WhatsApp alert for new leads needs WhatsApp Business API; Phase 1 = e-mail alert only | Dolluz | none |
 | 15 | Confirm dev/prod API port 4012 is free on the droplet | Pavithran | Phase 0 |
 | 16 | Lighthouse mobile >= 85 - measured 66 median locally (unreliable Windows runs; Phase 2 shell = 88). Hard gate in Phase 8, verified on PageSpeed Insights after staging deploy. | Pavithran | Phase 8 |
+| 17 | First real admin sign-in (dAdmin password + e-mailed code): Claude has no dAdmin password, so Phase 7 tested sessions, roles and the code checks with signed test sessions only. Sign in once with a real account and confirm the code e-mail arrives (MAIL_TEST_TO redirects it locally) | Pavithran | admin login |
+| 18 | Public `/languages` and `/bootstrap` are cached by browsers (`max-age=60, stale-while-revalidate=600`): a language switched off (or any admin edit) can still show to a visitor who loaded the site in the last minute, longer while the stale copy revalidates. The server side changes at once. Accept, or shorten the max-age | Shoban | none |
