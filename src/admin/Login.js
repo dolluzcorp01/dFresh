@@ -3,6 +3,10 @@
 // back, it submits itself when the sixth digit is in), "Resend code" after a 30 s countdown. When the server
 // says the code is gone (data.restart: expired, too many tries, timed out) the form goes back to step 1 with the
 // e-mail kept and the server's message shown.
+// Truthful: "We sent a code" only when the server says the mail really went out (data.mail === 'sent'). Outside
+// production the server may open the code step without a mail (switched off or failed, data.mailNote); the
+// screen then says so and points to the [dev] line in the API terminal. In production an unsent code is an
+// error on step 1 (503), so the code step never opens without a mail.
 import { useEffect, useRef, useState } from 'react';
 import { api } from './adminApi';
 import { mediaUrl } from '../utils/api';
@@ -15,6 +19,9 @@ const OFFLINE = 'Cannot reach the dFresh server. Check your connection and try a
 
 // Server message, or a plain one when the request never reached the server.
 const messageOf = (err) => (err && err.status ? err.message : OFFLINE);
+
+// Development only: why no mail came, and where the code is instead.
+const notSent = (data) => `${data.mailNote || 'No e-mail was sent'}, so no code was e-mailed to ${data.sentTo}. Development only: the code is printed in the API terminal ([dev] line).`;
 
 function EyeIcon({ open }) {
   return (
@@ -90,7 +97,7 @@ export default function Login({ onSignedIn }) {
   const [showPw, setShowPw] = useState(false);
   const [caps, setCaps] = useState(false);
   const [digits, setDigits] = useState(empty);
-  const [sentTo, setSentTo] = useState('');
+  const [sent, setSent] = useState(null); // { sentTo, mail, mailNote } from the server
   const [wait, setWait] = useState(0); // seconds until "Resend code" works
   const [busy, setBusy] = useState(''); // '' | 'password' | 'code' | 'resend'
   const [error, setError] = useState(null);
@@ -124,7 +131,7 @@ export default function Login({ onSignedIn }) {
     setError(null);
     try {
       const data = await api.send('POST', '/login', { email, password });
-      setSentTo(data.sentTo);
+      setSent(data);
       setWait(data.resendAfter || 30);
       setPassword('');
       setShowPw(false);
@@ -163,10 +170,10 @@ export default function Login({ onSignedIn }) {
     setInfo(null);
     try {
       const data = await api.send('POST', '/login/resend');
-      setSentTo(data.sentTo);
+      setSent(data);
       setWait(data.resendAfter || 30);
       setDigits(empty());
-      setInfo(`A new code was sent to ${data.sentTo}. The old code no longer works.`);
+      setInfo(data.mail === 'sent' ? `A new code was sent to ${data.sentTo}. The old code no longer works.` : null);
     } catch (err) {
       if (err.data && err.data.data && err.data.data.restart) restart(err.message);
       else {
@@ -214,7 +221,12 @@ export default function Login({ onSignedIn }) {
         ) : (
           <form className="a-login" onSubmit={(e) => { e.preventDefault(); verify(digits.join('')); }} aria-busy={busy === 'code'}>
             <h1>Enter your code</h1>
-            <p className="a-muted" id="a-code-label">We sent a 6-digit code to <strong>{sentTo}</strong>. It works for 10 minutes.</p>
+            {sent && sent.mail === 'sent' ? (
+              <p className="a-muted" id="a-code-label">We sent a 6-digit code to <strong>{sent.sentTo}</strong>. It works for 10 minutes.</p>
+            ) : (
+              <p className="a-muted" id="a-code-label">Type the 6-digit code. It works for 10 minutes.</p>
+            )}
+            {sent && sent.mail !== 'sent' && <Notice kind="warn">{notSent(sent)}</Notice>}
             <CodeBoxes digits={digits} setDigits={setDigits} disabled={busy === 'code'} onComplete={verify} />
             <Notice kind="error">{error}</Notice>
             <Notice kind="ok">{info}</Notice>
