@@ -82,7 +82,7 @@ dfresh/
 - `const db = getDBConnection('dfresh').promise();` at the top of each route file.
 - Responses: `{ success: true, data }` or `{ success: false, message }` with the right HTTP status.
 - Frontend calls go through `apiFetch()` in `src/utils/api.js` (`credentials: 'include'`, base URL from
-  `REACT_APP_API` in production, `http://localhost:4012` in dev).
+  `REACT_APP_API` in production, empty = the site's own origin (the deployed setup), `http://localhost:4012` in dev).
 - Files: PascalCase components, camelCase utils, `*_server.js` for route modules (Inside D naming).
 - Every DB change after Phase 0 = a new file in `database/migrations/` + update `docs/03_DATABASE.md`.
 - Comment WHY, not what. Keep functions small. No dead code, no console noise in production.
@@ -91,7 +91,8 @@ dfresh/
 See `.env.example` in the repo root. Key groups: server (PORT, NODE_ENV, PUBLIC_SITE_URL), DB (DB_HOST, DB_USER,
 DB_PASSWORD, DB_NAME=dfresh, DADMIN_DB_NAME=dadmin), auth (JWT_SECRET shared with dAdmin, ADMIN_APP_KEY=dFresh),
 mail (SENDGRID_API_KEY, MAIL_ENABLED), Google (GSHEET_ENABLED, GOOGLE_SERVICE_ACCOUNT_JSON path), security (IP_HASH_SALT,
-BROCHURE_TOKEN_TTL_MIN), React (REACT_APP_API, REACT_APP_SITE_URL).
+BROCHURE_TOKEN_TTL_MIN), SEO (SEO_NOINDEX on staging only), local (SERVE_BUILD), React (REACT_APP_API, empty in production).
+The full server checklist is in `deploy/DEPLOY.md`.
 
 ## Performance budget (brief: < 3 s on 4G, Lighthouse >= 85 mobile)
 - Images are separate files (never base64), lazy-loaded, `srcset` 400/800/1200, explicit width/height.
@@ -101,14 +102,33 @@ BROCHURE_TOKEN_TTL_MIN), React (REACT_APP_API, REACT_APP_SITE_URL).
 - Fonts: load only the active language's script font (`languages.font_family`), `display=swap`.
 - Admin is a separate lazy chunk - it must add 0 KB to the public bundle.
 - Content API responses are cached in memory and with `Cache-Control` + `ETag`.
+- First screen without API round trips: the server writes the languages list and the page language's bootstrap
+  into the HTML (`<script id="dfresh-data">`, seo.js); I18nProvider seeds its caches from it.
+- Saira's stylesheet is not render-blocking (preload + swap). Home sections below the hero use
+  `content-visibility: auto`; no component may force a layout on mount (no getBoundingClientRect / innerWidth in a
+  mount effect: use IntersectionObserver / matchMedia), or those skipped sections get laid out anyway.
+- Text compression is nginx's job (gzip, deploy/nginx). Measuring locally: put a gzip proxy in front, or the
+  "text compression" audit alone costs ~1.8 s.
 
 ## SEO approach (CRA without server rendering)
 In production `server.js` serves `build/index.html` but first injects, per URL and language: `<html lang>`,
 `<title>`, meta description, canonical, `hreflang` alternates for every active language + `x-default`,
 Open Graph tags and JSON-LD (Organization, LocalBusiness, Product list). `/sitemap.xml` and `/robots.txt`
-are generated from the DB. See `seo.js` in Phase 8.
+are generated from the DB. See `src/backend_routes/seo.js`.
+- Titles and descriptions come from existing ui_text keys only (`src/shared/pageMeta.js`, shared with the client,
+  which updates `document.title` on in-app navigation): home `dFresh - {tagline} | {eyebrow}`, products
+  `{all_h or category name} | dFresh`, legal `{lg_priv_s / lg_terms_h} | dFresh`; description = `lede`.
+- Paths are resolved exactly like the client router: unknown / wrongly cased prefix or a page without prefix -> 301
+  to the same page in the right / default language, unknown page -> 301 to that language's home, a missing file -> 404.
+  `/` keeps the client's language pick (saved / browser language) and carries the default language's tags.
+- JSON-LD Product items have name, image, sku, brand, description, category - never offers or price (Phase 1).
+  Google's Product snippet wants offers / review / rating, so the Rich Results Test is expected to list them as
+  "not eligible" until prices exist; the schema itself is valid (open item 19).
+- `SEO_NOINDEX=true` (staging): every page `noindex`, robots.txt disallows all. `/admin` is always `noindex`.
 
 ## Deployment (Phase 8)
+Step by step, env checklist and every `<DOMAIN>` placeholder: `deploy/DEPLOY.md` (+ `deploy/nginx/dfresh.conf`,
+`deploy/ecosystem.config.js`, `deploy/backup.sh`).
 nginx -> `server.js` (serves API + React build) under pm2 as `dfresh`. Build React on a dev machine or CI
 if the droplet runs out of memory. `media/` and `private/brochures/` live outside git on the server
 (upload via admin), originals backed up.

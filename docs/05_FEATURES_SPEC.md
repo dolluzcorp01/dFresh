@@ -279,3 +279,10 @@ Screens:
 - `/sitemap.xml` (every language x home/products/privacy/terms + category filter URLs), `/robots.txt`
   (disallow /admin, /api).
 - Mobile load < 3 s on 4G, Lighthouse >= 85 (performance, accessibility, best practices, SEO) on mobile.
+- Phase 8 changes against the preview, for accessibility (4.5:1 text contrast, rule 12) - not layout:
+  `--ink-3` #7A766C -> #6F6B62 (4.37:1 -> 5.1:1 on paper); WhatsApp buttons WITH text use `--wa-d` #15803D
+  (white on the brand green #1FA855 is 3.1:1; the round icon-only button keeps #1FA855); range ring labels ink-2
+  (the ring fades back items); filter-chip counts opacity .55 -> .68; footer column headings are h3 (were h4
+  after an h2), same look; a focused Google map shows an ink ring.
+- Form success view: the preview's grey "Preview only: nothing is sent..." line is, on the live site, the
+  visitor's reference: "{mail_ack_ref}: DFL-xxxxxx. {mail_ack_keep}" (same size, same place, parity 0 px).

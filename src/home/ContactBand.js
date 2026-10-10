@@ -3,6 +3,7 @@
 // (the map_load text sits underneath until it paints) and an "Open in Google Maps" link, both from the
 // office_map_query / godown_map_query settings. On hover devices the sample and WhatsApp buttons throw a
 // little paper confetti (at most every 1.5 s each), as in the preview.
+import { useEffect, useRef, useState } from 'react';
 import { useI18n } from '../i18n/useT';
 import Reveal from '../components/Reveal';
 import { useOpenForm } from '../forms/FormsProvider';
@@ -26,13 +27,32 @@ function confetti(e) {
   burst(r.left + r.width / 2, r.top, 10);
 }
 
+// Keyboard focus inside a map: the cross-origin iframe matches no :focus selector in this page, so the ring is a
+// class set while this page's window is blurred with the iframe as its active element.
+function useFrameFocus() {
+  const ref = useRef(null);
+  const [focused, setFocused] = useState(false);
+  useEffect(() => {
+    const onBlur = () => setTimeout(() => setFocused(document.activeElement === ref.current), 0);
+    const onFocus = () => setFocused(false);
+    window.addEventListener('blur', onBlur);
+    window.addEventListener('focus', onFocus);
+    return () => {
+      window.removeEventListener('blur', onBlur);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, []);
+  return [ref, focused];
+}
+
 function Visit({ name, address, query }) {
   const { t } = useI18n();
+  const [frameRef, frameFocused] = useFrameFocus();
   return (
     <Reveal className="vc">
-      <div className="mapf">
+      <div className={`mapf${frameFocused ? ' focused' : ''}`}>
         <span>{t('map_load')}</span>
-        {query && <iframe title={t('map_frame', { place: name })} loading="lazy" referrerPolicy="no-referrer-when-downgrade" src={embedUrl(query)} />}
+        {query && <iframe ref={frameRef} title={t('map_frame', { place: name })} loading="lazy" referrerPolicy="no-referrer-when-downgrade" src={embedUrl(query)} />}
       </div>
       <div className="vb">
         <b>{name}</b>

@@ -94,7 +94,7 @@ const SECTIONS = [
     ['card p', '#contact .vc .vb p'], ['card btn', '#contact .vc .vb .btn'],
   ]],
   ['footer', 'footer.dark', [
-    ['footer', 'footer.dark'], ['wrap', 'footer.dark .wrap'], ['logo', 'footer.dark .flogo'], ['h4', 'footer.dark h4'], ['legal', 'footer.dark .legal'],
+    ['footer', 'footer.dark'], ['wrap', 'footer.dark .wrap'], ['logo', 'footer.dark .flogo'], ['h4', 'footer.dark h4, footer.dark h3'], ['legal', 'footer.dark .legal'],
     ['bigf', '.bigf'], ['letter', '.bigf span'],
   ]],
 ];
@@ -132,8 +132,8 @@ const FORM_DONE = [['form done', '.scrim:not([hidden]) .modal', [
   ['modal', '.scrim:not([hidden]) .modal'], ['done', '.scrim:not([hidden]) .modal .done'], ['tick', '.scrim:not([hidden]) .modal .done .tick'], ['tick svg', '.scrim:not([hidden]) .modal .done .tick svg'], ['h3', '.scrim:not([hidden]) .modal .done h3'],
   ['sub', '.scrim:not([hidden]) .modal .done .sub'], ['wa btn', '.scrim:not([hidden]) .modal .done .btn'],
 ]]];
-// Valid values by field type, the same on both pages (ours really submits: one lead per width, from 127.0.0.1,
-// so run it at most once per 10 minutes or the rate limit answers the 6th).
+// Valid values by field type, the same on both pages. Ours does not really submit: open() answers the lead POST
+// in the browser with a fixed reference (no lead row, no outbox mail, no rate limit), see FAKE_LEAD.
 async function fillForm(page) {
   await page.evaluate(() => {
     const set = (el, v) => {
@@ -247,8 +247,21 @@ async function settle(page, w) {
   await wait(2500);
 }
 
+const FAKE_LEAD = { success: true, data: { lead_ref: 'DFL-269999' } };
+
 async function open(browser, which, w, h) {
   const page = await browser.newPage();
+  if (which === 'ours') {
+    await page.setRequestInterception(true);
+    page.on('request', (r) => {
+      if (r.method() === 'POST' && /\/api\/dfresh\/leads(\?|$)/.test(r.url())) {
+        const origin = new URL(OURS).origin;
+        return r.respond({ status: 200, contentType: 'application/json', body: JSON.stringify(FAKE_LEAD),
+          headers: { 'Access-Control-Allow-Origin': origin, 'Access-Control-Allow-Credentials': 'true' } });
+      }
+      return r.continue();
+    });
+  }
   await page.setViewport({ width: w, height: h, deviceScaleFactor: 1, isMobile: w < 500, hasTouch: w < 500 });
   await page.goto(which === 'ours' ? OURS : PREVIEW, { waitUntil: 'networkidle2', timeout: 60000 });
   await wait(1200);

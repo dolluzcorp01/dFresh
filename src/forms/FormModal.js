@@ -216,6 +216,10 @@ export default function FormModal({ type, prefill, source, onClose }) {
           </div>
           <h3 id={`${uid}-done`}>{t('thanks_name', { name: firstName })}</h3>
           <p className="sub">{t(doneMsg)}</p>
+          {result && result.lead_ref && (
+            // The preview's note slot (there: "preview only"); on the live site the visitor's reference.
+            <p className="note">{t('mail_ack_ref')}: <strong>{result.lead_ref}</strong>. {t('mail_ack_keep')}</p>
+          )}
           <a className="btn b-wa" href={waHref(settings.whatsapp_number, t('wa_general'))} target="_blank" rel="noopener noreferrer"
             onClick={() => trackWhatsApp('general', `form_${type}`)}>
             <WhatsAppIcon /><span>{t('whatsapp_us')}</span>

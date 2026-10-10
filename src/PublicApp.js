@@ -16,6 +16,7 @@ import ProductsPage from './pages/ProductsPage';
 import LegalPage from './pages/LegalPage';
 import ProductsOverlay from './products/ProductsOverlay';
 import { isProductsPath } from './products/useOpenProducts';
+import { pageMeta } from './shared/pageMeta';
 
 export default function PublicApp() {
   return (
@@ -56,7 +57,7 @@ function LangGate() {
 }
 
 function Layout() {
-  const { lang } = useI18n();
+  const { lang, data } = useI18n();
   const location = useLocation();
   // Products drawer opened from inside the site: the URL is /:lang/products, the page under it is state.bg.
   const bg = location.state && location.state.bg;
@@ -65,6 +66,14 @@ function Layout() {
   const isHome = splitPath(page.pathname).rest.replace(/\/$/, '') === '';
 
   useEffect(() => installProtection(), []);
+
+  // Tab title for the URL in the address bar (the server sent the first one, seo.js; same keys, pageMeta.js).
+  useEffect(() => {
+    const name = splitPath(location.pathname).rest.replace(/^\/+|\/+$/g, '');
+    const cat = name === 'products' ? new URLSearchParams(location.search).get('cat') : null;
+    const category = cat ? data.categories.find((c) => c.key === cat) : null;
+    document.title = pageMeta(name, data.ui, category).title;
+  }, [location.pathname, location.search, data]);
 
   // New page -> top. Not for a language switch (keepScroll), a #section link (HomePage scrolls to it), or
   // the products overlay opening / closing over the same page.

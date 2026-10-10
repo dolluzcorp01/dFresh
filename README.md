@@ -41,6 +41,11 @@ Phase task files are in `docs/claude-tasks/` (finished ones in `docs/claude-task
 | `npm run db:reset` | Local only: drop + create + schema + seed + app user |
 | `npm run media:sync` | Copy `assets/` to `media/`, then `media:build` |
 | `npm run media:build` | Generate product sizes and check every DB-referenced media file exists |
+| `npm run test:api` | API tests against the local DB (files one at a time: some add and remove test rows) |
+| `SERVE_BUILD=true PORT=4013 node server.js` | The production build with the SEO HTML, locally (e.g. for Lighthouse; build with `REACT_APP_API=` first) |
+| `node scripts/visual-check/visual-check.js <out>` | Screenshots of every section, 1440 + 390, every language, motion + reduced motion (header has setup) |
+| `node scripts/visual-check/keyboard.js [lang] [width]` | Keyboard-only run: focus rings, drawer / card / swatch / form, focus trap and return |
+| `node scripts/visual-parity/measure.js <phase> <label> [shots]` | Preview vs ours parity measurements (header has setup) |
 
 ## Folders
 - `assets/` - source of truth for logos, product photos and banners (committed)
@@ -48,5 +53,6 @@ Phase task files are in `docs/claude-tasks/` (finished ones in `docs/claude-task
 - `private/brochures/` - brochure PDFs, never public, never committed
 - `database/` - schema, seed, and later `migrations/`
 - `docs/` - spec, task phases, reference preview; `docs/kit/` has the kit's kickoff notes
+- `deploy/` - droplet setup: `DEPLOY.md` (steps, server .env checklist, every `<DOMAIN>` placeholder), nginx, pm2, backup
 
 Health check: `GET http://localhost:4012/api/dfresh/health`

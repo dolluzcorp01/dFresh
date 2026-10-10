@@ -16,7 +16,7 @@
 .filters { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; padding-bottom: 14px; }
 .filters::-webkit-scrollbar { display: none; }
 .filters button { flex: none; border: 1.5px solid var(--line); background: #fff; color: var(--ink); border-radius: 999px; padding: 9px 15px; font: inherit; font-weight: 600; font-size: 13.5px; cursor: pointer; transition: background .2s, color .2s, border-color .2s; }
-.filters button span { opacity: .55; font-weight: 500; margin-inline-start: 4px; }
+.filters button span { opacity: .68; font-weight: 500; margin-inline-start: 4px; } /* preview .55 = 4.1:1 on white; .68 keeps 4.5:1+ */
 .filters button[aria-pressed="true"] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
 .grid4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px; padding-block: 28px 80px; }
 .empty { grid-column: 1 / -1; text-align: center; color: var(--ink-2); padding: 60px 0; margin: 0; }

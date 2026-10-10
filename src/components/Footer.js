@@ -37,7 +37,7 @@ export default function Footer() {
           <p className="bl">{t('brand_line')}</p>
         </div>
         <div>
-          <h4>{t('f_shop')}</h4>
+          <h3>{t('f_shop')}</h3>
           <ul>
             {SHOP_LINKS.map((l) => (
               <li key={l.key}><NavLink link={l}>{t(l.key)}</NavLink></li>
@@ -45,7 +45,7 @@ export default function Footer() {
           </ul>
         </div>
         <div>
-          <h4>{t('f_work')}</h4>
+          <h3>{t('f_work')}</h3>
           <ul>
             {WORK_FORMS.map((f) => (
               <li key={f.key}><button type="button" className="lnk" onClick={() => openForm(f.form)}>{t(f.key)}</button></li>
@@ -53,7 +53,7 @@ export default function Footer() {
           </ul>
         </div>
         <div>
-          <h4>{t('f_visit')}</h4>
+          <h3>{t('f_visit')}</h3>
           <ul>
             <li>
               {t('lbl_whatsapp')}:{' '}

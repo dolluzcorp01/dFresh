@@ -40,7 +40,7 @@ section[id] { scroll-margin-top: 84px; }
 .btn svg { width: 18px; height: 18px; flex: none; }
 .b-ink { background: var(--ink); color: var(--gold-l); }
 .b-ink:hover { box-shadow: 0 12px 26px -12px rgba(18, 18, 20, .6); }
-.b-wa { background: var(--wa); color: #fff; }
+.b-wa { background: var(--wa-d); color: #fff; }
 .b-wa:hover { box-shadow: 0 12px 26px -10px rgba(31, 168, 85, .65); }
 .b-line { background: transparent; color: var(--ink); box-shadow: inset 0 0 0 1.5px var(--ink); }
 .b-gold { background: var(--gold); color: var(--ink); }
@@ -72,3 +72,9 @@ img, svg, picture { -webkit-user-drag: none; }
   html { scroll-behavior: auto; }
   .rv.pre { transform: none; opacity: 1; }
 }
+
+/* Home sections below the hero: the browser skips their layout and paint until they come near the viewport
+   (big main-thread saving on phones at first load). "auto" remembers each real height once it has been shown,
+   so the page does not jump; 900px is only the first estimate. #section links still land: sections above the
+   target stay skipped at their estimate while it scrolls there. */
+#main > .sec { content-visibility: auto; contain-intrinsic-size: auto 900px; }

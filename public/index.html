@@ -11,7 +11,9 @@
     <!-- Saira = brand display font (all scripts, numbers). Body / script fonts load per language from languages.font_family. -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira:wght@300..800&display=swap" />
+    <!-- Not render-blocking: text paints at once in the fallback font and swaps to Saira when it arrives. -->
+    <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Saira:wght@300..800&display=swap" onload="this.onload=null;this.rel='stylesheet'" />
+    <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira:wght@300..800&display=swap" /></noscript>
     <title>dFresh</title>
   </head>
   <body>

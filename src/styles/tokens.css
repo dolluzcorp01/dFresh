@@ -7,11 +7,12 @@
   --line: #E4DBC8;
   --ink: #121214;
   --ink-2: #47443D;
-  --ink-3: #7A766C;
+  --ink-3: #6F6B62; /* preview #7A766C = 4.37:1 on paper; this keeps small text at 4.5:1+ (5.1:1) */
   --gold: #E5BF24;
   --gold-l: #F4CF2C;
   --gold-d: #C79714;
-  --wa: #1FA855;
+  --wa: #1FA855;   /* WhatsApp green: icons / fills with no text on them (3:1 rule) */
+  --wa-d: #15803D; /* green behind white text: 5.0:1 (white on --wa is only 3.1:1) */
   --dark-text: #B9B5AA;
   --dark-muted: #8E897F;
   --dark-line: #2B2A2D;

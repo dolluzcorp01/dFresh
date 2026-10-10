@@ -12,6 +12,8 @@ import { I18nContext, LanguagesContext, useLanguages } from './useT';
 
 let languagesRequest = null;
 const bootRequests = new Map(); // lang -> Promise<bootstrap data>; a failed request is forgotten
+// Data the server wrote into the page (seo.js, production): used for the first render without waiting.
+const ready = { languages: null, boot: new Map() };
 
 function fetchLanguages() {
   if (!languagesRequest) {
@@ -39,12 +41,23 @@ function fetchBootstrap(lang) {
 export function prefetchContent(pathname) {
   const first = pathname.split('/')[1] || '';
   if (first === 'admin') return;
+  const el = document.getElementById('dfresh-data');
+  if (el) {
+    try {
+      const d = JSON.parse(el.textContent);
+      if (d.languages) { ready.languages = d.languages; languagesRequest = Promise.resolve(d.languages); }
+      if (d.boot) { ready.boot.set(d.boot.lang, d.boot); bootRequests.set(d.boot.lang, Promise.resolve(d.boot)); }
+    } catch {
+      // unreadable: the normal requests below load the same data
+    }
+    el.remove();
+  }
   fetchLanguages().catch(() => {});
   if (/^[a-z]{2,3}(-[a-z]{2,4})?$/i.test(first)) fetchBootstrap(first).catch(() => {});
 }
 
 export function LanguagesProvider({ children }) {
-  const [state, setState] = useState({ status: 'loading' });
+  const [state, setState] = useState(() => (ready.languages ? { status: 'ready', data: ready.languages } : { status: 'loading' }));
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
@@ -108,7 +121,8 @@ export function I18nProvider({ lang, children }) {
   const { languages, default: defaultLang } = useLanguages();
   const location = useLocation();
   // `asked` = the lang whose request produced `data` (differs from `lang` while a switch is loading).
-  const [state, setState] = useState({ status: 'loading', data: null, asked: null });
+  const [state, setState] = useState(() => (ready.boot.has(lang)
+    ? { status: 'ready', data: ready.boot.get(lang), asked: lang } : { status: 'loading', data: null, asked: null }));
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {

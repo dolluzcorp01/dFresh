@@ -15,6 +15,8 @@ import './Header.css';
 
 const MENU_ID = 'msheet';
 const NARROW = 900;
+// A media query, not window.innerWidth: reading innerWidth forces a layout of the whole page.
+const isNarrow = () => window.matchMedia(`(max-width: ${NARROW}px)`).matches;
 
 function contentWidth(el) {
   const cs = getComputedStyle(el);
@@ -39,14 +41,14 @@ export default function Header({ overHero }) {
   const closeMenu = useCallback(() => setMenuOpen(false), []);
   const wrapRef = useRef(null);
   const needed = useRef(0); // wrap width the full nav needed when it last overflowed (0 = unknown)
-  const [compact, setCompact] = useState(() => window.innerWidth <= NARROW);
+  const [compact, setCompact] = useState(isNarrow);
 
   const [measureTick, setMeasureTick] = useState(0);
 
   // New text widths: start from the full layout again and re-measure.
   const remeasure = useCallback(() => {
     needed.current = 0;
-    setCompact(window.innerWidth <= NARROW);
+    setCompact(isNarrow());
     setMeasureTick((n) => n + 1);
   }, []);
 
@@ -77,7 +79,7 @@ export default function Header({ overHero }) {
   useEffect(() => {
     const wrap = wrapRef.current;
     const onResize = () => {
-      if (window.innerWidth <= NARROW) {
+      if (isNarrow()) {
         setCompact(true);
       } else if (wrap.closest('.compact')) {
         if (!needed.current || contentWidth(wrap) >= needed.current) setCompact(false);

@@ -1,6 +1,7 @@
 // dotenv FIRST: config/db.js and route modules read env at require time.
 require('dotenv').config({ quiet: true });
 
+const fs = require('fs');
 const path = require('path');
 const express = require('express');
 const cors = require('cors');
@@ -14,6 +15,7 @@ const adminLoginRoutes = require('./src/backend_routes/Admin_login_server');
 const adminRoutes = require('./src/backend_routes/Admin_server');
 const outboxWorker = require('./src/backend_routes/outbox-worker');
 const contentCache = require('./src/backend_routes/content-cache');
+const seo = require('./src/backend_routes/seo');
 const { version } = require('./package.json');
 
 const app = express();
@@ -104,6 +106,47 @@ app.use('/api/dfresh', brochureRoutes);
 // Sign-in first: /admin/login and /admin/login/verify must not hit the session check of Admin_server.
 app.use('/api/dfresh', adminLoginRoutes);
 app.use('/api/dfresh', adminRoutes);
+
+// The React build (production, or SERVE_BUILD=true to try the production build locally, e.g. for Lighthouse).
+// Order: robots / sitemap (generated) -> hashed static files -> admin shell -> every other GET = index.html with
+// the SEO head for that URL (seo.js). nginx may serve /static and /media itself; these stay as the fallback.
+const BUILD = path.join(__dirname, 'build');
+if (isProd || process.env.SERVE_BUILD === 'true') {
+  let template = null;
+  try {
+    template = fs.readFileSync(path.join(BUILD, 'index.html'), 'utf8');
+  } catch {
+    console.error('build/index.html is missing: run `npm run build` (or copy the build) before starting in production.');
+  }
+  const text = (type, maxAge) => (res, body) => res.type(type).set('Cache-Control', `public, max-age=${maxAge}`).send(body);
+  app.get('/robots.txt', (req, res) => text('text/plain', 3600)(res, seo.robots()));
+  app.get('/sitemap.xml', async (req, res, next) => {
+    try { text('application/xml', 3600)(res, await seo.sitemap()); } catch (err) { next(err); }
+  });
+  app.use(express.static(BUILD, {
+    index: false,
+    setHeaders(res, file) {
+      // CRA puts a content hash in every /static file name; the rest (favicon, manifest) may change in place.
+      res.set('Cache-Control', file.includes(`${path.sep}static${path.sep}`) ? 'public, max-age=31536000, immutable' : 'public, max-age=86400');
+    },
+  }));
+  const html = (res, status, body) => res.status(status).type('html').set('Cache-Control', 'no-cache').send(body);
+  app.get(/^\/admin(\/.*)?$/, (req, res) => (template ? html(res, 200, seo.adminHtml(template)) : res.sendStatus(503)));
+  app.use(async (req, res, next) => {
+    if ((req.method !== 'GET' && req.method !== 'HEAD') || req.path.startsWith('/api/')) return next();
+    if (!template) return res.sendStatus(503);
+    try {
+      const out = await seo.render(template, req.path, req.query);
+      if (out.status === 301) return res.redirect(301, out.location);
+      if (out.status === 404) return res.status(404).type('text').send('Not found');
+      return html(res, 200, out.html);
+    } catch (err) {
+      // A content error must not take the site down: the plain shell still boots the app.
+      console.error(`seo head for ${req.path} failed:`, err.code || err.message);
+      return html(res, 200, template);
+    }
+  });
+}
 
 // Malformed JSON, oversized body or any error a route did not handle: JSON, never a stack trace.
 app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars
