@@ -20,7 +20,7 @@ const SECTIONS = {
       { name: 'note', label: 'Internal note', wide: true }, ACTIVE,
     ],
     tr: [{ name: 'headline', label: 'Headline', required: true, long: true }, { name: 'cta_label', label: 'Button label', required: true }],
-    list: (r) => [r.banner_key, r.tr.en && r.tr.en.headline, r.theme, `${r.cta_action}${r.cta_target ? `: ${r.cta_target}` : ''}`],
+    list: (r) => [r.banner_key, r.tr?.en?.headline ?? '', r.theme, `${r.cta_action ?? ''}${r.cta_target ? `: ${r.cta_target}` : ''}`],
     head: ['Key', 'Headline (EN)', 'Theme', 'Button'],
     defaults: { theme: 'light', cta_action: 'products', is_active: 0 },
   },
@@ -33,7 +33,7 @@ const SECTIONS = {
     ],
     tr: [{ name: 'name', label: 'Name', required: true }, { name: 'tagline', label: 'Tagline', required: true }],
     links: 'products',
-    list: (r) => [r.kit_key, r.tr.en && r.tr.en.name, r.business_type, r.products.join(', ')],
+    list: (r) => [r.kit_key, r.tr?.en?.name ?? '', r.business_type, (r.products || []).join(', ')],
     head: ['Key', 'Name (EN)', 'Business type', 'Products'],
     defaults: { is_active: 1, products: [] },
   },
@@ -45,7 +45,7 @@ const SECTIONS = {
       { name: 'lat', label: 'Latitude', type: 'number' }, { name: 'lng', label: 'Longitude', type: 'number' }, ACTIVE,
     ],
     tr: [{ name: 'name', label: 'Name', required: true }],
-    list: (r) => [r.town_key, r.tr.en && r.tr.en.name, r.is_base ? 'base' : '', r.map_x !== null ? `${r.map_x}, ${r.map_y}` : ''],
+    list: (r) => [r.town_key, r.tr?.en?.name ?? '', r.is_base ? 'base' : '', r.map_x != null ? `${r.map_x}, ${r.map_y}` : ''],
     head: ['Key', 'Name (EN)', 'Base', 'Map'],
     defaults: { is_active: 1 },
   },
@@ -53,7 +53,7 @@ const SECTIONS = {
     title: 'Categories', keys: ['category_key'], reorder: true,
     fields: [{ name: 'category_key', label: 'Key', required: true, keyField: true }, ORDER, { name: 'rep_product_id', label: 'Photo from product', type: 'select', lookup: 'products' }, ACTIVE],
     tr: [{ name: 'name', label: 'Name', required: true }],
-    list: (r) => [r.category_key, r.tr.en && r.tr.en.name, r.rep_product_id],
+    list: (r) => [r.category_key, r.tr?.en?.name ?? '', r.rep_product_id],
     head: ['Key', 'Name (EN)', 'Photo from'],
     defaults: { is_active: 1 },
   },
@@ -76,7 +76,7 @@ const SECTIONS = {
       { name: 'option_value', label: 'Stored value', required: true, keyField: true, help: 'saved in leads; never change it once used' }, ORDER, ACTIVE,
     ],
     tr: [{ name: 'label', label: 'Label', required: true }],
-    list: (r) => [r.list_key, r.option_value, r.tr.en && r.tr.en.label],
+    list: (r) => [r.list_key, r.option_value, r.tr?.en?.label ?? ''],
     head: ['List', 'Value', 'Label (EN)'],
     defaults: { is_active: 1, list_key: 'business_type' },
   },
@@ -93,13 +93,13 @@ export default function EntityPage({ name }) {
   const [drag, setDrag] = useState(null);
 
   const lookups = useMemo(() => ({
-    products: (products.data || []).map((p) => ({ value: p.product_id, label: `${p.product_id} ${p.tr.en ? p.tr.en.name : ''}` })),
+    products: (products.data || []).map((p) => ({ value: p.product_id, label: `${p.product_id} ${p.tr?.en?.name ?? ''}` })),
     businessTypes: (options.data || []).filter((o) => o.list_key === 'business_type').map((o) => o.option_value),
   }), [products.data, options.data]);
 
   const drop = (target) => {
     if (!drag || drag === target) return;
-    const ids = list.data.map((r) => rowId(cfg.keys, r));
+    const ids = (list.data || []).map((r) => rowId(cfg.keys, r));
     const from = ids.indexOf(drag);
     ids.splice(ids.indexOf(target), 0, ids.splice(from, 1)[0]);
     setDrag(null);

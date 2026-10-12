@@ -20,6 +20,7 @@ import Settings from './Settings';
 import Users from './Users';
 import AuditLog from './AuditLog';
 import css from './adminStyles';
+import ScreenBoundary from './ScreenBoundary';
 
 const NAV = [
   ['', 'Dashboard', 'viewer'], ['leads', 'Leads', 'viewer'], ['products', 'Products', 'viewer'],
@@ -106,18 +107,19 @@ export default function AdminApp() {
           })}
         </nav>
         <main className="a-main">
+          <ScreenBoundary key={pathname}>
           <Routes>
             <Route index element={<Dashboard />} />
             <Route path="leads" element={<Leads />} />
             <Route path="products" element={<Products />} />
             <Route path="import-export" element={<ImportExport />} />
             <Route path="translations" element={<Translations />} />
-            <Route path="banners" element={<EntityPage name="banners" />} />
-            <Route path="kits" element={<EntityPage name="kits" />} />
-            <Route path="towns" element={<EntityPage name="towns" />} />
-            <Route path="categories" element={<EntityPage name="categories" />} />
-            <Route path="size-picker" element={<EntityPage name="size-picker" />} />
-            <Route path="form-options" element={<EntityPage name="form-options" />} />
+            <Route path="banners" element={<EntityPage key="banners" name="banners" />} />
+            <Route path="kits" element={<EntityPage key="kits" name="kits" />} />
+            <Route path="towns" element={<EntityPage key="towns" name="towns" />} />
+            <Route path="categories" element={<EntityPage key="categories" name="categories" />} />
+            <Route path="size-picker" element={<EntityPage key="size-picker" name="size-picker" />} />
+            <Route path="form-options" element={<EntityPage key="form-options" name="form-options" />} />
             <Route path="languages" element={<Languages />} />
             <Route path="brochures" element={<Brochures />} />
             <Route path="settings" element={<Settings />} />
@@ -125,6 +127,7 @@ export default function AdminApp() {
             <Route path="audit" element={<AuditLog />} />
             <Route path="*" element={<Navigate to="/admin" replace />} />
           </Routes>
+          </ScreenBoundary>
         </main>
       </div>
     </AdminContext.Provider>

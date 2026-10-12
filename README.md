@@ -47,6 +47,7 @@ Phase task files are in `docs/claude-tasks/` (finished ones in `docs/claude-task
 | `npm run fonts:build` | Self-hosted fonts from Google into `src/fonts` + `src/styles/fonts.css` (needs the DB + internet; script fonts subset to the characters the content uses: re-run after adding a language or text in a new script) |
 | `npm run media:build` | Generate product sizes and check every DB-referenced media file exists |
 | `npm run test:api` | API tests against the local DB (files one at a time: some add and remove test rows) |
+| `NODE_PATH=<scratch>/node_modules WEB_URL=http://localhost:3000 npm run test:admin-nav` | Admin: every screen to every other (240 moves) + Back / Forward + the error boundary; zero console errors (puppeteer-core outside the repo, header of `scripts/admin-check/admin-nav.js`) |
 | `SERVE_BUILD=true PORT=4013 node server.js` | The production build with the SEO HTML, locally (e.g. for Lighthouse; build with `REACT_APP_API=` first) |
 | `node scripts/visual-check/visual-check.js <out>` | Screenshots of every section, 1440 + 390, every language, motion + reduced motion (header has setup) |
 | `node scripts/visual-check/keyboard.js [lang] [width]` | Keyboard-only run: focus rings, drawer / card / swatch / form, focus trap and return |

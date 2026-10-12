@@ -34,7 +34,7 @@ export default function Dashboard() {
                 <h2>Translations</h2>
                 <table className="a-table">
                   <thead><tr><th>Language</th><th>Complete</th><th>Missing</th></tr></thead>
-                  <tbody>{d.languages.map((l) => (
+                  <tbody>{(d.languages || []).map((l) => (
                     <tr key={l.lang_code}>
                       <td>{l.name_en} <code>{l.lang_code}</code>{Number(l.is_active) ? '' : ' (off)'}</td>
                       <td className="a-num">{l.pct}%</td>

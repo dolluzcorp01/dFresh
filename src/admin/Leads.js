@@ -130,7 +130,7 @@ function LeadDrawer({ id, onClose, onChanged }) {
     ['Business', l.business_name], ['Business type', l.business_type], ['Town', l.town],
     ['Phone', l.phone && <a href={`tel:+91${l.phone}`}>{l.phone}</a>], ['WhatsApp', l.phone && <a href={`https://wa.me/91${l.phone}`} target="_blank" rel="noreferrer">wa.me/91{l.phone}</a>],
     ['E-mail', l.email && <a href={`mailto:${l.email}`}>{l.email}</a>],
-    ['Products', l.products.map((p) => `${p.product_id} ${p.name || ''}`).join(', ')], ['Monthly quantity', l.monthly_quantity], ['Message', l.message],
+    ['Products', (l.products || []).map((p) => `${p.product_id} ${p.name || ''}`).join(', ')], ['Monthly quantity', l.monthly_quantity], ['Message', l.message],
     ...Object.entries(details).filter(([k]) => k !== 'firm_name').map(([k, v]) => [k.replace(/_/g, ' '), v]),
     ['Language', l.lang_code], ['Page', l.source_page], ['Opened from', l.source_ref], ['Consent', l.consent_given ? `Yes, ${fmtDate(l.consent_at)}: "${l.consent_text}"` : 'No'],
     ['Sheet synced', fmtDate(l.sheet_synced_at)],

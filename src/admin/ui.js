@@ -13,21 +13,24 @@ export function useCan(role) {
 }
 
 /** Loads `path` (GET) and gives { data, error, loading, reload, setData }. */
+// Data belongs to the path it was loaded for: when the path changes (another list in the same component), the
+// old rows are never handed out, the new path starts as loading with no data.
 export function useLoad(path) {
-  const [state, setState] = useState({ data: null, error: null, loading: true });
+  const [state, setState] = useState({ path, data: null, error: null, loading: true });
   const seq = useRef(0);
   const reload = useCallback(() => {
     if (!path) return;
     const n = ++seq.current;
-    setState((s) => ({ ...s, loading: true }));
+    setState((s) => (s.path === path ? { ...s, loading: true } : { path, data: null, error: null, loading: true }));
     api.get(path).then(
-      (data) => n === seq.current && setState({ data, error: null, loading: false }),
-      (error) => n === seq.current && setState({ data: null, error, loading: false })
+      (data) => n === seq.current && setState({ path, data, error: null, loading: false }),
+      (error) => n === seq.current && setState({ path, data: null, error, loading: false })
     );
   }, [path]);
   useEffect(reload, [reload]);
   const setData = useCallback((fn) => setState((s) => ({ ...s, data: typeof fn === 'function' ? fn(s.data) : fn })), []);
-  return { ...state, reload, setData };
+  const own = state.path === path ? state : { path, data: null, error: null, loading: Boolean(path) };
+  return { data: own.data, error: own.error, loading: own.loading, reload, setData };
 }
 
 export function Notice({ kind = 'info', children, onClose }) {

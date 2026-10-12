@@ -16,7 +16,7 @@ const TR_FIELDS = [
 
 const baseFields = (cats, cards, creating) => [
   { name: 'product_id', label: 'Product ID', type: creating ? 'text' : 'readonly', required: true, help: 'e.g. DZIND-DF050; a colour: DZIND-DF008-RED' },
-  { name: 'category_key', label: 'Category', type: 'select', options: cats.map((c) => ({ value: c.category_key, label: `${c.tr.en ? c.tr.en.name : c.category_key}` })), required: true, allowEmpty: false },
+  { name: 'category_key', label: 'Category', type: 'select', options: cats.map((c) => ({ value: c.category_key, label: `${c.tr?.en?.name ?? c.category_key}` })), required: true, allowEmpty: false },
   { name: 'variant_of', label: 'Colour of (variant)', type: 'select', options: cards.map((p) => p.product_id), help: 'Empty = its own product card' },
   { name: 'sort_order', label: 'Sort order', type: 'number', step: '0.01' },
   { name: 'specification', label: 'Specification', required: true, wide: true },
@@ -60,9 +60,9 @@ export default function Products() {
                 <tr key={p.product_id} onClick={() => setOpen({ id: p.product_id })} tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && setOpen({ id: p.product_id })} className={p.is_active ? '' : 'a-off'}>
                   <td>{p.images[0] && <img className="a-thumb" src={mediaUrl(`/media/products/400/${p.images[0].file_name}`)} alt="" width="40" height="40" />}</td>
                   <td><code>{p.variant_of ? '└ ' : ''}{p.product_id}</code></td>
-                  <td>{p.tr.en ? p.tr.en.name : ''}{p.variant_of && p.tr.en && p.tr.en.colour_name ? ` (${p.tr.en.colour_name})` : ''}</td>
+                  <td>{p.tr?.en?.name ?? ''}{p.variant_of && p.tr?.en?.colour_name ? ` (${p.tr.en.colour_name})` : ''}</td>
                   <td>{p.category_key}</td>
-                  <td className="a-num">{p.images.length}</td>
+                  <td className="a-num">{(p.images || []).length}</td>
                   <td>{p.is_featured ? `Yes (${p.featured_order ?? '-'})` : ''}</td>
                   <td>{p.is_active ? 'Yes' : 'No'}</td>
                   <td>{Object.keys(p.tr).join(' ')}</td>
@@ -124,8 +124,9 @@ function ProductEditor({ id, initial, cats, cards, onClose, onSaved, onAddVarian
 }
 
 function Photos({ product, canEdit, onChanged }) {
+  const images = product.images || [];
   const act = useAction();
-  const [position, setPosition] = useState(String(Math.min(product.images.length + 1, 3)));
+  const [position, setPosition] = useState(String(Math.min(images.length + 1, 3)));
   const id = encodeURIComponent(product.product_id);
   const upload = (file) => act.run(async () => {
     const r = await api.upload(`/products/${id}/images`, file, { position });
@@ -134,7 +135,7 @@ function Photos({ product, canEdit, onChanged }) {
   }).then((r) => r && act.setMsg({ kind: 'ok', text: `Saved ${r.file_name}: ${Math.round(r.original_bytes / 1024)} KB in -> ${Math.round(r.bytes / 1024)} KB WebP 1200x1200 (+ 400, 800)` }));
   const remove = (pos) => window.confirm(`Remove photo ${pos}?`) && act.run(async () => { await api.send('DELETE', `/products/${id}/images/${pos}`); onChanged(); }, 'Removed');
   const move = (pos, dir) => {
-    const order = product.images.map((i) => i.position);
+    const order = images.map((i) => i.position);
     const at = order.indexOf(pos);
     const to = at + dir;
     if (to < 0 || to >= order.length) return;
@@ -147,7 +148,7 @@ function Photos({ product, canEdit, onChanged }) {
       <h3>Photos (1-3)</h3>
       {act.note}
       <div className="a-photos">
-        {product.images.map((img, i) => (
+        {images.map((img, i) => (
           <figure key={img.position}>
             <img src={mediaUrl(`/media/products/400/${img.file_name}`)} alt={`${product.product_id} ${img.position}`} width="140" height="140" />
             <figcaption>
@@ -155,7 +156,7 @@ function Photos({ product, canEdit, onChanged }) {
               {canEdit && (
                 <span className="a-row">
                   <button type="button" className="a-btn a-btn-sm a-btn-ghost" disabled={i === 0 || act.busy} onClick={() => move(img.position, -1)} aria-label="Move left">◀</button>
-                  <button type="button" className="a-btn a-btn-sm a-btn-ghost" disabled={i === product.images.length - 1 || act.busy} onClick={() => move(img.position, 1)} aria-label="Move right">▶</button>
+                  <button type="button" className="a-btn a-btn-sm a-btn-ghost" disabled={i === images.length - 1 || act.busy} onClick={() => move(img.position, 1)} aria-label="Move right">▶</button>
                   <button type="button" className="a-btn a-btn-sm a-btn-danger" disabled={act.busy} onClick={() => remove(img.position)}>Remove</button>
                 </span>
               )}
