@@ -16,7 +16,10 @@ const excel = require('./product-excel');
 const csv = require('./csv');
 const contentCache = require('./content-cache');
 const { audit } = require('./audit');
-const { LOGO_URL } = require('./mailer');
+const path = require('path');
+const mailer = require('./mailer');
+const logoCheck = require('./mail-logo-check');
+const outboxWorker = require('./outbox-worker');
 
 const router = express.Router();
 const db = getDBConnection(process.env.DB_NAME || 'dfresh').promise();
@@ -98,6 +101,7 @@ route('get', '/dashboard', 'viewer', async () => {
     byForm: byForm.map((r) => ({ form_type: r.form_type, n: Number(r.n) })),
     outbox: { mail: counts(mail), sync: counts(sync) },
     languages: langs.map((l) => ({ ...l, missing: done[l.lang_code].total - done[l.lang_code].have, pct: done[l.lang_code].pct })),
+    mailLogo: logoCheck.status(), // state 'failing' = red notice: mails use the built-in logo
   };
 });
 
@@ -634,21 +638,66 @@ route('get', '/settings', 'admin', async () => {
   return rows;
 });
 
-route('put', '/settings/:key', 'admin', async (req) => tx(async (q) => {
-  const [[before]] = await q.query('SELECT setting_key, setting_value FROM site_settings WHERE setting_key = ?', [req.params.key]);
-  if (!before) throw new InputError('Unknown setting', 404);
+route('put', '/settings/:key', 'admin', async (req) => {
   const value = typeof req.body.value === 'string' ? req.body.value.trim() : '';
   if (value.length > 20000) throw new InputError('Too long');
-  if (['mail_from', 'lead_email', 'public_email'].includes(before.setting_key) && value && !/^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]{2,}$/.test(value)) {
+  if (['mail_from', 'lead_email', 'public_email'].includes(req.params.key) && value && !/^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]{2,}$/.test(value)) {
     throw new InputError('A plain e-mail address, e.g. connect@dolluzcorp.com');
   }
-  if (before.setting_key === 'mail_logo_url' && value && !LOGO_URL.test(value)) {
-    throw new InputError('An https:// URL of the logo PNG (no spaces or quotes), or empty for the built-in logo');
+  // The hosted mail logo is fetched and checked BEFORE anything is saved (outside the transaction: up to 5 s).
+  let logo = null;
+  if (req.params.key === 'mail_logo_url' && value) {
+    logo = await logoCheck.check(value);
+    if (!logo.ok) throw new InputError(`Logo URL not saved: ${logo.reason}.`);
   }
-  await q.query('UPDATE site_settings SET setting_value = ?, updated_by = ? WHERE setting_key = ?', [value, by(req), before.setting_key]);
-  await audit(q, { empId: by(req), action: 'update', entity: 'setting', entityId: before.setting_key, before: { value: before.setting_value }, after: { value } });
-  return { setting_key: before.setting_key, setting_value: value };
-}), { content: true });
+  const saved = await tx(async (q) => {
+    const [[before]] = await q.query('SELECT setting_key, setting_value FROM site_settings WHERE setting_key = ?', [req.params.key]);
+    if (!before) throw new InputError('Unknown setting', 404);
+    await q.query('UPDATE site_settings SET setting_value = ?, updated_by = ? WHERE setting_key = ?', [value, by(req), before.setting_key]);
+    await audit(q, { empId: by(req), action: 'update', entity: 'setting', entityId: before.setting_key, before: { value: before.setting_value }, after: { value } });
+    return { setting_key: before.setting_key, setting_value: value };
+  });
+  if (saved.setting_key === 'mail_logo_url') logoCheck.record(value, logo);
+  return saved;
+}, { content: true });
+
+// Mail logo in admin Settings: the built-in logo (preview when mail_logo_url is empty), the check state, and a
+// test mail through the outbox (MAIL_TEST_TO outside production, the signed-in admin's own e-mail in production).
+router.get('/admin/mail-logo/builtin.png', auth.requireRole('admin'), (req, res) => {
+  res.type('png').set('Cache-Control', 'private, max-age=300').sendFile(path.join(__dirname, 'mail-logo.png'));
+});
+
+route('get', '/mail-logo', 'admin', async () => logoCheck.status());
+
+route('post', '/mail-logo/test-mail', 'admin', async (req) => {
+  let to;
+  if (process.env.NODE_ENV === 'production') {
+    const [[emp]] = await db.query(`SELECT emp_mail_id FROM \`${auth.DADMIN}\`.employee WHERE emp_id = ?`, [req.admin.emp_id]);
+    to = emp && emp.emp_mail_id;
+    if (!to) throw new InputError('Your dAdmin account has no e-mail address');
+  } else {
+    to = (process.env.MAIL_TEST_TO || '').trim();
+    if (!to) throw new InputError('MAIL_TEST_TO is not set in this server\'s .env, so a test mail has nowhere to go');
+  }
+  const [[company]] = await db.query("SELECT setting_value FROM site_settings WHERE setting_key = 'company_name'");
+  const [[setting]] = await db.query("SELECT setting_value FROM site_settings WHERE setting_key = 'mail_logo_url'");
+  const url = logoCheck.usableUrl(setting && setting.setting_value);
+  const m = mailer.renderLogoTest({ logo: url ? 'url' : 'builtin', url, companyName: company ? company.setting_value : '' });
+  // Not due for a minute: the worker pass leaves it alone, sendMailNow sends it now.
+  const [ins] = await db.query(
+    `INSERT INTO mail_outbox (to_email, subject, html_body, text_body, purpose, next_attempt_at)
+     VALUES (?, ?, ?, ?, 'logo_test', NOW() + INTERVAL 1 MINUTE)`,
+    [to, m.subject, m.html, m.text]
+  );
+  const r = await outboxWorker.sendMailNow(ins.insertId);
+  if (r.status !== 'sent') {
+    // A test that did not go out now is not retried later.
+    await db.query("UPDATE mail_outbox SET status = 'cancelled', last_error = ? WHERE mail_id = ?", [String(r.error || r.reason || r.status).slice(0, 500), ins.insertId]);
+    const why = r.status === 'off' ? (process.env.MAIL_ENABLED !== 'true' ? 'e-mail is switched off on this server' : r.reason) : r.error;
+    throw new InputError(`Test mail not sent: ${why}`, 503);
+  }
+  return { to, logo: url ? 'url' : 'builtin', mail_id: ins.insertId, provider_id: r.providerId };
+});
 
 const USER_SELECT = `SELECT a.emp_id, a.role, a.is_active, a.created_by, a.created_at,
   TRIM(CONCAT(COALESCE(e.emp_first_name, ''), ' ', COALESCE(e.emp_last_name, ''))) AS name, e.emp_mail_id AS email,

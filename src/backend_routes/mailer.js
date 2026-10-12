@@ -9,8 +9,9 @@
 //   value goes through esc().
 // - Logo: image only (alt "dFresh", fixed 62x34, no text wordmark), the same header in every template. Templates
 //   render LOGO_SRC (cid:); send() decides per message, reading site_settings on every send:
-//   mail_logo_url set (https) -> that URL replaces LOGO_SRC and nothing is attached; empty -> the inline CID
-//   attachment mail-logo.png (built by scripts/mail-logo.js). Never SVG. Already queued mails follow the setting.
+//   mail_logo_url set AND its last check passed (mail-logo-check.js) -> that URL replaces LOGO_SRC and nothing is
+//   attached; otherwise (empty, unchecked or failing) -> the inline CID attachment mail-logo.png (built by
+//   scripts/mail-logo.js). Never SVG. Already queued mails follow the setting.
 // - Log: logMail() prints one "[mail] #id purpose from .. to .. -> outcome" line per mail and outcome (the
 //   outbox worker calls it); the subject and body are never printed, so a sign-in code never reaches the log.
 // - Size: Gmail clips html over 102 KB. Rendered templates stay far below MAX_HTML_BYTES (60 KB) because every
@@ -21,6 +22,7 @@ const path = require('path');
 const sgMail = require('@sendgrid/mail');
 const { getDBConnection } = require('../../config/db');
 const { siteBase } = require('../../config/urls');
+const logoCheck = require('./mail-logo-check');
 
 const db = getDBConnection(process.env.DB_NAME || 'dfresh').promise();
 const isProd = process.env.NODE_ENV === 'production';
@@ -66,9 +68,6 @@ function readiness() {
   if (!isProd && !EMAIL.test(testTo())) return { ok: false, reason: 'outside production a real send needs MAIL_TEST_TO (local test inbox)' };
   return { ok: true };
 }
-
-/** An https logo URL that is safe inside src="..." (admin Settings checks the same), else ''. */
-const LOGO_URL = /^https:\/\/[^\s"'<>]+$/;
 
 async function mailSettings() {
   const [rows] = await db.query(
@@ -120,7 +119,7 @@ async function send({ to, subject, html, text }) {
   if (!EMAIL.test(to || '')) throw new Error('mailer: bad recipient');
   const redirect = testTo();
   const settings = await mailSettings();
-  const logoUrl = LOGO_URL.test(settings.mail_logo_url || '') ? settings.mail_logo_url : '';
+  const logoUrl = logoCheck.usableUrl(settings.mail_logo_url);
   const hasLogo = html.includes(LOGO_SRC);
   const message = {
     from: senderOf(settings),
@@ -329,7 +328,23 @@ It is valid for ${minutes} minutes. If you did not try to sign in, tell the dFre
   return { subject, html, text };
 }
 
+/** "Send test mail" in admin Settings (English, staff only). { logo: 'url' | 'builtin', url, companyName } */
+function renderLogoTest({ logo, url, companyName }) {
+  const subject = 'dFresh test mail: e-mail header logo';
+  const source = logo === 'url' ? `the hosted logo URL (${url})` : 'the built-in logo (attached to the mail)';
+  const html = shell({
+    title: subject,
+    preheader: 'A test of the e-mail header.',
+    body: `<h1 style="${S.h1}">${esc(subject)}</h1>`
+      + `<p style="margin:0 0 14px">This test mail was sent from dFresh admin Settings. The header above should show the dFresh logo.</p>`
+      + `<p style="margin:0">Logo used: ${esc(source)}.</p>`,
+    footer: `dFresh admin &middot; ${esc(companyName)}`,
+  });
+  const text = `${subject}\n\nThis test mail was sent from dFresh admin Settings. The header should show the dFresh logo.\nLogo used: ${source}.\n`;
+  return { subject, html, text };
+}
+
 module.exports = {
-  send, readiness, setTransport, fromAddress, logMail, queuedOutcome, renderLeadAlert, renderBrochureCopy, renderLeadAck, renderLoginCode, esc,
-  LOGO_SRC, LOGO_URL, MAX_HTML_BYTES,
+  send, readiness, setTransport, fromAddress, logMail, queuedOutcome, renderLeadAlert, renderBrochureCopy, renderLeadAck, renderLoginCode,
+  renderLogoTest, esc, LOGO_SRC, LOGO_URL: logoCheck.LOGO_URL, MAX_HTML_BYTES,
 };

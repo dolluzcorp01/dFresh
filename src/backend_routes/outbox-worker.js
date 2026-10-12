@@ -16,6 +16,7 @@
 //   only catches rows written with foreign keys off, e.g. a restore, or a lead deleted mid-pass.)
 const { getDBConnection } = require('../../config/db');
 const mailer = require('./mailer');
+const logoCheck = require('./mail-logo-check');
 const gsheet = require('./gsheet');
 
 const db = getDBConnection(process.env.DB_NAME || 'dfresh').promise();
@@ -228,11 +229,13 @@ function start() {
   timer = setInterval(tick, INTERVAL_MS);
   timer.unref();
   tick();
+  logoCheck.start(); // mail_logo_url: now and every 6 hours; a failing URL falls back to the built-in logo
 }
 
 function stop() {
   clearInterval(timer);
   timer = null;
+  logoCheck.stop();
 }
 
 module.exports = { start, stop, tick, sendMailNow, backoffMinutes, MAX_ATTEMPTS };

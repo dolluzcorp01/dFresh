@@ -161,3 +161,93 @@ test('admin setting mail_logo_url: https URL or empty only; a bad value is refus
   const [[after]] = await db.query("SELECT setting_value FROM site_settings WHERE setting_key = 'mail_logo_url'");
   assert.equal(after.setting_value, row.setting_value);
 });
+
+// ---- mail logo safety (fake fetch / fake transport; mail_logo_url and the test rows restored) ----
+const mailLogo = () => {
+  const fsx = require('fs');
+  const pathx = require('path');
+  return fsx.readFileSync(pathx.join(__dirname, '..', '..', 'src', 'backend_routes', 'mail-logo.png'));
+};
+const logoReply = (body, type = 'image/png', status = 200) => async () => new Response(body, { status, headers: { 'content-type': type } });
+
+test('saving mail_logo_url fetches it first: refused with the exact reason (nothing saved) or saved and shown as working', async () => {
+  const logoCheck = require('../../src/backend_routes/mail-logo-check');
+  const [[row]] = await db.query("SELECT setting_value, updated_by, updated_at FROM site_settings WHERE setting_key = 'mail_logo_url'");
+  const URL = 'https://logo.example/media/mail/dfresh-mail-logo.png';
+  try {
+    logoCheck.setFetch(logoReply('gone', 'text/html', 404));
+    const bad = await call('PUT', '/admin/settings/mail_logo_url', { as: 'admin', body: { value: URL } });
+    assert.equal(bad.status, 400);
+    assert.equal(bad.json.message, 'Logo URL not saved: it answered HTTP 404, not 200.');
+    const [[still]] = await db.query("SELECT setting_value FROM site_settings WHERE setting_key = 'mail_logo_url'");
+    assert.equal(still.setting_value, row.setting_value);
+
+    logoCheck.setFetch(logoReply(mailLogo()));
+    const ok = await call('PUT', '/admin/settings/mail_logo_url', { as: 'admin', body: { value: URL } });
+    assert.equal(ok.status, 200);
+    assert.equal((await call('GET', '/admin/mail-logo', { as: 'admin' })).json.data.state, 'ok');
+    assert.equal((await call('GET', '/admin/dashboard', { as: 'viewer' })).json.data.mailLogo.state, 'ok');
+
+    // The 6-hourly re-check finds it down: the dashboard shows it (red notice in the admin) until it works.
+    logoCheck.record(URL, { ok: false, reason: 'no answer within 5 s' });
+    const dash = (await call('GET', '/admin/dashboard', { as: 'viewer' })).json.data.mailLogo;
+    assert.deepEqual([dash.state, dash.reason, dash.url], ['failing', 'no answer within 5 s', URL]);
+
+    const off = await call('PUT', '/admin/settings/mail_logo_url', { as: 'admin', body: { value: '' } });
+    assert.equal(off.status, 200);
+    assert.equal((await call('GET', '/admin/dashboard', { as: 'viewer' })).json.data.mailLogo.state, 'off');
+  } finally {
+    logoCheck.setFetch(null);
+    // Value AND who / when: the admin Settings page shows "Changed ... by", which must not say ZZU-ADMIN.
+    await db.query("UPDATE site_settings SET setting_value = ?, updated_by = ?, updated_at = ? WHERE setting_key = 'mail_logo_url'",
+      [row.setting_value, row.updated_by, row.updated_at]);
+    logoCheck.record('', null);
+  }
+});
+
+test('built-in logo preview: admin only, the 124x68 PNG', async () => {
+  const get = (as) => fetch(`${base}/api/dfresh/admin/mail-logo/builtin.png`, { headers: { Cookie: `${COOKIE}=${token(USERS[as])}` } });
+  const r = await get('admin');
+  assert.equal(r.status, 200);
+  assert.equal(r.headers.get('content-type'), 'image/png');
+  const buf = Buffer.from(await r.arrayBuffer());
+  assert.deepEqual([buf.readUInt32BE(16), buf.readUInt32BE(20)], [124, 68]);
+  assert.equal((await get('editor')).status, 403);
+});
+
+test('"Send test mail": through the outbox to MAIL_TEST_TO locally (admin\'s own e-mail in production); refused clearly when mail is off', async () => {
+  const mailer = require('../../src/backend_routes/mailer');
+  const keep = { MAIL_ENABLED: process.env.MAIL_ENABLED, NODE_ENV: process.env.NODE_ENV, MAIL_TEST_TO: process.env.MAIL_TEST_TO };
+  const [[{ m: before }]] = await db.query('SELECT COALESCE(MAX(mail_id), 0) AS m FROM mail_outbox');
+  const sent = [];
+  try {
+    process.env.MAIL_TEST_TO = 'test-inbox@example.com';
+    process.env.MAIL_ENABLED = 'false';
+    const off = await call('POST', '/admin/mail-logo/test-mail', { as: 'admin' });
+    assert.equal(off.status, 503);
+    assert.equal(off.json.message, 'Test mail not sent: e-mail is switched off on this server');
+
+    process.env.MAIL_ENABLED = 'true';
+    mailer.setTransport(async (msg) => { sent.push(msg); return { id: 'fake-test' }; });
+    const ok = await call('POST', '/admin/mail-logo/test-mail', { as: 'admin' });
+    assert.equal(ok.status, 200);
+    assert.deepEqual([ok.json.data.to, ok.json.data.logo, ok.json.data.provider_id], ['test-inbox@example.com', 'builtin', 'fake-test']);
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].to, 'test-inbox@example.com');
+    assert.match(sent[0].text, /Logo used: the built-in logo/);
+    assert.equal((await call('POST', '/admin/mail-logo/test-mail', { as: 'editor' })).status, 403);
+
+    // Production: the signed-in admin's own dAdmin e-mail (ZZU-ADMIN has none, so it says so).
+    process.env.NODE_ENV = 'production';
+    const prod = await call('POST', '/admin/mail-logo/test-mail', { as: 'admin' });
+    assert.equal(prod.status, 400);
+    assert.equal(prod.json.message, 'Your dAdmin account has no e-mail address');
+
+    const [rows] = await db.query("SELECT purpose, status FROM mail_outbox WHERE mail_id > ? AND purpose = 'logo_test' ORDER BY mail_id", [before]);
+    assert.deepEqual(rows.map((r) => r.status), ['cancelled', 'sent']);
+  } finally {
+    Object.assign(process.env, keep);
+    mailer.setTransport(null);
+    await db.query("DELETE FROM mail_outbox WHERE mail_id > ? AND purpose = 'logo_test'", [before]);
+  }
+});

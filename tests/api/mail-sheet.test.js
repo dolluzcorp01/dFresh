@@ -72,21 +72,25 @@ test('the e-mail logo file is a PNG of at most 20 KB at exactly 2x the header sl
   assert.deepEqual([buf.readUInt32BE(16), buf.readUInt32BE(20)], [124, 68]); // IHDR width, height
 });
 
-test('mail_logo_url set: every template shows that URL and nothing is attached; empty: the inline CID logo', async () => {
-  const [[row]] = await db.query("SELECT setting_value FROM site_settings WHERE setting_key = 'mail_logo_url'");
+test('mail_logo_url set and checked: every template shows that URL and nothing is attached; empty: the inline CID logo', async () => {
+  const logoCheck = require('../../src/backend_routes/mail-logo-check');
+  const [[row]] = await db.query("SELECT setting_value, updated_by, updated_at FROM site_settings WHERE setting_key = 'mail_logo_url'");
   assert.ok(row, 'site_settings.mail_logo_url exists (migration 20261012_mail_logo_url.sql)');
   const sent = [];
   mailer.setTransport(async (msg) => { sent.push(msg); return { id: 'fake' }; });
   const URL = 'https://dfresh.example/media/mail/dfresh-mail-logo.png?v=1&x=2';
   try {
     await db.query("UPDATE site_settings SET setting_value = ? WHERE setting_key = 'mail_logo_url'", [URL]);
+    logoCheck.record(URL, { ok: true }); // as after a passing check (mail-logo.test.js covers the check)
     for (const m of Object.values(worst)) await mailer.send({ to: 'obx@example.com', subject: m.subject, html: m.html, text: m.text });
     await db.query("UPDATE site_settings SET setting_value = '' WHERE setting_key = 'mail_logo_url'");
     const m = worst.login_code;
     await mailer.send({ to: 'obx@example.com', subject: m.subject, html: m.html, text: m.text });
   } finally {
     mailer.setTransport(null);
-    await db.query("UPDATE site_settings SET setting_value = ? WHERE setting_key = 'mail_logo_url'", [row.setting_value]);
+    logoCheck.record('', null);
+    await db.query("UPDATE site_settings SET setting_value = ?, updated_by = ?, updated_at = ? WHERE setting_key = 'mail_logo_url'",
+      [row.setting_value, row.updated_by, row.updated_at]);
   }
   const byUrl = sent.slice(0, -1);
   for (const msg of byUrl) {

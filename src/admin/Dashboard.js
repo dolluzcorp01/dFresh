@@ -1,6 +1,6 @@
 // Dashboard: leads today / 7 days / by form, outbox health, missing translations per language (spec F 1).
 import { Link } from 'react-router-dom';
-import { Loading, useLoad } from './ui';
+import { Loading, Notice, useLoad } from './ui';
 
 export default function Dashboard() {
   const s = useLoad('/dashboard');
@@ -11,6 +11,11 @@ export default function Dashboard() {
       <Loading state={s}>
         {d && (
           <>
+            {d.mailLogo && d.mailLogo.state === 'failing' && (
+              <Notice kind="error">
+                Mail logo URL not reachable - using built-in logo. {d.mailLogo.reason ? `(${d.mailLogo.reason})` : ''} <Link to="/admin/settings">Settings</Link>
+              </Notice>
+            )}
             <div className="a-tiles">
               <Tile label="Leads today" value={d.leads.today} to="/admin/leads" />
               <Tile label="Leads last 7 days" value={d.leads.last7} to="/admin/leads" />

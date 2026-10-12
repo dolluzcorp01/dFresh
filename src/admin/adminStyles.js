@@ -110,6 +110,9 @@ const css = `
 .a-note { display: flex; gap: 8px; justify-content: space-between; align-items: flex-start; padding: 10px 12px; border-radius: 8px; margin: 8px 0; background: #eef3f8; border: 1px solid #c9d8e6; }
 .a-note ul { margin: 0; padding-inline-start: 18px; }
 .a-note-error { background: #fbeceb; border-color: #e8b4b0; color: #7a1a14; }
+.a-maillogo { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 8px; }
+.a-maillogo-head { display: flex; align-items: center; min-width: 118px; height: 34px; padding: 22px 28px; background: #121214; border-bottom: 4px solid #E5BF24; border-radius: 8px 8px 0 0; color: #F4CF2C; font-size: 12px; }
+.a-maillogo-head img { display: block; width: 62px; height: 34px; }
 .a-note-ok { background: #eaf5ee; border-color: #b5d9c1; color: var(--a-ok); }
 .a-note-warn { background: #fdf4e3; border-color: #ecd09a; color: var(--a-warn); }
 

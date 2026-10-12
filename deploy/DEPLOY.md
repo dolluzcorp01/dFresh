@@ -69,6 +69,17 @@ Database settings (admin -> Settings, after the first sign-in):
 - `lead_email` (info@dolluzcorp.com), `mail_from` (connect@dolluzcorp.com, verified in SendGrid), `site_url`.
 - `mail_logo_url` (optional): https URL of the hosted e-mail logo (`visual-output/mail-logo/dfresh-mail-logo.png` from
   `node scripts/mail-logo.js`, 124x68 transparent PNG). Empty = the inline logo attached to every mail.
+  **At go-live:** host the logo on our own domain:
+  1. `mkdir -p /var/www/dfresh/media/mail` and copy `dfresh-mail-logo.png` there (any change later = a NEW file
+     name, e.g. `dfresh-mail-logo-v2.png`: the URL is cached for a year).
+  2. nginx serves it with `Cache-Control: public, max-age=31536000, immutable` (`location /media/mail/` in
+     `deploy/nginx/dfresh.conf`); check: `curl -sI https://<DOMAIN>/media/mail/dfresh-mail-logo.png` -> 200,
+     `content-type: image/png`, that cache-control.
+  3. Admin -> Settings -> `mail_logo_url` = `https://<DOMAIN>/media/mail/dfresh-mail-logo.png` -> Save. The server
+     fetches it first and refuses to save unless it answers 200 within 5 s, is image/png or image/jpeg, <= 50 KB and
+     124x68 (or 62:34). Then "Send test mail" (goes to the signed-in admin's own e-mail in production).
+  4. The API re-checks the URL at start-up and every 6 hours; if it stops working, mails use the built-in logo,
+     pm2 logs one `[mail] logo URL ... not usable` line and the admin dashboard shows a red notice until it works.
 
 X-Forwarded-For: nginx sets it to `$remote_addr` (overwrite, not append) and `server.js` trusts only loopback,
 so `req.ip` is the visitor (lead rate limit, ip_hash) and a visitor cannot fake it. If a CDN / Cloudflare is put
