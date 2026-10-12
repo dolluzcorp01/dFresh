@@ -34,6 +34,9 @@ const css = `
 .a-nav a { padding: 8px 12px; border-radius: 8px; text-decoration: none; color: var(--a-ink2); }
 .a-nav a:hover { background: #efeadb; }
 .a-nav a.active { background: var(--a-gold); color: var(--a-ink); font-weight: 600; }
+.a-nav-sep { height: 1px; background: var(--a-line); margin: 8px 12px; }
+.a-nav a.a-nav-ext { display: inline-flex; align-items: center; gap: 6px; }
+.a-nav-ext svg { flex: none; opacity: .75; }
 .a-main { padding: 20px; min-width: 0; }
 
 .a-card { background: var(--a-card); border: 1px solid var(--a-line); border-radius: 12px; padding: 16px; margin-bottom: 16px; }

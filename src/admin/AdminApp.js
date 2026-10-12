@@ -105,6 +105,15 @@ export default function AdminApp() {
             const active = path === '' ? /^\/admin\/?$/.test(pathname) : pathname.startsWith(to);
             return <Link key={path} to={to} className={active ? 'active' : undefined} aria-current={active ? 'page' : undefined}>{label}</Link>;
           })}
+          {/* The public site, same origin as the admin (relative /en: localhost, staging, production), in a new
+              tab; for every role, never "active". */}
+          <div className="a-nav-sep" role="separator" />
+          <a className="a-nav-ext" href="/en" target="_blank" rel="noopener noreferrer" aria-label="User Interface - opens the website in a new tab">
+            User Interface
+            <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M9 2.5h4.5V7M13.5 2.5 7.5 8.5M12 9.5v3a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h3" />
+            </svg>
+          </a>
         </nav>
         <main className="a-main">
           <ScreenBoundary key={pathname}>

@@ -2,6 +2,8 @@
 // each, in one Euler circuit so every ordered pair occurs exactly once), then browser Back through the history
 // and Forward again. After each move: the screen's own heading, no "could not load" panel, loading finished,
 // on the list screens the first row is that screen's own data (compared with the API), and zero console errors.
+// External links in the sidebar (User Interface -> the public site) are not screens: they are skipped, and only
+// checked to point to /en in a new tab and never be marked active.
 // Finally the error boundary: one list answered (in the browser only) with a broken row must show "This screen
 // could not load" inside the page, log the error, and leave the sidebar working.
 // Exit code 1 on any failure.
@@ -82,6 +84,22 @@ async function main() {
       firstRow[path] = rows && rows.length ? api[1].map((k) => String(rows[0][k])) : null;
     }
 
+    // The sidebar: the 16 screens, plus the User Interface link to the public site (not a screen, never active).
+    const sidebar = await page.evaluate(() => ({
+      screens: [...document.querySelectorAll('.a-nav a')].filter((a) => !a.target).map((a) => a.getAttribute('href')),
+      ext: [...document.querySelectorAll('.a-nav a[target]')].map((a) => ({ href: a.getAttribute('href'), target: a.target, rel: a.rel, label: a.getAttribute('aria-label') })),
+    }));
+    const wantScreens = SCREENS.map(([p]) => `/admin/${p}`);
+    if (JSON.stringify(sidebar.screens) !== JSON.stringify(wantScreens)) fail(`sidebar screens ${sidebar.screens.join(' ')}`);
+    const ui = sidebar.ext.find((x) => x.href === '/en');
+    if (!ui || ui.target !== '_blank' || ui.rel !== 'noopener noreferrer' || ui.label !== 'User Interface - opens the website in a new tab') {
+      fail(`User Interface link: ${JSON.stringify(sidebar.ext)}`);
+    } else console.log('sidebar: 16 screens + User Interface -> /en (new tab, noopener noreferrer)');
+    const extActive = async (label) => {
+      const bad = await page.evaluate(() => [...document.querySelectorAll('.a-nav a[target]')].some((a) => a.classList.contains('active') || a.hasAttribute('aria-current')));
+      if (bad) fail(`${label}: the User Interface link is marked active`);
+    };
+
     const check = async (i, label) => {
       const [path, heading] = SCREENS[i];
       const ok = await page.waitForFunction((h) => {
@@ -104,6 +122,7 @@ async function main() {
         if (!has) fail(`${label}: /admin/${path} first row [${state.first.slice(0, 4).join(' | ')}] is not its own (expected ${want.join(' + ')})`);
       }
       if (errors.length) { fail(`${label}: console: ${errors.join(' || ').slice(0, 300)}`); errors.length = 0; }
+      await extActive(label);
     };
 
     const order = circuit(SCREENS.length);
