@@ -78,5 +78,7 @@ submits in Phase 6: 20 unique, consecutive refs.
   of the hosted transparent PNG 124x68 from `node scripts/mail-logo.js`).
   `20261012_form_close_confirm.sql` (2 keys `close_confirm`, `keep_editing`, EN/TA/HI; TA/HI drafts for native review,
   open item 9). After it (local DB, counted 2026-10-12): 193 UI keys (EN 193 rows, TA 191, HI 191).
+  `20261012_card_photo_of.sql` (1 key `card_photo_of` "Photo {n} of {total}", EN/TA/HI; TA/HI drafts for native
+  review, open item 9). After it (local DB, counted 2026-10-12): 194 UI keys (EN 194 rows, TA 192, HI 192).
 - `01_schema.sql` is for a fresh database only (it adds one FK with ALTER at the end).
 - The dAdmin database (`dadmin`) is read-only from dFresh except `login_otp` rows for app_key `dFresh`.

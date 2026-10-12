@@ -7,8 +7,14 @@
 .back { transform: rotateY(180deg); padding: 22px; gap: 10px; overflow-y: auto; scrollbar-width: thin; }
 
 .car { position: relative; flex: 1 1 auto; min-height: 200px; overflow: hidden; background: #FFF8E6; user-select: none; -webkit-user-select: none; }
-.track { display: flex; height: 100%; transform: translateX(calc(var(--k, 0) * -100%)); transition: transform .7s var(--ease); }
-:root[dir="rtl"] .track { transform: translateX(calc(var(--k, 0) * 100%)); }
+.car { touch-action: pan-y; cursor: grab; } /* vertical swipes scroll the page; horizontal drags change photo */
+.car.dragging { cursor: grabbing; }
+.car:focus-visible { outline: 3px solid var(--ink); outline-offset: -3px; }
+/* --dx = the live drag offset in px (ProductCarousel sets it while dragging, 0 otherwise) */
+.track { display: flex; height: 100%; transform: translateX(calc(var(--k, 0) * -100% + var(--dx, 0px))); transition: transform .7s var(--ease); }
+:root[dir="rtl"] .track { transform: translateX(calc(var(--k, 0) * 100% + var(--dx, 0px))); }
+.car.dragging .track { transition: none; }
+.car-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .slide { flex: 0 0 100%; height: 100%; }
 .slide svg { width: 100%; height: 100%; display: block; pointer-events: none; }
 .slide .ph { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; -webkit-user-drag: none; }

@@ -146,7 +146,14 @@ links (wa.me, tel:, mailto:).
 Front:
 - Carousel: the product's 3 photos + a 4th dark "spec slide" (logo, name, first 4 parts of the spec).
   Auto-advance ~3 s (staggered per card so a grid does not tick together), pause on hover / touch / when the
-  card is flipped / off-screen, swipe on touch, dots to jump. Images lazy, `srcset`, alt text.
+  card is flipped / off-screen / focused, dots to jump. Images lazy, `srcset`, alt text.
+  Drag (mouse) / swipe (touch): the photo follows once the move is clearly horizontal, then snaps to the next /
+  previous photo past ~40 px or on a quick flick (>= 0.3 px/ms), else back; wraps both ways. Vertical swipes keep
+  scrolling (`touch-action: pan-y`), so in the featured rail a sideways swipe ON A PHOTO changes the photo and the
+  rail scrolls from the card text or its arrows. A drag never becomes a click (no flip, no dot jump); the card
+  still flips only from `know_more`. Keyboard: the photo area is focusable, Left / Right change photo;
+  `card_photo_of` ("Photo 2 of 4") is announced for the visitor's own changes. Reduced motion: no following,
+  the photo switches on release. A colour swatch starts the new set at photo 1.
 - Product ID chip (dark chip, gold text), name, one-liner, first 3 keyword chips.
 - Colour swatches when the product has variants (`colour` label + dots from `swatch_hex`; White dot has a border).
 - Button `know_more` with a turn icon -> flip.
