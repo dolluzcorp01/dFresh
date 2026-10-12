@@ -47,7 +47,7 @@ CSS: `user-select: none` on body, `text` on form fields, `-webkit-user-drag: non
 ### A6. Analytics (GA4, silent if `ga4_measurement_id` is empty)
 Events: `whatsapp_click`, `card_flip {product_id}`, `variant_pick {product_id}`, `banner_click {banner}`,
 `filter_use {filter}`, `search {query_length}`, `form_open {form}`, `form_submit {form}`,
-`brochure_download {lang}`, `language_change {to}`, `roll_play`, `size_pick {size}`.
+`brochure_download {lang}`, `language_change {to}`, `roll_play`, `size_pick {size}`, `tissue_turn` (hero tissue picked up).
 All go through ONE helper `track(name, params)` which also adds `language`.
 
 ---------------------------------------------------------------------------------------------------
@@ -61,6 +61,18 @@ All go through ONE helper `track(name, params)` which also adds `language`.
   printed in the centre, embossed dot texture, gently billowing; pointer move / tap creates ripples;
   random soft auto-ripples; hint pill `touch` hides after first touch. 2D canvas fallback without WebGL;
   static image with reduced motion. Mobile: smaller mesh (e.g. 40x30) for performance.
+  **Pick it up anywhere** (2026-10-12, reference `docs/reference/dfresh-feel-gentle-tissue-pinch.html`, its hero tissue
+  only): press and hold >= 0.18 s or move > 4 px on the sheet picks it up at that point (a quick tap only ripples);
+  a Verlet cloth (33 x 25 nodes under the 65 x 49 render mesh; structural, shear and weak bending links, gravity, air
+  drag, 10 solver passes, soft floor and side limits) hangs from the pointer, back side duller with the logo faintly
+  showing through, two-sided light. Release: gravity fades over 1.8 s, the pull back eases in over 4.6 s, the last
+  bit fades over 2 s, at rest after about 5-6 s, then the cloth is switched off and the original sheet (and shader)
+  draws again. Phones keep their 40 x 30 render mesh with the same 33 x 25 cloth spread over it. Sideways drag on a
+  phone picks it up, a vertical swipe scrolls the page (`touch-action: pan-y`). GA4 `tissue_turn` on pick-up.
+  Reduced motion: still sheet, no ripples; it can be picked up without flutter or swing and is back at rest the
+  moment it is let go. Hint `touch` = "Touch it, or pick it up anywhere", description `sheet_label` updated
+  (migration 20261012_tissue_pickup_text.sql, TA/HI drafts for native review); long scripts get a smaller,
+  unspaced hint so it stays on one line at 390 px.
 - Falling tissue petals (canvas, ~16 pieces, 30 fps) behind the hero; leaf-icon trail following the mouse
   on hover devices only; small paper confetti burst on sheet tap.
 - **Stats strip**: products count (cards, not variants), categories count, active towns count, active

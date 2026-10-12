@@ -80,5 +80,7 @@ submits in Phase 6: 20 unique, consecutive refs.
   open item 9). After it (local DB, counted 2026-10-12): 193 UI keys (EN 193 rows, TA 191, HI 191).
   `20261012_card_photo_of.sql` (1 key `card_photo_of` "Photo {n} of {total}", EN/TA/HI; TA/HI drafts for native
   review, open item 9). After it (local DB, counted 2026-10-12): 194 UI keys (EN 194 rows, TA 192, HI 192).
+  `20261012_tissue_pickup_text.sql` (data: new texts for `touch` and `sheet_label` in EN/TA/HI, only where the seeded
+  text was unchanged; TA/HI drafts for native review, open item 9). UI key count unchanged.
 - `01_schema.sql` is for a fresh database only (it adds one FK with ALTER at the end).
 - The dAdmin database (`dadmin`) is read-only from dFresh except `login_otp` rows for app_key `dFresh`.
