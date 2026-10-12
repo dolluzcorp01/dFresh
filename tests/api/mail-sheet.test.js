@@ -48,24 +48,62 @@ const worst = {
   login_code: mailer.renderLoginCode({ name: '&'.repeat(120), code: '123456', minutes: 10, companyName: 'Dolluz' }),
 };
 
-test('every template uses the CID logo over a wordmark (never a URL / SVG) and stays under 60 KB at worst case', () => {
+// The header row: ink cell with the logo, up to the body cell.
+const header = (html) => /<tr><td style="background:#121214[^"]*">[\s\S]*?<\/td><\/tr>/.exec(html)[0];
+
+test('every template has the same header: logo image only (alt dFresh, 62x34), no wordmark / URL / SVG, under 60 KB', () => {
+  const first = header(worst.lead_alert.html);
   for (const [name, m] of Object.entries(worst)) {
     const bytes = Buffer.byteLength(m.html);
     console.log(`  ${name}: html ${bytes} B, text ${Buffer.byteLength(m.text)} B (worst case)`);
-    assert.ok(m.html.includes(`src="${mailer.LOGO_SRC}"`), `${name}: CID logo`);
-    assert.ok(/<img src="cid:[^"]+" alt="" width="62" height="34"/.test(m.html), `${name}: fixed-size logo, no shift`);
-    assert.ok(/>dfresh<\/div><!--<!\[endif\]--><img src="cid:/.test(m.html), `${name}: gold wordmark under the logo while it loads`);
-    assert.ok(!/\/media\/logo|\.svg/i.test(m.html), `${name}: no logo URL / SVG`);
+    assert.equal(header(m.html), first, `${name}: same header as every template`);
+    assert.ok(/<img src="cid:[^"]+" alt="dFresh" width="62" height="34"/.test(header(m.html)), `${name}: logo image, fixed size`);
+    assert.ok(!/>dfresh</i.test(m.html) && !/margin-top:-34px/.test(m.html), `${name}: no text wordmark`);
+    assert.ok(!/\/media\/logo|\.svg/i.test(m.html), `${name}: no logo URL / SVG in the template`);
     assert.ok(bytes < mailer.MAX_HTML_BYTES, `${name}: ${bytes} B >= 60 KB`);
   }
 });
 
-test('the e-mail logo file is a PNG of at most 20 KB at 2x height (68 px)', async () => {
+test('the e-mail logo file is a PNG of at most 20 KB at exactly 2x the header slot (124x68)', async () => {
   const file = path.join(__dirname, '..', '..', 'src', 'backend_routes', 'mail-logo.png');
   const buf = fs.readFileSync(file);
   assert.equal(buf.subarray(1, 4).toString(), 'PNG');
   assert.ok(buf.length <= 20 * 1024, `${buf.length} B`);
-  assert.equal(buf.readUInt32BE(20), 68); // IHDR height
+  assert.deepEqual([buf.readUInt32BE(16), buf.readUInt32BE(20)], [124, 68]); // IHDR width, height
+});
+
+test('mail_logo_url set: every template shows that URL and nothing is attached; empty: the inline CID logo', async () => {
+  const [[row]] = await db.query("SELECT setting_value FROM site_settings WHERE setting_key = 'mail_logo_url'");
+  assert.ok(row, 'site_settings.mail_logo_url exists (migration 20261012_mail_logo_url.sql)');
+  const sent = [];
+  mailer.setTransport(async (msg) => { sent.push(msg); return { id: 'fake' }; });
+  const URL = 'https://dfresh.example/media/mail/dfresh-mail-logo.png?v=1&x=2';
+  try {
+    await db.query("UPDATE site_settings SET setting_value = ? WHERE setting_key = 'mail_logo_url'", [URL]);
+    for (const m of Object.values(worst)) await mailer.send({ to: 'obx@example.com', subject: m.subject, html: m.html, text: m.text });
+    await db.query("UPDATE site_settings SET setting_value = '' WHERE setting_key = 'mail_logo_url'");
+    const m = worst.login_code;
+    await mailer.send({ to: 'obx@example.com', subject: m.subject, html: m.html, text: m.text });
+  } finally {
+    mailer.setTransport(null);
+    await db.query("UPDATE site_settings SET setting_value = ? WHERE setting_key = 'mail_logo_url'", [row.setting_value]);
+  }
+  const byUrl = sent.slice(0, -1);
+  for (const msg of byUrl) {
+    assert.ok(msg.html.includes('<img src="https://dfresh.example/media/mail/dfresh-mail-logo.png?v=1&amp;x=2" alt="dFresh" width="62" height="34"'));
+    assert.ok(!msg.html.includes('cid:'));
+    assert.equal(msg.attachments, undefined);
+  }
+  const cid = sent[sent.length - 1];
+  assert.ok(cid.html.includes(`<img src="${mailer.LOGO_SRC}" alt="dFresh"`));
+  assert.equal(cid.attachments.length, 1);
+});
+
+test('the URL check accepts https only, without spaces or quotes', () => {
+  for (const ok of ['https://a.example/l.png', 'https://a.example/x/l.png?v=2']) assert.ok(mailer.LOGO_URL.test(ok), ok);
+  for (const bad of ['', 'http://a.example/l.png', 'https://a.example/l .png', 'https://a.example/"x', 'javascript:alert(1)', 'cid:x']) {
+    assert.ok(!mailer.LOGO_URL.test(bad), bad);
+  }
 });
 
 test('send() attaches the logo inline with the matching content id and turns click tracking off', async () => {

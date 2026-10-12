@@ -67,6 +67,8 @@ Database settings (admin -> Settings, after the first sign-in):
 - `gsheet_spreadsheet_id` = LIVE sheet `1iv8X5AOv5VZ3KlZiRwYjX9-oc5LV16GuomGfDRDa1V4` (the TEST sheet is local only).
   Share it with the service account's e-mail as Editor. Tabs and row-1 headers as in `gsheet.js` HEADERS.
 - `lead_email` (info@dolluzcorp.com), `mail_from` (connect@dolluzcorp.com, verified in SendGrid), `site_url`.
+- `mail_logo_url` (optional): https URL of the hosted e-mail logo (`visual-output/mail-logo/dfresh-mail-logo.png` from
+  `node scripts/mail-logo.js`, 124x68 transparent PNG). Empty = the inline logo attached to every mail.
 
 X-Forwarded-For: nginx sets it to `$remote_addr` (overwrite, not append) and `server.js` trusts only loopback,
 so `req.ip` is the visitor (lead rate limit, ip_hash) and a visitor cannot fake it. If a CDN / Cloudflare is put

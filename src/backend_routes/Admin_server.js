@@ -16,6 +16,7 @@ const excel = require('./product-excel');
 const csv = require('./csv');
 const contentCache = require('./content-cache');
 const { audit } = require('./audit');
+const { LOGO_URL } = require('./mailer');
 
 const router = express.Router();
 const db = getDBConnection(process.env.DB_NAME || 'dfresh').promise();
@@ -640,6 +641,9 @@ route('put', '/settings/:key', 'admin', async (req) => tx(async (q) => {
   if (value.length > 20000) throw new InputError('Too long');
   if (['mail_from', 'lead_email', 'public_email'].includes(before.setting_key) && value && !/^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]{2,}$/.test(value)) {
     throw new InputError('A plain e-mail address, e.g. connect@dolluzcorp.com');
+  }
+  if (before.setting_key === 'mail_logo_url' && value && !LOGO_URL.test(value)) {
+    throw new InputError('An https:// URL of the logo PNG (no spaces or quotes), or empty for the built-in logo');
   }
   await q.query('UPDATE site_settings SET setting_value = ?, updated_by = ? WHERE setting_key = ?', [value, by(req), before.setting_key]);
   await audit(q, { empId: by(req), action: 'update', entity: 'setting', entityId: before.setting_key, before: { value: before.setting_value }, after: { value } });

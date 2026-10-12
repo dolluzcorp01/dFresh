@@ -7,8 +7,10 @@
 //   can never mail info@ or a visitor.
 // - Every message has a plain-text part (send() throws without one); inline CSS only; every interpolated
 //   value goes through esc().
-// - Logo: an inline CID attachment (mail-logo.png, built by scripts/mail-logo.js), never a URL or SVG: Gmail
-//   showed only the alt text for the URL logo. send() attaches it to every message whose html uses LOGO_SRC.
+// - Logo: image only (alt "dFresh", fixed 62x34, no text wordmark), the same header in every template. Templates
+//   render LOGO_SRC (cid:); send() decides per message, reading site_settings on every send:
+//   mail_logo_url set (https) -> that URL replaces LOGO_SRC and nothing is attached; empty -> the inline CID
+//   attachment mail-logo.png (built by scripts/mail-logo.js). Never SVG. Already queued mails follow the setting.
 // - Log: logMail() prints one "[mail] #id purpose from .. to .. -> outcome" line per mail and outcome (the
 //   outbox worker calls it); the subject and body are never printed, so a sign-in code never reaches the log.
 // - Size: Gmail clips html over 102 KB. Rendered templates stay far below MAX_HTML_BYTES (60 KB) because every
@@ -65,13 +67,23 @@ function readiness() {
   return { ok: true };
 }
 
-async function sender() {
+/** An https logo URL that is safe inside src="..." (admin Settings checks the same), else ''. */
+const LOGO_URL = /^https:\/\/[^\s"'<>]+$/;
+
+async function mailSettings() {
   const [rows] = await db.query(
-    "SELECT setting_key, setting_value FROM site_settings WHERE setting_key IN ('mail_from', 'mail_from_name')"
+    "SELECT setting_key, setting_value FROM site_settings WHERE setting_key IN ('mail_from', 'mail_from_name', 'mail_logo_url')"
   );
-  const s = Object.fromEntries(rows.map((r) => [r.setting_key, (r.setting_value || '').trim()]));
+  return Object.fromEntries(rows.map((r) => [r.setting_key, (r.setting_value || '').trim()]));
+}
+
+function senderOf(s) {
   if (!EMAIL.test(s.mail_from || '')) throw new Error('site_settings.mail_from is empty or not a plain e-mail address');
   return { email: s.mail_from, name: s.mail_from_name || undefined };
+}
+
+async function sender() {
+  return senderOf(await mailSettings());
 }
 
 /** The sender address for the log line, or why there is none (never throws). */
@@ -107,13 +119,16 @@ async function send({ to, subject, html, text }) {
   if (!html) throw new Error('mailer: html part missing');
   if (!EMAIL.test(to || '')) throw new Error('mailer: bad recipient');
   const redirect = testTo();
+  const settings = await mailSettings();
+  const logoUrl = LOGO_URL.test(settings.mail_logo_url || '') ? settings.mail_logo_url : '';
+  const hasLogo = html.includes(LOGO_SRC);
   const message = {
-    from: await sender(),
+    from: senderOf(settings),
     to: redirect || to,
     subject: redirect ? `[TEST for ${to}] ${subject}` : subject,
-    html,
+    html: hasLogo && logoUrl ? html.split(LOGO_SRC).join(esc(logoUrl)) : html,
     text,
-    ...(html.includes(LOGO_SRC) ? { attachments: [logo()] } : {}),
+    ...(hasLogo && !logoUrl ? { attachments: [logo()] } : {}),
     trackingSettings: { clickTracking: { enable: false, enableText: false } },
   };
   let providerId = null;
@@ -151,15 +166,10 @@ function button(href, label) {
   return `<a href="${esc(href)}" style="display:inline-block;background:${C.ink};color:${C.goldL};font:600 15px/1.3 ${FONT};text-decoration:none;padding:13px 26px;border-radius:999px">${esc(label)}</a>`;
 }
 
-// Branded shell: ink header with the on-dark logo (inline CID attachment, 62x34 shown, 2x file) and a gold
-// rule, paper body, beige footer. Gmail fetches images after the text, so the logo slot is a fixed 62x34 box
-// with a gold text wordmark in it; the (opaque, ink-backed) logo is pulled up over it by a negative margin and
-// covers it once loaded, so nothing shifts. Outlook desktop ignores negative margins, so it gets the image only
-// (the wordmark is inside a not-mso comment). alt is empty: the wordmark already names the brand.
-const LOGO_SLOT = `<div style="width:62px;height:34px;overflow:hidden;background:${C.ink}">`
-  + `<!--[if !mso]><!--><div style="height:34px;font:700 20px/34px ${HEAD};color:${C.goldL};white-space:nowrap">dfresh</div><!--<![endif]-->`
-  + `<img src="${LOGO_SRC}" alt="" width="62" height="34" style="display:block;width:62px;height:34px;border:0;margin-top:-34px;background:${C.ink}">`
-  + '</div>';
+// Branded shell: ink header with the on-dark logo and a gold rule, paper body, beige footer. The logo is the
+// image only (no text wordmark), fixed 62x34 so nothing shifts while it loads; src is LOGO_SRC, which send()
+// turns into mail_logo_url or the inline CID attachment. Every template uses this one header.
+const LOGO_IMG = `<img src="${LOGO_SRC}" alt="dFresh" width="62" height="34" style="display:block;width:62px;height:34px;border:0;outline:none;text-decoration:none">`;
 
 function shell({ htmlLang = 'en', title, preheader = '', body, footer }) {
   return `<!doctype html>
@@ -168,7 +178,7 @@ function shell({ htmlLang = 'en', title, preheader = '', body, footer }) {
 <div style="display:none;max-height:0;overflow:hidden;opacity:0">${esc(preheader)}</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${C.beige}"><tr><td align="center" style="padding:24px 12px">
 <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:${C.paper};border-radius:16px;overflow:hidden;border:1px solid ${C.line}">
-<tr><td style="background:${C.ink};padding:22px 28px;border-bottom:4px solid ${C.gold}">${LOGO_SLOT}</td></tr>
+<tr><td style="background:${C.ink};padding:22px 28px;border-bottom:4px solid ${C.gold}">${LOGO_IMG}</td></tr>
 <tr><td style="padding:28px;font:15px/1.6 ${FONT};color:${C.ink}">${body}</td></tr>
 <tr><td style="padding:16px 28px;background:#F3EEDF;font:12px/1.5 ${FONT};color:${C.ink2}">${footer}</td></tr>
 </table></td></tr></table></body></html>`;
@@ -321,5 +331,5 @@ It is valid for ${minutes} minutes. If you did not try to sign in, tell the dFre
 
 module.exports = {
   send, readiness, setTransport, fromAddress, logMail, queuedOutcome, renderLeadAlert, renderBrochureCopy, renderLeadAck, renderLoginCode, esc,
-  LOGO_SRC, MAX_HTML_BYTES,
+  LOGO_SRC, LOGO_URL, MAX_HTML_BYTES,
 };

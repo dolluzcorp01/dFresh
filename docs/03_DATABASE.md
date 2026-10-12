@@ -37,7 +37,7 @@ Put this pattern in ONE helper (`src/backend_routes/i18n-sql.js`) and reuse it. 
 | `brochures` | One PDF per language | file at `private/brochures/<lang_code>/<file_name>`; English fallback |
 | `leads` + `lead_products` | Every form submission | one table, `form_type` enum; distributor extras in `details_json` (brochure: `{ brochure_lang }` = PDF language actually served, null when none); status workflow; `staff_notes`, `ip_hash` INTERNAL |
 | `lead_counters` | Running lead number per year | one row per 2-digit year (IST); bumped inside the lead transaction (row lock = unique `lead_ref`, also serialises the rate-limit count) |
-| `mail_outbox` | E-mails waiting to be sent (`purpose`: `lead_alert`, `brochure_copy`, `lead_ack`, `admin_otp`) | worker retries with back-off; never lose a lead e-mail. Sender is read at send time from `site_settings.mail_from` / `mail_from_name` (not stored per row). `lead_id` -> `leads` ON DELETE CASCADE; status `cancelled` = its lead no longer exists (never sent). `admin_otp` rows (sign-in codes) are wiped once sent, or cancelled and wiped after 10 minutes. `provider_msg_id` = SendGrid x-message-id of a sent row |
+| `mail_outbox` | E-mails waiting to be sent (`purpose`: `lead_alert`, `brochure_copy`, `lead_ack`, `admin_otp`) | worker retries with back-off; never lose a lead e-mail. Sender and header logo are read at send time from `site_settings.mail_from` / `mail_from_name` / `mail_logo_url` (not stored per row; empty `mail_logo_url` = the inline CID logo). `lead_id` -> `leads` ON DELETE CASCADE; status `cancelled` = its lead no longer exists (never sent). `admin_otp` rows (sign-in codes) are wiped once sent, or cancelled and wiped after 10 minutes. `provider_msg_id` = SendGrid x-message-id of a sent row |
 | `sync_outbox` | Google Sheet rows waiting | same retry model, same cascade and `cancelled` rule |
 | `admin_users` | Who may use the admin + role | `emp_id` VARCHAR(20); seeded DZIND002 + DZIND148 as admin |
 | `audit_log` | Every admin change | before/after JSON |
@@ -74,5 +74,7 @@ submits in Phase 6: 20 unique, consecutive refs.
   data: `mail_from` = `connect@dolluzcorp.com` (plain address, the verified SendGrid sender), new `mail_from_name` =
   `dFresh`; 5 keys `sending`, `thanks_name`, `e_net`, `e_rate`, `bro_expired`; `ok_bro` reworded without the preview's
   "On the live site" (EN/TA/HI, only where the seeded text was unchanged)). After it: 186 UI keys (EN 186 rows, TA 184, HI 184).
+  `20261012_mail_logo_url.sql` (data: non-public setting `mail_logo_url`, empty = inline CID logo; set it to the https URL
+  of the hosted transparent PNG 124x68 from `node scripts/mail-logo.js`).
 - `01_schema.sql` is for a fresh database only (it adds one FK with ALTER at the end).
 - The dAdmin database (`dadmin`) is read-only from dFresh except `login_otp` rows for app_key `dFresh`.

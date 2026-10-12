@@ -149,3 +149,15 @@ test('bad input is a 400 with a message, never a 500', async () => {
   const nf = await call('GET', '/admin/kits/nope', { as: 'viewer' });
   assert.equal(nf.status, 404);
 });
+
+test('admin setting mail_logo_url: https URL or empty only; a bad value is refused and nothing is saved', async () => {
+  const [[row]] = await db.query("SELECT setting_value FROM site_settings WHERE setting_key = 'mail_logo_url'");
+  for (const bad of ['http://a.example/l.png', 'https://a.example/l .png', 'javascript:alert(1)']) {
+    const r = await call('PUT', '/admin/settings/mail_logo_url', { as: 'admin', body: { value: bad } });
+    assert.equal(r.status, 400, bad);
+    assert.match(r.json.message, /https:\/\/ URL/);
+  }
+  assert.equal((await call('PUT', '/admin/settings/mail_logo_url', { as: 'editor', body: { value: '' } })).status, 403);
+  const [[after]] = await db.query("SELECT setting_value FROM site_settings WHERE setting_key = 'mail_logo_url'");
+  assert.equal(after.setting_value, row.setting_value);
+});
