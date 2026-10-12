@@ -15,6 +15,7 @@ const brochureRoutes = require('./src/backend_routes/Brochure_server');
 const adminLoginRoutes = require('./src/backend_routes/Admin_login_server');
 const adminRoutes = require('./src/backend_routes/Admin_server');
 const outboxWorker = require('./src/backend_routes/outbox-worker');
+const fontManager = require('./src/backend_routes/font-manager');
 const contentCache = require('./src/backend_routes/content-cache');
 const seo = require('./src/backend_routes/seo');
 const { version } = require('./package.json');
@@ -171,5 +172,6 @@ const server = app.listen(PORT, (err) => {
   if (err) return failListen(err);
   console.log(`dFresh API listening on http://localhost:${PORT}`);
   outboxWorker.start();
+  fontManager.init(); // script font subsets: checked now and after every content change (font-manager.js)
 });
 server.on('error', failListen);

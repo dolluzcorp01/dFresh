@@ -11,6 +11,11 @@ export default function Dashboard() {
       <Loading state={s}>
         {d && (
           <>
+            {(d.fonts || []).filter((f) => f.status === 'full').map((f) => (
+              <Notice key={f.family} kind="error">
+                Font for {f.script} could not be rebuilt - using the full font ({f.error}). It retries by itself. <Link to="/admin/languages">Languages</Link>
+              </Notice>
+            ))}
             {d.mailLogo && d.mailLogo.state === 'failing' && (
               <Notice kind="error">
                 Mail logo URL not reachable - using built-in logo. {d.mailLogo.reason ? `(${d.mailLogo.reason})` : ''} <Link to="/admin/settings">Settings</Link>

@@ -1,20 +1,14 @@
-// `npm run fonts:build`: self-hosted web fonts (woff2, font-display: swap), generated from the DB, committed.
-// Run it after adding a language, changing a languages.font_family, or adding text with characters a script
-// font has not seen yet (a missing character falls back to the next font in the stack, it never disappears).
-// - Brand display font (Saira) and the DEFAULT language's font: Google's latin + latin-ext files (all their
-//   characters), variable weight 300-800.
-// - Every other language's font: ONE variable file (300-800) subset to the characters that language's content
-//   uses (bootstrap + legal pages + the language list), Google Fonts `text=` subsetting, which keeps the
-//   shaping rules for those characters.
-// - Language switch labels: a tiny weight-600 subset per font with just the labels, family "dFresh label <font>"
-//   (src/i18n/fonts.js labelFamily), so the switch shows every script without loading that script's font.
-// Output: src/fonts/*.woff2 (webpack fingerprints them into /static/media), src/styles/fonts.css (@font-face),
-// src/i18n/selfHostedFonts.json (what is self-hosted; fonts.js asks Google only for anything else, e.g. a new
-// language before this ran).
+// `npm run fonts:build` - a MANUAL FALLBACK only. The site keeps its script fonts up to date by itself
+// (src/backend_routes/font-manager.js: subsets rebuilt on the server after every text change, no command).
+// What this does:
+// 1. The fonts the build carries (committed): the brand display font Saira and the default language's Latin font
+//    (Open Sans), Google's latin + latin-ext files, variable weight 300-800 -> src/fonts/*.woff2 +
+//    src/styles/fonts.css. Re-run only to update those two families.
+// 2. Runs the same refresh the server runs for the script fonts (media/fonts, private/fonts/manifest.json); a
+//    running server picks the result up after a restart (it rebuilds by itself anyway on the next text change).
 // No <link rel="preload"> for fonts: measured with Lighthouse mobile, preloading the two Latin files held the
 // first paint back (observed FCP ~2.2 s instead of ~0.4 s); with font-display: swap the text paints at once in
 // the fallback font instead.
-// Languages are data: nothing here names a language.
 require('dotenv').config({ quiet: true });
 
 const fs = require('fs');
@@ -23,7 +17,6 @@ const path = require('path');
 const ROOT = path.resolve(__dirname, '..');
 const FONTS = path.join(ROOT, 'src/fonts');
 const CSS = path.join(ROOT, 'src/styles/fonts.css');
-const JSON_OUT = path.join(ROOT, 'src/i18n/selfHostedFonts.json');
 const BRAND = 'Saira';
 const WEIGHTS = '300..800';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36';
@@ -37,7 +30,6 @@ async function get(url, as = 'text') {
   return as === 'buffer' ? Buffer.from(await res.arrayBuffer()) : res.text();
 }
 
-// [{ comment, weight, url, range }] from Google's css2 answer.
 function faces(css) {
   const out = [];
   const re = /(?:\/\*\s*([\w-]+)\s*\*\/\s*)?@font-face\s*{([^}]*)}/g;
@@ -54,55 +46,24 @@ function faces(css) {
   return out;
 }
 
-// Symbols the public UI code itself renders (arrows, stars, ticks): every non-ASCII character in src/ outside
-// the admin. In a script font's subset (when the font has the glyph), they no longer pull in the Latin font.
-function uiSymbols() {
-  let out = '';
-  const walk = (dir) => {
-    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-      const p = path.join(dir, e.name);
-      if (e.isDirectory()) { if (e.name !== 'admin' && e.name !== 'fonts') walk(p); } else if (/\.(js|css)$/.test(e.name)) out += fs.readFileSync(p, 'utf8');
-    }
-  };
-  walk(path.join(ROOT, 'src'));
-  return [...new Set(out.match(/[\u0080-\u{10ffff}]/gu) || [])].join('');
-}
-
 const written = new Set();
-async function save(name, url) {
-  const buf = await get(url, 'buffer');
-  fs.writeFileSync(path.join(FONTS, name), buf);
-  written.add(name);
-  return buf.length;
-}
-
-function rule(family, weight, file, range) {
-  return `@font-face {\n  font-family: '${family}';\n  font-style: normal;\n  font-weight: ${weight};\n  font-display: swap;\n`
-    + `  src: url(../fonts/${file}) format('woff2');\n${range ? `  unicode-range: ${range};\n` : ''}}\n`;
-}
+const report = [];
 
 // Google's latin + latin-ext files of a family (all characters of those ranges).
-async function latinFamily(family, report) {
+async function latinFamily(family) {
   const css = await get(`https://fonts.googleapis.com/css2?family=${plus(family)}:wght@${WEIGHTS}&display=swap`);
   let out = '';
   for (const f of faces(css).filter((x) => ['latin', 'latin-ext'].includes(x.comment))) {
     const file = `${slug(family)}-${f.comment}.woff2`;
-    report.push([file, await save(file, f.url)]);
-    out += rule(family, f.weight, file, f.range);
+    const buf = await get(f.url, 'buffer');
+    fs.writeFileSync(path.join(FONTS, file), buf);
+    written.add(file);
+    report.push([file, buf.length]);
+    out += `@font-face {\n  font-family: '${family}';\n  font-style: normal;\n  font-weight: ${f.weight};\n  font-display: swap;\n`
+      + `  src: url(../fonts/${file}) format('woff2');\n${f.range ? `  unicode-range: ${f.range};\n` : ''}}\n`;
   }
   if (!out) throw new Error(`no latin files for ${family}`);
   return out;
-}
-
-// One file with exactly the characters in text (Google `text=` subsetting, unicode-range included).
-async function subsetFamily(family, text, weights, cssFamily, file, report) {
-  // Spaces too (a space missing from the subset would pull in the whole fallback font); no control characters.
-  const chars = [...new Set([...text])].filter((c) => c >= ' ' && c !== '\u007f').sort().join('');
-  const css = await get(`https://fonts.googleapis.com/css2?family=${plus(family)}:wght@${weights}&text=${encodeURIComponent(chars)}&display=swap`);
-  const [f] = faces(css);
-  if (!f || !f.url) throw new Error(`no subset for ${family}`);
-  report.push([file, await save(file, f.url), [...chars].length]);
-  return rule(cssFamily, f.weight, file, f.range);
 }
 
 async function main() {
@@ -112,46 +73,21 @@ async function main() {
   if (!def || !def.fontFamily) throw new Error('the default language has no font_family');
 
   fs.mkdirSync(FONTS, { recursive: true });
-  const report = [];
-  let css = `/* GENERATED by \`npm run fonts:build\` (scripts/fonts-build.js) from the languages table: do not edit. */\n`;
-  const families = [BRAND, def.fontFamily];
-  css += await latinFamily(BRAND, report);
-  if (def.fontFamily !== BRAND) css += await latinFamily(def.fontFamily, report);
-
-  // Script fonts: characters of everything that language shows.
-  const byFont = new Map();
-  for (const l of langs.languages) {
-    if (!l.fontFamily || families.includes(l.fontFamily)) continue;
-    const boot = (await content.getBootstrap(l.code)).data;
-    const legal = [];
-    for (const page of ['privacy', 'terms']) {
-      try { legal.push((await content.getLegal(page, l.code)).data); } catch { /* no legal page: nothing to add */ }
-    }
-    byFont.set(l.fontFamily, (byFont.get(l.fontFamily) || '') + JSON.stringify([boot, legal, langs]) + uiSymbols());
-  }
-  for (const [family, text] of byFont) {
-    families.push(family);
-    css += await subsetFamily(family, text, WEIGHTS, family, `${slug(family)}-content.woff2`, report);
-  }
-
-  // Switch labels, every font.
-  const labels = {};
-  for (const l of langs.languages) {
-    if (!l.fontFamily) continue;
-    // + a space: the first font in a stack that covers U+0020 is the one CSS loads for line metrics, so a
-    // label face without it would pull in the full script font of every language on every page.
-    labels[l.fontFamily] = `${labels[l.fontFamily] || ' '}${l.switchLabel}`;
-  }
-  for (const [family, text] of Object.entries(labels)) {
-    css += await subsetFamily(family, text, '600', `dFresh label ${family}`, `label-${slug(family)}.woff2`, report);
-    labels[family] = [...new Set([...text])].join('');
-  }
-
+  let css = '/* GENERATED by `npm run fonts:build` (scripts/fonts-build.js): the Latin fonts the build carries. Script fonts: backend font-manager.js. */\n';
+  css += await latinFamily(BRAND);
+  if (def.fontFamily !== BRAND) css += await latinFamily(def.fontFamily);
   for (const f of fs.readdirSync(FONTS)) if (f.endsWith('.woff2') && !written.has(f)) fs.unlinkSync(path.join(FONTS, f));
   fs.writeFileSync(CSS, css);
-  fs.writeFileSync(JSON_OUT, `${JSON.stringify({ families, labels }, null, 2)}\n`);
-  for (const [file, bytes, n] of report) console.log(`  ${file.padEnd(36)} ${String(Math.round(bytes / 102.4) / 10).padStart(6)} KB${n ? `  (${n} characters)` : ''}`);
-  console.log(`fonts: ${report.length} files in src/fonts, src/styles/fonts.css, src/i18n/selfHostedFonts.json`);
+  for (const [file, bytes] of report) console.log(`  ${file.padEnd(30)} ${String(Math.round(bytes / 102.4) / 10).padStart(6)} KB`);
+  console.log(`fonts: ${report.length} Latin files in src/fonts + src/styles/fonts.css`);
+
+  const fontManager = require('../src/backend_routes/font-manager');
+  await fontManager.init();
+  await fontManager.whenIdle();
+  for (const s of fontManager.status()) {
+    console.log(`  ${s.family.padEnd(22)} ${s.status.padEnd(10)} ${s.subsetSize ? `${Math.round(s.subsetSize / 1024)} KB, ${s.characters} characters` : ''}`);
+  }
+  fontManager.stop();
   process.exit(0);
 }
 

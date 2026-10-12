@@ -1,0 +1,16 @@
+{
+  "about": "Scripts a language can use (admin > Languages > Script). family = languages.font_family, dir = languages.dir. ranges = the script's Unicode blocks (hex): the full-script font served while a subset is rebuilt. Source fonts in fonts/source (scripts/fonts-source.js). bundled = the build already carries this family (Latin: Open Sans latin + latin-ext); its runtime part is only the language-switch label.",
+  "scripts": [
+    { "script": "Latin", "family": "Open Sans", "dir": "ltr", "bundled": true, "file": "open-sans.woff2", "googleDir": "opensans", "googleFile": "OpenSans[wdth,wght].ttf", "ranges": ["0000-024F", "1E00-1EFF", "2000-206F", "20A0-20CF", "2100-214F"] },
+    { "script": "Tamil", "family": "Noto Sans Tamil", "dir": "ltr", "file": "noto-sans-tamil.woff2", "googleDir": "notosanstamil", "googleFile": "NotoSansTamil[wdth,wght].ttf", "ranges": ["0B80-0BFF", "11FC0-11FFF"] },
+    { "script": "Devanagari", "family": "Noto Sans Devanagari", "dir": "ltr", "file": "noto-sans-devanagari.woff2", "googleDir": "notosansdevanagari", "googleFile": "NotoSansDevanagari[wdth,wght].ttf", "ranges": ["0900-097F", "A8E0-A8FF", "1CD0-1CFF"] },
+    { "script": "Telugu", "family": "Noto Sans Telugu", "dir": "ltr", "file": "noto-sans-telugu.woff2", "googleDir": "notosanstelugu", "googleFile": "NotoSansTelugu[wdth,wght].ttf", "ranges": ["0C00-0C7F"] },
+    { "script": "Kannada", "family": "Noto Sans Kannada", "dir": "ltr", "file": "noto-sans-kannada.woff2", "googleDir": "notosanskannada", "googleFile": "NotoSansKannada[wdth,wght].ttf", "ranges": ["0C80-0CFF"] },
+    { "script": "Malayalam", "family": "Noto Sans Malayalam", "dir": "ltr", "file": "noto-sans-malayalam.woff2", "googleDir": "notosansmalayalam", "googleFile": "NotoSansMalayalam[wdth,wght].ttf", "ranges": ["0D00-0D7F"] },
+    { "script": "Bengali", "family": "Noto Sans Bengali", "dir": "ltr", "file": "noto-sans-bengali.woff2", "googleDir": "notosansbengali", "googleFile": "NotoSansBengali[wdth,wght].ttf", "ranges": ["0980-09FF"] },
+    { "script": "Gujarati", "family": "Noto Sans Gujarati", "dir": "ltr", "file": "noto-sans-gujarati.woff2", "googleDir": "notosansgujarati", "googleFile": "NotoSansGujarati[wdth,wght].ttf", "ranges": ["0A80-0AFF"] },
+    { "script": "Gurmukhi", "family": "Noto Sans Gurmukhi", "dir": "ltr", "file": "noto-sans-gurmukhi.woff2", "googleDir": "notosansgurmukhi", "googleFile": "NotoSansGurmukhi[wdth,wght].ttf", "ranges": ["0A00-0A7F"] },
+    { "script": "Odia", "family": "Noto Sans Oriya", "dir": "ltr", "file": "noto-sans-oriya.woff2", "googleDir": "notosansoriya", "googleFile": "NotoSansOriya[wdth,wght].ttf", "ranges": ["0B00-0B7F"] },
+    { "script": "Arabic", "family": "Noto Sans Arabic", "dir": "rtl", "file": "noto-sans-arabic.woff2", "googleDir": "notosansarabic", "googleFile": "NotoSansArabic[wdth,wght].ttf", "ranges": ["0600-06FF", "0750-077F", "08A0-08FF", "FB50-FDFF", "FE70-FEFF"] }
+  ]
+}

@@ -19,6 +19,7 @@ const { audit } = require('./audit');
 const path = require('path');
 const mailer = require('./mailer');
 const logoCheck = require('./mail-logo-check');
+const fontManager = require('./font-manager');
 const outboxWorker = require('./outbox-worker');
 
 const router = express.Router();
@@ -102,6 +103,7 @@ route('get', '/dashboard', 'viewer', async () => {
     outbox: { mail: counts(mail), sync: counts(sync) },
     languages: langs.map((l) => ({ ...l, missing: done[l.lang_code].total - done[l.lang_code].have, pct: done[l.lang_code].pct })),
     mailLogo: logoCheck.status(), // state 'failing' = red notice: mails use the built-in logo
+    fonts: fontManager.status(), // status 'full' = red notice: a subset could not be rebuilt, the full font is served
   };
 });
 
@@ -513,6 +515,12 @@ const LANG_COLS = {
 };
 
 function langValues(body, creating) {
+  // script (fonts/scripts.json, the admin's Script list) sets font_family and dir together
+  if (typeof body.script === 'string' && body.script) {
+    const s = fontManager.CATALOG.find((x) => x.script === body.script);
+    if (!s) throw new InputError(`script: one of ${fontManager.CATALOG.map((x) => x.script).join(', ')}`);
+    body = { ...body, font_family: s.family, dir: s.dir }; // eslint-disable-line no-param-reassign
+  }
   const out = {};
   for (const [c, def] of Object.entries(LANG_COLS)) {
     if (!(c in body)) {
@@ -525,18 +533,29 @@ function langValues(body, creating) {
     out[c] = entities.coerce(c, def, body[c]);
   }
   if (out.html_lang && !/^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/.test(out.html_lang)) throw new InputError('html_lang like te-IN');
-  // font_family goes into a Google Fonts URL and a CSS variable: letters, digits and spaces only.
-  if (out.font_family && !/^[A-Za-z0-9 ]{2,120}$/.test(out.font_family)) throw new InputError('font_family: a Google Font name, e.g. Noto Sans Telugu');
+  // the server only has fonts for the scripts in its catalog
+  if (out.font_family && !fontManager.CATALOG.some((x) => x.family === out.font_family)) {
+    throw new InputError(`font_family: one of ${fontManager.CATALOG.map((x) => x.family).join(', ')} (pick the Script)`);
+  }
   return out;
 }
 
 const LANG_SELECT = 'SELECT lang_code, name_en, native_name, switch_label, html_lang, dir, font_family, is_default, is_active, sort_order FROM languages';
 
+route('get', '/fonts', 'viewer', async () => ({ scripts: fontManager.CATALOG, fonts: fontManager.status() }));
+
 route('get', '/languages', 'viewer', async () => {
   const [rows] = await db.query(`${LANG_SELECT} ORDER BY sort_order, lang_code`);
   const done = await entities.completeness();
   const [bros] = await db.query('SELECT lang_code FROM brochures');
-  return rows.map((r) => ({ ...r, completeness: done[r.lang_code], brochure: bros.some((b) => b.lang_code === r.lang_code) }));
+  const script = (family) => (fontManager.CATALOG.find((x) => x.family === family) || {}).script || null;
+  return rows.map((r) => ({
+    ...r,
+    script: script(r.font_family),
+    font: fontManager.familyStatus(r.font_family), // null while the language is off (its font is only built when used)
+    completeness: done[r.lang_code],
+    brochure: bros.some((b) => b.lang_code === r.lang_code),
+  }));
 });
 
 route('post', '/languages', 'admin', async (req) => tx(async (q) => {

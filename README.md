@@ -44,7 +44,9 @@ Phase task files are in `docs/claude-tasks/` (finished ones in `docs/claude-task
 | `npm run prerender` | Server bundle `build-ssr/ssr.js` + every public page per language pre-rendered into `build-ssr/pages.json` |
 | `npm run db:reset` | Local only: drop + create + schema + seed + app user |
 | `npm run media:sync` | Copy `assets/` to `media/`, then `media:build` |
-| `npm run fonts:build` | Self-hosted fonts from Google into `src/fonts` + `src/styles/fonts.css` (needs the DB + internet; script fonts subset to the characters the content uses: re-run after adding a language or text in a new script) |
+| `npm run fonts:build` | Manual fallback only: the server keeps script fonts right by itself (`font-manager.js`). Refreshes the Latin fonts the build carries + runs the server's font refresh |
+| `npm run fonts:source` | Refresh the full source fonts (`fonts/source`, 11 scripts) from Google Fonts; rare, committed |
+| `NODE_PATH=<scratch>/node_modules WEB_URL=http://localhost:4013 npm run test:fonts-e2e` | Fonts end to end in a browser: new Tamil character rendered in Noto Sans Tamil; test Telugu language rendered in Noto Sans Telugu |
 | `npm run media:build` | Generate product sizes and check every DB-referenced media file exists |
 | `npm run test:api` | API tests against the local DB (files one at a time: some add and remove test rows) |
 | `NODE_PATH=<scratch>/node_modules WEB_URL=http://localhost:3000 npm run test:admin-nav` | Admin: every screen to every other (240 moves) + Back / Forward + the error boundary; zero console errors (puppeteer-core outside the repo, header of `scripts/admin-check/admin-nav.js`) |

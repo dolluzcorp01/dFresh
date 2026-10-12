@@ -63,9 +63,20 @@ function getOrBuild(key, builder) {
   return entry.promise;
 }
 
+const listeners = new Set(); // called after every bust() (font-manager: new text may need new glyphs)
+
 function bust() {
   contentVersion += 1;
   entries.clear();
+  for (const fn of listeners) {
+    try { fn(contentVersion); } catch (err) { console.error('content bust listener failed:', err.message); }
+  }
 }
 
-module.exports = { getOrBuild, bust, getContentVersion, TTL_MS };
+/** fn(contentVersion) after every bust(); returns the unsubscribe function. */
+function onBust(fn) {
+  listeners.add(fn);
+  return () => listeners.delete(fn);
+}
+
+module.exports = { getOrBuild, bust, onBust, getContentVersion, TTL_MS };

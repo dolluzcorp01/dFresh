@@ -8,6 +8,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { content } = require('./Public_server');
+const fontManager = require('./font-manager');
 const { siteBase } = require('../../config/urls');
 const { BRAND, PAGES, pageMeta } = require('../shared/pageMeta');
 
@@ -217,6 +218,12 @@ const afterPaint = (src) => `<link rel="preload" as="script" fetchpriority="low"
   + `var s=document.createElement("script");s.src="${src}";document.head.appendChild(s)}`
   + 'addEventListener("DOMContentLoaded",function(){requestAnimationFrame(function(){setTimeout(go,0)});setTimeout(go,50)})})()</script>';
 
+// Script fonts (font-manager.js): inlined, so every page has the current subsets without another request.
+const fontStyle = () => {
+  const css = fontManager.css();
+  return css ? `<style id="dfresh-fonts">${css.replace(/</g, '')}</style>` : '';
+};
+
 function inject(template, head, body = '') {
   const page = body
     ? template.replace(/<script defer="defer" src="(\/static\/js\/main\.[\w.]+\.js)"><\/script>/, (m, src) => afterPaint(src))
@@ -226,7 +233,7 @@ function inject(template, head, body = '') {
     .replace(/<html lang="[^"]*"/, `<html lang="${escHtml(head.htmlLang)}" dir="${head.dir}"${
       head.longScript ? ' data-script="long"' : ''}${head.font ? ` style="--f-lang: &quot;${head.font}&quot;"` : ''}`)
     .replace(/<title>[^<]*<\/title>/, `<title>${escHtml(head.title)}</title>`)
-    .replace('</head>', `${head.tags.join('')}</head>`);
+    .replace('</head>', `${head.tags.join('')}${fontStyle()}</head>`);
 }
 
 /**

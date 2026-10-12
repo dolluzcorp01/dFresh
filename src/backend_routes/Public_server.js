@@ -348,6 +348,12 @@ function fail(res, err, what) {
   res.status(500).json({ success: false, message: 'Content unavailable' });
 }
 
+// The script fonts' @font-face rules (font-manager.js). Pages served by seo.js have them inlined; the React dev
+// server's page loads them from here. Short cache: a rebuilt subset changes them.
+router.get('/fonts.css', (req, res) => {
+  res.type('text/css').set('Cache-Control', 'public, max-age=60').send(require('./font-manager').css());
+});
+
 router.get('/languages', async (req, res) => {
   try {
     sendCached(req, res, await loadLanguages());

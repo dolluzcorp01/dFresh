@@ -114,6 +114,9 @@ REACT_APP_API= npm run build          # empty = same origin; prebuild refreshes 
 rsync -az --delete build/ <user>@<droplet>:/var/www/dfresh/build/
 rsync -az --delete build-ssr/ <user>@<droplet>:/var/www/dfresh/build-ssr/
 ```
+Script fonts are built on the server at run time (font-manager.js) from `fonts/source/` (in git): the API must be
+able to write `media/fonts/` (served by nginx under /media, content-hashed names) and `private/fonts/` (its state).
+Nothing to copy for them.
 `build-ssr/` (server bundle + pre-rendered pages) is not public: server.js reads it, nginx never serves it. Without
 it the site still works (pages render in the browser, slower first paint; pm2 log says "pre-rendering off").
 `media/` (originals + sizes): first time `rsync -az media/ <user>@<droplet>:/var/www/dfresh/media/`; later

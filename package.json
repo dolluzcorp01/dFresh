@@ -14,7 +14,9 @@
     "dotenv": "^18.0.6",
     "exceljs": "^4.4.0",
     "express": "^5.2.1",
+    "fontverter": "^2.0.0",
     "googleapis": "^185.0.0",
+    "harfbuzzjs": "^1.6.3",
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.4.0",
     "mysql2": "^3.24.5",
@@ -23,6 +25,7 @@
     "react-router-dom": "^6.30.6",
     "react-scripts": "5.0.1",
     "sharp": "^0.35.5",
+    "subset-font": "^2.9.0",
     "web-vitals": "^2.1.4"
   },
   "scripts": {
@@ -41,9 +44,11 @@
     "media:sync": "node scripts/media-sync.js && npm run media:build",
     "media:build": "node scripts/media-build.js",
     "fonts:build": "node scripts/fonts-build.js",
+    "fonts:source": "node scripts/fonts-source.js",
     "cache:bust": "node scripts/cache-bust.js",
     "test:api": "node --test --test-concurrency=1 \"tests/api/*.test.js\"",
-    "test:admin-nav": "node scripts/admin-check/admin-nav.js"
+    "test:admin-nav": "node scripts/admin-check/admin-nav.js",
+    "test:fonts-e2e": "node scripts/admin-check/fonts-e2e.js"
   },
   "eslintConfig": {
     "extends": [
