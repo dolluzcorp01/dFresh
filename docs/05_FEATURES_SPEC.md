@@ -174,6 +174,10 @@ Rules:
   "x" and "×" are treated the same (so "30x30" finds "30×30"). Empty result -> `none` message.
 - Grid: 4 columns desktop, 3 at <= 1100px, 2 at <= 900px, 1 at <= 560px (the preview goes to 1 column at
   620px; approved: 2 columns stay usable down to 561px). Cards = C1.
+- After every filter / category / search change (also `?cat=` loaded directly and the drawer on Home): if the first
+  card's top is under the sticky head (its real height, Tamil included), the drawer scrolls up until it sits fully
+  visible just below it (the grid's top padding as the gap). Smooth for a chip, instant while typing in the search
+  (the browser's caret scroll would cancel a smooth one) and with reduced motion.
 - The search box gets focus on open only where there is a mouse; on touch devices the dialog itself takes focus,
   so the phone keyboard does not cover the grid (approved deviation from the preview).
 
@@ -192,7 +196,12 @@ Common to all forms:
   `thanks_name` (`{name}` = first name), `ok_bro` / `bro_pending` / `ok_other`, WhatsApp button. On network or
   server error: keep the data, show `e_net` above the button (never lose what they typed); 429 shows `e_rate`.
 - The first field takes focus on open where there is a mouse; on touch devices the dialog does (phone keyboard).
-- Esc / X / backdrop closes; focus is trapped inside and returned to the opener.
+- Esc / X closes; a click on the dark backdrop does NOT close a form (owner's change, 2026-10-12: a stray tap
+  must never lose typed data). With anything typed, Esc / X first asks inside the modal: `close_confirm`
+  [`keep_editing`] [`close`]; Esc there = keep editing. Focus is trapped inside and returned to the opener.
+- Draft: the typed fields (never the honeypot or the consent tick) are kept in sessionStorage per form type, restored
+  when the same form opens again in the same tab, removed after a successful send. Without storage: no draft.
+- Non-form overlays keep their behaviour: the privacy / terms overlay still closes on a backdrop click.
 
 | Form | Title / sub | Fields (required unless marked) | form_type |
 |---|---|---|---|

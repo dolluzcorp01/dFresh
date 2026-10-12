@@ -16,7 +16,9 @@ export function isModalOpen() {
 
 // `before`: shown above the title (e.g. the logo). `labelledBy`: the id of a heading the children render
 // themselves (e.g. a form's success view); the modal then renders no title of its own.
-export default function Modal({ open, onClose, title, className = '', before = null, labelledBy = null, children }) {
+// onClose(reason): 'x' (the close button), 'esc' or 'scrim' (a click on the dark backdrop). closeOnScrim={false}
+// (the forms) ignores backdrop clicks, so a stray tap never loses what the visitor typed.
+export default function Modal({ open, onClose, title, className = '', before = null, labelledBy = null, closeOnScrim = true, children }) {
   const t = useT();
   const id = useId();
   const dialogRef = useRef(null);
@@ -36,7 +38,7 @@ export default function Modal({ open, onClose, title, className = '', before = n
       if (stack[stack.length - 1] !== id) return;
       if (e.key === 'Escape') {
         e.preventDefault();
-        onCloseRef.current();
+        onCloseRef.current('esc');
       } else if (e.key === 'Tab') {
         const items = [...dialog.querySelectorAll(FOCUSABLE)].filter((el) => el.offsetParent !== null);
         if (!items.length) {
@@ -69,7 +71,7 @@ export default function Modal({ open, onClose, title, className = '', before = n
     <div
       className="scrim"
       style={{ zIndex: 70 + depth * 2 }}
-      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      onMouseDown={(e) => { if (closeOnScrim && e.target === e.currentTarget) onClose('scrim'); }}
     >
       <div
         ref={dialogRef}
@@ -79,7 +81,7 @@ export default function Modal({ open, onClose, title, className = '', before = n
         aria-labelledby={labelledBy || `${id}-h`}
         tabIndex={-1}
       >
-        <button type="button" className="btn b-line xbtn" onClick={onClose} aria-label={t('close')}>×</button>
+        <button type="button" className="btn b-line xbtn" onClick={() => onClose('x')} aria-label={t('close')}>×</button>
         {before}
         {!labelledBy && <h3 id={`${id}-h`}>{title}</h3>}
         {children}

@@ -3,7 +3,11 @@
 // limit keeps everything typed and shows a message above the button, so the visitor can simply retry.
 // Success: tick, "Thank you, <name>!", ok_bro / bro_pending / ok_other, WhatsApp button; a brochure lead
 // with a PDF starts the download in a hidden frame (an error page there stays invisible).
-import { useId, useMemo, useRef, useState } from 'react';
+// Typed data is never lost by accident: a click on the backdrop does nothing (closeOnScrim false); X or Esc on
+// a form with typed values first asks "Close without sending?" inside the modal (Esc there = keep editing).
+// A draft of the fields (never the honeypot, never the consent tick) is kept in sessionStorage per form type
+// while typing, restored when the same form opens again in the same tab, and removed after a successful send.
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import Modal from '../components/Modal';
 import { WhatsAppIcon } from '../components/Icons';
 import { useI18n } from '../i18n/useT';
@@ -38,13 +42,63 @@ function productChoices(products, prefill) {
   return list;
 }
 
-function initialValues(cfg, prefill) {
+// What the form shows when nothing was typed: empty fields plus what the opener prefilled (a card's product,
+// a kit's business type). "Typed" = any difference from this.
+function baseValues(cfg, prefill) {
   const values = {};
   for (const f of cfg.fields) values[f.name] = f.type === 'pick' ? [] : '';
   if (prefill && Array.isArray(prefill.products)) values.products = [...prefill.products];
   if (prefill && prefill.businessType && 'business_type' in values) values.business_type = prefill.businessType;
   return values;
 }
+
+// Drafts: sessionStorage (this tab only), one per form type. Storage can be missing or throw (private
+// mode, blocked site data): then there is simply no draft.
+const draftKey = (type) => `dfresh:form-draft:${type}`;
+
+function readDraft(type, cfg) {
+  try {
+    const d = JSON.parse(window.sessionStorage.getItem(draftKey(type)) || 'null');
+    if (!d || typeof d !== 'object') return null;
+    const out = {};
+    for (const f of cfg.fields) {
+      const v = d[f.name];
+      if (f.type === 'pick' && Array.isArray(v)) out[f.name] = v.filter((x) => typeof x === 'string').slice(0, 100);
+      else if (f.type !== 'pick' && typeof v === 'string') out[f.name] = v.slice(0, f.max || 2000);
+    }
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+function writeDraft(type, values) {
+  try {
+    window.sessionStorage.setItem(draftKey(type), JSON.stringify(values));
+  } catch {
+    // no storage: no draft
+  }
+}
+
+function clearDraft(type) {
+  try {
+    window.sessionStorage.removeItem(draftKey(type));
+  } catch {
+    // no storage: nothing to clear
+  }
+}
+
+// Draft first, then the opener's prefill on top (a card's product is added to the drafted ones).
+function initialValues(type, cfg, prefill) {
+  const values = { ...baseValues(cfg, prefill), ...(readDraft(type, cfg) || {}) };
+  if (prefill && Array.isArray(prefill.products) && Array.isArray(values.products)) {
+    values.products = [...new Set([...values.products, ...prefill.products])];
+  }
+  if (prefill && prefill.businessType && 'business_type' in values) values.business_type = prefill.businessType;
+  return values;
+}
+
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
 function Field({ field, uid, value, error, options, choices, onChange, onBlur, t, autoFocus }) {
   const id = `${uid}-${field.name}`;
@@ -112,7 +166,11 @@ export default function FormModal({ type, prefill, source, onClose }) {
   const openLegal = useOpenLegal();
   const uid = useId();
   const cfg = useMemo(() => formConfig(type), [type]);
-  const [values, setValues] = useState(() => initialValues(cfg, prefill));
+  const base = useMemo(() => baseValues(cfg, prefill), [cfg, prefill]);
+  const [values, setValues] = useState(() => initialValues(type, cfg, prefill));
+  const [confirming, setConfirming] = useState(false);
+  const keepRef = useRef(null);
+  const backTo = useRef(null); // where focus was when the close question opened
   const [errors, setErrors] = useState({});
   const [consent, setConsent] = useState(false);
   const [consentBad, setConsentBad] = useState(false);
@@ -202,13 +260,48 @@ export default function FormModal({ type, prefill, source, onClose }) {
     }
   };
 
+  const done = status === 'done';
+  const typed = !done && !same(values, base);
+
+  // The draft follows every change; nothing typed = no draft. After a successful send it is gone for good.
+  useEffect(() => {
+    if (done) clearDraft(type);
+    else if (typed) writeDraft(type, values);
+    else clearDraft(type);
+  }, [values, done, typed, type]);
+
+  // X / Esc. Untyped or sent: close. Typed: ask first; Esc while asking = back to editing.
+  const requestClose = (reason) => {
+    if (!typed) return onClose();
+    if (confirming) {
+      if (reason === 'esc') keepEditing();
+      return undefined;
+    }
+    backTo.current = document.activeElement;
+    setConfirming(true);
+    return undefined;
+  };
+  const keepEditing = () => {
+    setConfirming(false);
+    requestAnimationFrame(() => {
+      const el = backTo.current;
+      if (el && document.contains(el) && !el.classList.contains('xbtn')) el.focus();
+      else if (formRef.current) {
+        const first = formRef.current.querySelector('input:not([type="hidden"]), select, textarea');
+        if (first) first.focus();
+      }
+    });
+  };
+  useEffect(() => {
+    if (confirming && keepRef.current) keepRef.current.focus();
+  }, [confirming]);
+
   const firstName = (values.first_name || values.full_name || '').trim().split(/\s+/)[0];
   const doneMsg = type !== 'brochure' ? 'ok_other' : result && result.brochure_available ? 'ok_bro' : 'bro_pending';
-  const done = status === 'done';
   const logo = <img className="mlogo" src={mediaUrl('/media/logo/dfresh-logo-on-light.webp')} alt="dFresh" width="900" height="498" />;
 
   return (
-    <Modal open onClose={onClose} title={t(cfg.title)} before={logo} labelledBy={done ? `${uid}-done` : null}>
+    <Modal open onClose={requestClose} closeOnScrim={false} title={t(cfg.title)} before={logo} labelledBy={done ? `${uid}-done` : null}>
       {done ? (
         <div className="done" ref={doneRef}>
           <div className="tick" aria-hidden="true">
@@ -270,6 +363,15 @@ export default function FormModal({ type, prefill, source, onClose }) {
               {t(status === 'sending' ? 'sending' : cfg.button)}
             </button>
           </form>
+          {confirming && (
+            <div className="mconfirm" role="alertdialog" aria-labelledby={`${uid}-cq`}>
+              <p id={`${uid}-cq`}>{t('close_confirm')}</p>
+              <div className="mconfirm-b">
+                <button ref={keepRef} type="button" className="btn b-ink b-sm" onClick={keepEditing}>{t('keep_editing')}</button>
+                <button type="button" className="btn b-line b-sm" onClick={() => onClose()}>{t('close')}</button>
+              </div>
+            </div>
+          )}
         </>
       )}
     </Modal>

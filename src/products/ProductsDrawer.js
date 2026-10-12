@@ -53,6 +53,34 @@ export default function ProductsDrawer({ open, animate = true, inline = false, o
     return () => cancelAnimationFrame(id);
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // New list (filter chip, ?cat= category, search, also on first show): if the first card's top is under the
+  // sticky bar (title + search + filter chips, its real height: Tamil chips can wrap to two lines), scroll up
+  // until it sits fully visible just below it, with the grid's own top padding as the gap. Instant with
+  // reduced motion, smooth otherwise. Nothing moves when the first card is already visible.
+  // Layout positions (offsetTop), not getBoundingClientRect: new cards rise in with a transform. Next frame,
+  // and instant for a search change: while typing, the browser scrolls to show the caret after each key,
+  // which cancels any smooth scroll (measured: the first card stayed 66 px under the bar).
+  const lastQ = useRef(q);
+  useEffect(() => {
+    const typing = lastQ.current !== q;
+    lastQ.current = q;
+    const id = requestAnimationFrame(() => {
+      const el = ref.current;
+      const bar = el && el.querySelector('.dh');
+      const grid = el && el.querySelector('.grid4');
+      if (!bar || !grid) return;
+      let top = 0; // the first card's top in the drawer's scrolled content (the drawer is fixed = offsetParent)
+      let n = grid.firstElementChild || grid;
+      for (; n && n !== el; n = n.offsetParent) top += n.offsetTop;
+      if (n !== el) return;
+      const gap = parseFloat(getComputedStyle(grid).paddingTop) || 0;
+      const target = Math.max(0, top - bar.offsetHeight - gap);
+      if (el.scrollTop <= target + 1) return;
+      el.scrollTo({ top: target, behavior: reduced || typing ? 'auto' : 'smooth' });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [filter, q]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Scroll lock, Esc, focus trap and focus in / out, for as long as the drawer is mounted.
   useEffect(() => {
     lockScroll();

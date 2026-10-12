@@ -76,5 +76,7 @@ submits in Phase 6: 20 unique, consecutive refs.
   "On the live site" (EN/TA/HI, only where the seeded text was unchanged)). After it: 186 UI keys (EN 186 rows, TA 184, HI 184).
   `20261012_mail_logo_url.sql` (data: non-public setting `mail_logo_url`, empty = inline CID logo; set it to the https URL
   of the hosted transparent PNG 124x68 from `node scripts/mail-logo.js`).
+  `20261012_form_close_confirm.sql` (2 keys `close_confirm`, `keep_editing`, EN/TA/HI; TA/HI drafts for native review,
+  open item 9). After it (local DB, counted 2026-10-12): 193 UI keys (EN 193 rows, TA 191, HI 191).
 - `01_schema.sql` is for a fresh database only (it adds one FK with ALTER at the end).
 - The dAdmin database (`dadmin`) is read-only from dFresh except `login_otp` rows for app_key `dFresh`.
