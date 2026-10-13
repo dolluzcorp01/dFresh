@@ -6,14 +6,21 @@ import { useEffect } from 'react';
 import { createLoop } from './loop';
 import useReducedMotion from './useReducedMotion';
 
-// Tint target on LIGHT backgrounds (CLAUDE.md rule 12: hover tints keep 4.5:1). #8A6A0C, mixed in at most
-// 90% (below), stays >= 4.57:1 on the hero's lightest-to-darkest backgrounds (#FFFFFF / #FCFBF6 / #F3EBDB)
-// for both headline colours (ink 4.92-5.83, ink-2 4.57-5.42). Do not raise the 0.9 cap.
-const GOLD = [138, 106, 12];
+// Tint target on LIGHT backgrounds (CLAUDE.md rule 12: hover tints keep 4.5:1): the CSS token --gold-text
+// (#8A6A0C, tokens.css; the headline's load sweep uses the same), mixed in at most 90% (below), stays >= 4.57:1 on
+// the hero's lightest-to-darkest backgrounds (#FFFFFF / #FCFBF6 / #F3EBDB) for both headline colours
+// (ink 4.92-5.83, ink-2 4.57-5.42). Do not raise the 0.9 cap.
+const GOLD_FALLBACK = [138, 106, 12];
 
 function rgb(color) {
   const m = color.match(/\d+(\.\d+)?/g);
   return m ? m.slice(0, 3).map(Number) : [18, 18, 20];
+}
+
+function goldText() {
+  const hex = getComputedStyle(document.documentElement).getPropertyValue('--gold-text').trim();
+  const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex);
+  return m ? m.slice(1).map((h) => parseInt(h, 16)) : GOLD_FALLBACK;
 }
 
 export default function useSpringField(boxRef, itemSelector, opts, deps) {
@@ -26,6 +33,7 @@ export default function useSpringField(boxRef, itemSelector, opts, deps) {
     const items = [...box.querySelectorAll(itemSelector)];
     const st = items.map(() => ({ y: 0, v: 0, t: 0 }));
     const base = items.map((el) => rgb(getComputedStyle(el).color));
+    const GOLD = goldText();
     let pos = [];
     let em = 16;
     let px = null;

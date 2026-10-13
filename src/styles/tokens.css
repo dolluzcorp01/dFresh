@@ -11,6 +11,9 @@
   --gold: #E5BF24;
   --gold-l: #F4CF2C;
   --gold-d: #C79714;
+  /* Gold for TEXT on light backgrounds (rule 12): the headline's hover tint and its load sweep, mixed in at most
+     90% with the text colour, stays >= 4.57:1 on the hero's backgrounds (useSpringField.js reads it from here). */
+  --gold-text: #8A6A0C;
   --wa: #1FA855;   /* WhatsApp green: icons / fills with no text on them (3:1 rule) */
   --wa-d: #15803D; /* green behind white text: 5.0:1 (white on --wa is only 3.1:1) */
   --dark-text: #B9B5AA;

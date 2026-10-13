@@ -19,18 +19,21 @@ const graphemes = (w) => (segmenter ? [...segmenter.segment(w)].map((s) => s.seg
 
 let introPlayed = false; // the rise-in plays once per page load, not on every language switch
 
-// Letters (or words) of a line; --i = position in the whole headline (the rise-in delay, Hero.css).
+// Letters (or words) of a line; --i = position in the whole headline (the rise-in delay, Hero.css), --j = position
+// in its line and --m = the line's last position (the gold sweep, so every line sweeps in the same time).
 const pieces = (text, byChar) => text.split(' ').map((w) => (byChar ? graphemes(w) : [w]));
 
 function Line({ text, cls, byChar, start }) {
+  const words = pieces(text, byChar);
   let i = start;
+  let j = 0;
   return (
-    <span className={`ln ${cls}`} aria-hidden="true">
-      {pieces(text, byChar).map((parts, wi) => (
+    <span className={`ln ${cls}`} style={{ '--m': Math.max(1, words.flat().length - 1) }} aria-hidden="true">
+      {words.map((parts, wi) => (
         <Fragment key={wi}>
           {wi > 0 && ' '}
           <span className="w">
-            {parts.map((c, ci) => <span className="ch" key={ci} style={{ '--i': i++ }}>{c}</span>)}
+            {parts.map((c, ci) => <span className="ch" key={ci} style={{ '--i': i++, '--j': j++ }}>{c}</span>)}
           </span>
         </Fragment>
       ))}
@@ -83,16 +86,17 @@ export default function Hero() {
 
   useSpringField(h1Ref, '.ch', { lift: 0.22, reach: 0.9, gold: true }, [l1, l2, byChar]);
 
-  // The rise-in is a CSS animation (h1.intro, Hero.css), so it starts with the first paint of the pre-rendered
-  // page and hydration does not restart it. The class goes once it has played: a language switch later
-  // brings new letters without replaying it.
+  // The rise-in and the gold sweep that follows it are CSS animations (h1.intro, Hero.css), so they start with the
+  // first paint of the pre-rendered page and hydration does not restart them. --n = letters, so the sweep starts
+  // as the last letter lands. The class goes once both have played: a language switch later brings new letters
+  // without replaying them, and scrolling never does.
   const n1 = pieces(l1, byChar).flat().length;
   const count = n1 + pieces(l2, byChar).flat().length;
   const [intro, setIntro] = useState(() => !introPlayed);
   useEffect(() => {
     introPlayed = true;
     if (!intro) return undefined;
-    const id = setTimeout(() => setIntro(false), 150 + count * 40 + 900 + 100);
+    const id = setTimeout(() => setIntro(false), 150 + count * 40 + 900 + 1200 + 150);
     return () => clearTimeout(id);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -106,7 +110,7 @@ export default function Hero() {
       <div className="wrap">
         <div className="copy">
           <p className="k">{t('eyebrow')}</p>
-          <h1 id="h1" ref={h1Ref} className={intro ? 'intro' : undefined} aria-label={`${l1} ${l2}`}>
+          <h1 id="h1" ref={h1Ref} className={intro ? 'intro' : undefined} style={{ '--n': count }} aria-label={`${l1} ${l2}`}>
             <Line text={l1} cls="ln1" byChar={byChar} start={0} />
             <Line text={l2} cls="ln2" byChar={byChar} start={n1} />
           </h1>
