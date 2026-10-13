@@ -7,6 +7,7 @@ const express = require('express');
 const { getDBConnection } = require('../../config/db');
 const { translatedSelect } = require('./i18n-sql');
 const cache = require('./content-cache');
+const { numberWords, fillCounts } = require('../shared/countText');
 
 const router = express.Router();
 const db = getDBConnection(process.env.DB_NAME || 'dfresh').promise();
@@ -278,6 +279,23 @@ async function buildBootstrap(lang, fallback, activeLanguages) {
   const settings = {};
   for (const r of settingRows) settings[r.setting_key] = r.setting_value;
 
+  const stats = {
+    products: products.length,
+    categories: categories.length,
+    towns: towns.length,
+    languages: activeLanguages,
+  };
+  // {products}, {towns_word} ... in any text (src/shared/countText.js)
+  const words = numberWords(ui.num_words);
+  for (const [k, v] of Object.entries(ui)) ui[k] = fillCounts(v, stats, words);
+
+  // The office / godown address is one text per language (Translations c_office_a / c_godown_a, the only copy);
+  // the Google Maps search always uses the default language's, so the map finds the same place in every language.
+  const [placeRows] = await db.query(
+    "SELECT text_key, value FROM ui_text WHERE lang_code = ? AND text_key IN ('c_office_a', 'c_godown_a')", [fallback]
+  );
+  const place = Object.fromEntries(placeRows.map((r) => [r.text_key, r.value]));
+
   return {
     lang,
     ui,
@@ -289,12 +307,8 @@ async function buildBootstrap(lang, fallback, activeLanguages) {
     towns,
     formOptions,
     sizePicker,
-    stats: {
-      products: products.length,
-      categories: categories.length,
-      towns: towns.length,
-      languages: activeLanguages,
-    },
+    places: { office: place.c_office_a || '', godown: place.c_godown_a || '' },
+    stats,
     contentVersion: cache.getContentVersion(),
   };
 }

@@ -52,7 +52,7 @@ function resolve(pathname, query, langs) {
 
 const pagePath = (lang, page, cat) => `/${lang}${page ? `/${page}` : ''}${cat ? `?cat=${encodeURIComponent(cat)}` : ''}`;
 
-function organisation(base, s) {
+function organisation(base, s, ui) {
   return {
     '@type': 'Organization',
     '@id': `${base}/#organization`,
@@ -62,7 +62,8 @@ function organisation(base, s) {
     logo: `${base}${LOGO}`,
     email: s.public_email || undefined,
     telephone: s.office_phone || undefined,
-    address: s.office_address ? { '@type': 'PostalAddress', streetAddress: s.office_address, addressCountry: 'IN' } : undefined,
+    // addresses: Translations c_office_a / c_godown_a in the page's language (the only copy)
+    address: ui.c_office_a ? { '@type': 'PostalAddress', streetAddress: ui.c_office_a, addressCountry: 'IN' } : undefined,
   };
 }
 
@@ -78,7 +79,7 @@ function localBusiness(base, s, boot) {
     email: s.public_email || undefined,
     parentOrganization: { '@id': `${base}/#organization` },
     // The goods ship from the base town's godown; the exact address and pin are open item 4.
-    address: { '@type': 'PostalAddress', streetAddress: s.godown_address || s.office_address || '', addressCountry: 'IN' },
+    address: { '@type': 'PostalAddress', streetAddress: boot.ui.c_godown_a || boot.ui.c_office_a || '', addressCountry: 'IN' },
     geo: town && town.lat != null ? { '@type': 'GeoCoordinates', latitude: Number(town.lat), longitude: Number(town.lng) } : undefined,
   };
 }
@@ -137,7 +138,7 @@ async function headFor(target, langs) {
     ...og,
     `<meta name="twitter:card" content="${share ? 'summary_large_image' : 'summary'}">`,
   ];
-  const graph = [organisation(base, boot.settings)];
+  const graph = [organisation(base, boot.settings, boot.ui)];
   if (page === '') graph.push(localBusiness(base, boot.settings, boot));
   if (page === '' || page === 'products') {
     const catNames = Object.fromEntries((boot.categories || []).map((c) => [c.key, c.name]));

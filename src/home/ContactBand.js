@@ -1,8 +1,8 @@
 // Contact band (spec B10): big headline over a soft breathing yellow blob, buttons (free sample = quote form
 // in sample mode, WhatsApp, brochure, message), the numbers line, and two visit cards with a lazy Google map
-// (the map_load text sits underneath until it paints) and an "Open in Google Maps" link, both from the
-// office_map_query / godown_map_query settings. On hover devices the sample and WhatsApp buttons throw a
-// little paper confetti (at most every 1.5 s each), as in the preview.
+// (the map_load text sits underneath until it paints) and an "Open in Google Maps" link, both from the default
+// language's address texts (bootstrap places; Translations c_office_a / c_godown_a, the only copy). On hover
+// devices the sample and WhatsApp buttons throw a little paper confetti (at most every 1.5 s each), as in the preview.
 import { useEffect, useRef, useState } from 'react';
 import { useI18n } from '../i18n/useT';
 import Reveal from '../components/Reveal';
@@ -64,7 +64,7 @@ function Visit({ name, address, query }) {
 }
 
 export default function ContactBand() {
-  const { t, settings } = useI18n();
+  const { t, settings, data } = useI18n();
   const openForm = useOpenForm();
 
   return (
@@ -88,8 +88,8 @@ export default function ContactBand() {
           <span><a href={`mailto:${settings.public_email}`}><b>{settings.public_email}</b></a></span>
         </div>
         <div className="visit">
-          <Visit name={t('c_office')} address={t('c_office_a')} query={settings.office_map_query} />
-          <Visit name={t('c_godown')} address={t('c_godown_a')} query={settings.godown_map_query} />
+          <Visit name={t('c_office')} address={t('c_office_a')} query={data.places.office} />
+          <Visit name={t('c_godown')} address={t('c_godown_a')} query={data.places.godown} />
         </div>
       </div>
     </section>

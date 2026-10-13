@@ -105,7 +105,7 @@ export default function WhereMap() {
   }, [drawn, reduced, routeKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!base) return null;
-  const aria = t('map_aria', { base: base.name, towns: others.map((tw) => tw.name).join(', ') });
+  const aria = t('map_aria', { base: base.name, places: others.map((tw) => tw.name).join(', ') });
 
   return (
     <section className="sec where" id="where" aria-labelledby="where-h">

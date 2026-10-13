@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react';
 import { api } from './adminApi';
 import { Loading, Notice, useAction, useAdmin, useCan, useLoad } from './ui';
+import { COUNTS } from '../shared/countText';
 
 export default function Translations() {
   const grid = useLoad('/ui-text');
@@ -49,6 +50,13 @@ export default function Translations() {
   return (
     <section>
       <h1>Translations</h1>
+      <Notice>
+        Live numbers: type {COUNTS.map((c) => <code key={c}>{`{${c}}`}</code>).reduce((a, b) => [a, ', ', b])} in any text and the site
+        shows the current count in digits (products, categories, towns and languages that are switched on). Add <code>_word</code>{' '}
+        for the number as a word, e.g. <code>{'{towns_word}'}</code> shows &quot;six&quot;; the words come from <code>num_words</code>{' '}
+        (group Numbers in text) in each language. Other <code>{'{...}'}</code> names (like <code>{'{name}'}</code>) are filled by the
+        site in that one text: keep them as they are.
+      </Notice>
       <p className="a-muted">Missing per language: {languages.map((l) => <span key={l.lang_code} className={missingCount[l.lang_code] ? 'a-bad' : ''}> {l.lang_code} {missingCount[l.lang_code]} </span>)}</p>
       <div className="a-toolbar">
         <input type="search" placeholder="Search key or text" aria-label="Search" value={q} onChange={(e) => setQ(e.target.value)} />

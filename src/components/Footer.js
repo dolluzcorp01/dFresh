@@ -24,9 +24,12 @@ export default function Footer() {
   const openForm = useOpenForm();
   const bigRef = useRef(null);
   useSpringField(bigRef, 'span', SPRING, []);
-  const legal = settings.gstin
-    ? t('legal1_gst', { cin: settings.cin, gstin: settings.gstin })
-    : t('legal1');
+  // Company line from Settings company_name / cin / gstin (the CIN and GSTIN parts are left out while empty).
+  const legal = [
+    settings.company_name,
+    settings.cin && t('legal_cin', { cin: settings.cin }),
+    settings.gstin && t('legal_gstin', { gstin: settings.gstin }),
+  ].filter(Boolean).join(' · ');
 
   return (
     <footer className="dark">
@@ -64,7 +67,7 @@ export default function Footer() {
             </li>
             <li>{t('lbl_office')}: <a href={`tel:${String(settings.office_phone).replace(/[^\d+]/g, '')}`}>{settings.office_phone}</a></li>
             <li><a href={`mailto:${settings.public_email}`}>{settings.public_email}</a></li>
-            <li>{t('f_addr')}</li>
+            <li>{t('c_office')} · {t('c_godown')}</li>
           </ul>
         </div>
         <div className="legal">

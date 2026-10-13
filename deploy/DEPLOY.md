@@ -29,7 +29,7 @@ Site and API are ONE origin, so the React build is made with `REACT_APP_API` emp
 | 4 | `deploy/nginx/dfresh.conf` `ssl_certificate` / `ssl_certificate_key` (2 blocks) | `/etc/letsencrypt/live/<DOMAIN>/...` |
 | 5 | certbot (step 5) | `-d <DOMAIN> -d www.<DOMAIN>` |
 | 6 | DNS at the registrar | A records `<DOMAIN>` and `www.<DOMAIN>` -> droplet IP |
-| 7 | Admin -> Settings `site_url` | `https://<DOMAIN>` (seeded as `https://dfresh.in` "TO CONFIRM"; no code reads it today, keep it true) |
+| 7 | Admin -> Settings | nothing: the site address is row 1 only (the unused `site_url` setting was removed 13 Oct 2026) |
 | 8 | Google Search Console | property `https://<DOMAIN>`, submit `https://<DOMAIN>/sitemap.xml` (open item 5) |
 | 9 | GA4 web stream | URL `https://<DOMAIN>`, then admin -> Settings `ga4_measurement_id` (open item 5) |
 
@@ -66,7 +66,7 @@ nothing gets indexed (every page `noindex`, `robots.txt` disallows all). Remove 
 Database settings (admin -> Settings, after the first sign-in):
 - `gsheet_spreadsheet_id` = LIVE sheet `1iv8X5AOv5VZ3KlZiRwYjX9-oc5LV16GuomGfDRDa1V4` (the TEST sheet is local only).
   Share it with the service account's e-mail as Editor. Tabs and row-1 headers as in `gsheet.js` HEADERS.
-- `lead_email` (info@dolluzcorp.com), `mail_from` (connect@dolluzcorp.com, verified in SendGrid), `site_url`.
+- `lead_email` (info@dolluzcorp.com), `mail_from` (connect@dolluzcorp.com, verified in SendGrid).
 - `mail_logo_url` (optional): https URL of the hosted e-mail logo (`visual-output/mail-logo/dfresh-mail-logo.png` from
   `node scripts/mail-logo.js`, 124x68 transparent PNG). Empty = the inline logo attached to every mail.
   **At go-live:** host the logo on our own domain:
