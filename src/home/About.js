@@ -1,6 +1,7 @@
 // About (spec B9): ab_k / ab_h / ab_p, a photo (framed to the right so the product shows)
-// and three points ab1-ab3. The photo is site setting `about_image` (a path under /media), independent of the
-// "about" banner, so the banner can be switched off without losing the photo. Empty = no photo.
+// and three points ab1-ab3. The photo is site setting `about_image` (uploaded in admin Settings; the value is its
+// path under /media), independent of the "about" banner, so the banner can be switched off without losing the photo.
+// Empty = no photo.
 import { useI18n } from '../i18n/useT';
 import Kicker from '../components/Kicker';
 import Reveal from '../components/Reveal';
@@ -14,7 +15,13 @@ function mediaPath(value) {
   return `/media/${parts.map(encodeURIComponent).join('/')}`;
 }
 
-const POINTS = [['ab1', '\u{1F33F}'], ['ab2', '\u{1F4E6}'], ['ab3', '✔']]; // decorative icons
+// A photo uploaded in Settings (/media/about/<name>) also has a 960 wide copy in /media/about/960/.
+function aboutSrcSet(photo) {
+  const m = /^\/media\/about\/([^/]+)$/.exec(photo);
+  return m ? `${mediaUrl(`/media/about/960/${m[1]}`)} 960w, ${mediaUrl(photo)} 1920w` : undefined;
+}
+
+const POINTS =[['ab1', '\u{1F33F}'], ['ab2', '\u{1F4E6}'], ['ab3', '✔']]; // decorative icons
 
 export default function About() {
   const { t, data } = useI18n();
@@ -30,7 +37,10 @@ export default function About() {
             <p>{t('ab_p')}</p>
           </Reveal>
           <Reveal className="pic">
-            {photo && <img src={mediaUrl(photo)} alt={t('ab_alt')} width="1920" height="800" loading="lazy" decoding="async" draggable="false" />}
+            {photo && (
+              <img src={mediaUrl(photo)} srcSet={aboutSrcSet(photo)} sizes="(max-width: 760px) 92vw, 50vw" alt={t('ab_alt')}
+                width="1920" height="800" loading="lazy" decoding="async" draggable="false" />
+            )}
           </Reveal>
         </div>
         <div className="pts">

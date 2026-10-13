@@ -1,20 +1,29 @@
 // Settings (spec F 10, admin): every site_settings row with its description; the public flag is shown, not
-// editable here (a secret must never become public by a click).
+// editable here (a secret must never become public by a click). share_image / about_image: preview + Upload /
+// Remove (typed values are refused by the server); door_home_product / door_biz_product: a product dropdown.
 // mail_logo_url also gets a live preview on the e-mail's ink header (the typed URL, or the built-in logo when
 // empty), the server's last check of the saved URL, and "Send test mail" (MAIL_TEST_TO locally, the signed-in
 // admin's own e-mail in production). Saving a URL is refused by the server unless it passes the check.
 import { useState } from 'react';
 import { api } from './adminApi';
-import { API_BASE } from '../utils/api';
+import { API_BASE, mediaUrl } from '../utils/api';
 import { Loading, fmtDate, useAction, useLoad } from './ui';
 
 const HTTPS = /^https:\/\/[^\s"'<>]+$/;
 const BUILTIN = `${API_BASE}/api/dfresh/admin/mail-logo/builtin.png`;
 const CHECK_TEXT = { ok: 'Checked: works, mails use it.', failing: 'Not reachable: mails use the built-in logo.', unchecked: 'Not checked yet.', off: 'Empty: mails use the built-in logo.' };
+// Picture settings: upload + preview instead of a typed path. empty = what the site shows without one.
+const PICTURES = {
+  share_image: { accept: 'image/jpeg,image/png', button: 'Upload JPG / PNG (1200 x 630)', width: 240, height: 126, empty: '/media/logo/dfresh-logo-tagline-on-light.png', emptyText: 'Empty: links show the dFresh logo.' },
+  about_image: { accept: 'image/jpeg,image/png,image/webp', button: 'Upload JPG / PNG / WebP', width: 240, height: 100, empty: null, emptyText: 'Empty: the About section shows no photo.' },
+};
+const PRODUCT_PICKERS = ['door_home_product', 'door_biz_product'];
 
 export default function Settings() {
   const list = useLoad('/settings');
+  const products = useLoad('/products');
   const act = useAction();
+  const cards = (products.data || []).filter((p) => !p.variant_of);
   return (
     <section>
       <h1>Settings</h1>
@@ -23,7 +32,7 @@ export default function Settings() {
         <div className="a-scroll">
           <table className="a-table">
             <thead><tr><th>Setting</th><th>Value</th><th>Public</th><th /></tr></thead>
-            <tbody>{(list.data || []).map((s) => <Row key={s.setting_key} s={s} act={act} onSaved={list.reload} />)}</tbody>
+            <tbody>{(list.data || []).map((s) => <Row key={s.setting_key} s={s} act={act} cards={cards} onSaved={list.reload} />)}</tbody>
           </table>
         </div>
       </Loading>
@@ -31,23 +40,63 @@ export default function Settings() {
   );
 }
 
-function Row({ s, act, onSaved }) {
+function Row({ s, act, cards, onSaved }) {
   const [v, setV] = useState(s.setting_value || '');
   const dirty = v !== (s.setting_value || '');
   const save = () => act.run(async () => { await api.send('PUT', `/settings/${s.setting_key}`, { value: v }); onSaved(); }, `${s.setting_key} saved`);
+  const picture = PICTURES[s.setting_key];
+  let control;
+  if (picture) {
+    control = <Picture s={s} cfg={picture} act={act} onSaved={onSaved} />;
+  } else if (PRODUCT_PICKERS.includes(s.setting_key)) {
+    control = (
+      <select value={v} onChange={(e) => setV(e.target.value)} aria-label={s.setting_key}>
+        {!cards.some((p) => p.product_id === v) && <option value={v}>{v || 'Choose a product'}</option>}
+        {cards.map((p) => <option key={p.product_id} value={p.product_id}>{p.product_id} {p.tr?.en?.name ?? ''}{p.is_active ? '' : ' (not active)'}</option>)}
+      </select>
+    );
+  } else if (v.length > 60 || v.includes('\n')) {
+    control = <textarea rows={4} value={v} onChange={(e) => setV(e.target.value)} aria-label={s.setting_key} />;
+  } else {
+    control = <input type="text" value={v} onChange={(e) => setV(e.target.value)} aria-label={s.setting_key} />;
+  }
   return (
     <tr>
       <td><code>{s.setting_key}</code><br /><small className="a-muted">{s.description}</small></td>
       <td>
-        {v.length > 60 || v.includes('\n')
-          ? <textarea rows={4} value={v} onChange={(e) => setV(e.target.value)} aria-label={s.setting_key} />
-          : <input type="text" value={v} onChange={(e) => setV(e.target.value)} aria-label={s.setting_key} />}
+        <div>{control}</div>
         {s.updated_by && <small className="a-muted">Changed {fmtDate(s.updated_at)} by {s.updated_by}</small>}
         {s.setting_key === 'mail_logo_url' && <MailLogo value={v} act={act} />}
       </td>
       <td>{Number(s.is_public) ? 'Yes (on the site)' : 'No'}</td>
-      <td>{dirty && <button type="button" className="a-btn a-btn-sm" onClick={save} disabled={act.busy}>Save</button>}</td>
+      <td>{dirty && !picture && <button type="button" className="a-btn a-btn-sm" onClick={save} disabled={act.busy}>Save</button>}</td>
     </tr>
+  );
+}
+
+// Preview of the saved picture (or what the site shows without one), Upload, Remove.
+function Picture({ s, cfg, act, onSaved }) {
+  const value = s.setting_value || '';
+  const src = value ? `/media/${value}` : cfg.empty;
+  const upload = (file) => act.run(async () => {
+    const r = await api.upload(`/settings/${s.setting_key}/image`, file);
+    onSaved();
+    return r;
+  }).then((r) => r && act.setMsg({ kind: 'ok', text: `${s.setting_key} saved: ${Math.round(r.original_bytes / 1024)} KB in -> ${r.width} x ${r.height}, ${Math.round(r.bytes / 1024)} KB` }));
+  const remove = () => window.confirm('Remove this picture?') && act.run(async () => { await api.send('PUT', `/settings/${s.setting_key}`, { value: '' }); onSaved(); }, `${s.setting_key} removed`);
+  return (
+    <div className="a-picture">
+      {src
+        ? <img src={mediaUrl(src)} alt={`${s.setting_key} preview`} width={cfg.width} height={cfg.height} />
+        : <span className="a-picture-none">No photo</span>}
+      <small className="a-muted">{value ? <code>{value}</code> : cfg.emptyText}</small>
+      <span className="a-row">
+        <label className="a-btn a-btn-sm a-btn-ghost a-file">{act.busy ? 'Uploading...' : cfg.button}
+          <input type="file" accept={cfg.accept} disabled={act.busy} onChange={(e) => { const f = e.target.files[0]; e.target.value = ''; if (f) upload(f); }} />
+        </label>
+        {value && <button type="button" className="a-btn a-btn-sm a-btn-danger" onClick={remove} disabled={act.busy}>Remove</button>}
+      </span>
+    </div>
   );
 }
 

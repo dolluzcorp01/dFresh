@@ -155,6 +155,9 @@ const css = `
 .a-tr-label { font-size: 13px; padding-top: 7px; }
 .a-tr input, .a-tr textarea { width: 100%; }
 
+.a-picture { display: grid; gap: 6px; justify-items: start; }
+.a-picture img { display: block; max-width: 100%; height: auto; object-fit: cover; background: #fff; border: 1px solid var(--a-line); border-radius: 8px; }
+.a-picture-none { display: grid; place-items: center; width: 240px; max-width: 100%; height: 100px; border: 1px dashed var(--a-line); border-radius: 8px; font-size: 12px; color: var(--a-muted, #666); }
 .a-photos { display: flex; flex-wrap: wrap; gap: 12px; }
 .a-photos figure { margin: 0; width: 180px; }
 .a-photos img { width: 140px; height: 140px; object-fit: contain; background: #fff; border: 1px solid var(--a-line); border-radius: 8px; display: block; }

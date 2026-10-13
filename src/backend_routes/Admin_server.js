@@ -657,11 +657,20 @@ route('get', '/settings', 'admin', async () => {
   return rows;
 });
 
+// Settings holding a picture (uploaded below; typed values are refused) and settings naming a product.
+const IMAGE_SETTINGS = { share_image: media.saveShareImage, about_image: media.saveAboutImage };
+const PRODUCT_SETTINGS = ['door_home_product', 'door_biz_product'];
+
 route('put', '/settings/:key', 'admin', async (req) => {
   const value = typeof req.body.value === 'string' ? req.body.value.trim() : '';
   if (value.length > 20000) throw new InputError('Too long');
   if (['mail_from', 'lead_email', 'public_email'].includes(req.params.key) && value && !/^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]{2,}$/.test(value)) {
     throw new InputError('A plain e-mail address, e.g. connect@dolluzcorp.com');
+  }
+  if (IMAGE_SETTINGS[req.params.key] && value) throw new InputError('Use Upload to change this picture (or Remove to clear it)');
+  if (PRODUCT_SETTINGS.includes(req.params.key)) {
+    const [[p]] = await db.query('SELECT product_id FROM products WHERE product_id = ? AND variant_of IS NULL', [value]);
+    if (!p) throw new InputError('Pick a product from the list');
   }
   // The hosted mail logo is fetched and checked BEFORE anything is saved (outside the transaction: up to 5 s).
   let logo = null;
@@ -674,11 +683,29 @@ route('put', '/settings/:key', 'admin', async (req) => {
     if (!before) throw new InputError('Unknown setting', 404);
     await q.query('UPDATE site_settings SET setting_value = ?, updated_by = ? WHERE setting_key = ?', [value, by(req), before.setting_key]);
     await audit(q, { empId: by(req), action: 'update', entity: 'setting', entityId: before.setting_key, before: { value: before.setting_value }, after: { value } });
-    return { setting_key: before.setting_key, setting_value: value };
+    return { setting_key: before.setting_key, setting_value: value, before: before.setting_value };
   });
   if (saved.setting_key === 'mail_logo_url') logoCheck.record(value, logo);
-  return saved;
+  if (IMAGE_SETTINGS[saved.setting_key]) media.removeSettingImage(saved.before);
+  return { setting_key: saved.setting_key, setting_value: saved.setting_value };
 }, { content: true });
+
+// Share picture / About photo: upload -> generated files under /media, the setting holds the path.
+route('post', '/settings/:key/image', 'admin', async (req) => {
+  const save = IMAGE_SETTINGS[req.params.key];
+  if (!save) throw new InputError('This setting takes no picture', 404);
+  if (!req.file) throw new InputError('Choose a picture');
+  const saved = await save(req.file.buffer);
+  const before = await tx(async (q) => {
+    const [[row]] = await q.query('SELECT setting_key, setting_value FROM site_settings WHERE setting_key = ?', [req.params.key]);
+    if (!row) throw new InputError('Unknown setting', 404);
+    await q.query('UPDATE site_settings SET setting_value = ?, updated_by = ? WHERE setting_key = ?', [saved.file_name, by(req), row.setting_key]);
+    await audit(q, { empId: by(req), action: 'update', entity: 'setting', entityId: row.setting_key, before: { value: row.setting_value }, after: { value: saved.file_name } });
+    return row.setting_value;
+  });
+  if (before !== saved.file_name) media.removeSettingImage(before);
+  return { ...saved, original_bytes: req.file.size };
+}, { content: true, before: [upload(8)] });
 
 // Mail logo in admin Settings: the built-in logo (preview when mail_logo_url is empty), the check state, and a
 // test mail through the outbox (MAIL_TEST_TO outside production, the signed-in admin's own e-mail in production).

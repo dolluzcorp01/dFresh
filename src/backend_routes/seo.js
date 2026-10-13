@@ -13,6 +13,9 @@ const { siteBase } = require('../../config/urls');
 const { BRAND, PAGES, pageMeta } = require('../shared/pageMeta');
 
 const LOGO = '/media/logo/dfresh-logo-on-light.png';
+const SHARE_FALLBACK = '/media/logo/dfresh-logo-tagline-on-light.png';
+// Settings share_image is "share/share-<hash>.jpg" (admin upload); anything else is ignored.
+const shareImage = (v) => (/^share\/share-[0-9a-f]{10}\.jpg$/.test(String(v || '')) ? `/media/${v}` : '');
 const noindex = () => process.env.SEO_NOINDEX === 'true';
 
 const escHtml = (v) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -118,9 +121,13 @@ async function headFor(target, langs) {
     ...langs.languages.map((l) => `<link rel="alternate" hreflang="${escHtml(l.htmlLang)}" href="${escHtml(`${base}${pagePath(l.code, page, cat)}`)}">`),
     `<link rel="alternate" hreflang="x-default" href="${escHtml(`${base}${pagePath(langs.default, page, cat)}`)}">`,
   ];
+  // Share picture: Settings share_image (1200x630 JPG uploaded in the admin), else the logo file.
+  const share = shareImage(boot.settings.share_image);
   const og = [
     ['og:type', 'website'], ['og:site_name', BRAND], ['og:title', meta.title], ['og:description', meta.description],
-    ['og:url', canonical], ['og:image', `${base}/media/logo/dfresh-logo-tagline-on-light.png`], ['og:locale', ogLocale(info.htmlLang)],
+    ['og:url', canonical], ['og:image', `${base}${share || SHARE_FALLBACK}`],
+    ...(share ? [['og:image:width', '1200'], ['og:image:height', '630']] : []),
+    ['og:locale', ogLocale(info.htmlLang)],
     ...langs.languages.filter((l) => l.code !== lang).map((l) => ['og:locale:alternate', ogLocale(l.htmlLang)]),
   ].map(([p, v]) => `<meta property="${p}" content="${escHtml(v)}">`);
   const tags = [
@@ -128,7 +135,7 @@ async function headFor(target, langs) {
     ...(noindex() ? ['<meta name="robots" content="noindex, nofollow">'] : []),
     ...links,
     ...og,
-    '<meta name="twitter:card" content="summary">',
+    `<meta name="twitter:card" content="${share ? 'summary_large_image' : 'summary'}">`,
   ];
   const graph = [organisation(base, boot.settings)];
   if (page === '') graph.push(localBusiness(base, boot.settings, boot));

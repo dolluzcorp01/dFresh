@@ -10,6 +10,7 @@ import Reveal from '../components/Reveal';
 import { productImage } from './productImage';
 import './Doors.css';
 
+// Which product's first photo each door shows: Settings door_home_product / door_biz_product (these are the defaults).
 const HOME_ART = 'DZIND-DF028';
 const BIZ_ART = 'DZIND-DF037';
 
@@ -34,7 +35,7 @@ function Art({ img }) {
 }
 
 export default function Doors() {
-  const { t, lang, data } = useI18n();
+  const { t, lang, data, settings } = useI18n();
   const openProducts = useOpenProducts();
 
   const onHome = (e) => {
@@ -57,7 +58,7 @@ export default function Doors() {
               <p>{t('dh_p')}</p>
             </div>
             <span className="go"><span>{t('dh_go')}</span><i aria-hidden="true">→</i></span>
-            <Art img={productImage(data.products, HOME_ART)} />
+            <Art img={productImage(data.products, settings.door_home_product || HOME_ART)} />
           </Reveal>
           <Reveal as={Link} className="door biz" to={linkTarget(lang, { hash: 'business' })}>
             <div>
@@ -66,7 +67,7 @@ export default function Doors() {
               <p>{t('db_p')}</p>
             </div>
             <span className="go"><span>{t('db_go')}</span><i aria-hidden="true">→</i></span>
-            <Art img={productImage(data.products, BIZ_ART)} />
+            <Art img={productImage(data.products, settings.door_biz_product || BIZ_ART)} />
           </Reveal>
         </div>
       </div>
