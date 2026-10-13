@@ -7,6 +7,7 @@ const css = `
 .adm {
   --a-ink: #121214; --a-ink2: #4a4840; --a-muted: #6b675e; --a-line: #e2dccb; --a-bg: #f6f3ea; --a-card: #fff;
   --a-gold: #e5bf24; --a-bad: #b3261e; --a-ok: #1e6b3a; --a-warn: #8a5a00;
+  --a-top-h: 56px; /* header bar height: the sidebar sits right below it, window height minus this */
   font: 14px/1.5 'Open Sans', system-ui, sans-serif; color: var(--a-ink); background: var(--a-bg); min-height: 100vh;
   user-select: text; -webkit-user-select: text;
 }
@@ -22,7 +23,9 @@ const css = `
 
 .a-shell { display: grid; grid-template-columns: 236px minmax(0, 1fr); grid-template-rows: auto 1fr; }
 .a-shell.collapsed { grid-template-columns: 64px minmax(0, 1fr); }
-.a-top { grid-column: 1 / -1; display: flex; gap: 12px; align-items: center; padding: 10px 16px; background: var(--a-ink); color: #fff; }
+/* Header and sidebar stay put while the page scrolls: header sticky at the top, sidebar sticky right below it and
+   exactly as tall as the rest of the window, so the ink always reaches the bottom (no cream gap). */
+.a-top { grid-column: 1 / -1; position: sticky; top: 0; z-index: 40; height: var(--a-top-h); display: flex; gap: 12px; align-items: center; padding: 0 16px; background: var(--a-ink); color: #fff; }
 .a-brand { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; border-radius: 6px; }
 .adm .a-brand { color: var(--a-gold); }
 .a-brand img { display: block; height: 30px; width: auto; }
@@ -31,11 +34,21 @@ const css = `
 .a-top .a-who { margin-inline-start: auto; font-size: 13px; opacity: .85; }
 .a-top .a-who code { background: #2a2a2e; color: #fff; }
 .a-top .a-btn-ghost { color: #fff; border-color: #55555c; }
-.a-burger { display: none; }
+.a-burger { flex: none; display: inline-grid; place-items: center; width: 40px; height: 40px; padding: 0; border: 1px solid #3a3a40; border-radius: 8px; background: none; color: #fff; cursor: pointer; }
+.a-burger:hover { background: #232327; }
+.a-burger:focus-visible { outline: 2px solid var(--a-gold); outline-offset: 2px; }
 /* Sidebar: ink, gold accents. Item text #d9d4c6 on ink 13:1, group headings #a9a497 7:1; active = gold fill, ink text. */
 .a-nav { --n-ink: #121214; --n-hover: #232327; --n-text: #d9d4c6; --n-head: #a9a497;
-  display: flex; flex-direction: column; gap: 2px; padding: 12px 10px; background: var(--n-ink); color: var(--n-text);
-  position: sticky; top: 0; height: calc(100vh - 52px); overflow-y: auto; overscroll-behavior: contain; border-top: 1px solid #2a2a2e; }
+  display: flex; flex-direction: column; background: var(--n-ink); color: var(--n-text); border-top: 1px solid #2a2a2e;
+  position: sticky; top: var(--a-top-h); align-self: start; overflow: hidden;
+  height: calc(100vh - var(--a-top-h)); height: calc(100dvh - var(--a-top-h)); }
+/* Only the item list scrolls, with a thin ink scrollbar (never a light one); the toggle under it never moves. */
+.a-nav-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 2px;
+  padding: 12px 10px 8px; scrollbar-width: thin; scrollbar-color: #3a3a40 transparent; }
+.a-nav-list::-webkit-scrollbar { width: 8px; }
+.a-nav-list::-webkit-scrollbar-track { background: transparent; }
+.a-nav-list::-webkit-scrollbar-thumb { background: #3a3a40; border-radius: 8px; border: 2px solid var(--n-ink); }
+.a-nav-list::-webkit-scrollbar-thumb:hover { background: #55555c; }
 .a-nav .a-ico { flex: none; }
 .adm .a-nav-item { display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 8px 10px; border-radius: 8px; text-decoration: none; color: var(--n-text); font-size: 13.5px; }
 .adm .a-nav-item:hover { background: var(--n-hover); color: #fff; }
@@ -57,17 +70,21 @@ const css = `
 .a-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .a-nav-sep { height: 1px; background: #2f2f34; margin: 10px 6px; flex: none; }
 .a-nav-ext .a-ico { opacity: .85; }
-.a-collapse { margin-top: auto; display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 8px 10px; border: 0; border-radius: 8px;
+.a-collapse { flex: none; margin: 0 10px 10px; display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 8px 10px; border: 0; border-radius: 8px; box-shadow: 0 -1px 0 #2f2f34;
   background: none; color: var(--n-head); font: 600 12.5px/1 'Open Sans', system-ui, sans-serif; cursor: pointer; }
 .a-collapse:hover { background: var(--n-hover); color: #fff; }
 .a-nav :focus-visible { outline: 2px solid var(--a-gold); outline-offset: 1px; }
 /* Collapsed: icons only, names as tooltips (title) and still read by screen readers (.a-lbl visually hidden) */
-.a-nav.collapsed { padding: 12px 8px; align-items: stretch; }
-.a-nav.collapsed .a-nav-item, .a-nav.collapsed .a-collapse { justify-content: center; padding: 9px 0; position: relative; }
+/* Collapsed: tighter rows so every icon fits without scrolling at 1366 x 768 */
+.a-nav.collapsed .a-nav-list { padding: 10px 8px 6px; gap: 1px; align-items: stretch; }
+.a-nav.collapsed .a-grp { margin-top: 0; gap: 1px; }
+.adm .a-nav.collapsed .a-nav-item, .a-nav.collapsed .a-collapse { justify-content: center; min-height: 30px; padding: 6px 0; position: relative; }
+.a-nav.collapsed .a-collapse { margin: 0 8px 8px; }
+.a-nav.collapsed .a-nav-sep { margin: 6px 4px; }
 .a-nav.collapsed .a-lbl { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .a-nav.collapsed .a-grp-items { padding-inline-start: 0; }
 .a-nav.collapsed .a-badge { position: absolute; top: 2px; inset-inline-end: 2px; min-width: 16px; height: 16px; padding: 0 4px; font-size: 10px; }
-.a-grp-sep { height: 1px; background: #2f2f34; margin: 6px 8px; }
+.a-grp-sep { height: 1px; background: #2f2f34; margin: 5px 6px; }
 .a-nav-backdrop { display: none; }
 .a-main { padding: 20px; min-width: 0; }
 
@@ -230,15 +247,16 @@ tr.a-target td { background: #fff6d6; }
 
 @media (max-width: 900px) {
   .a-shell { grid-template-columns: minmax(0, 1fr); }
-  .a-burger { display: inline-flex; background: none; border: 1px solid #55555c; color: #fff; border-radius: 8px; padding: 6px 10px; font: inherit; cursor: pointer; }
   .a-top .a-who { display: none; }
   .a-top .a-btn-ghost { margin-inline-start: auto; }
   .a-shell.collapsed { grid-template-columns: minmax(0, 1fr); }
-  .a-nav { position: fixed; z-index: 60; inset-block: 0; inset-inline-start: 0; width: min(300px, 86vw); height: 100%; padding-top: 16px;
+  /* drawer: full window height (dvh where supported), the same scrolling list and pinned toggle */
+  .a-nav { position: fixed; z-index: 60; top: 0; inset-block: 0; inset-inline-start: 0; width: min(300px, 86vw); height: 100vh; height: 100dvh; border-top: 0;
     transform: translateX(-105%); transition: transform .22s ease; box-shadow: 8px 0 30px rgba(0, 0, 0, .35); visibility: hidden; }
   :root[dir="rtl"] .a-nav { transform: translateX(105%); }
   .a-nav.open { transform: none; visibility: visible; }
   .a-nav-backdrop { display: block; position: fixed; inset: 0; z-index: 55; background: rgba(18, 18, 20, .45); }
+  .a-nav-list { padding-top: 16px; }
   .a-main { padding: 14px; }
   .a-dl div { grid-template-columns: 1fr; gap: 0; }
 }

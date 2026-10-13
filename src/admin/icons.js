@@ -22,6 +22,7 @@ const P = {
   users: <><circle cx="9" cy="8" r="3.2" /><path d="M3 20c0-3.4 2.7-6 6-6s6 2.6 6 6" /><path d="M16 4.6a3.2 3.2 0 010 6.3M18 14.3c1.9.7 3 2.6 3 5.7" /></>,
   audit: <><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></>,
   external: <><path d="M14 4h6v6M20 4l-9 9" /><path d="M18 13.5V19a1 1 0 01-1 1H5a1 1 0 01-1-1V7a1 1 0 011-1h5.5" /></>,
+  menu: <path d="M4 6.5h16M4 12h16M4 17.5h16" />,
   chevron: <path d="M9 6l6 6-6 6" />,
   collapse: <path d="M12 6l-6 6 6 6M19 6l-6 6 6 6" />,
   expand: <path d="M5 6l6 6-6 6M12 6l6 6-6 6" />,

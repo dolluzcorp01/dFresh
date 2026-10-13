@@ -64,7 +64,7 @@ const isActive = (pathname, path) => (path === '' ? /^\/admin\/?$/.test(pathname
   : pathname === `/admin/${path}` || pathname.startsWith(`/admin/${path}/`));
 
 const NARROW = '(max-width: 900px)';
-function useNarrow() {
+export function useNarrow() {
   const [narrow, setNarrow] = useState(() => window.matchMedia(NARROW).matches);
   useEffect(() => {
     const mq = window.matchMedia(NARROW);
@@ -128,6 +128,8 @@ export default function Sidebar({ role, drawerOpen, onCloseDrawer, collapsed, on
     <>
       {narrow && drawerOpen && <div className="a-nav-backdrop" onClick={() => onCloseDrawer(false)} aria-hidden="true" />}
       <nav id="a-nav" className={`a-nav${drawerOpen ? ' open' : ''}${compact ? ' collapsed' : ''}`} aria-label="Admin">
+        {/* Only this list scrolls (thin ink scrollbar); the menu toggle below it never moves. */}
+        <div className="a-nav-list">
         <NavItem it={DASHBOARD} pathname={pathname} compact={compact} onNavigate={navigate} />
         {groups.map((g) => {
           const shown = compact || Boolean(open[g.key]);
@@ -161,14 +163,33 @@ export default function Sidebar({ role, drawerOpen, onCloseDrawer, collapsed, on
           <Icon name="external" />
           <span className="a-lbl">User Interface</span>
         </a>
-        {!narrow && (
-          <button type="button" className="a-collapse" onClick={onToggleCollapsed} aria-pressed={collapsed}
-            aria-label={collapsed ? 'Expand the sidebar' : 'Collapse the sidebar to icons'} title={collapsed ? 'Expand the sidebar' : 'Collapse to icons'}>
-            <Icon name={collapsed ? 'expand' : 'collapse'} />
-            <span className="a-lbl">Collapse</span>
-          </button>
-        )}
+        </div>
+        {/* Pinned menu toggle (the header has the same one): desktop collapses / expands the sidebar, the drawer closes. */}
+        <MenuToggle className="a-collapse" narrow={narrow} collapsed={collapsed} drawerOpen={drawerOpen}
+          onToggleCollapsed={onToggleCollapsed} onCloseDrawer={() => onCloseDrawer(true)} withLabel />
       </nav>
     </>
+  );
+}
+
+/**
+ * The menu toggle, in the header (left of the logo) and pinned at the bottom of the sidebar. Desktop: collapses /
+ * expands the sidebar (remembered per browser). Under 900px: opens / closes the drawer (onOpenDrawer given) or closes
+ * it (the pinned one, inside the drawer). aria-label "Collapse menu" / "Expand menu", aria-expanded = menu shown.
+ */
+export function MenuToggle({ className, narrow, collapsed, drawerOpen, onToggleCollapsed, onOpenDrawer, onCloseDrawer, withLabel, buttonRef }) {
+  const expanded = narrow ? Boolean(drawerOpen) : !collapsed;
+  const label = expanded ? 'Collapse menu' : 'Expand menu';
+  const onClick = () => {
+    if (!narrow) onToggleCollapsed();
+    else if (drawerOpen) onCloseDrawer();
+    else if (onOpenDrawer) onOpenDrawer();
+  };
+  return (
+    <button type="button" ref={buttonRef} className={className} onClick={onClick} aria-label={label} aria-expanded={expanded}
+      aria-controls="a-nav" title={label}>
+      <Icon name={narrow ? (drawerOpen ? 'collapse' : 'menu') : (collapsed ? 'expand' : 'collapse')} />
+      {withLabel && <span className="a-lbl">{narrow ? 'Close menu' : (collapsed ? 'Expand' : 'Collapse')}</span>}
+    </button>
   );
 }

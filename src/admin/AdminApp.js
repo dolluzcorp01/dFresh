@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 // Only router exports the public site already uses (Link, useLocation...), so this chunk adds 0 KB to main.js.
 import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
-import Sidebar, { saveCollapsed, savedCollapsed } from './Sidebar';
+import Sidebar, { MenuToggle, saveCollapsed, savedCollapsed, useNarrow } from './Sidebar';
 import { api } from './adminApi';
 import { mediaUrl } from '../utils/api';
 import { AdminContext, Notice } from './ui';
@@ -43,6 +43,7 @@ export default function AdminApp() {
   const [collapsed, setCollapsed] = useState(savedCollapsed);
   const [newLeads, setNewLeads] = useState(0);
   const burgerRef = useRef(null);
+  const narrow = useNarrow();
   const [error, setError] = useState(null);
   const { pathname } = useLocation();
 
@@ -97,7 +98,9 @@ export default function AdminApp() {
     <AdminContext.Provider value={ctx}>
       <div className={`adm a-shell${collapsed ? ' collapsed' : ''}`}>
         <header className="a-top">
-          <button type="button" ref={burgerRef} className="a-burger" aria-expanded={menuOpen} aria-controls="a-nav" onClick={() => setMenuOpen((o) => !o)}>Menu</button>
+          {/* Menu toggle left of the logo: collapses / expands the sidebar on desktop, opens / closes the drawer on a phone */}
+          <MenuToggle className="a-burger" buttonRef={burgerRef} narrow={narrow} collapsed={collapsed} drawerOpen={menuOpen}
+            onToggleCollapsed={toggleCollapsed} onOpenDrawer={() => setMenuOpen(true)} onCloseDrawer={() => setMenuOpen(false)} />
           <Link to="/admin" className="a-brand" aria-label="dFresh admin - dashboard">
             <img src={mediaUrl(LOGO_ON_DARK)} alt="" width="900" height="498" />
             <span className="a-brand-tag" aria-hidden="true">Admin</span>
