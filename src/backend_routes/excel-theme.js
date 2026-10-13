@@ -115,17 +115,20 @@ function cellFor(col, v) {
 }
 
 /**
- * A branded table sheet. columns: [{ header, type: 'text' | 'number' | 'date' (default text), width?, wrap? }],
- * rows: arrays in column order. freezeCols: columns kept in view when scrolling sideways (default: 1 on sheets with
- * more than 8 columns). Returns the worksheet.
+ * A branded table sheet. columns: [{ header, type: 'text' | 'number' | 'date' (default text), width?, wrap?,
+ * head?: { fill, color } (a header that must stand out, e.g. internal), tint?: [odd, even] (cell fills instead of the
+ * white / beige bands) }], rows: arrays in column order. freezeCols: columns kept in view when scrolling sideways
+ * (default: 1 on sheets with more than 8 columns). print: { pagesWide (default 1), repeatCols (e.g. 2 = columns A:B
+ * on every printed page) }. Returns the worksheet.
  */
-function tableSheet(wb, name, { title, exportedBy, filters, columns, rows, freezeCols }) {
+function tableSheet(wb, name, { title, exportedBy, filters, columns, rows, freezeCols, print = {} }) {
   const xSplit = freezeCols ?? (columns.length > 8 ? 1 : 0);
   const ws = wb.addWorksheet(name, {
     views: [{ state: 'frozen', xSplit, ySplit: HEADER_ROW, topLeftCell: `${colLetter(xSplit + 1)}${HEADER_ROW + 1}`, showGridLines: false }],
     pageSetup: {
-      orientation: 'landscape', paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 0,
+      orientation: 'landscape', paperSize: 9, fitToPage: true, fitToWidth: print.pagesWide || 1, fitToHeight: 0,
       printTitlesRow: `${HEADER_ROW}:${HEADER_ROW}`,
+      ...(print.repeatCols ? { printTitlesColumn: `A:${colLetter(print.repeatCols)}` } : {}),
       margins: { left: 0.4, right: 0.4, top: 0.5, bottom: 0.6, header: 0.3, footer: 0.3 },
     },
     headerFooter: { oddFooter: '&C&"Arial"&9dFresh - page &P of &N', evenFooter: '&C&"Arial"&9dFresh - page &P of &N' },
@@ -144,8 +147,8 @@ function tableSheet(wb, name, { title, exportedBy, filters, columns, rows, freez
   columns.forEach((col, i) => {
     const c = head.getCell(i + 1);
     c.value = col.header;
-    c.font = { name: FONT, size: 10, bold: true, color: { argb: C.gold } };
-    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: C.ink } };
+    c.font = { name: FONT, size: 10, bold: true, color: { argb: col.head ? col.head.color : C.gold } };
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: col.head ? col.head.fill : C.ink } };
     c.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
     c.border = { bottom: { style: 'thin', color: { argb: C.gold } } };
   });
@@ -158,7 +161,7 @@ function tableSheet(wb, name, { title, exportedBy, filters, columns, rows, freez
       const c = row.getCell(i + 1);
       c.value = cellFor(col, values[i]);
       c.font = { name: FONT, size: 10, color: { argb: C.ink } };
-      c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: band } };
+      c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: col.tint ? col.tint[r % 2] : band } };
       c.border = { top: thin, left: thin, bottom: thin, right: thin };
       c.alignment = { vertical: 'top', wrapText: Boolean(col.wraps), horizontal: col.type === 'number' ? 'right' : 'left' };
       if (col.type === 'date') c.numFmt = DATE_FMT;

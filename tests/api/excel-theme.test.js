@@ -54,6 +54,29 @@ test('branded sheet: logo + title rows, ink / gold header in row 4, frozen, filt
   const band = [ws.getRow(5).getCell(4).fill.fgColor.argb, ws.getRow(6).getCell(4).fill.fgColor.argb];
   assert.deepEqual(band, ['FFFFFFFF', 'FFF8F3E8'], 'white / beige bands');
   assert.equal(ws.getRow(5).getCell(4).font.name, 'Arial');
+
+  // the internal column stands out: red header, white text, light red cells
+  const specCol = ws.getRow(theme.HEADER_ROW).values.indexOf('Spec status - INTERNAL, do not publish');
+  assert.ok(specCol > 0, 'Spec status header');
+  const spec = ws.getRow(theme.HEADER_ROW).getCell(specCol);
+  assert.equal(spec.fill.fgColor.argb, 'FFB42318');
+  assert.equal(spec.font.color.argb, 'FFFFFFFF');
+  assert.deepEqual([5, 6].map((r) => ws.getRow(r).getCell(specCol).fill.fgColor.argb), ['FFFEF3F2', 'FFFCE4E1']);
+});
+
+test('print options: pages wide and columns repeated on every page (leads: 2 pages wide, A:B repeated)', async () => {
+  const wb = theme.newWorkbook('t');
+  theme.tableSheet(wb, 'T', {
+    title: 't', exportedBy: 'x', filters: null, freezeCols: 2, print: { pagesWide: 2, repeatCols: 2 },
+    columns: [{ header: 'Lead ref' }, { header: 'Name' }, { header: 'Town' }], rows: [['DFL-1', 'A', 'B']],
+  });
+  const ws = (await reload(wb)).getWorksheet('T');
+  assert.equal(ws.pageSetup.fitToWidth, 2);
+  assert.equal(ws.pageSetup.paperSize, 9, 'A4');
+  assert.equal(ws.pageSetup.orientation, 'landscape');
+  assert.equal(ws.pageSetup.printTitlesRow, '4:4');
+  assert.equal(ws.pageSetup.printTitlesColumn, 'A:B');
+  assert.equal(ws.views[0].xSplit, 2);
 });
 
 test('types: IDs, phones and GST stay text (leading zeros), dates are real dates in India time, counts are numbers', async () => {

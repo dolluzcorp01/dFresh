@@ -3,8 +3,9 @@
 // Layout: sheets Read_Me, Products, Categories, UI_Text, branded by excel-theme.js (logo + title rows 1-3, header row 4). Per-language column groups are _EN _TA _HI as in v0.2,
 // and every other language in the languages table (active or not, so translators can fill a new one before it
 // goes live) gets its own column right after _HI in each group, e.g. Name_TE.
-// One deliberate difference: the v0.2 Spec_status header has an en dash before "do not publish"; ours has "-"
-// (house style). Import accepts any header that starts with "Spec_status".
+// One deliberate difference: the internal column's header reads "Spec status - INTERNAL, do not publish" on a red
+// header cell (v0.2: "Spec_status (INTERNAL ... do not publish)"). Import accepts any header that starts with
+// "Spec status" or "Spec_status", so v0.2 files and older exports still import.
 // Import rules:
 // - Products sheet: one row per Product_ID. Changed rows are updated, new IDs added, IDs missing from the sheet
 //   are reported as removed and, on apply, DEACTIVATED (never deleted: leads may point at them).
@@ -22,7 +23,10 @@ const FIELD_GROUPS = [ // [header base, translation column, read-only]
   ['Category', null, true], ['Name', 'name'], ['One_liner', 'one_liner'], ['Keywords', 'keywords'],
   ['Description', 'description'], ['Best_for', 'best_for'], ['Colour', 'colour_name'],
 ];
-const SPEC_HEADER = 'Spec_status (INTERNAL - do not publish)';
+const SPEC_HEADER = 'Spec status - INTERNAL, do not publish';
+const isSpecHeader = (h) => /^spec[ _]status\b/i.test(h);
+// The internal column must stand out: red header with white text (6.5:1), light red cells.
+const SPEC_LOOK = { head: { fill: 'FFB42318', color: 'FFFFFFFF' }, tint: ['FFFEF3F2', 'FFFCE4E1'] };
 const V02_WIDTHS = {
   Sort_order: 8, Featured: 9, Featured_order: 9, Product_ID: 18, Category_key: 11, Category: [20, 22, 20],
   Name: [28, 30, 28], One_liner: [40, 44, 42], Keywords: [34, 38, 36], Description: [60, 66, 62],
@@ -112,7 +116,7 @@ async function buildWorkbook(q, { who = 'dFresh admin' } = {}) {
       ['• Products sheet: one row per product (Variant_of filled = a colour of that product). Edit, then import in the admin: a dry run shows every change first.'],
       ['• Columns ending _EN / _TA / _HI (and any other language code) are the same field per language. Leave a language empty to show English.'],
       ['• Read-only: Category_XX on Products (edit names on the Categories sheet), Image_1..3 (upload photos in the admin), Products count.'],
-      ['• Spec_status is INTERNAL and never shown on the website. No prices in phase 1.'],
+      ['• Spec status (the red column) is INTERNAL and never shown on the website. No prices in phase 1.'],
       ['• A product missing from the sheet is deactivated on import, never deleted.'],
       ['• UI_Text is for reference; edit UI text in Translations (CSV export / import).'],
       ['• Keep the column names in the dark header row as they are: the import finds its columns by these names.'],
@@ -124,7 +128,10 @@ async function buildWorkbook(q, { who = 'dFresh admin' } = {}) {
     ...meta,
     title: 'dFresh Products',
     freezeCols: 4, // Sort_order .. Product_ID stay in view
-    columns: cols.map((c) => ({ header: c.header, type: NUMBER_COLS.has(c.header) ? 'number' : 'text', width: widthOf(c) })),
+    columns: cols.map((c) => ({
+      header: c.header, type: NUMBER_COLS.has(c.header) ? 'number' : 'text', width: widthOf(c),
+      ...(c.header === SPEC_HEADER ? SPEC_LOOK : {}),
+    })),
     rows: products.map((p) => cols.map((c) => productCell(c, p, cats))),
   });
 
@@ -194,7 +201,7 @@ function sheetRows(ws, mustHave) {
 
 /** Maps a Products header to { kind, ... } or null (unknown). */
 function classify(header, langCodes) {
-  if (header.startsWith('Spec_status')) return { kind: 'base', col: 'spec_status' };
+  if (isSpecHeader(header)) return { kind: 'base', col: 'spec_status' };
   const fixed = {
     Sort_order: 'sort_order', Featured: 'is_featured', Featured_order: 'featured_order', Product_ID: 'product_id',
     Category_key: 'category_key', Specification: 'specification', Pack: 'pack', Variant_of: 'variant_of', Swatch_hex: 'swatch_hex',

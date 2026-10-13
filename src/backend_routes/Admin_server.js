@@ -200,10 +200,13 @@ route('get', '/leads/export.xlsx', 'editor', async (req, res) => {
     title: 'dFresh Leads',
     exportedBy: await exportedBy(req),
     filters: leadFilterText(req.query),
-    freezeCols: 1,
+    // Lead ref + Name first: kept in view on screen and repeated on every printed page (2 pages wide), so each
+    // page says whose row it is.
+    freezeCols: 2,
+    print: { pagesWide: 2, repeatCols: 2 },
     columns: [
-      { header: 'Lead ref', width: 13 }, { header: 'Received', type: 'date' }, { header: 'Form', width: 12 },
-      { header: 'Status', width: 11 }, { header: 'Name', width: 22 }, { header: 'Business / firm', width: 24 },
+      { header: 'Lead ref', width: 13 }, { header: 'Name', width: 22 }, { header: 'Received', type: 'date' },
+      { header: 'Form', width: 12 }, { header: 'Status', width: 11 }, { header: 'Business / firm', width: 24 },
       { header: 'Business type', width: 15 }, { header: 'Town', width: 16 }, { header: 'Phone', width: 13 },
       { header: 'E-mail', width: 28 }, { header: 'Products', width: 30 }, { header: 'No. of products', type: 'number', width: 10 },
       { header: 'Monthly quantity', width: 16 }, { header: 'Message', width: 40, wrap: true }, { header: 'GST no.', width: 18 },
@@ -212,7 +215,7 @@ route('get', '/leads/export.xlsx', 'editor', async (req, res) => {
       { header: 'Opened from', width: 16 }, { header: 'Assigned to', width: 13 }, { header: 'Staff notes', width: 36, wrap: true },
     ],
     rows: rows.map((r) => [
-      r.lead_ref, r.created_at, r.form_type, r.status, r.full_name || [r.first_name, r.last_name].filter(Boolean).join(' '),
+      r.lead_ref, r.full_name || [r.first_name, r.last_name].filter(Boolean).join(' '), r.created_at, r.form_type, r.status,
       r.business_name, r.business_type, r.town, phoneText(r.phone), r.email, r.products, r.products ? r.products.split(' ').length : 0,
       r.monthly_quantity, r.message, detail(r, 'gst_no'), detail(r, 'areas'), detail(r, 'godown_vehicles'), detail(r, 'brands'),
       detail(r, 'monthly_sales'), r.lang_code, r.source_page, r.source_ref, r.assigned_to, r.staff_notes,

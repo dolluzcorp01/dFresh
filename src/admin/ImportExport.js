@@ -25,7 +25,7 @@ export default function ImportExport() {
       {act.note}
       <div className="a-card">
         <h2>Export</h2>
-        <p>Product List in the v0.2 layout (Products, Categories, UI_Text): one column per language for every text, plus Spec_status (internal).</p>
+        <p>Product List in the v0.2 layout (Products, Categories, UI_Text): one column per language for every text, plus Spec status (internal, the red column).</p>
         <button type="button" className="a-btn" onClick={exportXlsx} disabled={act.busy}>Download products .xlsx</button>
       </div>
       <div className="a-card">
