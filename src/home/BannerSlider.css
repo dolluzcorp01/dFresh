@@ -34,7 +34,14 @@
 .bnr-ui { position: absolute; inset-inline: 0; bottom: 22px; z-index: 3; pointer-events: none; }
 .bnr-ui .wrap { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .bnr-dots { display: flex; gap: 6px; pointer-events: auto; }
-.bnr-dots button { width: 34px; height: 4px; border: 0; padding: 0; border-radius: 4px; background: rgba(18, 18, 20, .18); overflow: hidden; cursor: pointer; position: relative; }
+/* Dots follow the theme of the banner on screen (.on-dark, BannerSlider.js) and keep 3:1 against the photo:
+   light banners ink (inactive 60%, the active bar 85% with a solid ink progress fill); dark banners paper with a thin
+   dark outline + soft shadow (no box), the active bar solid paper with a gold progress fill. */
+.bnr-dots button { width: 34px; height: 4px; border: 0; padding: 0; border-radius: 4px; background: rgba(18, 18, 20, .6); overflow: hidden; cursor: pointer; position: relative; }
+.bnr-dots button[aria-selected="true"] { background: rgba(18, 18, 20, .85); }
+.bnr.on-dark .bnr-dots button { background: rgba(252, 251, 246, .6); box-shadow: 0 0 0 1px rgba(0, 0, 0, .35), 0 1px 3px rgba(0, 0, 0, .45); }
+.bnr.on-dark .bnr-dots button[aria-selected="true"] { background: var(--paper); }
+.bnr.on-dark .bnr-dots button i { background: var(--gold); }
 /* 44px touch target around the thin bar */
 .bnr-dots button::before { content: ""; position: absolute; inset: -20px -2px; }
 .bnr-dots button i { display: block; height: 100%; width: 100%; background: var(--ink); transform: scaleX(0); transform-origin: left; }

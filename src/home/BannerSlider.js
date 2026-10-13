@@ -106,7 +106,7 @@ export default function BannerSlider() {
   return (
     <section
       ref={secRef}
-      className={`bnr${paused ? ' paused' : ''}`}
+      className={`bnr${paused ? ' paused' : ''}${banners[i] && banners[i].theme === 'dark' ? ' on-dark' : ''}`}
       id="moods"
       aria-roledescription="carousel"
       aria-label={t('bn_label')}

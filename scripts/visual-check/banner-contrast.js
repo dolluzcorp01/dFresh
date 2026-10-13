@@ -4,7 +4,7 @@
 // pixels the letters cover (where the two shots differ) are compared with the text colour: "p5" = the contrast that
 // 95% of those pixels meet or beat (pass mark), "min" = the single worst pixel. The button: label on its own fill
 // (text), and the fill against the photo just outside it (p5, non-text, 3:1 is the WCAG mark).
-// Pass: 4.5:1, or 3:1 for large text (>= 24px, or >= 18.66px bold).
+// Pass: 4.5:1, or 3:1 for large text (>= 24px, or >= 18.66px bold). The slider dots: 3:1 against the photo (dotContrast).
 //
 // puppeteer-core is NOT a project dependency (same as scripts/visual-parity):
 //   npm i --prefix <scratch> puppeteer-core@24
@@ -87,6 +87,61 @@ async function buttonContrast(page, sel) {
   return { label: r2(ratio(rgb(b.color), fill)), need: large ? 3 : 4.5, edgeP5: r2(pct(ring, 0.05)) };
 }
 
+// Slider dots (non-text, 3:1): each dot's pixels as shown against the same pixels with the dots hidden (the photo,
+// plus nothing else: there is no box behind them). An outline / shadow is part of the dot, so it counts where it
+// covers the photo. The active dot is measured twice: "start" = its progress fill emptied (the first moment of the
+// 6 s cycle, its weakest look) and "full" = filled. "apart" = how far the active dot (start) stands from the
+// inactive ones: contrast between their median colours. Pass: inactive p5, active start p5 >= 3.
+async function dotContrast(page) {
+  const dots = await page.$$eval('#moods .bnr-dots button', (bs) => bs.map((b) => {
+    const r = b.getBoundingClientRect();
+    return { x: r.left + window.scrollX, y: r.top + window.scrollY, w: r.width, h: r.height, on: b.getAttribute('aria-selected') === 'true' };
+  }));
+  const pad = 4;
+  const x0 = Math.floor(Math.min(...dots.map((d) => d.x))) - pad;
+  const y0 = Math.floor(Math.min(...dots.map((d) => d.y))) - pad;
+  const clip = { x: x0, y: y0, width: Math.ceil(Math.max(...dots.map((d) => d.x + d.w))) + pad - x0, height: Math.ceil(Math.max(...dots.map((d) => d.y + d.h))) + pad - y0 };
+  const fill = '#moods .bnr-dots button[aria-selected="true"] i';
+  await page.$eval(fill, (el) => el.style.setProperty('transform', 'scaleX(0)', 'important'));
+  await wait(60);
+  const start = await raw(page, clip);
+  await page.$eval(fill, (el) => el.style.removeProperty('transform'));
+  await wait(60);
+  const full = await raw(page, clip);
+  await page.$eval('#moods .bnr-dots', (el) => el.style.setProperty('visibility', 'hidden'));
+  await wait(60);
+  const behind = await raw(page, clip);
+  await page.$eval('#moods .bnr-dots', (el) => el.style.removeProperty('visibility'));
+  // pixels inside a dot (its visible bar; the 44px tap area around it is transparent)
+  const inDot = (d, img) => {
+    const out = [];
+    for (let y = Math.ceil(d.y - y0); y < Math.floor(d.y + d.h - y0); y += 1) {
+      for (let x = Math.ceil(d.x - x0); x < Math.floor(d.x + d.w - x0); x += 1) out.push((y * img.w + x) * 3);
+    }
+    return out;
+  };
+  const px = (img, i) => [img.data[i], img.data[i + 1], img.data[i + 2]];
+  const median = (img, idx) => [0, 1, 2].map((c) => pct(idx.map((i) => img.data[i + c]), 0.5));
+  const vsPhoto = (img, idx) => idx.map((i) => ratio(px(img, i), px(behind, i)));
+  const inactive = [];
+  let active = null;
+  const inactiveColours = [];
+  for (const d of dots) {
+    const idx = inDot(d, start);
+    if (d.on) {
+      active = { start: r2(pct(vsPhoto(start, idx), 0.05)), full: r2(pct(vsPhoto(full, idx), 0.05)), colour: median(start, idx) };
+    } else {
+      inactive.push(...vsPhoto(start, idx));
+      inactiveColours.push(median(start, idx));
+    }
+  }
+  const inactiveColour = [0, 1, 2].map((c) => pct(inactiveColours.map((m) => m[c]), 0.5));
+  return {
+    inactiveP5: r2(pct(inactive, 0.05)), inactiveMin: r2(Math.min(...inactive)),
+    activeStart: active.start, activeFull: active.full, apart: r2(ratio(active.colour, inactiveColour)), need: 3,
+  };
+}
+
 (async () => {
   fs.mkdirSync(OUT, { recursive: true });
   const langs = (await (await fetch(`${API}/api/dfresh/languages`)).json()).data.languages.map((l) => l.code);
@@ -119,6 +174,7 @@ async function buttonContrast(page, sel) {
           label: await textContrast(page, sel('.k')),
           headline: await textContrast(page, sel('h2')),
           button: await buttonContrast(page, sel('.ci .btn')),
+          dots: await dotContrast(page),
         };
         rows.push(row);
         if (mode === 'shots' && lang === 'en') {
@@ -146,12 +202,14 @@ async function buttonContrast(page, sel) {
   }
   fs.writeFileSync(path.join(OUT, `contrast-${label}.json`), JSON.stringify(rows, null, 2));
   const ok = (v, need) => (v !== null && v >= need ? '' : ' FAIL');
-  console.log('width lang banner   theme | label p5 (min) need | headline p5 (min) need | button label / edge p5');
+  console.log('width lang banner   theme | label p5 (min) need | headline p5 (min) need | button label / edge p5 | dots inactive p5 (min) / active start, full / apart');
   let fails = 0;
   for (const r of rows) {
-    const f = ok(r.label.p5, r.label.need) + ok(r.headline.p5, r.headline.need) + ok(r.button.label, r.button.need);
+    const d = r.dots;
+    const dotsOk = ok(d.inactiveP5, d.need) + ok(d.activeStart, d.need);
+    const f = ok(r.label.p5, r.label.need) + ok(r.headline.p5, r.headline.need) + ok(r.button.label, r.button.need) + dotsOk;
     if (f) fails += 1;
-    console.log(`${r.width} ${r.lang.padEnd(3)} ${r.banner.padEnd(9)} ${r.theme.padEnd(5)} | ${r.label.p5} (${r.label.min}) ${r.label.need}${ok(r.label.p5, r.label.need)} | ${r.headline.p5} (${r.headline.min}) ${r.headline.need}${ok(r.headline.p5, r.headline.need)} | ${r.button.label}${ok(r.button.label, r.button.need)} / ${r.button.edgeP5}`);
+    console.log(`${r.width} ${r.lang.padEnd(3)} ${r.banner.padEnd(9)} ${r.theme.padEnd(5)} | ${r.label.p5} (${r.label.min}) ${r.label.need}${ok(r.label.p5, r.label.need)} | ${r.headline.p5} (${r.headline.min}) ${r.headline.need}${ok(r.headline.p5, r.headline.need)} | ${r.button.label}${ok(r.button.label, r.button.need)} / ${r.button.edgeP5} | ${d.inactiveP5} (${d.inactiveMin}) / ${d.activeStart}, ${d.activeFull} / ${d.apart}${dotsOk}`);
   }
   console.log(`${rows.length} rows, ${fails} with a failure`);
 })().catch((e) => { console.error(e); process.exit(1); });
