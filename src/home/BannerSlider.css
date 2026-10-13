@@ -16,9 +16,20 @@
 .bs.on .ci > *:nth-child(3) { transition-delay: .3s; }
 .bs h2 { font-size: clamp(30px, 4.2vw, 60px); font-weight: 800; letter-spacing: -.03em; line-height: 1.02; margin: 12px 0 24px; color: var(--ink); }
 :root[data-script="long"] .bs h2 { font-size: clamp(24px, 3vw, 42px); line-height: 1.25; letter-spacing: 0; }
+/* light photos: the eyebrow in ink, so it keeps 4.5:1 on the brighter / pinker photos (ink-3 was 2.3:1 on funky) */
+.bs:not(.dark) .k { color: var(--ink); }
 /* gold button + light text only on the dark photos (gold text only on dark backgrounds) */
 .bs.dark h2 { color: var(--paper); }
 .bs.dark .k { color: #C9C3B2; }
+/* dark photos: a faint radial shade behind the text block only (fades to nothing, no edge, the photo stays
+   visible) and soft shadows, so the text and the gold button stay readable over bright parts like the neon ring */
+.bs.dark .ci { position: relative; isolation: isolate; }
+.bs.dark .ci::before {
+  content: ""; position: absolute; inset: -24% -20%; z-index: -1; pointer-events: none;
+  background: radial-gradient(closest-side, rgba(10, 10, 12, .56), rgba(10, 10, 12, .38) 55%, rgba(10, 10, 12, 0));
+}
+.bs.dark .k, .bs.dark h2 { text-shadow: 0 1px 2px rgba(0, 0, 0, .35), 0 2px 18px rgba(0, 0, 0, .45); }
+.bs.dark .ci .btn { box-shadow: 0 8px 24px -8px rgba(0, 0, 0, .7), 0 0 0 1px rgba(0, 0, 0, .18); }
 
 .bnr-ui { position: absolute; inset-inline: 0; bottom: 22px; z-index: 3; pointer-events: none; }
 .bnr-ui .wrap { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
