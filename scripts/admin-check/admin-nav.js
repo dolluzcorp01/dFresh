@@ -6,8 +6,8 @@
 //    load" panel, loading finished, list screens show their own first row (compared with the API), the item is the
 //    only active one, its group is open and marked current, zero console errors. Then Back / Forward.
 // 2. Group headers: aria-expanded / aria-controls, Enter and Space toggle them, the state survives a reload.
-// 3. Menu toggles (header, left of the logo, and pinned under the sidebar list): "Collapse menu" / "Expand menu" with
-//    aria-expanded, in sync. Collapsed to icons: every screen through its icon (with a tooltip), survives a reload.
+// 3. Desktop: no menu toggle in the header; the one pinned under the sidebar list collapses / expands ("Collapse menu"
+//    / "Expand menu", aria-expanded). Collapsed to icons: every screen through its icon (tooltip), survives a reload.
 // 4. 390 wide: the drawer (burger, groups, a link closes it, the backdrop and Esc close it), every screen through it.
 // 5. Roles: viewer and editor see exactly the items their role may open (Setup: Languages only), admin all 16.
 // 6. Leads badge = the API's count of New leads. User Interface -> /en in a new tab, never active.
@@ -219,17 +219,18 @@ async function main() {
     if ((await exp()) !== before) fail(`group state not remembered after reload (${before} -> ${await exp()})`);
     else console.log(`group header: Enter / Space toggle aria-expanded (${start} -> ${afterEnter} -> ${afterSpace}), state remembered after reload`);
 
-    // ---- 3. collapsed to icons (header toggle collapses, the pinned one expands; both labelled and in sync) ------
-    const toggles = () => page.evaluate(() => ['.a-top .a-burger', '.a-nav .a-collapse'].map((s) => {
-      const b = document.querySelector(s);
-      return `${b.getAttribute('aria-label')}|${b.getAttribute('aria-expanded')}`;
-    }).join(' / '));
+    // ---- 3. collapsed to icons (desktop: no header toggle; the pinned one collapses and expands, labelled) -------
+    const toggles = () => page.evaluate(() => {
+      const b = document.querySelector('.a-nav .a-collapse');
+      return { header: !!document.querySelector('.a-top .a-burger'), pinned: `${b.getAttribute('aria-label')}|${b.getAttribute('aria-expanded')}` };
+    });
     const t0 = await toggles();
-    await page.click('.a-top .a-burger');
+    await page.click('.a-nav .a-collapse');
     await page.waitForSelector('.a-nav.collapsed');
     const t1 = await toggles();
-    if (t0 !== 'Collapse menu|true / Collapse menu|true' || t1 !== 'Expand menu|false / Expand menu|false') fail(`menu toggles: ${t0} -> ${t1}`);
-    else console.log(`menu toggles (header + pinned): "${t0}" -> header click -> "${t1}"`);
+    if (t0.header || t1.header) fail('desktop: the header has a menu toggle (it belongs under 900px only)');
+    if (t0.pinned !== 'Collapse menu|true' || t1.pinned !== 'Expand menu|false') fail(`pinned toggle: ${t0.pinned} -> ${t1.pinned}`);
+    else console.log(`pinned toggle: "${t0.pinned}" -> click -> "${t1.pinned}"; no header toggle on desktop`);
     const tips = await page.$$eval('.a-nav.collapsed a', (as) => as.map((a) => [a.getAttribute('href'), a.title, a.offsetParent !== null]));
     const noTip = tips.filter(([, t, v]) => !t || !v);
     if (noTip.length) fail(`collapsed: items without tooltip or hidden: ${JSON.stringify(noTip)}`);

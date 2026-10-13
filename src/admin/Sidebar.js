@@ -173,9 +173,8 @@ export default function Sidebar({ role, drawerOpen, onCloseDrawer, collapsed, on
 }
 
 /**
- * The menu toggle, in the header (left of the logo) and pinned at the bottom of the sidebar. Desktop: collapses /
- * expands the sidebar (remembered per browser). Under 900px: opens / closes the drawer (onOpenDrawer given) or closes
- * it (the pinned one, inside the drawer). aria-label "Collapse menu" / "Expand menu", aria-expanded = menu shown.
+ * The menu toggle: pinned at the bottom of the sidebar (desktop: collapses / expands it, remembered per browser; in the
+ * drawer: closes it) and, under 900px only, in the header left of the logo (opens / closes the drawer). aria-label "Collapse menu" / "Expand menu", aria-expanded = menu shown.
  */
 export function MenuToggle({ className, narrow, collapsed, drawerOpen, onToggleCollapsed, onOpenDrawer, onCloseDrawer, withLabel, buttonRef }) {
   const expanded = narrow ? Boolean(drawerOpen) : !collapsed;

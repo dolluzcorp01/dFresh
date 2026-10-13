@@ -98,9 +98,12 @@ export default function AdminApp() {
     <AdminContext.Provider value={ctx}>
       <div className={`adm a-shell${collapsed ? ' collapsed' : ''}`}>
         <header className="a-top">
-          {/* Menu toggle left of the logo: collapses / expands the sidebar on desktop, opens / closes the drawer on a phone */}
-          <MenuToggle className="a-burger" buttonRef={burgerRef} narrow={narrow} collapsed={collapsed} drawerOpen={menuOpen}
-            onToggleCollapsed={toggleCollapsed} onOpenDrawer={() => setMenuOpen(true)} onCloseDrawer={() => setMenuOpen(false)} />
+          {/* Under 900px only: the button left of the logo opens / closes the drawer. On desktop the sidebar's pinned
+              toggle collapses / expands it. */}
+          {narrow && (
+            <MenuToggle className="a-burger" buttonRef={burgerRef} narrow={narrow} collapsed={collapsed} drawerOpen={menuOpen}
+              onToggleCollapsed={toggleCollapsed} onOpenDrawer={() => setMenuOpen(true)} onCloseDrawer={() => setMenuOpen(false)} />
+          )}
           <Link to="/admin" className="a-brand" aria-label="dFresh admin - dashboard">
             <img src={mediaUrl(LOGO_ON_DARK)} alt="" width="900" height="498" />
             <span className="a-brand-tag" aria-hidden="true">Admin</span>
