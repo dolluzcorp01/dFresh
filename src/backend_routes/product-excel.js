@@ -1,6 +1,6 @@
 // Product List Excel (spec F 4): export in the v0.2 layout (docs/reference/dFresh_Website_Product_List_v0.2.xlsx),
 // import as a dry-run diff, apply on confirm.
-// Layout: sheets Read_Me, Products, Categories, UI_Text. Per-language column groups are _EN _TA _HI as in v0.2,
+// Layout: sheets Read_Me, Products, Categories, UI_Text, branded by excel-theme.js (logo + title rows 1-3, header row 4). Per-language column groups are _EN _TA _HI as in v0.2,
 // and every other language in the languages table (active or not, so translators can fill a new one before it
 // goes live) gets its own column right after _HI in each group, e.g. Name_TE.
 // One deliberate difference: the v0.2 Spec_status header has an en dash before "do not publish"; ours has "-"
@@ -15,6 +15,7 @@
 // - Any row error blocks the apply; the dry-run lists every error.
 const ExcelJS = require('exceljs');
 const entities = require('./admin-entities');
+const theme = require('./excel-theme');
 
 const CORE = ['en', 'ta', 'hi'];
 const FIELD_GROUPS = [ // [header base, translation column, read-only]
@@ -22,10 +23,8 @@ const FIELD_GROUPS = [ // [header base, translation column, read-only]
   ['Description', 'description'], ['Best_for', 'best_for'], ['Colour', 'colour_name'],
 ];
 const SPEC_HEADER = 'Spec_status (INTERNAL - do not publish)';
-const HEADER_FILL = 'FFE5BF24';
-const INTERNAL_FILL = 'FFF4CCCC';
 const V02_WIDTHS = {
-  Sort_order: 8, Featured: 9, Featured_order: 9, Product_ID: 15, Category_key: 11, Category: [20, 22, 20],
+  Sort_order: 8, Featured: 9, Featured_order: 9, Product_ID: 18, Category_key: 11, Category: [20, 22, 20],
   Name: [28, 30, 28], One_liner: [40, 44, 42], Keywords: [34, 38, 36], Description: [60, 66, 62],
   Specification: 34, Pack: 22, Best_for: [30, 34, 32], Image: 22, Alt_text_EN: 40, WhatsApp_message_EN: 50,
   [SPEC_HEADER]: 34, Variant_of: 15, Colour: [12, 14, 12], Swatch_hex: 11,
@@ -90,71 +89,71 @@ function productCell(col, p, cats) {
   }
 }
 
-function styleHeader(ws, cols, internalHeader) {
-  const row = ws.getRow(1);
-  row.height = 34;
-  row.eachCell((c) => {
-    c.font = { bold: true, color: { argb: 'FF121214' } };
-    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: c.value === internalHeader ? INTERNAL_FILL : HEADER_FILL } };
-    c.alignment = { vertical: 'middle', wrapText: true };
-  });
-  ws.columns.forEach((c, i) => { c.width = cols[i]; });
-}
+// Column types for the theme: numbers stay numbers, everything else (IDs, keys, hex) is stored as text.
+const NUMBER_COLS = new Set(['Sort_order', 'Featured_order']);
 
-async function buildWorkbook(q) {
+/** The branded Product List workbook. who = "Name (EMP_ID)" of the admin exporting it. */
+async function buildWorkbook(q, { who = 'dFresh admin' } = {}) {
   const langs = await columnLanguages(q);
   const products = await entities.load('products', null, q);
   const cats = await entities.load('categories', null, q);
   const [ui] = await q.query('SELECT k.text_key, t.lang_code, t.value FROM ui_text_keys k LEFT JOIN ui_text t ON t.text_key = k.text_key ORDER BY k.group_name, k.text_key');
-  const wb = new ExcelJS.Workbook();
-  wb.creator = 'dFresh admin';
+  const wb = theme.newWorkbook('dFresh Products');
+  const meta = { exportedBy: who, filters: null };
 
-  const readMe = wb.addWorksheet('Read_Me');
-  readMe.getColumn(2).width = 150;
-  [
-    ['dFresh Website - Product List (export from the admin)', true],
-    [`Exported ${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC · ${products.filter((p) => !p.variant_of).length} products + ${products.filter((p) => p.variant_of).length} colour variants · languages: ${langs.map(LANG_SUFFIX).join(', ')}`],
-    [''],
-    ['How to use', true],
-    ['• Products sheet: one row per product (Variant_of filled = a colour of that product). Edit, then import in the admin: a dry run shows every change first.'],
-    ['• Columns ending _EN / _TA / _HI (and any other language code) are the same field per language. Leave a language empty to show English.'],
-    ['• Read-only: Category_XX on Products (edit names on the Categories sheet), Image_1..3 (upload photos in the admin), Products count.'],
-    ['• Spec_status is INTERNAL and never shown on the website. No prices in phase 1.'],
-    ['• A product missing from the sheet is deactivated on import, never deleted.'],
-    ['• UI_Text is for reference; edit UI text in Translations (CSV export / import).'],
-  ].forEach(([text, bold], i) => {
-    const c = readMe.getCell(9 + i, 2);
-    c.value = text;
-    if (bold) c.font = { bold: true, size: i === 0 ? 14 : 12 };
+  theme.notesSheet(wb, 'Read_Me', {
+    ...meta,
+    title: 'dFresh Products',
+    lines: [
+      ['dFresh Website - Product List (export from the admin)', true],
+      [`${products.filter((p) => !p.variant_of).length} products + ${products.filter((p) => p.variant_of).length} colour variants · languages: ${langs.map(LANG_SUFFIX).join(', ')}`],
+      [''],
+      ['How to use', true],
+      ['• Products sheet: one row per product (Variant_of filled = a colour of that product). Edit, then import in the admin: a dry run shows every change first.'],
+      ['• Columns ending _EN / _TA / _HI (and any other language code) are the same field per language. Leave a language empty to show English.'],
+      ['• Read-only: Category_XX on Products (edit names on the Categories sheet), Image_1..3 (upload photos in the admin), Products count.'],
+      ['• Spec_status is INTERNAL and never shown on the website. No prices in phase 1.'],
+      ['• A product missing from the sheet is deactivated on import, never deleted.'],
+      ['• UI_Text is for reference; edit UI text in Translations (CSV export / import).'],
+      ['• Keep the column names in the dark header row as they are: the import finds its columns by these names.'],
+    ],
   });
 
-  const ws = wb.addWorksheet('Products', { views: [{ state: 'frozen', xSplit: 4, ySplit: 1, topLeftCell: 'E2', activeCell: 'E2' }] });
   const cols = productColumns(langs);
-  ws.addRow(cols.map((c) => c.header));
-  for (const p of products) {
-    const row = ws.addRow(cols.map((c) => productCell(c, p, cats)));
-    row.alignment = { vertical: 'top', wrapText: true };
-  }
-  styleHeader(ws, cols.map(widthOf), SPEC_HEADER);
-  ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: products.length + 1, column: cols.length } };
+  theme.tableSheet(wb, 'Products', {
+    ...meta,
+    title: 'dFresh Products',
+    freezeCols: 4, // Sort_order .. Product_ID stay in view
+    columns: cols.map((c) => ({ header: c.header, type: NUMBER_COLS.has(c.header) ? 'number' : 'text', width: widthOf(c) })),
+    rows: products.map((p) => cols.map((c) => productCell(c, p, cats))),
+  });
 
-  const cs = wb.addWorksheet('Categories');
-  cs.addRow(['Order', 'Category_key', ...langs.map((l) => `Category_${LANG_SUFFIX(l)}`), 'Products']);
-  for (const c of cats) {
-    const count = products.filter((p) => p.category_key === c.category_key && !p.variant_of).length;
-    cs.addRow([c.sort_order, c.category_key, ...langs.map((l) => (c.tr[l] ? c.tr[l].name : null)), count]);
-  }
-  styleHeader(cs, [7, 14, ...langs.map((l, i) => [26, 30, 26][Math.min(i, 2)]), 10], null);
+  theme.tableSheet(wb, 'Categories', {
+    ...meta,
+    title: 'dFresh Product categories',
+    columns: [
+      { header: 'Order', type: 'number', width: 9 }, { header: 'Category_key', width: 15 },
+      ...langs.map((l, i) => ({ header: `Category_${LANG_SUFFIX(l)}`, width: [26, 30, 26][Math.min(i, 2)] })),
+      { header: 'Products', type: 'number', width: 11 },
+    ],
+    rows: cats.map((c) => [
+      c.sort_order, c.category_key, ...langs.map((l) => (c.tr[l] ? c.tr[l].name : null)),
+      products.filter((p) => p.category_key === c.category_key && !p.variant_of).length,
+    ]),
+  });
 
-  const us = wb.addWorksheet('UI_Text');
-  us.addRow(['Key', ...langs.map(LANG_SUFFIX)]);
   const byKey = new Map();
   for (const r of ui) {
     if (!byKey.has(r.text_key)) byKey.set(r.text_key, {});
     if (r.lang_code) byKey.get(r.text_key)[r.lang_code] = r.value;
   }
-  for (const [key, vals] of byKey) us.addRow([key, ...langs.map((l) => vals[l] ?? null)]).alignment = { vertical: 'top', wrapText: true };
-  styleHeader(us, [20, ...langs.map((l, i) => [46, 52, 48][Math.min(i, 2)])], null);
+  theme.tableSheet(wb, 'UI_Text', {
+    ...meta,
+    title: 'dFresh Website texts (reference)',
+    freezeCols: 1,
+    columns: [{ header: 'Key', width: 22 }, ...langs.map((l, i) => ({ header: LANG_SUFFIX(l), width: [46, 52, 48][Math.min(i, 2)], wrap: true }))],
+    rows: [...byKey].map(([key, vals]) => [key, ...langs.map((l) => vals[l] ?? null)]),
+  });
 
   return wb;
 }
@@ -174,12 +173,18 @@ function cellValue(v) {
   return v;
 }
 
-function sheetRows(ws) {
+/**
+ * Header + data rows of a sheet. The header row is found by a column it must have (Product_ID / Category_key), so the
+ * branded export (logo and title in rows 1-3, header in row 4) and the old plain layout (header in row 1) both
+ * import; formatting is ignored, only values are read.
+ */
+function sheetRows(ws, mustHave) {
+  const at = theme.findHeaderRow(ws, mustHave, cellValue) || 1;
   const header = [];
-  ws.getRow(1).eachCell({ includeEmpty: true }, (c, i) => { header[i] = norm(cellValue(c.value)); });
+  ws.getRow(at).eachCell({ includeEmpty: true }, (c, i) => { header[i] = norm(cellValue(c.value)); });
   const rows = [];
   ws.eachRow((row, n) => {
-    if (n === 1) return;
+    if (n <= at) return;
     const r = { _row: n };
     row.eachCell({ includeEmpty: true }, (c, i) => { if (header[i]) r[header[i]] = cellValue(c.value); });
     if (Object.entries(r).some(([k, v]) => k !== '_row' && !blank(v))) rows.push(r);
@@ -238,7 +243,7 @@ async function diffWorkbook(q, buffer) {
   const def = (langRows.find((r) => Number(r.is_default) === 1) || langRows[0]).lang_code;
   const pdef = entities.ENTITIES.products;
 
-  const { header, rows } = sheetRows(ws);
+  const { header, rows } = sheetRows(ws, 'Product_ID');
   if (!header.includes('Product_ID')) throw new entities.InputError('The Products sheet has no Product_ID column');
   const columns = header.map((h) => ({ h, c: classify(h, langCodes) }));
   const unknownColumns = columns.filter((x) => !x.c).map((x) => `Products!${x.h}`);
@@ -323,7 +328,7 @@ async function diffWorkbook(q, buffer) {
   const categories = [];
   const cws = wb.getWorksheet('Categories');
   if (cws) {
-    const { header: ch, rows: crows } = sheetRows(cws);
+    const { header: ch, rows: crows } = sheetRows(cws, 'Category_key');
     for (const h of ch) {
       if (!['Order', 'Category_key', 'Products'].includes(h) && !(classify(h, langCodes) || {}).lang) unknownColumns.push(`Categories!${h}`);
     }

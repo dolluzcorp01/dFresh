@@ -1,4 +1,5 @@
-// Leads (spec F 2): filters, table, detail drawer (status, assign, staff notes), outbox rows with retry, CSV.
+// Leads (spec F 2): filters, table, detail drawer (status, assign, staff notes), outbox rows with retry, Excel / CSV
+// download of the filtered list.
 // ?ref=DFL-... (link in the staff alert e-mail) opens that lead.
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -41,6 +42,7 @@ export default function Leads() {
   }, [params, list.data]);
 
   const exportCsv = () => dl.run(() => api.download(`/leads/export.csv?${query}`, 'dfresh-leads.csv'));
+  const exportXlsx = () => dl.run(() => api.download(`/leads/export.xlsx?${query}`, 'dFresh_Leads.xlsx'));
   const d = list.data;
   const pages = d ? Math.max(1, Math.ceil(d.total / d.limit)) : 1;
 
@@ -63,7 +65,8 @@ export default function Leads() {
           <input type="search" placeholder="Name, phone, e-mail, ref..." aria-label="Search" value={search} onChange={(e) => setSearch(e.target.value)} />
         </form>
         {params.get('ref') && <button type="button" className="a-btn a-btn-ghost" onClick={() => setFilter('ref', '')}>Clear ref {params.get('ref')}</button>}
-        {canEdit && <button type="button" className="a-btn" onClick={exportCsv} disabled={dl.busy}>Export CSV</button>}
+        {canEdit && <button type="button" className="a-btn" onClick={exportXlsx} disabled={dl.busy}>Export Excel</button>}
+        {canEdit && <button type="button" className="a-btn a-btn-ghost" onClick={exportCsv} disabled={dl.busy}>Export CSV</button>}
       </div>
       {dl.note}
       <Loading state={list}>

@@ -64,7 +64,8 @@ export default function Translations() {
           <option value="">All languages</option>{languages.filter((l) => l.lang_code !== def).map((l) => <option key={l.lang_code} value={l.lang_code}>{l.name_en}</option>)}
         </select>
         <label className="a-inline"><input type="checkbox" checked={missingOnly} onChange={(e) => setMissingOnly(e.target.checked)} /> Missing only</label>
-        {canEdit && <button type="button" className="a-btn a-btn-ghost" onClick={() => act.run(() => api.download('/ui-text/export.csv', 'translations.csv'))}>Export CSV</button>}
+        {canEdit && <button type="button" className="a-btn a-btn-ghost" onClick={() => act.run(() => api.download('/ui-text/export.xlsx', 'dFresh_Translations.xlsx'))}>Export Excel</button>}
+        {canEdit && <button type="button" className="a-btn a-btn-ghost" onClick={() => act.run(() => api.download('/ui-text/export.csv', 'translations.csv'))} title="The file to edit and import back">Export CSV (for import)</button>}
       </div>
       {canEdit && (
         <div className="a-toolbar">

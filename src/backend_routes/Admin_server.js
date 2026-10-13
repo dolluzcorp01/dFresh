@@ -13,6 +13,7 @@ const auth = require('./auth');
 const entities = require('./admin-entities');
 const media = require('./admin-media');
 const excel = require('./product-excel');
+const theme = require('./excel-theme');
 const csv = require('./csv');
 const contentCache = require('./content-cache');
 const { audit } = require('./audit');
@@ -82,6 +83,18 @@ const page = (req) => {
   return { limit, offset: (p - 1) * limit, page: p };
 };
 
+/** "Pavithran V V (DZIND148)" for the "Exported on ... by" line of the Excel downloads. */
+async function exportedBy(req) {
+  const id = req.admin.emp_id;
+  try {
+    const [[emp]] = await db.query(`SELECT emp_first_name, emp_last_name FROM \`${auth.DADMIN}\`.employee WHERE emp_id = ?`, [id]);
+    const name = emp ? [emp.emp_first_name, emp.emp_last_name].filter(Boolean).join(' ') : '';
+    return name ? `${name} (${id})` : id;
+  } catch {
+    return id;
+  }
+}
+
 // ---------------------------------------------------------------------------------------------
 // Dashboard
 // ---------------------------------------------------------------------------------------------
@@ -133,8 +146,13 @@ function leadFilters(q) {
   return { sql: where.length ? `WHERE ${where.join(' AND ')}` : '', params };
 }
 
-route('get', '/leads/export.csv', 'editor', async (req, res) => {
-  const f = leadFilters(req.query);
+// "98765 43210": how the site writes a phone; text with a space is never taken for a number (no 9.88E+09, and no
+// "number stored as text" flag in Excel).
+const phoneText = (p) => (/^\d{10}$/.test(String(p || '')) ? `${p.slice(0, 5)} ${p.slice(5)}` : p);
+
+/** The leads matching the list filters (max 10000, newest first), for the CSV and Excel downloads. */
+async function leadsForExport(query) {
+  const f = leadFilters(query);
   const [rows] = await db.query(
     `SELECT l.lead_ref, l.created_at, l.form_type, l.status, l.full_name, l.first_name, l.last_name, l.business_name,
             l.business_type, l.town, l.phone, l.email, l.monthly_quantity, l.message, l.details_json, l.lang_code,
@@ -143,6 +161,20 @@ route('get', '/leads/export.csv', 'editor', async (req, res) => {
        FROM leads l ${f.sql} ORDER BY l.lead_id DESC LIMIT 10000`,
     f.params
   );
+  return rows;
+}
+
+// The list filters in words, for the Excel "Filters:" line (null = none).
+const LEAD_FILTER_LABELS = { form: 'form', status: 'status', lang: 'language', from: 'from', to: 'to', q: 'search', ref: 'ref' };
+function leadFilterText(query) {
+  const parts = Object.entries(LEAD_FILTER_LABELS)
+    .filter(([k]) => typeof query[k] === 'string' && query[k].trim())
+    .map(([k, label]) => `${label} = ${String(query[k]).trim().slice(0, 60)}`);
+  return parts.length ? parts.join(', ') : null;
+}
+
+route('get', '/leads/export.csv', 'editor', async (req, res) => {
+  const rows = await leadsForExport(req.query);
   const head = ['lead_ref', 'created_at', 'form_type', 'status', 'full_name', 'first_name', 'last_name', 'business_name',
     'business_type', 'town', 'phone', 'email', 'products', 'monthly_quantity', 'message', 'details', 'lang', 'source_page',
     'source_ref', 'assigned_to', 'staff_notes'];
@@ -153,6 +185,41 @@ route('get', '/leads/export.csv', 'editor', async (req, res) => {
   await audit(null, { empId: by(req), action: 'export', entity: 'lead', after: { filters: req.query, rows: rows.length } });
   res.set({ 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="dfresh-leads-${new Date().toISOString().slice(0, 10)}.csv"`, 'Cache-Control': 'no-store' });
   res.send(body);
+});
+
+// Same leads and filters as the CSV, as a branded Excel file: phones and GST as text, received as a real date,
+// the distributor details in their own columns.
+route('get', '/leads/export.xlsx', 'editor', async (req, res) => {
+  const rows = await leadsForExport(req.query);
+  const detail = (r, k) => {
+    const d = r.details_json ? (typeof r.details_json === 'string' ? JSON.parse(r.details_json) : r.details_json) : {};
+    return d[k] ?? null;
+  };
+  const wb = theme.newWorkbook('dFresh Leads');
+  theme.tableSheet(wb, 'Leads', {
+    title: 'dFresh Leads',
+    exportedBy: await exportedBy(req),
+    filters: leadFilterText(req.query),
+    freezeCols: 1,
+    columns: [
+      { header: 'Lead ref', width: 13 }, { header: 'Received', type: 'date' }, { header: 'Form', width: 12 },
+      { header: 'Status', width: 11 }, { header: 'Name', width: 22 }, { header: 'Business / firm', width: 24 },
+      { header: 'Business type', width: 15 }, { header: 'Town', width: 16 }, { header: 'Phone', width: 13 },
+      { header: 'E-mail', width: 28 }, { header: 'Products', width: 30 }, { header: 'No. of products', type: 'number', width: 10 },
+      { header: 'Monthly quantity', width: 16 }, { header: 'Message', width: 40, wrap: true }, { header: 'GST no.', width: 18 },
+      { header: 'Areas covered', width: 24 }, { header: 'Godown / vehicles', width: 12 }, { header: 'Brands handled', width: 22 },
+      { header: 'Monthly tissue sales', width: 14 }, { header: 'Language', width: 10 }, { header: 'Page', width: 18 },
+      { header: 'Opened from', width: 16 }, { header: 'Assigned to', width: 13 }, { header: 'Staff notes', width: 36, wrap: true },
+    ],
+    rows: rows.map((r) => [
+      r.lead_ref, r.created_at, r.form_type, r.status, r.full_name || [r.first_name, r.last_name].filter(Boolean).join(' '),
+      r.business_name, r.business_type, r.town, phoneText(r.phone), r.email, r.products, r.products ? r.products.split(' ').length : 0,
+      r.monthly_quantity, r.message, detail(r, 'gst_no'), detail(r, 'areas'), detail(r, 'godown_vehicles'), detail(r, 'brands'),
+      detail(r, 'monthly_sales'), r.lang_code, r.source_page, r.source_ref, r.assigned_to, r.staff_notes,
+    ]),
+  });
+  const bytes = await theme.send(res, wb, `dFresh_Leads_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  await audit(null, { empId: by(req), action: 'export', entity: 'lead', after: { filters: req.query, rows: rows.length, file: 'leads.xlsx', bytes } });
 });
 
 route('get', '/leads', 'viewer', async (req) => {
@@ -246,15 +313,9 @@ route('get', '/assignees', 'viewer', async () => {
 // Products: Excel and images (registered before the generic /products/:id routes)
 // ---------------------------------------------------------------------------------------------
 route('get', '/products/export.xlsx', 'editor', async (req, res) => {
-  const wb = await excel.buildWorkbook(db);
-  const buf = await wb.xlsx.writeBuffer();
-  await audit(null, { empId: by(req), action: 'export', entity: 'product', after: { file: 'products.xlsx', bytes: buf.byteLength } });
-  res.set({
-    'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    'Content-Disposition': `attachment; filename="dFresh_Product_List_${new Date().toISOString().slice(0, 10)}.xlsx"`,
-    'Cache-Control': 'no-store',
-  });
-  res.send(Buffer.from(buf));
+  const wb = await excel.buildWorkbook(db, { who: await exportedBy(req) });
+  const bytes = await theme.send(res, wb, `dFresh_Product_List_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  await audit(null, { empId: by(req), action: 'export', entity: 'product', after: { file: 'products.xlsx', bytes } });
 });
 
 route('post', '/products/import', 'admin', async (req) => {
@@ -462,6 +523,28 @@ route('get', '/ui-text/export.csv', 'editor', async (req, res) => {
   await audit(null, { empId: by(req), action: 'export', entity: 'ui_text', after: { rows: rows.length, languages: langs.codes } });
   res.set({ 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="dfresh-translations-${new Date().toISOString().slice(0, 10)}.csv"`, 'Cache-Control': 'no-store' });
   res.send(body);
+});
+
+// The same grid as a branded Excel file, for reading and review (the import stays CSV).
+route('get', '/ui-text/export.xlsx', 'editor', async (req, res) => {
+  const langs = await entities.languages();
+  const [langRows] = await db.query('SELECT lang_code, name_en FROM languages');
+  const nameOf = Object.fromEntries(langRows.map((l) => [l.lang_code, l.name_en]));
+  const rows = await uiTextGrid();
+  const wb = theme.newWorkbook('dFresh Translations');
+  theme.tableSheet(wb, 'Translations', {
+    title: 'dFresh Translations',
+    exportedBy: await exportedBy(req),
+    filters: null,
+    freezeCols: 1,
+    columns: [
+      { header: 'Key', width: 22 }, { header: 'Group', width: 16 }, { header: 'Description', width: 34, wrap: true },
+      ...langs.codes.map((l) => ({ header: `${nameOf[l] || l} (${l})`, width: 44, wrap: true })),
+    ],
+    rows: rows.map((r) => [r.text_key, r.group_name, r.description, ...langs.codes.map((l) => r.values[l] ?? null)]),
+  });
+  const bytes = await theme.send(res, wb, `dFresh_Translations_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  await audit(null, { empId: by(req), action: 'export', entity: 'ui_text', after: { rows: rows.length, languages: langs.codes, file: 'translations.xlsx', bytes } });
 });
 
 /** Writes one ui_text cell; empty = delete (falls back to the default language), never for the default. */

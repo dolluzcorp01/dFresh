@@ -66,14 +66,14 @@ The client IP is `req.ip` with `trust proxy = loopback` (nginx on the same host 
 | GET | `/admin/dashboard` | viewer+ |
 | GET/PATCH | `/admin/leads?form&status&lang&from&to&q&ref&page`, `/admin/leads/:id` (status, assigned_to, staff_notes) | viewer read / editor write |
 | GET | `/admin/assignees` (active admin users with names, for "assign") | viewer+ |
-| GET | `/admin/leads/export.csv?filters` | editor+ |
+| GET | `/admin/leads/export.csv?filters`, `/admin/leads/export.xlsx?filters` (same filters; branded Excel, excel-theme.js) | editor+ |
 | POST | `/admin/outbox/:type/:id/retry` | editor+ |
 | GET/POST/PUT/DELETE | `/admin/products`, `/admin/products/:id` | viewer read / editor write |
 | POST / DELETE / PUT | `/admin/products/:id/images` (multipart `file` + `position` 1-3), `/admin/products/:id/images/:position`, `/admin/products/:id/images/order` (`{order:[3,1,2]}`) | editor+ |
-| GET | `/admin/products/export.xlsx` | editor+ |
+| GET | `/admin/products/export.xlsx` (branded: logo + title rows 1-3, header row 4; the import finds the header by its column names, so the old plain layout imports too) | editor+ |
 | POST | `/admin/products/import?dryRun=1` (multipart xlsx) then `?dryRun=0` | admin |
 | GET/PUT | `/admin/ui-text`, `/admin/ui-text/:key/:lang` (`{value}`; empty = delete, falls back) | viewer read / editor write |
-| GET / POST | `/admin/ui-text/export.csv`, `/admin/ui-text/import?dryRun=1` then `?dryRun=0` (multipart csv) | editor+ |
+| GET / POST | `/admin/ui-text/export.csv`, `/admin/ui-text/export.xlsx` (branded, for reading; the import stays CSV), `/admin/ui-text/import?dryRun=1` then `?dryRun=0` (multipart csv) | editor+ |
 | CRUD | `/admin/banners`, `/admin/kits`, `/admin/towns`, `/admin/categories`, `/admin/size-picker`, `/admin/form-options` (+ `POST /admin/<section>/reorder {order:[ids]}`; composite ids joined with `~`) | viewer read / editor write |
 | POST | `/admin/banners/:id/image?kind=desktop\|mobile` (multipart; cropped to 1920x800 / 1080x1350 WebP) | editor+ |
 | CRUD | `/admin/languages` (GET includes completeness % per language) | viewer read / admin write |
