@@ -7,7 +7,7 @@ import { createLoop } from './loop';
 import useReducedMotion from './useReducedMotion';
 
 // Tint target on LIGHT backgrounds (CLAUDE.md rule 12: hover tints keep 4.5:1): the CSS token --gold-text
-// (#8A6A0C, tokens.css; the headline's load sweep uses the same), mixed in at most 90% (below), stays >= 4.57:1 on
+// (#8A6A0C, tokens.css; the headline's gold on load uses the same), mixed in at most 90% (below), stays >= 4.57:1 on
 // the hero's lightest-to-darkest backgrounds (#FFFFFF / #FCFBF6 / #F3EBDB) for both headline colours
 // (ink 4.92-5.83, ink-2 4.57-5.42). Do not raise the 0.9 cap.
 const GOLD_FALLBACK = [138, 106, 12];
@@ -32,7 +32,9 @@ export default function useSpringField(boxRef, itemSelector, opts, deps) {
     if (!box || reduced) return undefined;
     const items = [...box.querySelectorAll(itemSelector)];
     const st = items.map(() => ({ y: 0, v: 0, t: 0 }));
-    const base = items.map((el) => rgb(getComputedStyle(el).color));
+    // resting colour from the parent (same colour, inherited): the item itself may still be in its gold-on-load
+    // animation when this runs
+    const base = items.map((el) => rgb(getComputedStyle(el.parentElement || el).color));
     const GOLD = goldText();
     let pos = [];
     let em = 16;
