@@ -279,8 +279,18 @@ exactly like Inside D. Only emp_ids in `dfresh.admin_users` (active) may enter. 
 (httpOnly, Secure + SameSite in prod). Roles: `admin` (everything), `editor` (content, not users/settings),
 `viewer` (read-only, leads read). Every write -> `audit_log` and busts the content cache.
 
+Sidebar (src/admin/Sidebar.js, ink with gold accents): Dashboard; groups Sales (Leads, badge = New leads), Catalogue
+(Products, Categories, Kits, Size picker, Excel import / export), Website content (Banners, Translations, Towns, Form
+options, Brochures), Setup (Languages, Settings, Admin users, Audit log); divider; User Interface (/en, new tab). Items
+a role cannot open are not shown. The current page's group opens by itself; open groups and "collapsed to icons"
+are remembered per browser; under 900px it is a slide-in drawer. Checked by `npm run test:admin-nav`.
+
 Screens:
-1. **Dashboard** - leads today / 7 days / by form, outbox health (pending / failed), missing translations per language.
+1. **Dashboard** - "Attention needed" first (only what applies, each line a link: New leads older than 24 h, failed
+   e-mails / sheet rows, mail logo or font rebuild failing, untranslated texts per language (the English-only legal
+   bodies excluded), empty GSTIN / GA4 id, languages without a brochure PDF; lines for screens a role cannot open
+   are left out), "All good" when nothing applies; then leads today / 7 days / by form, outbox health, missing
+   translations per language, and quick-jump tiles for the sidebar groups.
 2. **Leads** - table with filters (form, status, date, language, search), detail drawer, status change,
    assign, staff notes, CSV export, retry failed e-mail / sheet sync.
 3. **Products** - list with category/variant tree; edit base fields + per-language text side by side;

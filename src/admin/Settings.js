@@ -4,7 +4,7 @@
 // mail_logo_url also gets a live preview on the e-mail's ink header (the typed URL, or the built-in logo when
 // empty), the server's last check of the saved URL, and "Send test mail" (MAIL_TEST_TO locally, the signed-in
 // admin's own e-mail in production). Saving a URL is refused by the server unless it passes the check.
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from './adminApi';
 import { API_BASE, mediaUrl } from '../utils/api';
 import { Loading, Notice, fmtDate, useAction, useLoad } from './ui';
@@ -24,6 +24,12 @@ export default function Settings() {
   const products = useLoad('/products');
   const act = useAction();
   const cards = (products.data || []).filter((p) => !p.variant_of);
+  // #setting-<key> (dashboard links): scroll to that row once the list is there
+  useEffect(() => {
+    const id = decodeURIComponent(window.location.hash.slice(1));
+    const el = id && list.data ? document.getElementById(id) : null;
+    if (el) { el.scrollIntoView({ block: 'center' }); el.classList.add('a-target'); }
+  }, [list.data]);
   return (
     <section>
       <h1>Settings</h1>
@@ -67,7 +73,7 @@ function Row({ s, act, cards, onSaved }) {
     control = <input type="text" value={v} onChange={(e) => setV(e.target.value)} aria-label={s.setting_key} />;
   }
   return (
-    <tr>
+    <tr id={`setting-${s.setting_key}`}>
       <td><code>{s.setting_key}</code><br /><small className="a-muted">{s.description}</small></td>
       <td>
         <div>{control}</div>

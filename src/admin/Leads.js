@@ -8,7 +8,9 @@ import { Drawer, Loading, fmtDate, useAction, useAdmin, useCan, useLoad } from '
 
 const FORMS = ['brochure', 'quote', 'sample', 'distributor', 'contact'];
 const STATUS = ['new', 'contacted', 'qualified', 'won', 'lost', 'spam'];
-const FILTERS = ['form', 'status', 'lang', 'from', 'to', 'q', 'ref', 'page'];
+const FILTERS = ['form', 'status', 'lang', 'from', 'to', 'q', 'ref', 'age', 'outbox', 'page'];
+// Filters the dashboard links to, shown as removable chips: [param, value, label]
+const CHIPS = [['age', '24h', 'Older than 24 hours'], ['outbox', 'failed', 'With a failed e-mail or sheet row']];
 
 export default function Leads() {
   // Filters live in the URL (useLocation / useNavigate: router exports the public bundle already has).
@@ -65,6 +67,9 @@ export default function Leads() {
           <input type="search" placeholder="Name, phone, e-mail, ref..." aria-label="Search" value={search} onChange={(e) => setSearch(e.target.value)} />
         </form>
         {params.get('ref') && <button type="button" className="a-btn a-btn-ghost" onClick={() => setFilter('ref', '')}>Clear ref {params.get('ref')}</button>}
+        {CHIPS.filter(([k, v]) => params.get(k) === v).map(([k, , label]) => (
+          <button key={k} type="button" className="a-btn a-btn-ghost" onClick={() => setFilter(k, '')} aria-label={`Remove filter: ${label}`}>{label} ×</button>
+        ))}
         {canEdit && <button type="button" className="a-btn" onClick={exportXlsx} disabled={dl.busy}>Export Excel</button>}
         {canEdit && <button type="button" className="a-btn a-btn-ghost" onClick={exportCsv} disabled={dl.busy}>Export CSV</button>}
       </div>

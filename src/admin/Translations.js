@@ -1,6 +1,7 @@
 // Translations (spec F 5): every ui_text key x language, grouped; missing cells highlighted; inline edit;
 // "missing only" filter; CSV export / import (dry run first) for translators.
 import { useMemo, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { api } from './adminApi';
 import { Loading, Notice, useAction, useAdmin, useCan, useLoad } from './ui';
 import { COUNTS } from '../shared/countText';
@@ -10,8 +11,10 @@ export default function Translations() {
   const { languages } = useAdmin();
   const canEdit = useCan('editor');
   const act = useAction();
-  const [missingOnly, setMissingOnly] = useState(false);
-  const [lang, setLang] = useState('');
+  // ?lang=ta&missing=1 (dashboard "not translated yet" links) opens the grid already filtered
+  const { search } = useLocation();
+  const [missingOnly, setMissingOnly] = useState(() => new URLSearchParams(search).get('missing') === '1');
+  const [lang, setLang] = useState(() => new URLSearchParams(search).get('lang') || '');
   const [q, setQ] = useState('');
   const [csvFile, setCsvFile] = useState(null);
   const [csvReport, setCsvReport] = useState(null);

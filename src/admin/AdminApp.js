@@ -1,9 +1,10 @@
 // Admin console (lazy chunk, staff only, noindex; spec F). Plain staff layout, not the public design.
 // /admin/me decides: signed in -> sidebar + screens; 401 -> two-step sign-in. Screens hide write buttons for
 // lower roles, but the API is what enforces roles.
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 // Only router exports the public site already uses (Link, useLocation...), so this chunk adds 0 KB to main.js.
 import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import Sidebar, { saveCollapsed, savedCollapsed } from './Sidebar';
 import { api } from './adminApi';
 import { mediaUrl } from '../utils/api';
 import { AdminContext, Notice } from './ui';
@@ -22,15 +23,6 @@ import AuditLog from './AuditLog';
 import css from './adminStyles';
 import ScreenBoundary from './ScreenBoundary';
 
-const NAV = [
-  ['', 'Dashboard', 'viewer'], ['leads', 'Leads', 'viewer'], ['products', 'Products', 'viewer'],
-  ['import-export', 'Excel import / export', 'editor'], ['translations', 'Translations', 'viewer'],
-  ['banners', 'Banners', 'viewer'], ['kits', 'Kits', 'viewer'], ['towns', 'Towns', 'viewer'],
-  ['categories', 'Categories', 'viewer'], ['size-picker', 'Size picker', 'viewer'], ['form-options', 'Form options', 'viewer'],
-  ['languages', 'Languages', 'viewer'], ['brochures', 'Brochures', 'viewer'],
-  ['settings', 'Settings', 'admin'], ['users', 'Admin users', 'admin'], ['audit', 'Audit log', 'admin'],
-];
-const RANK = { viewer: 1, editor: 2, admin: 3 };
 const LOGO_ON_DARK = '/media/logo/dfresh-logo-on-dark.webp';
 
 // The site's favicon links (index.html), added if a page ever lacks them.
@@ -47,7 +39,10 @@ function ensureFavicon() {
 export default function AdminApp() {
   const [me, setMe] = useState(undefined); // undefined = checking, null = signed out
   const [languages, setLanguages] = useState([]);
-  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false); // the drawer on narrow screens
+  const [collapsed, setCollapsed] = useState(savedCollapsed);
+  const [newLeads, setNewLeads] = useState(0);
+  const burgerRef = useRef(null);
   const [error, setError] = useState(null);
   const { pathname } = useLocation();
 
@@ -75,6 +70,18 @@ export default function AdminApp() {
   }, [loadLanguages]);
   useEffect(check, [check]);
 
+  // Leads badge: New leads, refreshed on every page change (cheap: one COUNT).
+  useEffect(() => {
+    if (!me) return;
+    api.get('/nav-counts').then((d) => setNewLeads(d.newLeads || 0), () => {});
+  }, [me, pathname]);
+
+  const toggleCollapsed = () => setCollapsed((c) => { saveCollapsed(!c); return !c; });
+  const closeDrawer = useCallback((returnFocus) => {
+    setMenuOpen(false);
+    if (returnFocus && burgerRef.current) burgerRef.current.focus();
+  }, []);
+
   const logout = async () => {
     await api.send('POST', '/logout').catch(() => {});
     setMe(null);
@@ -84,14 +91,13 @@ export default function AdminApp() {
   if (me === undefined) return <main className="adm a-center"><p className="a-muted">Loading...</p></main>;
   if (me === null) return <Login onSignedIn={check} />;
 
-  const nav = NAV.filter(([, , role]) => RANK[me.role] >= RANK[role]);
   const ctx = { me, languages, reloadLanguages: loadLanguages };
 
   return (
     <AdminContext.Provider value={ctx}>
-      <div className="adm a-shell">
+      <div className={`adm a-shell${collapsed ? ' collapsed' : ''}`}>
         <header className="a-top">
-          <button type="button" className="a-burger" aria-expanded={menuOpen} aria-controls="a-nav" onClick={() => setMenuOpen((o) => !o)}>Menu</button>
+          <button type="button" ref={burgerRef} className="a-burger" aria-expanded={menuOpen} aria-controls="a-nav" onClick={() => setMenuOpen((o) => !o)}>Menu</button>
           <Link to="/admin" className="a-brand" aria-label="dFresh admin - dashboard">
             <img src={mediaUrl(LOGO_ON_DARK)} alt="" width="900" height="498" />
             <span className="a-brand-tag" aria-hidden="true">Admin</span>
@@ -99,22 +105,8 @@ export default function AdminApp() {
           <span className="a-who">{me.name} <code>{me.emp_id}</code> · {me.role}</span>
           <button type="button" className="a-btn a-btn-ghost" onClick={logout}>Sign out</button>
         </header>
-        <nav id="a-nav" className={`a-nav${menuOpen ? ' open' : ''}`} onClick={() => setMenuOpen(false)}>
-          {nav.map(([path, label]) => {
-            const to = `/admin/${path}`;
-            const active = path === '' ? /^\/admin\/?$/.test(pathname) : pathname.startsWith(to);
-            return <Link key={path} to={to} className={active ? 'active' : undefined} aria-current={active ? 'page' : undefined}>{label}</Link>;
-          })}
-          {/* The public site, same origin as the admin (relative /en: localhost, staging, production), in a new
-              tab; for every role, never "active". */}
-          <div className="a-nav-sep" role="separator" />
-          <a className="a-nav-ext" href="/en" target="_blank" rel="noopener noreferrer" aria-label="User Interface - opens the website in a new tab">
-            User Interface
-            <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M9 2.5h4.5V7M13.5 2.5 7.5 8.5M12 9.5v3a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h3" />
-            </svg>
-          </a>
-        </nav>
+        <Sidebar role={me.role} drawerOpen={menuOpen} onCloseDrawer={closeDrawer} collapsed={collapsed}
+          onToggleCollapsed={toggleCollapsed} newLeads={newLeads} />
         <main className="a-main">
           <ScreenBoundary key={pathname}>
           <Routes>

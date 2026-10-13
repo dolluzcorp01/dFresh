@@ -1,26 +1,79 @@
-// Dashboard: leads today / 7 days / by form, outbox health, missing translations per language (spec F 1).
+// Dashboard (spec F 1): "Attention needed" first (only what applies, every line a link to where it is fixed; a calm
+// "All good" when nothing is), then the counters (leads today / 7 days / by form, outbox health, translations per
+// language) and quick-jump tiles for the sidebar groups. Lines for screens a role cannot open are left out.
 import { Link } from 'react-router-dom';
-import { Loading, Notice, useLoad } from './ui';
+import { Loading, useAdmin, useCan, useLoad } from './ui';
+import Icon from './icons';
+import { groupsFor } from './Sidebar';
+
+const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+const names = (list) => (list.length <= 1 ? list.join('') : `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`);
+
+/** [{ key, text, to, kind: 'bad' | 'warn' }] for the attention panel. */
+function attentionLines(d, isAdmin) {
+  const a = d.attention || {};
+  const out = [];
+  if (a.staleNew > 0) {
+    out.push({ key: 'stale', kind: 'bad', to: '/admin/leads?status=new&age=24h', text: `${plural(a.staleNew, 'new lead', 'new leads')} not handled for more than 24 hours` });
+  }
+  if (a.failed && (a.failed.mail > 0 || a.failed.sync > 0)) {
+    const parts = [a.failed.mail > 0 && plural(a.failed.mail, 'e-mail', 'e-mails'), a.failed.sync > 0 && plural(a.failed.sync, 'Google Sheet row', 'Google Sheet rows')].filter(Boolean);
+    out.push({ key: 'failed', kind: 'bad', to: '/admin/leads?outbox=failed', text: `${names(parts)} failed to send (${plural(a.failed.leads, 'lead', 'leads')}): retry them from the lead` });
+  }
+  if (isAdmin && d.mailLogo && d.mailLogo.state === 'failing') {
+    out.push({ key: 'logo', kind: 'bad', to: '/admin/settings#setting-mail_logo_url', text: `E-mail logo URL is not reachable - mails use the built-in logo${d.mailLogo.reason ? ` (${d.mailLogo.reason})` : ''}` });
+  }
+  for (const f of (d.fonts || []).filter((x) => x.status === 'full')) {
+    out.push({ key: `font-${f.family}`, kind: 'warn', to: '/admin/languages', text: `The ${f.script} font could not be rebuilt - the full font is used for now (it retries by itself)` });
+  }
+  // the privacy / terms bodies are English by rule: not counted here (the Translations card shows every gap)
+  for (const l of (d.languages || []).filter((x) => x.missing - (x.legalMissing || 0) > 0)) {
+    const n = l.missing - (l.legalMissing || 0);
+    out.push({
+      key: `tr-${l.lang_code}`, kind: Number(l.is_active) ? 'warn' : 'info', to: `/admin/translations?lang=${encodeURIComponent(l.lang_code)}&missing=1`,
+      text: `${l.name_en}: ${plural(n, 'text', 'texts')} not translated yet${Number(l.is_active) ? ' (English is shown instead)' : ' (language switched off)'}`,
+    });
+  }
+  if (isAdmin) {
+    const empty = (a.emptySettings || []);
+    if (empty.includes('gstin')) out.push({ key: 'gstin', kind: 'info', to: '/admin/settings#setting-gstin', text: 'GSTIN is still empty - the footer leaves it out until it is filled' });
+    if (empty.includes('ga4_measurement_id')) out.push({ key: 'ga4', kind: 'info', to: '/admin/settings#setting-ga4_measurement_id', text: 'Google Analytics (GA4) id is still empty - no visits are counted' });
+  }
+  const missing = a.noBrochure || [];
+  if (missing.length) {
+    const def = missing.find((l) => l.is_default);
+    out.push({
+      key: 'brochure', kind: def ? 'bad' : 'warn', to: '/admin/brochures',
+      text: `No brochure PDF for ${names(missing.map((l) => l.name_en))}${def ? ' - brochure requests get "being finalised" until it is uploaded' : ' - those visitors get the default language\'s brochure'}`,
+    });
+  }
+  return out;
+}
 
 export default function Dashboard() {
   const s = useLoad('/dashboard');
+  const { me } = useAdmin();
+  const isAdmin = useCan('admin');
   const d = s.data;
+  const lines = d ? attentionLines(d, isAdmin) : [];
   return (
     <section>
       <h1>Dashboard</h1>
       <Loading state={s}>
         {d && (
           <>
-            {(d.fonts || []).filter((f) => f.status === 'full').map((f) => (
-              <Notice key={f.family} kind="error">
-                Font for {f.script} could not be rebuilt - using the full font ({f.error}). It retries by itself. <Link to="/admin/languages">Languages</Link>
-              </Notice>
-            ))}
-            {d.mailLogo && d.mailLogo.state === 'failing' && (
-              <Notice kind="error">
-                Mail logo URL not reachable - using built-in logo. {d.mailLogo.reason ? `(${d.mailLogo.reason})` : ''} <Link to="/admin/settings">Settings</Link>
-              </Notice>
-            )}
+            <div className={`a-attn${lines.length ? '' : ' a-attn-ok'}`} role="region" aria-labelledby="a-attn-h">
+              <h2 id="a-attn-h">{lines.length ? 'Attention needed' : 'All good'}</h2>
+              {lines.length ? (
+                <ul>
+                  {lines.map((l) => (
+                    <li key={l.key} className={`a-attn-${l.kind}`}>
+                      <Link to={l.to}><span className="a-attn-dot" aria-hidden="true" />{l.text}<Icon name="chevron" className="a-attn-go" /></Link>
+                    </li>
+                  ))}
+                </ul>
+              ) : <p>Nothing needs attention: leads are handled, e-mails and sheet rows are sent, texts are translated and the setup is complete.</p>}
+            </div>
             <div className="a-tiles">
               <Tile label="Leads today" value={d.leads.today} to="/admin/leads" />
               <Tile label="Leads last 7 days" value={d.leads.last7} to="/admin/leads" />
@@ -49,6 +102,15 @@ export default function Dashboard() {
                 </table>
                 <p><Link to="/admin/translations">Open translations</Link></p>
               </div>
+            </div>
+            <h2 className="a-jump-h">Go to</h2>
+            <div className="a-jump">
+              {groupsFor(me.role).map((g) => (
+                <div className="a-jump-tile" key={g.key}>
+                  <Link className="a-jump-title" to={`/admin/${g.items[0].path}`}><Icon name={g.icon} />{g.label}</Link>
+                  <ul>{g.items.map((it) => <li key={it.path}><Link to={`/admin/${it.path}`}>{it.label}</Link></li>)}</ul>
+                </div>
+              ))}
             </div>
           </>
         )}

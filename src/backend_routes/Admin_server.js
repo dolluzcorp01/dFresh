@@ -111,14 +111,54 @@ route('get', '/dashboard', 'viewer', async () => {
   const counts = (rows) => Object.fromEntries(rows.map((r) => [r.status, Number(r.n)]));
   const [langs] = await db.query('SELECT lang_code, name_en, is_active, is_default FROM languages ORDER BY sort_order');
   const done = await entities.completeness();
+  // The privacy / terms bodies are English by rule (CLAUDE.md): not "missing" for the attention panel.
+  const [legal] = await db.query(
+    `SELECT l.lang_code, COUNT(*) AS n FROM languages l
+       CROSS JOIN (SELECT 'legal_privacy_body' AS k UNION ALL SELECT 'legal_terms_body') x
+       LEFT JOIN ui_text t ON t.text_key = x.k AND t.lang_code = l.lang_code
+      WHERE t.text_key IS NULL GROUP BY l.lang_code`
+  );
+  const legalMissing = Object.fromEntries(legal.map((r) => [r.lang_code, Number(r.n)]));
   return {
     leads: { today: Number(leads.today) || 0, last7: Number(leads.last7) || 0, open_new: Number(leads.open_new) || 0, total: Number(leads.total) },
     byForm: byForm.map((r) => ({ form_type: r.form_type, n: Number(r.n) })),
     outbox: { mail: counts(mail), sync: counts(sync) },
-    languages: langs.map((l) => ({ ...l, missing: done[l.lang_code].total - done[l.lang_code].have, pct: done[l.lang_code].pct })),
+    languages: langs.map((l) => ({ ...l, missing: done[l.lang_code].total - done[l.lang_code].have, pct: done[l.lang_code].pct, legalMissing: legalMissing[l.lang_code] || 0 })),
     mailLogo: logoCheck.status(), // state 'failing' = red notice: mails use the built-in logo
     fonts: fontManager.status(), // status 'full' = red notice: a subset could not be rebuilt, the full font is served
+    attention: await attention(langs),
   };
+});
+
+// "Attention needed" on the dashboard: only what applies; the screen links each line to where it is fixed.
+async function attention(langs) {
+  const [[a]] = await db.query(
+    `SELECT (SELECT COUNT(*) FROM leads WHERE status = 'new' AND created_at < NOW() - INTERVAL 24 HOUR) AS stale_new,
+            (SELECT COUNT(*) FROM leads l WHERE ${FAILED_OUTBOX_SQL}) AS failed_leads,
+            (SELECT COUNT(*) FROM mail_outbox WHERE status = 'failed' AND lead_id IS NOT NULL) AS failed_mail,
+            (SELECT COUNT(*) FROM sync_outbox WHERE status = 'failed') AS failed_sync`
+  );
+  const [settings] = await db.query("SELECT setting_key, setting_value FROM site_settings WHERE setting_key IN ('gstin', 'ga4_measurement_id')");
+  const empty = settings.filter((r) => !String(r.setting_value || '').trim()).map((r) => r.setting_key);
+  const [noBrochure] = await db.query(
+    `SELECT l.lang_code, l.name_en, l.is_default FROM languages l
+      WHERE l.is_active = 1 AND NOT EXISTS (SELECT 1 FROM brochures b WHERE b.lang_code = l.lang_code AND b.is_active = 1)
+      ORDER BY l.sort_order`
+  );
+  return {
+    staleNew: Number(a.stale_new),
+    failed: { leads: Number(a.failed_leads), mail: Number(a.failed_mail), sync: Number(a.failed_sync) },
+    emptySettings: empty, // gstin, ga4_measurement_id
+    noBrochure: noBrochure.map((l) => ({ lang_code: l.lang_code, name_en: l.name_en, is_default: Number(l.is_default) === 1 })),
+    // languages whose translations are incomplete come from `languages` above (missing > 0)
+    activeLanguages: langs.filter((l) => Number(l.is_active)).length,
+  };
+}
+
+// Sidebar badge (every page change): New leads.
+route('get', '/nav-counts', 'viewer', async () => {
+  const [[r]] = await db.query("SELECT COUNT(*) AS n FROM leads WHERE status = 'new'");
+  return { newLeads: Number(r.n) };
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -128,9 +168,15 @@ const LEAD_STATUS = ['new', 'contacted', 'qualified', 'won', 'lost', 'spam'];
 const LEAD_LIST_COLS = `l.lead_id, l.lead_ref, l.form_type, l.full_name, l.first_name, l.last_name, l.business_name,
   l.business_type, l.town, l.phone, l.email, l.lang_code, l.status, l.assigned_to, l.source_page, l.source_ref, l.created_at`;
 
+// A lead with a failed e-mail (mail_outbox) or a failed Google Sheet row (sync_outbox). Alias l = leads.
+const FAILED_OUTBOX_SQL = `(EXISTS (SELECT 1 FROM mail_outbox m WHERE m.lead_id = l.lead_id AND m.status = 'failed')
+  OR EXISTS (SELECT 1 FROM sync_outbox s WHERE s.lead_id = l.lead_id AND s.status = 'failed'))`;
+
 function leadFilters(q) {
   const where = [];
   const params = [];
+  if (q.age === '24h') where.push('l.created_at < NOW() - INTERVAL 24 HOUR'); // older than a day (dashboard: not handled)
+  if (q.outbox === 'failed') where.push(FAILED_OUTBOX_SQL);
   if (q.form) { where.push('l.form_type = ?'); params.push(String(q.form)); }
   if (q.status) { where.push('l.status = ?'); params.push(String(q.status)); }
   if (q.lang) { where.push('l.lang_code = ?'); params.push(String(q.lang)); }
@@ -165,7 +211,7 @@ async function leadsForExport(query) {
 }
 
 // The list filters in words, for the Excel "Filters:" line (null = none).
-const LEAD_FILTER_LABELS = { form: 'form', status: 'status', lang: 'language', from: 'from', to: 'to', q: 'search', ref: 'ref' };
+const LEAD_FILTER_LABELS = { form: 'form', status: 'status', lang: 'language', from: 'from', to: 'to', q: 'search', ref: 'ref', age: 'older than', outbox: 'e-mail / sheet row' };
 function leadFilterText(query) {
   const parts = Object.entries(LEAD_FILTER_LABELS)
     .filter(([k]) => typeof query[k] === 'string' && query[k].trim())
