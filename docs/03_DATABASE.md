@@ -29,7 +29,7 @@ Put this pattern in ONE helper (`src/backend_routes/i18n-sql.js`) and reuse it. 
 | `product_translations` | Name, one-liner, keywords, description, best for, colour name, optional spec/pack override, alt text, WhatsApp message | alt + WhatsApp only in English today -> fallback |
 | `product_images` | 3 photos per product incl. variants (84 rows) | `file_name` under `/media/products/` |
 | `size_picker` | "Pick a size" napkin widget | 5 sizes, 30x30 is default |
-| `banners` / `banner_translations` | 11 "dFresh moods" slides | text-free images; headline + CTA translated; `cta_action` + `cta_target`; funky/neon/rainbow seeded **inactive** pending Director approval |
+| `banners` / `banner_translations` | 11 "dFresh moods" slides | text-free images; headline + CTA translated; `cta_action` + `cta_target`; funky/neon/rainbow seeded inactive, all 11 active since the Director approved them (13 Oct 2026, migration `20261013_all_banners_active.sql`) |
 | `kits` / `kit_translations` / `kit_products` | 4 business kits | `business_type` prefills the quote form |
 | `towns` / `town_translations` | 6 delivery towns | `is_base` = Kanchipuram; `map_x/map_y` for the illustrated map, `label_dx/label_dy/label_anchor` place the name; lat/lng for later real maps |
 | `form_options` / `form_option_translations` | Drop-downs (business type, monthly sales, yes/no) | leads store the English `option_value` |
@@ -50,7 +50,7 @@ submits in Phase 6: 20 unique, consecutive refs.
 
 ## Seed numbers (verified)
 25 product cards + 3 variants, 84 translations rows, 84 images, 6 categories (7/6/2/5/4/1), 5 featured
-(DF007, DF017, DF028, DF037, DF044), 10 "For Home" products, 11 banners (8 active), 4 kits, 6 towns,
+(DF007, DF017, DF028, DF037, DF044), 10 "For Home" products, 11 banners (8 active in the seed; all 11 after the 13 Oct 2026 migration), 4 kits, 6 towns,
 13 form options, 154 UI keys (EN 154 rows, TA 152, HI 152 - only `legal_privacy_body` and `legal_terms_body` fall back to English; `lg_en` is intentionally empty in English), 2 admin users.
 
 ## Rules

@@ -112,6 +112,24 @@ test('missing translation rows fall back to English, present rows are used', asy
   assert.equal((await content.getLegal('privacy', 'en')).data.isEnglishFallback, false);
 });
 
+// Director approved all banners, 13 Oct 2026 (migration 20261013_all_banners_active.sql).
+test('banner slider shows 11 active banners in sort order, each translated', async () => {
+  const order = ['home', 'forhome', 'products', 'business', 'colours', 'classic', 'rich', 'about', 'funky', 'neon', 'rainbow'];
+  const [rows] = await db.query("SELECT lang_code FROM languages WHERE is_active = 1 AND lang_code <> 'zt'");
+  assert.ok(rows.length >= 3);
+  const en = (await bootstrap('en')).data;
+  for (const { lang_code: lang } of rows) {
+    const { banners } = (await bootstrap(lang)).data;
+    assert.deepEqual(banners.map((b) => b.key), order, `${lang}: 11 banners in sort order`);
+    for (const b of banners) {
+      assert.ok(b.headline && b.ctaLabel, `${lang}/${b.key}: headline and button text`);
+      if (lang !== 'en' && ['funky', 'neon', 'rainbow'].includes(b.key)) {
+        assert.notEqual(b.headline, en.banners.find((e) => e.key === b.key).headline, `${lang}/${b.key}: own translation`);
+      }
+    }
+  }
+});
+
 test('inactive or unknown language is served as the default language', async () => {
   await db.query('UPDATE languages SET is_active = 0 WHERE lang_code = ?', [TMP]);
   try {

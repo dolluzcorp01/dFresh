@@ -35,7 +35,7 @@
 | 8 | Register app_key `dFresh` in dAdmin. Checked 2026-10-10: not in `dadmin.login_app_config` or `app_visibility`. Sign-in does NOT need it (dFresh uses login_otp + login_session_revoke, free-text app_key); the rows only make dFresh show in dAdmin's screens. SQL in deploy/DEPLOY.md section 3 | Pavithran | none (dAdmin screens) |
 | 9 | Native-speaker review of all Tamil and Hindi text | Dolluz | go-live |
 | 10 | Approve About copy, Quality-check wording, Privacy and Terms drafts | Director | go-live |
-| 11 | Approve or drop the funky / neon / rainbow banners (seeded inactive) | Director | none |
+| 11 | ~~Approve or drop the funky / neon / rainbow banners (seeded inactive)~~ DONE: Director approved all banners, 13 Oct 2026 (migration `20261013_all_banners_active.sql`, all 11 active) | Director | - |
 | 12 | Final product specs after supplier samples (all specs are "planned") | Dolluz | updated Excel import |
 | 13 | Missing Appendix of 25 reference websites in the brief PDF | Dolluz | none (design approved via preview) |
 | 14 | Staff WhatsApp alert for new leads needs WhatsApp Business API; Phase 1 = e-mail alert only | Dolluz | none |
