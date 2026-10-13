@@ -356,6 +356,26 @@ function bannerGuard(body, current) {
   if (active && (!desktop || !mobile)) throw new InputError('Upload the desktop and the mobile photo before switching the banner on');
 }
 
+// A category's own Google / share texts (Translations group "Google and sharing", src/shared/pageMeta.js): created
+// with the category in the default language (title "<name> | dFresh", description = the home description), removed
+// with it (its ui_text rows go by ON DELETE CASCADE).
+const seoKeys = (categoryKey) => [`seo_cat_${categoryKey}_t`, `seo_cat_${categoryKey}_d`];
+async function categorySeoTexts(q, cat, empId) {
+  const { def } = await entities.languages(q);
+  const [t, d] = seoKeys(cat.category_key);
+  const about = `Products page for the category "${cat.category_key}"`;
+  await q.query(
+    `INSERT IGNORE INTO ui_text_keys (text_key, group_name, description, allows_html, max_chars) VALUES
+       (?, 'Google and sharing', ?, 0, 60), (?, 'Google and sharing', ?, 0, 160)`,
+    [t, `${about}: title in Google results, the browser tab and share previews. Changes no text on the page.`,
+      d, `${about}: description in Google results and share previews. Changes no text on the page.`]
+  );
+  const name = cat.tr && cat.tr[def] ? cat.tr[def].name : cat.category_key;
+  const [[home]] = await q.query("SELECT value FROM ui_text WHERE text_key = 'seo_home_d' AND lang_code = ?", [def]);
+  await q.query('INSERT IGNORE INTO ui_text (text_key, lang_code, value, updated_by) VALUES (?, ?, ?, ?), (?, ?, ?, ?)',
+    [t, def, `${name} | dFresh`, empId, d, def, home ? home.value : name, empId]);
+}
+
 const AUDIT_LABEL = {
   products: 'product', categories: 'category', banners: 'banner', kits: 'kit', towns: 'town',
   'form-options': 'form_option', 'size-picker': 'size_picker',
@@ -383,6 +403,7 @@ for (const name of Object.keys(entities.ENTITIES)) {
     if (name === 'banners') bannerGuard(req.body, null);
     const keyValues = await entities.create(q, name, req.body || {}, by(req));
     const after = await entities.load(name, keyValues, q);
+    if (name === 'categories') await categorySeoTexts(q, after, by(req));
     await audit(q, { empId: by(req), action: 'create', entity: label, entityId: entities.idOf(e, after), after });
     return after;
   }), { content: true, status: 201 });
@@ -404,6 +425,7 @@ for (const name of Object.keys(entities.ENTITIES)) {
       const row = await entities.load(name, keyValues, q);
       if (!row) throw new InputError('Not found', 404);
       await entities.remove(q, name, keyValues);
+      if (name === 'categories') await q.query('DELETE FROM ui_text_keys WHERE text_key IN (?, ?)', seoKeys(row.category_key));
       await audit(q, { empId: by(req), action: 'delete', entity: label, entityId: req.params.id, before: row });
       return row;
     });
@@ -416,9 +438,9 @@ for (const name of Object.keys(entities.ENTITIES)) {
 // UI text (Translations grid)
 // ---------------------------------------------------------------------------------------------
 async function uiTextGrid() {
-  const [keys] = await db.query('SELECT text_key, group_name, description, allows_html FROM ui_text_keys ORDER BY group_name, text_key');
+  const [keys] = await db.query('SELECT text_key, group_name, description, allows_html, max_chars FROM ui_text_keys ORDER BY group_name, text_key');
   const [vals] = await db.query('SELECT text_key, lang_code, value FROM ui_text');
-  const map = new Map(keys.map((k) => [k.text_key, { ...k, allows_html: Number(k.allows_html), values: {} }]));
+  const map = new Map(keys.map((k) => [k.text_key, { ...k, allows_html: Number(k.allows_html), max_chars: k.max_chars === null ? null : Number(k.max_chars), values: {} }]));
   for (const v of vals) if (map.has(v.text_key)) map.get(v.text_key).values[v.lang_code] = v.value;
   return [...map.values()];
 }

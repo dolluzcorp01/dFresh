@@ -155,6 +155,8 @@ const css = `
 .a-tr-label { font-size: 13px; padding-top: 7px; }
 .a-tr input, .a-tr textarea { width: 100%; }
 
+.a-count { display: block; text-align: end; font-size: 11px; color: var(--a-muted); }
+.a-count.a-bad { color: #b42318; }
 .a-picture { display: grid; gap: 6px; justify-items: start; }
 .a-picture img { display: block; max-width: 100%; height: auto; object-fit: cover; background: #fff; border: 1px solid var(--a-line); border-radius: 8px; }
 .a-picture-none { display: grid; place-items: center; width: 240px; max-width: 100%; height: 100px; border: 1px dashed var(--a-line); border-radius: 8px; font-size: 12px; color: var(--a-muted, #666); }
