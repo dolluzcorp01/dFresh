@@ -8,7 +8,7 @@ Public endpoints never return internal columns (`spec_status`, `staff_notes`, `i
 |---|---|---|
 | GET | `/health` | `{ db: 'ok', counts: { products, variants, languages }, version }` (no secrets) |
 | GET | `/languages` | `{ languages: [{ code, nativeName, switchLabel, htmlLang, dir, fontFamily, isDefault }], default }` (active only, ordered by sort_order; `default` is the default language code) |
-| GET | `/bootstrap?lang=xx` | ONE payload for the site in that language (English fallback applied): `{ lang, ui: {key: value}, settings: {public keys}, categories[], products[] (cards with variants[], images[]), banners[], kits[], towns[], formOptions: {list_key: [{value,label}]}, sizePicker[], stats: {products, categories, towns, languages}, contentVersion }` |
+| GET | `/bootstrap?lang=xx` | ONE payload for the site in that language (English fallback applied): `{ lang, ui: {key: value}, settings: {public keys}, categories[], products[] (cards with variants[], images[]), banners[], kits[], towns[], formOptions: {list_key: [{value,label}]}, sizePicker[], places: {office, godown}, stats: {products, categories, towns, languages}, contentVersion }`. `ui` has {products} / {towns_word} ... already filled in from `stats` (src/shared/countText.js) and never holds the "Staff e-mails" group; `places` = the default language's office / godown address (Google Maps search) |
 | GET | `/legal/:page?lang=xx` | `{ title, html, isEnglishFallback }` for `privacy` / `terms` |
 
 Town shape: `{ key, isBase, mapX, mapY, label: { dx, dy, anchor }, lat, lng, name }` (label = where the name sits
@@ -78,7 +78,8 @@ The client IP is `req.ip` with `trust proxy = loopback` (nginx on the same host 
 | POST | `/admin/banners/:id/image?kind=desktop\|mobile` (multipart; cropped to 1920x800 / 1080x1350 WebP) | editor+ |
 | CRUD | `/admin/languages` (GET includes completeness % per language) | viewer read / admin write |
 | GET/POST/DELETE | `/admin/brochures`, `/admin/brochures/:lang` (multipart pdf), `GET /admin/brochures/:lang/file` | viewer read / editor write |
-| GET / PUT | `/admin/settings`, `/admin/settings/:key` (`{value}`; is_public is not editable) | admin |
+| GET / PUT | `/admin/settings`, `/admin/settings/:key` (`{value}`; is_public is not editable; `share_image` / `about_image` accept only `""` = remove; `door_home_product` / `door_biz_product` must name a product card) | admin |
+| POST | `/admin/settings/:key/image` (multipart `file`, <= 8 MB): `share_image` = JPG / PNG of 1200x630 or larger in that shape -> `share/share-<hash>.jpg` + `.webp`; `about_image` = JPG / PNG / WebP -> `about/about-<hash>.webp` (1920x800, <= 250 KB) + `about/960/`. The previous generated file is deleted | admin |
 | GET / POST / PUT | `/admin/users`, `/admin/users/:empId` (role, is_active; never your own admin access) | admin |
 | GET | `/admin/audit?entity&emp&id&action&page` | admin |
 

@@ -22,7 +22,7 @@ Put this pattern in ONE helper (`src/backend_routes/i18n-sql.js`) and reuse it. 
 | Table | Purpose | Key facts |
 |---|---|---|
 | `languages` | Active languages | `lang_code` = URL prefix; `html_lang` for `<html lang>`/hreflang; `dir` (ltr/rtl); `font_family`; exactly one `is_default` |
-| `ui_text_keys` | Registry of every page/UI text key | `group_name` for the admin grid; `allows_html` (0 = plain text) |
+| `ui_text_keys` | Registry of every page/UI text key | `group_name` for the admin grid; `allows_html` (0 = plain text); `max_chars` = length counter in Translations (group "Google and sharing": title 60, description 160). Group "Staff e-mails" (ma_*, mc_*) is read in the default language only and never sent to the site. Any text may hold {products} {categories} {towns} {languages} (+ `_word`, words from `num_words`), filled in by the server |
 | `ui_text` | Value of each key per language | PK `(text_key, lang_code)`; 154 keys: EN 154, TA 152, HI 152 (the two legal bodies are English-only and fall back) |
 | `categories` / `category_translations` | 6 categories | `rep_product_id` = photo on the range ring |
 | `products` | 25 cards + 3 colour variants | `variant_of` NULL = card; set = colour of that card. `sort_order` DECIMAL (5.1, 5.2 ...). `swatch_hex` on parent and variants. `show_for_home` drives the "For Home" chip. `spec_status` is INTERNAL |
@@ -33,7 +33,7 @@ Put this pattern in ONE helper (`src/backend_routes/i18n-sql.js`) and reuse it. 
 | `kits` / `kit_translations` / `kit_products` | 4 business kits | `business_type` prefills the quote form |
 | `towns` / `town_translations` | 6 delivery towns | `is_base` = Kanchipuram; `map_x/map_y` for the illustrated map, `label_dx/label_dy/label_anchor` place the name; lat/lng for later real maps |
 | `form_options` / `form_option_translations` | Drop-downs (business type, monthly sales, yes/no) | leads store the English `option_value` |
-| `site_settings` | Phones, e-mails, company, CIN, GSTIN, addresses, GA4 id, sheet id, About photo (`about_image`) | `is_public = 1` rows only go to the browser |
+| `site_settings` | Phones, e-mails, company, CIN, GSTIN (footer company line), GA4 id, sheet id, About photo (`about_image`) and share picture (`share_image`, both uploaded in Settings), home door photos (`door_home_product` / `door_biz_product`). Addresses are NOT here: Translations `c_office_a` / `c_godown_a` are the only copy (13 Oct 2026) | `is_public = 1` rows only go to the browser |
 | `brochures` | One PDF per language | file at `private/brochures/<lang_code>/<file_name>`; English fallback |
 | `leads` + `lead_products` | Every form submission | one table, `form_type` enum; distributor extras in `details_json` (brochure: `{ brochure_lang }` = PDF language actually served, null when none); status workflow; `staff_notes`, `ip_hash` INTERNAL |
 | `lead_counters` | Running lead number per year | one row per 2-digit year (IST); bumped inside the lead transaction (row lock = unique `lead_ref`, also serialises the rate-limit count) |

@@ -126,9 +126,11 @@ are generated from the DB. See `src/backend_routes/seo.js`.
   during render (only in effects); `useSyncExternalStore` always gets a server snapshot; no portals in a page that
   is pre-rendered (`ProductsDrawer inline`); the first render may not depend on the #hash, the width or saved
   state. Width-dependent layout that must be right before JS (header compact <= 900px) is done in CSS.
-- Titles and descriptions come from existing ui_text keys only (`src/shared/pageMeta.js`, shared with the client,
-  which updates `document.title` on in-app navigation): home `dFresh - {tagline} | {eyebrow}`, products
-  `{all_h or category name} | dFresh`, legal `{lg_priv_s / lg_terms_h} | dFresh`; description = `lede`.
+- Titles and descriptions have their own ui_text keys per page and language, Translations group "Google and sharing"
+  (`src/shared/pageMeta.js`, shared with the client, which updates `document.title` on in-app navigation):
+  `seo_home`, `seo_products`, `seo_privacy`, `seo_terms`, `seo_cat_<category>` with `_t` / `_d` (a category gets
+  its pair when it is created in the admin). Without them: the old pattern (`dFresh - {tagline} | {eyebrow}`, ...,
+  description = `lede`). og:image = Settings `share_image` (1200x630) when set, else the logo file.
 - Paths are resolved exactly like the client router: unknown / wrongly cased prefix or a page without prefix -> 301
   to the same page in the right / default language, unknown page -> 301 to that language's home, a missing file -> 404.
   `/` keeps the client's language pick (saved / browser language) and carries the default language's tags.

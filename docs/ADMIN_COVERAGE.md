@@ -3,7 +3,9 @@
 Audit of everything a visitor sees on the public site, the e-mails, and what Google / WhatsApp share previews show.
 For each item: can a dFresh admin change it from the admin console (`/admin`) on their own?
 
-Checked against the code and the local database on 13 Oct 2026 (commit `4b951aa`). Audit only: no code was changed.
+Checked against the code and the local database on 13 Oct 2026 (commit `4b951aa`). Updated the same day after the
+small fixes it listed were built (commits `019df81` pictures, `1d122bb` Google and sharing texts, `af1d28e` live
+numbers / addresses / company line, `026fc67` towns, form texts, staff e-mails).
 
 ## How to read this
 
@@ -26,16 +28,18 @@ visit, so a change is live on the next page load. No build or restart is needed.
 
 ## Things to know before the tables
 
-1. **Text with numbers in it does not update itself.** These texts are typed copy and must be edited by hand when the
-   range changes: "All 25 products" (`ab2_p`, `m_brochure_s`), "six towns" (`where_p`), "Six ways to soft" (`range_h`).
-   The hero stats strip, the category counts and the product counts on filters DO update themselves.
-2. **Addresses live in several places.** What visitors read comes from Translations (`c_office`, `c_office_a`,
-   `c_godown`, `c_godown_a`, footer `f_addr`). The maps come from Settings (`office_map_query`, `godown_map_query`).
-   Settings `office_address` and `godown_address` are only used in the hidden Google data. Change all of them together.
-3. **The footer legal line has the CIN typed into the text** (`legal1`) while GSTIN is empty. Once Settings `gstin` is
-   filled, the line switches to `legal1_gst`, which uses Settings `cin` and `gstin`.
-4. **Two settings do nothing today:** `site_url` (the real domain comes from the server's `.env`, `PUBLIC_SITE_URL`) and
-   `recaptcha_site_key` (not read by the site). Changing them has no visible effect.
+1. **Numbers in text follow the site.** In any Translations text, `{products}`, `{categories}`, `{towns}` and
+   `{languages}` show the current count in digits; add `_word` (e.g. `{towns_word}`) for the word, taken from the
+   `num_words` text of that language. "All 25 products", "six towns" and "Six ways to soft" (and TA/HI) use them now.
+   The Translations screen lists the placeholders at the top.
+2. **Each address has one home:** Translations, group Contact details (`c_office`, `c_office_a`, `c_godown`,
+   `c_godown_a`), one text per language. The contact cards, the footer, the Google Maps search (the English text)
+   and Google's business data all read it. The old Settings copies and the footer's own copy are gone.
+3. **The footer company line is built from Settings** `company_name`, `cin` and `gstin` ("CIN" / "GSTIN" words:
+   Translations `legal_cin`, `legal_gstin`); the GSTIN part is hidden while `gstin` is empty. The company name is
+   the same (English legal name) in every language.
+4. **Every setting does something.** The unused `site_url` and `recaptcha_site_key` were removed; the site address
+   lives in the server's `.env` (`PUBLIC_SITE_URL`).
 5. **Translations edits existing text slots only.** An admin cannot add a new text slot (key). Any "No" below that says
    "add a text key" means a developer adds the slot once; after that the admin edits it.
 6. **Many texts are shared.** For example `sample` is the label on three different buttons and `ok_other` is both the
@@ -65,10 +69,10 @@ visit, so a change is live on the next page load. No build or restart is needed.
 
 | Item | Admin can change? | Where in the admin / what it would take |
 |---|---|---|
-| Eyebrow "Tissue & hygiene paper · Kanchipuram" | Yes | Translations > `eyebrow` (also used in the home page title, section 13) |
+| Eyebrow "Tissue & hygiene paper · Kanchipuram" | Yes | Translations > `eyebrow` |
 | Headline "Gentle, / like you." (2 lines) | Yes | Translations > `hero_l1`, `hero_l2` |
 | Headline animation (gold rise-in, letters lifting near the pointer) | No | Design. |
-| Lede paragraph | Yes | Translations > `lede` (also the Google / share description of every page, section 13) |
+| Lede paragraph | Yes | Translations > `lede` |
 | "WhatsApp us" button: label / number / message | Yes | Translations > `whatsapp_us`, `wa_general`; Settings > `whatsapp_number` |
 | "See all products" button label | Yes | Translations > `see_all_products` |
 | Tissue sheet (the soft sheet you can touch and pick up) | No | Design. The icon printed on it is a fixed image file. Its screen-reader label: Translations > `sheet_label`. |
@@ -97,14 +101,14 @@ visit, so a change is live on the next page load. No build or restart is needed.
 |---|---|---|
 | Section eyebrow and heading | Yes | Translations > `doors_k`, `doors_h` |
 | Door texts (label, heading, paragraph, link text) | Yes | Translations > `for_home`, `dh_h`, `dh_p`, `dh_go`; `for_business`, `db_h`, `db_p`, `db_go` |
-| Door photos | No | Fixed to products DZIND-DF028 (home) and DZIND-DF037 (business) in code. Replacing those products' first photo in Products changes the doors too, but another product cannot be picked. Two "photo from product" settings: small. |
+| Door photos | Yes | Settings > `door_home_product`, `door_biz_product` (product dropdown; the door shows that product's first photo, changed in Products) |
 | Where the doors lead (For Home products / Business kits section) | No | Fixed in code. Small. |
 
 ## 5. Home - Range ring ("Spin the range")
 
 | Item | Admin can change? | Where in the admin / what it would take |
 |---|---|---|
-| Eyebrow, heading, paragraph, "Drag to spin" hint | Yes | Translations > `range_k`, `range_h`, `range_p`, `ring_hint` (note: "Six ways to soft" is typed, see the notes at the top) |
+| Eyebrow, heading, paragraph, "Drag to spin" hint | Yes | Translations > `range_k`, `range_h` (`{categories_word}` = the number of categories, see note 1), `range_p`, `ring_hint` |
 | Which categories are on the ring, names, order | Yes | Categories: Name per language, Active, drag to reorder, Add |
 | Photo on each category tile | Yes | Categories > Photo from product (uses that product's first photo; change the photo itself in Products) |
 | "N products" under each tile | Yes, automatic | Counted live; wording: Translations > `n_product`, `n_products` |
@@ -148,10 +152,10 @@ visit, so a change is live on the next page load. No build or restart is needed.
 
 | Item | Admin can change? | Where in the admin / what it would take |
 |---|---|---|
-| Eyebrow, heading, paragraph | Yes | Translations > `where_k`, `where_h`, `where_p` (note: "six towns" is typed) |
+| Eyebrow, heading, paragraph | Yes | Translations > `where_k`, `where_h`, `where_p` (`{towns_word}` = the number of towns, see note 1) |
 | Towns: names, order, which is the godown base, on / off | Yes | Towns: Name, Order, Godown base, Active, Add |
 | Pin position on the map | Yes | Towns > Map x (0-600), Map y (0-360) |
-| Position of each town's name next to its pin | No | Stored per town in the database (label offset and side) but not on the Towns screen. Add three fields: small. |
+| Position of each town's name next to its pin | Yes | Towns > Name: move right / left, Name: move down / up, Name: which part sits at that point (live map preview in the editor) |
 | The land shape of the map | No | Fixed drawing. Medium (an upload or editor for the map). |
 | "Become a distributor" button | Yes | Translations > `become_distributor` (opens the distributor form) |
 | Map description for screen readers | Yes | Translations > `map_aria` |
@@ -161,7 +165,7 @@ visit, so a change is live on the next page load. No build or restart is needed.
 | Item | Admin can change? | Where in the admin / what it would take |
 |---|---|---|
 | Eyebrow, heading, paragraph | Yes | Translations > `ab_k`, `ab_h`, `ab_p` |
-| Photo | Text only | Settings > `about_image` takes the path of a file already on the server (now the "about" banner photo). It cannot upload a new photo; a new photo can be uploaded as a banner first and its path typed here. A proper upload button: small. |
+| Photo | Yes | Settings > `about_image`: preview, Upload (JPG / PNG / WebP, cropped to 1920 x 800), Remove |
 | Photo description for screen readers | Yes | Translations > `ab_alt` |
 | Three points (Our promise, Kanchipuram godown, Quality check) | Text only | Translations > `ab1_h`, `ab1_p`, `ab2_h`, `ab2_p`, `ab3_h`, `ab3_p`. Always three; the icons (leaf, box, tick) are fixed. Small. |
 
@@ -172,8 +176,8 @@ visit, so a change is live on the next page load. No build or restart is needed.
 | Heading "Let's talk fresh." and paragraph | Yes | Translations > `band_h`, `band_p` |
 | Four buttons (free sample, WhatsApp, brochure, message) | Text only | Translations > `sample`, `whatsapp_us`, `download_brochure`, `msg_btn`. Which buttons and what they open: No, small. |
 | WhatsApp number shown, office phone, e-mail | Yes | Settings > `whatsapp_display` (the number as shown), `whatsapp_number` (the link), `office_phone`, `public_email`. Labels: Translations > `lbl_whatsapp`, `lbl_office` |
-| Visit cards: names and addresses | Yes | Translations > `c_office`, `c_office_a`, `c_godown`, `c_godown_a` (see note 2) |
-| Google maps in the cards and "Open in Google Maps" | Yes | Settings > `office_map_query`, `godown_map_query`; label Translations > `c_map`, `map_load` |
+| Visit cards: names and addresses | Yes | Translations > Contact details: `c_office`, `c_office_a`, `c_godown`, `c_godown_a` (the only copy, see note 2) |
+| Google maps in the cards and "Open in Google Maps" | Yes | Follow the English address in Translations > `c_office_a`, `c_godown_a`; labels Translations > `c_map`, `map_load` |
 | Exactly two visit cards (office + godown) | No | A third location: small to medium. |
 | Yellow blob, confetti | No | Design. |
 
@@ -203,13 +207,13 @@ visit, so a change is live on the next page load. No build or restart is needed.
 
 | Item | Admin can change? | Where in the admin / what it would take |
 |---|---|---|
-| Home page title "dFresh - Gentle, Like You \| Tissue & hygiene paper · Kanchipuram" | Text only | Built from Translations > `tagline` and `eyebrow`; changing them also changes the visible eyebrow. The "dFresh - ... \| ..." pattern is fixed. A separate title text per page: small. |
-| Products page title "All products \| dFresh" (or the category name) | Text only | Translations > `all_h` / Categories > Name. Pattern fixed. |
-| Privacy / Terms page titles | Text only | Translations > `lg_priv_s`, `lg_terms_h`. Pattern fixed. |
-| Google description and share description (every page) | Text only | Always the hero lede: Translations > `lede`. All four pages share the same description; one per page: small. |
-| Share image (WhatsApp / Facebook preview picture) | No | Fixed to the logo-with-tagline file. A setting with an upload: small to medium. |
-| Share card type (Twitter / X small card) | No | Fixed. Small. |
-| Hidden Google business data (company name, phone, e-mail, address, product list) | Yes | Settings > `company_name`, `office_phone`, `public_email`, `office_address`, `godown_address`; godown map pin: Towns > Latitude / Longitude of the base town; products from Products |
+| Home page title | Yes | Translations > Google and sharing > `seo_home_t` (counter: 60 characters). Changes no text on the page. |
+| Products page title, and each category's page title | Yes | Translations > Google and sharing > `seo_products_t`, `seo_cat_<category>_t` (a new category gets its own pair when it is created) |
+| Privacy / Terms page titles | Yes | Translations > Google and sharing > `seo_privacy_t`, `seo_terms_t` |
+| Google description and share description | Yes | Translations > Google and sharing > `seo_home_d`, `seo_products_d`, `seo_privacy_d`, `seo_terms_d`, `seo_cat_<category>_d` (counter: 160 characters) |
+| Share image (WhatsApp / Facebook preview picture) | Yes | Settings > `share_image`: Upload a JPG / PNG of 1200 x 630 (checked; a larger picture of the same shape is resized), Remove = the logo again |
+| Share card type (Twitter / X) | Yes, automatic | Large picture card while a share picture is set, small card with the logo otherwise. |
+| Hidden Google business data (company name, phone, e-mail, address, product list) | Yes | Settings > `company_name`, `office_phone`, `public_email`; addresses Translations > `c_office_a`, `c_godown_a`; godown map pin: Towns > Latitude / Longitude of the base town; products from Products |
 | Language versions for Google (hreflang), sitemap | Yes, automatic | Follow the active languages and products. |
 | Browser tab icon (favicon), phone home-screen icon and name | No | Fixed files (`public/favicon*`, `manifest.json`). Brand artwork. |
 | Google Analytics | Yes | Settings > `ga4_measurement_id` (not visible to visitors) |
@@ -221,12 +225,12 @@ The free sample form is the quote form in "sample" mode, so it has the quote for
 | Item | Admin can change? | Where in the admin / what it would take |
 |---|---|---|
 | Form titles and subtitles | Yes | Translations > `m_brochure`, `m_brochure_s`, `m_quote`, `m_quote_s`, `m_dist`, `m_dist_s`, `m_contact`, `m_contact_s` |
-| Free sample form's own title | No | Uses the quote title (`m_quote`). Its own text key: small. |
+| Free sample form's own title | Yes | Translations > `m_sample` (starts as the quote title) |
 | Field labels | Yes | Translations > `first_name`, `last_name`, `email`, `mobile`, `fl_name`, `fl_biz`, `fl_type`, `fl_town`, `fl_phone`, `fl_prod`, `fl_qty`, `fl_msg`, `fl_firm`, `fl_gst`, `fl_area`, `fl_gd`, `fl_brands`, `fl_sales`; "(optional)": `optional`; "Choose...": `choose` |
 | Dropdown choices (business type, monthly sales, yes / no) | Yes | Form options: Label per language, Order, Active, Add. (Never change a Stored value once used.) |
 | Product tick list in the quote form | Yes | The active products from Products. |
 | Which fields a form has, their order, required or optional, maximum length | No | One shared rules file used by the site AND the server (`src/shared/rules.json`) plus the lead columns in the database. A form builder: large. Making one existing field optional / required from the admin: medium. |
-| Example text inside the boxes (98765 43210, name@company.com) | No | Typed in code. Two text keys: small. |
+| Example text inside the boxes (98765 43210, name@company.com) | Yes | Translations > `ph_tel`, `ph_email` |
 | Error messages | Yes | Translations > `e_fill`, `e_choose`, `e_pick`, `e_email`, `e_tel`, `e_gst`, `e_net`, `e_rate` |
 | Phone / e-mail / GST checks (Indian 10-digit mobile only) | No | Rules in code. Medium. |
 | Consent line and its privacy link | Yes | Translations > `consent`, `lg_priv_s` |
@@ -273,8 +277,8 @@ The free sample form is the quote form in "sample" mode, so it has the quote for
 | Shop links (Products, For Business, Where to buy, Our range, About) | Text only | Translations > nav keys and `f_range`. The set of links: No, small. |
 | Work with us links (quote, distributor, brochure) | Text only | Translations > `request_quote`, `become_distributor`, `download_brochure`. The set: No, small. |
 | WhatsApp, office phone, e-mail | Yes | Settings > `whatsapp_display`, `whatsapp_number`, `office_phone`, `public_email` |
-| Address line "Padur office · Kanchipuram godown" | Yes | Translations > `f_addr` (see note 2) |
-| Legal line (company, CIN, GSTIN) | Yes | Translations > `legal1` while GSTIN is empty, `legal1_gst` after; Settings > `cin`, `gstin` (see note 3) |
+| Address line "Padur office · Kanchipuram godown" | Yes | Built from Translations > Contact details `c_office` and `c_godown` (see note 2) |
+| Company line (company, CIN, GSTIN) | Yes | Settings > `company_name`, `cin`, `gstin` (each part hidden while empty); words "CIN" / "GSTIN": Translations > `legal_cin`, `legal_gstin` (see note 3) |
 | "© 2026 dFresh" (the year is automatic) | Yes | Translations > `copyright` |
 | Privacy / Terms link texts | Yes | Translations > `lg_priv`, `lg_terms` |
 | Large "dFresh" letters at the bottom | No | Decorative artwork in code. |
@@ -305,33 +309,36 @@ to make colours or layout editable).
 
 | Item | Admin can change? | Where in the admin / what it would take |
 |---|---|---|
-| New lead alert: subject "New dFresh lead ...", row labels (Lead ref, Form, Name...), "Open in dFresh admin" button, footer | No | English text in code (`mailer.js`). The values (name, phone, products, option labels) come from the lead and the admin data. Moving the labels to text keys: small. |
-| Admin sign-in code e-mail | No | English text in code. Small. Staff only. |
+| New lead alert: subject, row labels (Lead ref, Form, Name...), form names, button, footer | Yes | Translations > Staff e-mails (`ma_*`, English only; the values come from the lead) |
+| Admin sign-in code e-mail | Yes | Translations > Staff e-mails (`mc_*`, English only) |
 | "Send test mail" e-mail (from Settings) | No | English text in code. Staff only, a test tool. |
 
 ---
 
 ## Summary of the gaps
 
-Visitor-facing items that need a developer today, roughly by value:
+Built on 13 Oct 2026 (all "small" items of the first audit): share picture, About photo upload, door photos, page
+titles and descriptions per page, live numbers in text, one source for addresses, company line from Settings,
+settings that did nothing removed, town name positions, form example text, the free sample title, staff e-mail
+texts.
+
+Visitor-facing items that still need a developer:
 
 | Gap | Effort |
 |---|---|
-| Share image for WhatsApp / Facebook previews | small to medium |
-| A separate Google description (and title) per page instead of the hero lede everywhere | small |
-| About photo upload (today a typed file path) | small |
-| Door photos (fixed to DF028 and DF037) | small |
-| Town name position on the map (data exists, not on the Towns screen) | small |
-| Free sample form's own title; a success message per form | small |
-| Form example text (98765 43210, name@company.com) | small |
-| Staff lead alert labels | small |
 | Menu / footer link lists, contact band buttons, About points count, roll words count | small each |
+| A success message per form (today `ok_other` for four forms), an eyebrow per banner, where the doors lead, slide timing, the spam limit | small each |
+| A third visit card (another location) | small to medium |
 | Offline error screen text live without a build | medium |
 | Section order / hiding a whole home section | medium |
 | A text editor for the privacy and terms text (today raw HTML) | medium |
 | Brand images (logos, tagline artwork, favicon, icon) from the admin | medium |
 | Which fields each form has / required or optional | medium to large |
 | Map land shape | medium |
+
+Copy to review (not code): with today's texts the home page title is over the 60-character counter (EN 64, TA 76) and
+the Tamil descriptions over 160 (177); Google may cut them short. Tamil / Hindi number words in `num_words` are drafts
+for native review.
 
 Animations, colours, fonts and layout are deliberately not editable: they follow the approved preview
 (`docs/reference/dfresh-preview-v3.html`).

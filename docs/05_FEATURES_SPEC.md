@@ -28,8 +28,9 @@ Text keys in `code` are rows in `ui_text` (see `database/02_seed.sql`). Never ty
 - Logo on dark, tagline artwork, `brand_line`.
 - Column `f_shop`: Products, For Business, Where to buy, Our range (#range), About.
 - Column `f_work`: Request a quote, Become a distributor, Download brochure (open the forms).
-- Column `f_visit`: WhatsApp number, `lbl_office` + office phone, public e-mail, `f_addr`.
-- Legal line: `legal1` (company, CIN, GSTIN - show `gstin` setting when filled, else the "to be confirmed" text),
+- Column `f_visit`: WhatsApp number, `lbl_office` + office phone, public e-mail, `c_office` · `c_godown`.
+- Legal line: Settings `company_name` · `legal_cin` ({cin}) · `legal_gstin` ({gstin}); each part hidden while its
+  setting is empty,
   (c) year + `lg_priv` link + `lg_terms` link.
 - Big "dFresh" letters at the bottom that lift softly near the pointer (spring physics, see C1).
 
@@ -148,7 +149,8 @@ Big headline `band_h`, `band_p`, soft animated yellow blob; buttons: `sample` (Q
 WhatsApp, `download_brochure`, `msg_btn` (Contact form). Numbers line (WhatsApp, `lbl_office`, e-mail).
 Two visit cards: `c_office` / `c_office_a` and `c_godown` / `c_godown_a`, each with an embedded Google map
 (lazy iframe, `map_load` placeholder underneath) and `c_map` link (opens Google Maps in a new tab).
-Map place = `site_settings.office_map_query` / `godown_map_query`; iframe title `map_frame`. The numbers are
+Map place = the default language's `c_office_a` / `c_godown_a` (bootstrap `places`; the addresses live only in
+Translations, group Contact details); iframe title `map_frame`. The numbers are
 links (wa.me, tel:, mailto:).
 
 ---------------------------------------------------------------------------------------------------
@@ -288,14 +290,17 @@ Screens:
    column set per extra active language); import shows a dry-run diff (added / changed / removed rows) and
    applies only on confirm. Unknown columns are reported, not ignored silently.
 5. **Translations** - grid of all `ui_text` keys x active languages, grouped, missing cells highlighted,
-   inline edit, filter "missing only", export / import CSV for translators.
+   inline edit, filter "missing only", export / import CSV for translators. Help text lists the live-number
+   placeholders; "Google and sharing" texts show a length counter; "Staff e-mails" texts are default language only.
 6. **Banners** - upload desktop + mobile images, headline + CTA per language, CTA action, theme, order (drag),
    active toggle, note.
-7. **Kits, Towns, Categories, Size picker, Form options** - simple CRUD with translations.
+7. **Kits, Towns, Categories, Size picker, Form options** - simple CRUD with translations. Towns also edit the
+   name position next to the pin (`label_dx` / `label_dy` / `label_anchor`) with a live map preview.
 8. **Languages** - add / edit / activate / deactivate / reorder; cannot deactivate the default; shows
    completeness % before activation.
 9. **Brochures** - upload a PDF per language (<= 5 MB, PDF magic bytes checked), replace, download.
-10. **Settings** - site_settings with descriptions; public flag shown.
+10. **Settings** - site_settings with descriptions; public flag shown. Share picture and About photo: preview,
+    Upload, Remove; home door photos: product dropdown.
 11. **Admin users** (admin role) - add emp_id + role, deactivate.
 12. **Audit log** - who changed what, with before/after.
 
