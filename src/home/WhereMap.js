@@ -9,11 +9,11 @@ import Kicker from '../components/Kicker';
 import Reveal from '../components/Reveal';
 import { useOpenForm } from '../forms/FormsProvider';
 import { mediaUrl } from '../utils/api';
+import { LAND } from '../shared/mapShape';
 import { createLoop, watchActive } from '../utils/loop';
 import useReducedMotion from '../utils/useReducedMotion';
 import './WhereMap.css';
 
-const LAND = 'M10 40 Q200 10 470 30 Q540 60 560 120 Q575 200 520 280 Q470 340 300 340 Q120 345 30 300 Q0 200 10 40Z';
 const DRIVE_MS = 1700;
 const STOP_MS = 450;
 const FIRST_MS = 1500;

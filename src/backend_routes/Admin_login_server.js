@@ -69,6 +69,7 @@ async function issueCode(emp) {
   const [[company]] = await db.query("SELECT setting_value FROM site_settings WHERE setting_key = 'company_name'");
   const m = mailer.renderLoginCode({
     name: emp.emp_first_name || emp.emp_id, code, minutes: CODE_MIN, companyName: company ? company.setting_value : '',
+    ui: await mailer.staffText(),
   });
   // Not due for a minute: the 15 s worker pass leaves it alone, sendMailNow below sends it.
   const [ins] = await db.query(

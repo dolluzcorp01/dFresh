@@ -102,7 +102,9 @@ async function mailContext(conn, { lang, def, productIds, optionPairs }) {
     [def, lang, ...uiKeys]
   );
   const ui = Object.fromEntries(uiRows.map((r) => [r.text_key, r.value]));
-  return { settings, products, options, ui };
+  // the staff alert's own words (default language, Translations "Staff e-mails")
+  const staff = await mailer.staffText(conn);
+  return { settings, products, options, ui, staff };
 }
 
 // form fields -> leads columns (distributor extras go to details_json; firm name also to business_name for search).
@@ -266,6 +268,7 @@ router.post('/leads', async (req, res) => {
         sourceRef: cols.source_ref,
         consentText: cols.consent_text,
         companyName: ctx.settings.company_name,
+        ui: ctx.staff,
       });
       await outboxMail(conn, leadId, 'lead_alert', ctx.settings.lead_email, alert);
     } else {

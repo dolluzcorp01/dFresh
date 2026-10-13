@@ -19,7 +19,8 @@ import { formConfig } from './formConfig';
 import { checkField } from './validate';
 import './Forms.css';
 
-const PLACEHOLDER = { tel: '98765 43210', email: 'name@company.com' };
+// Example text inside the phone / e-mail boxes (Translations ph_tel / ph_email).
+const PLACEHOLDER = { tel: 'ph_tel', email: 'ph_email' };
 
 function startDownload(token) {
   const frame = document.createElement('iframe');
@@ -144,7 +145,7 @@ function Field({ field, uid, value, error, options, choices, onChange, onBlur, t
         autoComplete={field.autoComplete || 'off'}
         inputMode={field.type === 'tel' ? 'tel' : undefined}
         autoCapitalize={field.type === 'gst' ? 'characters' : undefined}
-        placeholder={PLACEHOLDER[field.type]}
+        placeholder={PLACEHOLDER[field.type] ? t(PLACEHOLDER[field.type]) : undefined}
         onChange={(e) => onChange(e.target.value)}
         onBlur={onBlur}
       />

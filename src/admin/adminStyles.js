@@ -155,6 +155,9 @@ const css = `
 .a-tr-label { font-size: 13px; padding-top: 7px; }
 .a-tr input, .a-tr textarea { width: 100%; }
 
+.a-townmap { margin: 12px 0; max-width: 560px; }
+.a-townmap svg { display: block; width: 100%; height: auto; overflow: visible; background: #fff; border: 1px solid var(--a-line); border-radius: 8px; }
+.a-townmap figcaption { font-size: 12px; margin-top: 4px; }
 .a-count { display: block; text-align: end; font-size: 11px; color: var(--a-muted); }
 .a-count.a-bad { color: #b42318; }
 .a-picture { display: grid; gap: 6px; justify-items: start; }

@@ -8,6 +8,7 @@ const { getDBConnection } = require('../../config/db');
 const { translatedSelect } = require('./i18n-sql');
 const cache = require('./content-cache');
 const { numberWords, fillCounts } = require('../shared/countText');
+const { STAFF_GROUP } = require('./text-groups');
 
 const router = express.Router();
 const db = getDBConnection(process.env.DB_NAME || 'dfresh').promise();
@@ -108,8 +109,8 @@ async function buildBootstrap(lang, fallback, activeLanguages) {
     q({
       base: 'ui_text_keys', tr: 'ui_text', keys: ['text_key'],
       baseCols: ['text_key', 'allows_html'], trCols: [{ col: 'value' }],
-      where: `b.text_key NOT IN (${LEGAL_BODY_KEYS.map(() => '?').join(', ')})`,
-      whereParams: LEGAL_BODY_KEYS,
+      where: `b.text_key NOT IN (${LEGAL_BODY_KEYS.map(() => '?').join(', ')}) AND b.group_name <> ?`, // staff e-mail words stay on the server
+      whereParams: [...LEGAL_BODY_KEYS, STAFF_GROUP],
       orderBy: 'b.text_key',
     }),
     q({

@@ -6,6 +6,7 @@
 // language's row is all-or-nothing for required columns; a language with every column empty has its row
 // deleted, so the site falls back to the default language (an empty string would show as blank instead).
 const { getDBConnection } = require('../../config/db');
+const { STAFF_GROUP } = require('./text-groups');
 
 const db = getDBConnection(process.env.DB_NAME || 'dfresh').promise();
 
@@ -65,7 +66,10 @@ const ENTITIES = {
     cols: {
       town_key: KEY(40), sort_order: { type: 'int' }, is_base: { type: 'bool' },
       map_x: { type: 'int', nullable: true }, map_y: { type: 'int', nullable: true },
-      lat: { type: 'decimal', nullable: true }, lng: { type: 'decimal', nullable: true }, is_active: { type: 'bool' },
+      // town name next to its pin: offset in map units and which end of the text sits there (DB defaults when not sent)
+      label_dx: { type: 'int', default: 0 }, label_dy: { type: 'int', default: -20 },
+      label_anchor: { type: 'enum', values: ['start', 'middle', 'end'], default: 'middle' },
+      lat:{ type: 'decimal', nullable: true }, lng: { type: 'decimal', nullable: true }, is_active: { type: 'bool' },
     },
     tr: { table: 'town_translations', cols: { name: TEXT(80, { required: true }) } },
   },
@@ -211,6 +215,10 @@ function baseValues(e, body, creating) {
       out[c] = def.type === 'bool' ? (c === 'is_active' ? 1 : 0) : null;
       continue;
     }
+    if (creating && !(c in body) && 'default' in def) {
+      out[c] = def.default;
+      continue;
+    }
     if (creating && !(c in body) && c === 'sort_order') {
       out[c] = 0;
       continue;
@@ -333,7 +341,8 @@ async function reorder(q, name, ids) {
  */
 async function completeness(q = db) {
   const langs = await languages(q);
-  const parts = [{ name: 'ui_text', table: 'ui_text', keys: ['text_key'] },
+  // staff e-mail words are read in the default language only: never "missing" in another language
+  const parts = [{ name: 'ui_text', table: 'ui_text', keys: ['text_key'], skip: 'd.text_key NOT IN (SELECT text_key FROM ui_text_keys WHERE group_name = ?)', skipParams: [STAFF_GROUP] },
     ...TRANSLATED.map((t) => ({ name: t.name, table: t.tr.table, keys: t.keys }))];
   const out = Object.fromEntries(langs.codes.map((l) => [l, { have: 0, total: 0, parts: {} }]));
   for (const p of parts) {
@@ -341,10 +350,10 @@ async function completeness(q = db) {
     const [rows] = await q.query(
       `SELECT l.lang_code, COUNT(d.lang_code) AS total, COUNT(x.lang_code) AS have
          FROM languages l
-         JOIN ${p.table} d ON d.lang_code = ?
+         JOIN ${p.table} d ON d.lang_code = ?${p.skip ? ` AND ${p.skip}` : ''}
          LEFT JOIN ${p.table} x ON ${on} AND x.lang_code = l.lang_code
         GROUP BY l.lang_code`,
-      [langs.def]
+      [langs.def, ...(p.skipParams || [])]
     );
     for (const r of rows) {
       const o = out[r.lang_code];

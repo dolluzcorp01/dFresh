@@ -11,7 +11,7 @@ if (process.env.NODE_ENV === 'production') {
 
 const fs = require('fs');
 const path = require('path');
-const { test, after } = require('node:test');
+const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const { getDBConnection } = require('../../config/db');
 const mailer = require('../../src/backend_routes/mailer');
@@ -27,7 +27,9 @@ after(async () => {
 
 // Worst case allowed by rules.json: 2000-char message of characters that esc() expands, 40 products, long names.
 const ui = new Proxy({}, { get: (t, k) => `${'&'.repeat(200)} ${String(k)} {name} {ref}` });
-const worst = {
+// Staff texts: the real ones from the DB (Translations "Staff e-mails"), loaded before the templates render.
+let worst;
+const build = (staff) => ({
   lead_alert: mailer.renderLeadAlert({
     leadRef: 'DFL-260001', formType: 'quote', receivedAt: '10 Oct 2026, 12:00 IST', fullName: '&'.repeat(120),
     businessName: '&'.repeat(150), businessType: 'hotel', town: '&'.repeat(120), phone: '9876543210',
@@ -35,7 +37,7 @@ const worst = {
     details: { gst_no: '33ABCDE1234F1Z5', areas: '&'.repeat(255), godown_vehicles: 'yes', brands: '&'.repeat(255), monthly_sales: 'x' },
     products: Array.from({ length: 40 }, (_, i) => ({ id: `DZIND-DF${100 + i}`, name: '&'.repeat(80) })),
     options: {}, brochure: 'sent', brochureLang: 'EN', languageName: 'Tamil (ta)', sourcePage: '&'.repeat(150),
-    sourceRef: '&'.repeat(60), consentText: '&'.repeat(500), companyName: 'Dolluz Corporation (OPC) Pvt Ltd',
+    sourceRef: '&'.repeat(60), consentText: '&'.repeat(500), companyName: 'Dolluz Corporation (OPC) Pvt Ltd', ui: staff,
   }),
   brochure_copy: mailer.renderBrochureCopy({
     htmlLang: 'ta', ui, name: '&'.repeat(60), link: `https://api.example.in/x?token=${'a'.repeat(400)}`,
@@ -45,8 +47,9 @@ const worst = {
     htmlLang: 'ta', ui, name: '&'.repeat(120), leadRef: 'DFL-260001', whatsappNumber: '919876543210',
     whatsappDisplay: '+91 98765 43210', companyName: 'Dolluz', publicEmail: 'info@example.com',
   }),
-  login_code: mailer.renderLoginCode({ name: '&'.repeat(120), code: '123456', minutes: 10, companyName: 'Dolluz' }),
-};
+  login_code: mailer.renderLoginCode({ name: '&'.repeat(120), code: '123456', minutes: 10, companyName: 'Dolluz', ui: staff }),
+});
+before(async () => { worst = build(await mailer.staffText()); });
 
 // The header row: ink cell with the logo, up to the body cell.
 const header = (html) => /<tr><td style="background:#121214[^"]*">[\s\S]*?<\/td><\/tr>/.exec(html)[0];

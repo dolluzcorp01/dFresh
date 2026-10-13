@@ -51,7 +51,8 @@ const LAYOUT = {
     },
   },
 };
-LAYOUT.sample = LAYOUT.quote; // the quote form in "free sample" mode (form_type sample)
+// the quote form in "free sample" mode (form_type sample), with its own title (Translations m_sample)
+LAYOUT.sample = { ...LAYOUT.quote, title: 'm_sample' };
 
 const ruleFields = (type) => {
   const def = rules.forms[type];

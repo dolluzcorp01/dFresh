@@ -119,7 +119,7 @@ test('recheck (start-up / every 6 hours) reads the saved setting; send() falls b
   await db.query("UPDATE site_settings SET setting_value = ? WHERE setting_key = 'mail_logo_url'", [URL]);
   const sent = [];
   mailer.setTransport(async (msg) => { sent.push(msg); return { id: 'fake' }; });
-  const view = mailer.renderLoginCode({ name: 'T', code: '123456', minutes: 10, companyName: 'D' });
+  const view = mailer.renderLoginCode({ name: 'T', code: '123456', minutes: 10, companyName: 'D', ui: await mailer.staffText() });
 
   logoCheck.setFetch(reply('down', 'text/plain', 502));
   await capture(() => logoCheck.recheck());

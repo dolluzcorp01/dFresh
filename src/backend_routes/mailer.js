@@ -199,59 +199,75 @@ const textRows = (rows) => rows
   .map(([label, value]) => `${label}: ${String(value).replace(/\n/g, '\n  ')}`)
   .join('\n');
 
-const FORM_NAMES = { brochure: 'Brochure', quote: 'Quote', sample: 'Free sample', distributor: 'Distributor', contact: 'Contact' };
+// Staff e-mails (lead alert, sign-in code): their words are Translations group "Staff e-mails" (ma_*, mc_*), read in
+// the default language only (staffText). A missing text shows its key, so nothing is ever blank.
+const { STAFF_GROUP } = require('./text-groups');
+async function staffText(q = db) {
+  const [rows] = await q.query(
+    `SELECT t.text_key, t.value FROM ui_text_keys k
+       JOIN languages l ON l.is_default = 1
+       JOIN ui_text t ON t.text_key = k.text_key AND t.lang_code = l.lang_code
+      WHERE k.group_name = ?`,
+    [STAFF_GROUP]
+  );
+  return Object.fromEntries(rows.map((r) => [r.text_key, r.value]));
+}
+const say = (ui, key, vars = {}) => String((ui && ui[key]) || key).replace(/\{(\w+)\}/g, (m, k) => (k in vars ? String(vars[k] ?? '') : m));
 
 /**
- * Staff lead alert (English, internal). lead = the saved row values plus:
+ * Staff lead alert (default language, internal). lead = the saved row values plus:
  * { leadRef, formType, receivedAt, languageName, products: [{id, name}], options: {field: label},
- *   details: {...distributor extras}, brochure: 'sent' | 'pending' | null, companyName }
+ *   details: {...distributor extras}, brochure: 'sent' | 'pending' | null, companyName, ui: staffText() }
  */
 function renderLeadAlert(lead) {
-  const form = FORM_NAMES[lead.formType] || lead.formType;
+  const { ui } = lead;
+  const L = (key) => say(ui, `ma_l_${key}`);
+  const form = say(ui, `ma_form_${lead.formType}`);
   const name = lead.fullName || [lead.firstName, lead.lastName].filter(Boolean).join(' ');
   const opt = (field, value) => (value ? `${lead.options[field] || value} (${value})` : null);
   const d = lead.details || {};
   const products = (lead.products || []).map((p) => `${p.id} - ${p.name}`).join('\n');
   const adminUrl = `${siteBase()}/admin/leads?ref=${encodeURIComponent(lead.leadRef)}`;
-  const brochure = lead.brochure === 'sent' ? `Copy link e-mailed to the visitor (${lead.brochureLang})`
-    : lead.brochure === 'pending' ? 'No brochure uploaded yet - send it to the visitor when it is ready' : null;
-
+  const brochure = lead.brochure === 'sent' ? say(ui, 'ma_bro_sent', { lang: lead.brochureLang })
+    : lead.brochure === 'pending' ? say(ui, 'ma_bro_pending') : null;
   const rows = [
-    ['Lead ref', lead.leadRef],
-    ['Form', form],
-    ['Received', lead.receivedAt],
-    ['Name', name],
-    ['Business', lead.businessName],
-    ['Business type', opt('business_type', lead.businessType)],
-    ['Town', lead.town],
-    ['Phone', lead.phone, `tel:+91${lead.phone}`],
-    ['WhatsApp', `wa.me/91${lead.phone}`, `https://wa.me/91${lead.phone}`],
-    ['E-mail', lead.email, `mailto:${lead.email}`],
-    ['Products', products],
-    ['Monthly quantity', lead.monthlyQuantity],
-    ['Message', lead.message],
-    ['GST no.', d.gst_no],
-    ['Areas covered', d.areas],
-    ['Godown / vehicles', opt('godown_vehicles', d.godown_vehicles)],
-    ['Brands handled', d.brands],
-    ['Monthly tissue sales', opt('monthly_sales', d.monthly_sales)],
-    ['Brochure', brochure],
-    ['Language', lead.languageName],
-    ['Page', lead.sourcePage],
-    ['Opened from', lead.sourceRef],
-    ['Consent', lead.consentText ? `Yes - "${lead.consentText}"` : null],
+    [L('ref'), lead.leadRef],
+    [L('form'), form],
+    [L('received'), lead.receivedAt],
+    [L('name'), name],
+    [L('business'), lead.businessName],
+    [L('business_type'), opt('business_type', lead.businessType)],
+    [L('town'), lead.town],
+    [L('phone'), lead.phone, `tel:+91${lead.phone}`],
+    [L('whatsapp'), `wa.me/91${lead.phone}`, `https://wa.me/91${lead.phone}`],
+    [L('email'), lead.email, `mailto:${lead.email}`],
+    [L('products'), products],
+    [L('quantity'), lead.monthlyQuantity],
+    [L('message'), lead.message],
+    [L('gst'), d.gst_no],
+    [L('areas'), d.areas],
+    [L('godown'), opt('godown_vehicles', d.godown_vehicles)],
+    [L('brands'), d.brands],
+    [L('sales'), opt('monthly_sales', d.monthly_sales)],
+    [L('brochure'), brochure],
+    [L('language'), lead.languageName],
+    [L('page'), lead.sourcePage],
+    [L('from'), lead.sourceRef],
+    [L('consent'), lead.consentText ? say(ui, 'ma_consent_yes', { text: lead.consentText }) : null],
   ];
-  const subject = `New dFresh lead ${lead.leadRef} - ${form} - ${name}`;
+  const vars = { ref: lead.leadRef, form, name };
+  const subject = say(ui, 'ma_subject', vars);
+  const open = say(ui, 'ma_button');
   const html = shell({
     title: subject,
-    preheader: `${form} from ${name}${lead.town ? `, ${lead.town}` : ''}`,
-    body: `<p style="margin:0 0 4px;font:600 12px/1 ${FONT};letter-spacing:.14em;text-transform:uppercase;color:${C.ink3}">New lead</p>`
+    preheader: `${say(ui, 'ma_preheader', vars)}${lead.town ? `, ${lead.town}` : ''}`,
+    body: `<p style="margin:0 0 4px;font:600 12px/1 ${FONT};letter-spacing:.14em;text-transform:uppercase;color:${C.ink3}">${esc(say(ui, 'ma_kicker'))}</p>`
       + `<h1 style="margin:0 0 18px;font:700 26px/1.2 ${HEAD};color:${C.ink}">${esc(lead.leadRef)} &middot; ${esc(form)}</h1>`
       + `<table role="presentation" width="100%" cellpadding="0" cellspacing="0">${alertRows(rows)}</table>`
-      + `<p style="margin:24px 0 0">${button(adminUrl, 'Open in dFresh admin')}</p>`,
-    footer: `dFresh website lead alert &middot; ${esc(lead.companyName)}`,
+      + `<p style="margin:24px 0 0">${button(adminUrl, open)}</p>`,
+    footer: `${esc(say(ui, 'ma_footer'))} &middot; ${esc(lead.companyName)}`,
   });
-  const text = `New dFresh lead ${lead.leadRef} (${form})\n\n${textRows(rows)}\n\nOpen in dFresh admin: ${adminUrl}\n`;
+  const text = `${say(ui, 'ma_text_head', vars)}\n\n${textRows(rows)}\n\n${open}: ${adminUrl}\n`;
   return { subject, html, text };
 }
 
@@ -307,24 +323,23 @@ function renderLeadAck({ htmlLang, ui, name, leadRef, whatsappNumber, whatsappDi
   return { subject, html, text };
 }
 
-/** Admin sign-in code (English, staff only). { name, code, minutes, companyName } */
-function renderLoginCode({ name, code, minutes, companyName }) {
-  const subject = `dFresh admin sign-in code: ${code}`;
+/** Admin sign-in code (default language, staff only). { name, code, minutes, companyName, ui: staffText() } */
+function renderLoginCode({ name, code, minutes, companyName, ui }) {
+  const vars = { name, code, minutes };
+  const subject = say(ui, 'mc_subject', vars);
+  const hello = say(ui, 'mc_hello', vars);
+  const intro = say(ui, 'mc_intro', vars);
+  const valid = say(ui, 'mc_valid', vars);
   const html = shell({
     title: subject,
-    preheader: `Your code is valid for ${minutes} minutes.`,
-    body: `<p style="margin:0 0 14px">Hello ${esc(name)},</p>`
-      + '<p style="margin:0 0 18px">Your dFresh admin sign-in code is:</p>'
+    preheader: say(ui, 'mc_preheader', vars),
+    body: `<p style="margin:0 0 14px">${esc(hello)}</p>`
+      + `<p style="margin:0 0 18px">${esc(intro)}</p>`
       + `<p style="margin:0 0 18px;font:700 32px/1 ${HEAD};letter-spacing:.3em;color:${C.ink}">${esc(code)}</p>`
-      + `<p style="margin:0;color:${C.ink2}">It is valid for ${esc(minutes)} minutes. If you did not try to sign in, tell the dFresh admin.</p>`,
-    footer: `dFresh admin &middot; ${esc(companyName)}`,
+      + `<p style="margin:0;color:${C.ink2}">${esc(valid)}</p>`,
+    footer: `${esc(say(ui, 'mc_footer'))} &middot; ${esc(companyName)}`,
   });
-  const text = `Hello ${name},
-
-Your dFresh admin sign-in code is: ${code}
-
-It is valid for ${minutes} minutes. If you did not try to sign in, tell the dFresh admin.
-`;
+  const text = `${hello}\n\n${intro} ${code}\n\n${valid}\n`;
   return { subject, html, text };
 }
 
@@ -346,5 +361,6 @@ function renderLogoTest({ logo, url, companyName }) {
 
 module.exports = {
   send, readiness, setTransport, fromAddress, logMail, queuedOutcome, renderLeadAlert, renderBrochureCopy, renderLeadAck, renderLoginCode,
+  staffText, STAFF_GROUP,
   renderLogoTest, esc, LOGO_SRC, LOGO_URL: logoCheck.LOGO_URL, MAX_HTML_BYTES,
 };

@@ -21,6 +21,7 @@ const mailer = require('./mailer');
 const logoCheck = require('./mail-logo-check');
 const fontManager = require('./font-manager');
 const outboxWorker = require('./outbox-worker');
+const { STAFF_GROUP } = require('./text-groups');
 
 const router = express.Router();
 const db = getDBConnection(process.env.DB_NAME || 'dfresh').promise();
@@ -440,7 +441,10 @@ for (const name of Object.keys(entities.ENTITIES)) {
 async function uiTextGrid() {
   const [keys] = await db.query('SELECT text_key, group_name, description, allows_html, max_chars FROM ui_text_keys ORDER BY group_name, text_key');
   const [vals] = await db.query('SELECT text_key, lang_code, value FROM ui_text');
-  const map = new Map(keys.map((k) => [k.text_key, { ...k, allows_html: Number(k.allows_html), max_chars: k.max_chars === null ? null : Number(k.max_chars), values: {} }]));
+  const map = new Map(keys.map((k) => [k.text_key, {
+    ...k, allows_html: Number(k.allows_html), max_chars: k.max_chars === null ? null : Number(k.max_chars),
+    default_only: k.group_name === STAFF_GROUP, values: {},
+  }]));
   for (const v of vals) if (map.has(v.text_key)) map.get(v.text_key).values[v.lang_code] = v.value;
   return [...map.values()];
 }

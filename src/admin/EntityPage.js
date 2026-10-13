@@ -1,10 +1,11 @@
 // Banners, Kits, Towns, Categories, Size picker, Form options (spec F 6-7): one list + editor per section,
 // driven by the definitions below (they mirror backend admin-entities.js). Banners also take desktop / mobile
-// photo uploads and drag-and-drop order; kits take their product list.
+// photo uploads and drag-and-drop order; kits take their product list; towns show a live map preview (pin + name).
 import { useMemo, useState } from 'react';
 import { api, rowId } from './adminApi';
 import { mediaUrl } from '../utils/api';
 import { Drawer, Field, Loading, TrEditor, useAction, useCan, useLoad } from './ui';
+import { LAND, MAP_H, MAP_W } from '../shared/mapShape';
 
 const ACTIVE = { name: 'is_active', label: 'Active', type: 'bool' };
 const ORDER = { name: 'sort_order', label: 'Order', type: 'number', step: '1' };
@@ -42,12 +43,18 @@ const SECTIONS = {
     fields: [
       { name: 'town_key', label: 'Key', required: true, keyField: true }, ORDER, { name: 'is_base', label: 'Godown base', type: 'bool' },
       { name: 'map_x', label: 'Map x (0-600)', type: 'number', step: '1' }, { name: 'map_y', label: 'Map y (0-360)', type: 'number', step: '1' },
+      { name: 'label_dx', label: 'Name: move right (+) or left (-)', type: 'number', step: '1', help: 'map units from the pin' },
+      { name: 'label_dy', label: 'Name: move down (+) or up (-)', type: 'number', step: '1', help: 'map units from the pin; -20 = just above' },
+      { name: 'label_anchor', label: 'Name: which part sits at that point', type: 'select', allowEmpty: false, options: [
+        { value: 'start', label: 'its start (name runs to the right)' }, { value: 'middle', label: 'its middle (centred)' },
+        { value: 'end', label: 'its end (name runs to the left)' },
+      ] },
       { name: 'lat', label: 'Latitude', type: 'number' }, { name: 'lng', label: 'Longitude', type: 'number' }, ACTIVE,
     ],
     tr: [{ name: 'name', label: 'Name', required: true }],
     list: (r) => [r.town_key, r.tr?.en?.name ?? '', r.is_base ? 'base' : '', r.map_x != null ? `${r.map_x}, ${r.map_y}` : ''],
     head: ['Key', 'Name (EN)', 'Base', 'Map'],
-    defaults: { is_active: 1 },
+    defaults: { is_active: 1, label_dx: 0, label_dy: -20, label_anchor: 'middle' },
   },
   categories: {
     title: 'Categories', keys: ['category_key'], reorder: true,
@@ -137,14 +144,14 @@ export default function EntityPage({ name }) {
         </div>
       </Loading>
       {open && (
-        <Editor name={name} cfg={cfg} id={open.id} lookups={lookups} onClose={() => setOpen(null)}
+        <Editor name={name} cfg={cfg} id={open.id} lookups={lookups} rows={list.data || []} onClose={() => setOpen(null)}
           onSaved={(id) => { list.reload(); setOpen(id ? { id } : null); }} />
       )}
     </section>
   );
 }
 
-function Editor({ name, cfg, id, lookups, onClose, onSaved }) {
+function Editor({ name, cfg, id, lookups, rows, onClose, onSaved }) {
   const loaded = useLoad(id ? `/${name}/${id}` : null);
   const canEdit = useCan('editor');
   const act = useAction();
@@ -186,6 +193,7 @@ function Editor({ name, cfg, id, lookups, onClose, onSaved }) {
           return <Field key={f.name} def={def} value={row[f.name]} disabled={!canEdit} onChange={(v) => set(f.name, v)} />;
         })}
       </div>
+      {name === 'towns' && <TownPreview rows={rows} town={row} />}
       {cfg.links && (
         <label className="a-field a-wide"><span>Products (in order)</span>
           <select multiple size={8} disabled={!canEdit} value={row.products || []}
@@ -222,5 +230,37 @@ function Editor({ name, cfg, id, lookups, onClose, onSaved }) {
       )}
       {name === 'banners' && creating && <p className="a-muted">Create the banner first, then upload both photos and switch it on.</p>}
     </Drawer>
+  );
+}
+
+// Towns: the site's map (same land, pins and name sizes as src/home/WhereMap.js) with the town being edited drawn from
+// the unsaved values, so the pin and the name can be placed before saving. Other active towns are shown faded.
+function TownPreview({ rows, town }) {
+  const name = (t) => (t.tr && t.tr.en && t.tr.en.name) || t.town_key || '';
+  const placed = (t) => t.map_x !== null && t.map_x !== undefined && t.map_x !== '' && t.map_y !== null && t.map_y !== undefined && t.map_y !== '';
+  const others = rows.filter((t) => t.town_key !== town.town_key && t.is_active && placed(t));
+  const pin = (t, current) => {
+    const x = Number(t.map_x);
+    const y = Number(t.map_y);
+    const base = Number(t.is_base) === 1;
+    return (
+      <g key={t.town_key || 'new'} opacity={current ? 1 : 0.35}>
+        <circle cx={x} cy={y} r={base ? 11 : 7} fill={base ? '#121214' : '#E5BF24'} stroke="#fff" strokeWidth="3" />
+        <text x={x + Number(t.label_dx || 0)} y={y + Number(t.label_dy || 0)} textAnchor={t.label_anchor || 'middle'}
+          fontFamily="Saira, sans-serif" fontWeight="700" fontSize="18" fill="#121214">{name(t)}{base ? ' ★' : ''}</text>
+      </g>
+    );
+  };
+  return (
+    <figure className="a-townmap">
+      <svg viewBox={`0 0 ${MAP_W} ${MAP_H}`} role="img" aria-label="Preview of the delivery map">
+        <path d={LAND} fill="#FFF3CF" stroke="#EEE4C8" strokeWidth="2" />
+        {others.map((t) => pin(t, false))}
+        {placed(town) ? pin(town, true) : null}
+      </svg>
+      <figcaption className="a-muted">
+        {placed(town) ? 'Preview: this town in full colour, the others faded. Not saved until you press Save.' : 'Enter Map x and Map y to place this town.'}
+      </figcaption>
+    </figure>
   );
 }

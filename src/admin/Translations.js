@@ -20,7 +20,7 @@ export default function Translations() {
 
   const missingCount = useMemo(() => {
     const out = {};
-    for (const l of languages) out[l.lang_code] = (grid.data ? grid.data.keys : []).filter((k) => !k.values[l.lang_code]).length;
+    for (const l of languages) out[l.lang_code] = (grid.data ? grid.data.keys : []).filter((k) => !k.default_only && !k.values[l.lang_code]).length;
     return out;
   }, [grid.data, languages]);
 
@@ -28,13 +28,13 @@ export default function Translations() {
     const keys = (grid.data ? grid.data.keys : []).filter((k) => {
       const f = q.trim().toLowerCase();
       if (f && !k.text_key.includes(f) && !Object.values(k.values).some((v) => v.toLowerCase().includes(f))) return false;
-      if (missingOnly) return cols.some((l) => !k.values[l.lang_code]);
+      if (missingOnly) return cols.some((l) => !k.values[l.lang_code] && !(k.default_only && l.lang_code !== def));
       return true;
     });
     const by = new Map();
     for (const k of keys) by.set(k.group_name, [...(by.get(k.group_name) || []), k]);
     return [...by.entries()];
-  }, [grid.data, q, missingOnly, cols]);
+  }, [grid.data, q, missingOnly, cols, def]);
 
   const save = (key, code, value) => act.run(async () => {
     await api.send('PUT', `/ui-text/${encodeURIComponent(key)}/${code}`, { value });
@@ -91,12 +91,14 @@ export default function Translations() {
                 {keys.map((k) => (
                   <tr key={k.text_key}>
                     <td><code>{k.text_key}</code>{k.allows_html ? <small className="a-muted"> html</small> : null}<br /><small className="a-muted">{k.description}</small></td>
-                    {cols.map((l) => (
+                    {cols.map((l) => (k.default_only && l.lang_code !== def ? (
+                      <td key={l.lang_code}><small className="a-muted">Staff e-mails use {def} only</small></td>
+                    ) : (
                       <td key={l.lang_code} className={k.values[l.lang_code] ? '' : 'a-missing'}>
                         <Cell value={k.values[l.lang_code] || ''} dir={l.dir} disabled={!canEdit} label={`${k.text_key} ${l.lang_code}`}
                           max={k.max_chars} onSave={(v) => save(k.text_key, l.lang_code, v)} />
                       </td>
-                    ))}
+                    )))}
                   </tr>
                 ))}
               </tbody>
