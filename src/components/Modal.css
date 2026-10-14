@@ -2,7 +2,10 @@
 .modal { background: var(--paper); border-radius: var(--r); width: min(560px, 100%); max-height: calc(100% - 24px); overflow: auto; padding: clamp(22px, 4vw, 36px); position: relative; animation: pop .4s cubic-bezier(.2, .9, .3, 1.2); }
 .modal:focus { outline: none; }
 @keyframes pop { from { transform: translateY(18px) scale(.97); opacity: 0; } }
-.modal .mlogo { height: 38px; width: auto; margin-block-end: 16px; }
+/* header row: logo left, X right, centred on each other, inside the modal's own top padding (row-reverse: the X is first
+   in the markup for focus order, and the row mirrors by itself in a right-to-left language) */
+.modal .mhead { display: flex; flex-direction: row-reverse; justify-content: space-between; align-items: center; gap: 12px; margin-block-end: 16px; }
+.modal .mlogo { height: 38px; width: auto; }
 .modal h3 { font-size: 28px; font-weight: 700; padding-inline-end: 40px; }
 .modal .sub { color: var(--ink-2); font-size: 14.5px; margin-block-start: 6px; }
-.modal .xbtn { position: absolute; inset-block-start: 16px; inset-inline-end: 16px; width: 40px; height: 40px; padding: 1px 6px; font-size: 20px; font-weight: 400; line-height: 32px; gap: normal; }
+.modal .xbtn { flex: none; width: 40px; height: 40px; padding: 1px 6px; font-size: 20px; font-weight: 400; line-height: 32px; gap: normal; }

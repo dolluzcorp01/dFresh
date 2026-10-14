@@ -81,8 +81,11 @@ export default function Modal({ open, onClose, title, className = '', before = n
         aria-labelledby={labelledBy || `${id}-h`}
         tabIndex={-1}
       >
-        <button type="button" className="btn b-line xbtn" onClick={() => onClose('x')} aria-label={t('close')}>×</button>
-        {before}
+        {/* One header row: logo left, X right, centred on each other (the X stays first for focus order; CSS puts it right). */}
+        <div className="mhead">
+          <button type="button" className="btn b-line xbtn" onClick={() => onClose('x')} aria-label={t('close')}>×</button>
+          {before}
+        </div>
         {!labelledBy && <h3 id={`${id}-h`}>{title}</h3>}
         {children}
       </div>
