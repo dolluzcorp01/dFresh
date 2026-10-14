@@ -141,8 +141,8 @@ visit, so a change is live on the next page load. No build or restart is needed.
 |---|---|---|
 | Eyebrow, heading, paragraph | Yes | Translations > `for_business`, `biz_h`, `biz_p` |
 | Which kits, order, name, tagline | Yes | Business kits: Active, drag to reorder, Name, Tagline, Add |
-| Products listed in each kit | Yes | Business kits > Products (in order): tick in a list (filter, colour versions under their product), drag to order |
-| Kit photo | Yes | Business kits > Photo from product (live photo preview) |
+| Products listed in each kit | Yes | Business kits > Products (in order): tick rows with photos (filter, colour versions under their product), drag the "Selected (in order)" list |
+| Kit photo | Yes | Business kits > Photo from product (searchable photo picker, kit's own products first, larger preview) |
 | Business type the "free sample" form is pre-filled with | Yes | Business kits > Business type |
 | "Request this kit" WhatsApp message | Yes | Translations > `wa_kit` ({kit} and {items} are filled in) and `kit_cta` for the label |
 | "Get a free sample" label | Yes | Translations > `sample` (shared, see note 6) |

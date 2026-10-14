@@ -31,7 +31,8 @@ function startDownload(token) {
   setTimeout(() => frame.remove(), 60000);
 }
 
-// Product chips: every card, plus a prefilled colour variant right after its card (it is what they picked).
+// Product chips: every card, plus a prefilled colour variant (it is what they picked). The prefilled ones (a card's
+// product, all of a kit's products) come first, in the opener's order; the rest follow in the site's order.
 function productChoices(products, prefill) {
   const list = [];
   for (const p of products) {
@@ -40,7 +41,15 @@ function productChoices(products, prefill) {
       if (prefill.includes(v.id)) list.push({ id: v.id, name: v.name === p.name ? `${v.name} (${v.colourName})` : v.name });
     }
   }
-  return list;
+  const first = prefill.map((id) => list.find((c) => c.id === id)).filter(Boolean);
+  return [...first, ...list.filter((c) => !prefill.includes(c.id))];
+}
+
+// The opener's prefill, keeping only products the site shows (a kit may list one that is switched off).
+function usablePrefill(prefill, products) {
+  if (!prefill || !Array.isArray(prefill.products)) return prefill;
+  const shown = new Set(products.flatMap((p) => [p.id, ...p.variants.map((v) => v.id)]));
+  return { ...prefill, products: [...new Set(prefill.products)].filter((id) => shown.has(id)) };
 }
 
 // What the form shows when nothing was typed: empty fields plus what the opener prefilled (a card's product,
@@ -101,12 +110,13 @@ function initialValues(type, cfg, prefill) {
 
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
-function Field({ field, uid, value, error, options, choices, onChange, onBlur, t, autoFocus }) {
+function Field({ field, uid, value, error, options, choices, onChange, onBlur, onTouch, t, autoFocus }) {
   const id = `${uid}-${field.name}`;
   const errId = `${id}-e`;
   const opt = field.required ? null : <> <span className="opt">({t('optional')})</span></>;
   const common = {
     id, name: field.name, 'data-autofocus': autoFocus || undefined, 'aria-invalid': error ? 'true' : undefined, 'aria-describedby': error ? errId : undefined,
+    onKeyDown: onTouch, onPointerDown: onTouch,
   };
   let control;
   if (field.type === 'pick') {
@@ -162,8 +172,9 @@ function Field({ field, uid, value, error, options, choices, onChange, onBlur, t
   );
 }
 
-export default function FormModal({ type, prefill, source, onClose }) {
+export default function FormModal({ type, prefill: opened, source, onClose }) {
   const { t, lang, data, settings } = useI18n();
+  const [prefill] = useState(() => usablePrefill(opened, data.products));
   const openLegal = useOpenLegal();
   const uid = useId();
   const cfg = useMemo(() => formConfig(type), [type]);
@@ -173,6 +184,9 @@ export default function FormModal({ type, prefill, source, onClose }) {
   const keepRef = useRef(null);
   const backTo = useRef(null); // where focus was when the close question opened
   const [errors, setErrors] = useState({});
+  // Fields the visitor has used (a key, a tap, a change). Leaving one of them shows its error; a field that only
+  // had focus (the first field is focused on open) stays quiet until Submit.
+  const touched = useRef(new Set());
   const [consent, setConsent] = useState(false);
   const [consentBad, setConsentBad] = useState(false);
   const [status, setStatus] = useState('idle'); // idle | sending | net | rate | done
@@ -336,10 +350,12 @@ export default function FormModal({ type, prefill, source, onClose }) {
                 options={optionsFor(f)}
                 choices={choices}
                 onChange={(v, validateNow) => {
+                  touched.current.add(f.name);
                   setValues((s) => ({ ...s, [f.name]: v }));
                   if (validateNow || errors[f.name]) check(f, v);
                 }}
-                onBlur={() => check(f)}
+                onTouch={() => touched.current.add(f.name)}
+                onBlur={() => { if (touched.current.has(f.name)) check(f); }}
               />
             ))}
             <label className="hp" aria-hidden="true">

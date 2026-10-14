@@ -5,6 +5,7 @@
 import { useMemo, useState } from 'react';
 import { api, rowId } from './adminApi';
 import { mediaUrl } from '../utils/api';
+import { KitProducts, ProductField, RepPreview } from './ProductSelect';
 import { Drawer, Field, Loading, TrEditor, useAction, useCan, useLoad } from './ui';
 import { LAND, MAP_H, MAP_W } from '../shared/mapShape';
 
@@ -193,14 +194,20 @@ function Editor({ name, cfg, id, lookups, products, rows, onClose, onSaved }) {
       <div className="a-grid2">
         {cfg.fields.map((f) => {
           const def = { ...f, type: f.keyField && !creating ? 'readonly' : f.type, options: f.lookup ? lookups[f.lookup] : f.options };
-          const field = <Field key={f.name} def={def} value={row[f.name]} disabled={!canEdit} onChange={(v) => set(f.name, v)} />;
-          if (f.lookup !== 'products') return field;
-          return <div key={f.name} className="a-repfield">{field}<RepPreview product={products.find((p) => p.product_id === row[f.name])} /></div>;
+          if (f.lookup !== 'products') return <Field key={f.name} def={def} value={row[f.name]} disabled={!canEdit} onChange={(v) => set(f.name, v)} />;
+          // a product: the photo picker; "Photo from product" also shows the larger photo (kits: their own products first)
+          const picker = (
+            <ProductField key={f.name} name={f.name} label={f.label} help={f.help} required={f.required} products={products} value={row[f.name]}
+              allowEmpty={f.allowEmpty !== false} disabled={!canEdit} onChange={(v) => set(f.name, v)}
+              top={cfg.links && (row.products || []).length ? { label: 'In this kit', ids: row.products } : null} />
+          );
+          if (f.name !== 'rep_product_id') return picker;
+          return <div key={f.name} className="a-repfield">{picker}<RepPreview product={products.find((p) => p.product_id === row[f.name])} /></div>;
         })}
       </div>
       {name === 'towns' && <TownPreview rows={rows} town={row} />}
       {cfg.links && (
-        <ProductPicker all={products} value={row.products || []} disabled={!canEdit} onChange={(v) => set('products', v)} />
+        <KitProducts all={products} value={row.products || []} disabled={!canEdit} onChange={(v) => set('products', v)} />
       )}
       {cfg.tr && (
         <>
@@ -229,94 +236,6 @@ function Editor({ name, cfg, id, lookups, products, rows, onClose, onSaved }) {
       )}
       {name === 'banners' && creating && <p className="a-muted">Create the banner first, then upload both photos and switch it on.</p>}
     </Drawer>
-  );
-}
-
-const productName = (p) => {
-  const name = p.tr?.en?.name ?? '';
-  const colour = p.variant_of ? p.tr?.en?.colour_name : null; // most colour versions already carry it in the name
-  return colour && !name.toLowerCase().includes(colour.toLowerCase()) ? `${name} (${colour})` : name;
-};
-const thumbUrl = (p) => (p && p.images && p.images[0] ? mediaUrl(`/media/products/400/${p.images[0].file_name}`) : null);
-const Thumb = ({ p, size = 40 }) => (thumbUrl(p)
-  ? <img className="a-thumb" src={thumbUrl(p)} alt="" width={size} height={size} style={{ width: size, height: size }} />
-  : <span className="a-thumb a-thumb-none" style={{ width: size, height: size }} aria-hidden="true" />);
-
-// "Photo from product": the picked product's main photo, from the unsaved value.
-function RepPreview({ product }) {
-  if (!product) return <p className="a-muted a-rep">No product picked.</p>;
-  return (
-    <div className="a-rep">
-      <Thumb p={product} size={72} />
-      <span>{thumbUrl(product) ? 'Main photo of' : 'No photo yet for'} <code>{product.product_id}</code><br />{productName(product)}</span>
-    </div>
-  );
-}
-
-// Kit products: tick them in the list (colour versions under their main product, with a filter), then drag the
-// chosen ones into order. value = product IDs in order.
-function ProductPicker({ all, value, onChange, disabled }) {
-  const [filter, setFilter] = useState('');
-  const [drag, setDrag] = useState(null);
-  const byId = new Map(all.map((p) => [p.product_id, p]));
-  const f = filter.trim().toLowerCase();
-  const match = (p) => !f || p.product_id.toLowerCase().includes(f) || productName(p).toLowerCase().includes(f);
-  const groups = all.filter((p) => !p.variant_of).map((m) => ({ main: m, variants: all.filter((v) => v.variant_of === m.product_id) }))
-    .filter(({ main, variants }) => match(main) || variants.some(match));
-  const toggle = (id) => onChange(value.includes(id) ? value.filter((x) => x !== id) : [...value, id]);
-  const move = (from, to) => {
-    if (from === null || to < 0 || to >= value.length || from === to) return;
-    const next = [...value];
-    next.splice(to, 0, next.splice(from, 1)[0]);
-    onChange(next);
-  };
-  const option = (p, variant) => (
-    <label key={p.product_id} className={`a-pick${variant ? ' a-pick-var' : ''}${p.is_active ? '' : ' a-off'}`}>
-      <input type="checkbox" checked={value.includes(p.product_id)} disabled={disabled} onChange={() => toggle(p.product_id)} />
-      <Thumb p={p} size={32} />
-      <code>{p.product_id}</code>
-      <span>{productName(p)}{p.is_active ? '' : ' (not active)'}</span>
-    </label>
-  );
-  return (
-    <div className="a-kitpick">
-      <h3>Products (in order)</h3>
-      <div className="a-kitpick-cols">
-        <div>
-          <input type="search" placeholder="Filter by ID or name" aria-label="Filter products" value={filter} onChange={(e) => setFilter(e.target.value)} />
-          <div className="a-pick-list" role="group" aria-label="Products to include">
-            {groups.map(({ main, variants }) => [option(main, false), ...variants.filter((v) => match(v) || match(main)).map((v) => option(v, true))])}
-            {!groups.length && <p className="a-muted">No product matches.</p>}
-          </div>
-        </div>
-        <div>
-          <p className="a-muted a-pick-note">{value.length ? `${value.length} chosen. Drag to change the order.` : 'Tick products in the list.'}</p>
-          <ol className="a-chosen">
-            {value.map((id, i) => {
-              const p = byId.get(id);
-              return (
-                <li key={id} draggable={!disabled} className={drag === i ? 'a-dragging' : undefined}
-                  onDragStart={() => setDrag(i)} onDragOver={(e) => { if (drag !== null) e.preventDefault(); }}
-                  onDrop={(e) => { e.preventDefault(); move(drag, i); setDrag(null); }} onDragEnd={() => setDrag(null)}>
-                  {!disabled && <span className="a-handle" aria-hidden="true">⠿</span>}
-                  <span className="a-num">{i + 1}</span>
-                  <Thumb p={p} size={32} />
-                  <code>{id}</code>
-                  <span className="a-chosen-name">{p ? productName(p) : '(unknown product)'}</span>
-                  {!disabled && (
-                    <span className="a-chosen-btns">
-                      <button type="button" className="a-btn a-btn-sm a-btn-ghost" onClick={() => move(i, i - 1)} disabled={i === 0} aria-label={`Move ${id} up`}>↑</button>
-                      <button type="button" className="a-btn a-btn-sm a-btn-ghost" onClick={() => move(i, i + 1)} disabled={i === value.length - 1} aria-label={`Move ${id} down`}>↓</button>
-                      <button type="button" className="a-btn a-btn-sm a-btn-ghost" onClick={() => toggle(id)} aria-label={`Remove ${id}`}>×</button>
-                    </span>
-                  )}
-                </li>
-              );
-            })}
-          </ol>
-        </div>
-      </div>
-    </div>
   );
 }
 

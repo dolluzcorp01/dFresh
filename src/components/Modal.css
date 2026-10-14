@@ -1,14 +1,17 @@
 .scrim { position: fixed; inset: 0; z-index: 70; background: rgba(18, 18, 20, .55); backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px); display: grid; place-items: center; padding: 16px; }
-.modal { background: var(--paper); border-radius: var(--r); width: min(560px, 100%); max-height: calc(100% - 24px); overflow: auto; padding: clamp(22px, 4vw, 36px); position: relative; animation: pop .4s cubic-bezier(.2, .9, .3, 1.2); }
+/* --mp: the modal's side / bottom padding. Only .mbody scrolls; the header row (logo + X) stays on top. */
+.modal { --mp: clamp(22px, 4vw, 36px); background: var(--paper); border-radius: var(--r); width: min(560px, 100%); max-height: calc(100% - 24px); display: flex; flex-direction: column; overflow: hidden; position: relative; animation: pop .4s cubic-bezier(.2, .9, .3, 1.2); }
+.modal .mbody { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 13px var(--mp) var(--mp); }
 .modal:focus { outline: none; }
 @keyframes pop { from { transform: translateY(18px) scale(.97); opacity: 0; } }
-/* header row: logo left, X right, centred on each other, inside the modal's own top padding (row-reverse: the X is first
-   in the markup for focus order, and the row mirrors by itself in a right-to-left language) */
-.modal .mhead { display: flex; flex-direction: row-reverse; justify-content: space-between; align-items: center; gap: 12px; margin-block-end: 16px; }
+/* header row: logo left, X right, centred on each other, 7px higher than the body's top padding (row-reverse: the X is
+   first in the markup for focus order, and the row mirrors by itself in a right-to-left language). Solid paper behind
+   it; a soft shadow only once the body has scrolled under it. */
+.modal .mhead { flex: none; position: relative; z-index: 3; display: flex; flex-direction: row-reverse; justify-content: space-between; align-items: center; gap: 12px; padding: calc(var(--mp) - 7px) var(--mp) 10px; background: var(--paper); transition: box-shadow .2s ease; }
+.modal.m-scrolled .mhead { box-shadow: 0 8px 14px -12px rgba(18, 18, 20, .45); }
+@media (prefers-reduced-motion: reduce) { .modal .mhead { transition: none; } }
 .modal .mlogo { height: 38px; width: auto; }
 .modal h3 { font-size: 28px; font-weight: 700; padding-inline-end: 40px; }
 .modal .sub { color: var(--ink-2); font-size: 14.5px; margin-block-start: 6px; }
 .modal .xbtn { flex: none; width: 40px; height: 40px; padding: 0; display: flex; align-items: center; justify-content: center; line-height: 1; gap: normal; }
 .modal .xbtn svg { display: block; width: 16px; height: 16px; }
-/* thank-you screen: logo and X a little higher (same row, still centred on each other) */
-.modal.m-done .mhead { margin-block-start: -7px; }

@@ -1,6 +1,8 @@
 // Modal shell: portal, scrim, focus trap, Esc closes the top-most only, focus returns to the opener,
 // page scroll locked while any modal is open. Modals stack (a legal overlay over a form).
-import { useEffect, useId, useRef } from 'react';
+// Layout: the header row (logo + X) stays put at the top; only the body under it scrolls, and the header gets a soft
+// shadow once the body has scrolled, so the X is always one tap away.
+import { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useT } from '../i18n/useT';
 import { lockScroll, unlockScroll } from '../utils/scrollLock';
@@ -22,6 +24,7 @@ export default function Modal({ open, onClose, title, className = '', before = n
   const t = useT();
   const id = useId();
   const dialogRef = useRef(null);
+  const [scrolled, setScrolled] = useState(false);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
 
@@ -75,7 +78,7 @@ export default function Modal({ open, onClose, title, className = '', before = n
     >
       <div
         ref={dialogRef}
-        className={`modal${className ? ` ${className}` : ''}`}
+        className={`modal${className ? ` ${className}` : ''}${scrolled ? ' m-scrolled' : ''}`}
         role="dialog"
         aria-modal="true"
         aria-labelledby={labelledBy || `${id}-h`}
@@ -89,8 +92,10 @@ export default function Modal({ open, onClose, title, className = '', before = n
           </button>
           {before}
         </div>
-        {!labelledBy && <h3 id={`${id}-h`}>{title}</h3>}
-        {children}
+        <div className="mbody" onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 2)}>
+          {!labelledBy && <h3 id={`${id}-h`}>{title}</h3>}
+          {children}
+        </div>
       </div>
     </div>,
     document.body

@@ -9,6 +9,7 @@ import { useMemo, useState } from 'react';
 import { api } from './adminApi';
 import { mediaUrl } from '../utils/api';
 import { Drawer, Field, Loading, Notice, TrEditor, useAction, useCan, useLoad } from './ui';
+import { ProductField } from './ProductSelect';
 
 const TR_FIELDS = [
   { name: 'name', label: 'Name', required: true }, { name: 'one_liner', label: 'One-liner', required: true },
@@ -230,7 +231,12 @@ function ProductEditor({ id, initial, cats, all, home, onClose, onSaved, onAddVa
       {act.note}
       {/* Rows: ID / category / colour version of / position; specification; pack / featured order / swatch;
           the three switches on one line; spec status. */}
-      <div className="a-prow a-prow-4">{F('product_id')}{F('category_key')}{F('variant_of')}{F('sort_order')}</div>
+      <div className="a-prow a-prow-4">
+        {F('product_id')}{F('category_key')}
+        <ProductField name="variant_of" label={defs.variant_of.label} help={defs.variant_of.help} disabled={!canEdit} value={p.variant_of}
+          products={cards.filter((c) => c.product_id !== p.product_id)} onChange={(v) => set('variant_of', v)} />
+        {F('sort_order')}
+      </div>
       <div className="a-prow">{F('specification')}</div>
       <div className={`a-prow a-prow-${showSwatch ? 3 : 2}`}>
         {F('pack')}{F('featured_order')}

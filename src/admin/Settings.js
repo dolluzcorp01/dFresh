@@ -1,6 +1,6 @@
 // Settings (spec F 10, admin): every site_settings row with its description; the public flag is shown, not
 // editable here (a secret must never become public by a click). share_image / about_image: preview + Upload /
-// Remove (typed values are refused by the server); door_home_product / door_biz_product: a product dropdown.
+// Remove (typed values are refused by the server); door_home_product / door_biz_product: the photo product picker.
 // mail_logo_url also gets a live preview on the e-mail's ink header (the typed URL, or the built-in logo when
 // empty), the server's last check of the saved URL, and "Send test mail" (MAIL_TEST_TO locally, the signed-in
 // admin's own e-mail in production). Saving a URL is refused by the server unless it passes the check.
@@ -8,6 +8,7 @@ import { useEffect, useState } from 'react';
 import { api } from './adminApi';
 import { API_BASE, mediaUrl } from '../utils/api';
 import { Loading, Notice, fmtDate, useAction, useLoad } from './ui';
+import { ProductSelect } from './ProductSelect';
 
 const HTTPS = /^https:\/\/[^\s"'<>]+$/;
 const BUILTIN = `${API_BASE}/api/dfresh/admin/mail-logo/builtin.png`;
@@ -62,10 +63,11 @@ function Row({ s, act, cards, onSaved }) {
     control = <Picture s={s} cfg={picture} act={act} onSaved={onSaved} />;
   } else if (PRODUCT_PICKERS.includes(s.setting_key)) {
     control = (
-      <select value={v} onChange={(e) => setV(e.target.value)} aria-label={s.setting_key}>
-        {!cards.some((p) => p.product_id === v) && <option value={v}>{v || 'Choose a product'}</option>}
-        {cards.map((p) => <option key={p.product_id} value={p.product_id}>{p.product_id} {p.tr?.en?.name ?? ''}{p.is_active ? '' : ' (not active)'}</option>)}
-      </select>
+      <>
+        <span id={`set-${s.setting_key}-l`} className="a-sr">{s.setting_key}</span>
+        <ProductSelect id={`set-${s.setting_key}`} labelledBy={`set-${s.setting_key}-l`} products={cards} value={v || null} allowEmpty={false}
+          onChange={(x) => setV(x || '')} />
+      </>
     );
   } else if (v.length > 60 || v.includes('\n')) {
     control = <textarea rows={4} value={v} onChange={(e) => setV(e.target.value)} aria-label={s.setting_key} />;

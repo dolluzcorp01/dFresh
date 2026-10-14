@@ -11,7 +11,8 @@
 :root[dir="rtl"] .search input { padding: 13px 42px 13px 16px; }
 .search input:focus { outline: none; border-color: var(--ink); }
 .search svg { position: absolute; inset-inline-start: 15px; top: 50%; transform: translateY(-50%); width: 18px; height: 18px; color: var(--ink-3); }
-.xbtn { width: 48px; height: 48px; border-radius: 50%; border: 0; background: var(--ink); color: var(--gold-l); font-size: 22px; cursor: pointer; transition: transform .3s var(--ease); flex: none; }
+.xbtn { width: 48px; height: 48px; padding: 0; display: grid; place-items: center; border-radius: 50%; border: 0; background: var(--ink); color: var(--gold-l); font-size: 22px; cursor: pointer; transition: transform .3s var(--ease); flex: none; }
+.xbtn svg { display: block; width: 18px; height: 18px; }
 .xbtn:hover { transform: rotate(90deg); }
 .filters { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; padding-bottom: 14px; }
 .filters::-webkit-scrollbar { display: none; }
