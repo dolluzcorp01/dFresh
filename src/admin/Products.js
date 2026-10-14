@@ -166,10 +166,19 @@ function ProductEditor({ id, initial, cats, all, onClose, onSaved, onAddVariant 
   const p = draft || (creating ? { tr: {}, ...initial } : loaded.data);
   const cards = all.filter((x) => !x.variant_of);
 
-  const set = (k, v) => setDraft({ ...p, [k]: v });
-  const save = () => act.run(async () => {
+  const [swatchErr, setSwatchErr] = useState(null);
+  const set = (k, v) => { if (k === 'swatch_hex') setSwatchErr(null); setDraft({ ...p, [k]: v }); };
+  const swatchShown = () => Boolean(p.variant_of) || (!creating && all.some((x) => x.variant_of === p.product_id));
+  const save = () => {
+    // a shown swatch must be a #RRGGBB colour (it is the dot on the product card)
+    if (swatchShown() && !HEX.test(p.swatch_hex || '')) {
+      setSwatchErr(p.swatch_hex ? 'Use the form #RRGGBB, e.g. #7A1F2B' : 'Pick a colour or type #RRGGBB');
+      return undefined;
+    }
+    return saveNow();
+  };
+  const saveNow = () => act.run(async () => {
     const { images, ...body } = p; // eslint-disable-line no-unused-vars
-    if (body.swatch_hex && !HEX.test(body.swatch_hex)) throw new Error('Swatch colour: use the form #RRGGBB, e.g. #7A1F2B');
     const saved = creating ? await api.send('POST', '/products', body) : await api.send('PUT', `/products/${encodeURIComponent(id)}`, body);
     setDraft(null);
     if (!creating) loaded.setData(saved);
@@ -178,38 +187,48 @@ function ProductEditor({ id, initial, cats, all, onClose, onSaved, onAddVariant 
 
   if (!creating && !loaded.data) return <Drawer title="Product" onClose={onClose}><Loading state={loaded}>{null}</Loading></Drawer>;
 
-  // The swatch only matters for a colour version or a product that has colour versions (the dots on the card).
-  const hasVersions = !creating && all.some((x) => x.variant_of === p.product_id);
-  const showSwatch = Boolean(p.variant_of) || hasVersions;
+  // The swatch only matters for a colour version or a product that has colour versions (the dots on the card); it
+  // follows "Colour version of" at once (the draft), before saving.
+  const showSwatch = swatchShown();
   const hex = p.swatch_hex || '';
-  const hexOk = !hex || HEX.test(hex);
+  const hexOk = HEX.test(hex);
+  const defs = Object.fromEntries(baseFields(cats, cards.filter((c) => c.product_id !== p.product_id), creating).map((fd) => [fd.name, fd]));
+  const F = (name) => <Field key={name} def={defs[name]} value={p[name]} disabled={!canEdit} onChange={(v) => set(name, v)} />;
 
   return (
     <Drawer title={creating ? (initial.variant_of ? `New colour of ${initial.variant_of}` : 'New product') : `${p.product_id}`} onClose={onClose}
       footer={canEdit && (
         <>
-          <button type="button" className="a-btn" onClick={save} disabled={act.busy || !hexOk}>{creating ? 'Create' : 'Save'}</button>
+          <button type="button" className="a-btn" onClick={save} disabled={act.busy}>{creating ? 'Create' : 'Save'}</button>
           {!creating && !p.variant_of && <button type="button" className="a-btn a-btn-ghost" onClick={() => onAddVariant(p)}>Add colour version</button>}
           {draft && <span className="a-muted">Unsaved changes</span>}
         </>
       )}>
       {act.note}
-      <div className="a-grid2">
-        {baseFields(cats, cards.filter((c) => c.product_id !== p.product_id), creating).map((fd) => (
-          <Field key={fd.name} def={fd} value={p[fd.name]} disabled={!canEdit} onChange={(v) => set(fd.name, v)} />
-        ))}
+      {/* Rows: ID / category / colour version of / position; specification; pack / featured order / swatch;
+          the three switches on one line; spec status. */}
+      <div className="a-prow a-prow-4">{F('product_id')}{F('category_key')}{F('variant_of')}{F('sort_order')}</div>
+      <div className="a-prow">{F('specification')}</div>
+      <div className={`a-prow a-prow-${showSwatch ? 3 : 2}`}>
+        {F('pack')}{F('featured_order')}
         {showSwatch && (
-          <label className="a-field" htmlFor="f-swatch_hex">
-            <span>Swatch colour</span>
+          <div className="a-field">
+            <span id="f-swatch-lbl">Swatch colour</span>
             <span className="a-swatch-row">
-              <span className="a-swatch" style={{ backgroundColor: hexOk && hex ? hex : 'transparent' }} aria-hidden="true" />
-              <input id="f-swatch_hex" type="text" value={hex} placeholder="#RRGGBB" maxLength={7} disabled={!canEdit}
-                aria-invalid={!hexOk} onChange={(e) => set('swatch_hex', e.target.value.trim() || null)} />
+              {/* the card's colour dot, live; clicking it opens the colour picker */}
+              <span className={`a-dot${hexOk ? '' : ' a-dot-empty'}`} style={{ '--c': hexOk ? hex : 'transparent' }} title="Pick a colour">
+                <input type="color" value={hexOk ? hex.toLowerCase() : '#000000'} disabled={!canEdit} aria-label="Pick the swatch colour"
+                  onChange={(e) => set('swatch_hex', e.target.value.toUpperCase())} />
+              </span>
+              <input id="f-swatch_hex" type="text" aria-labelledby="f-swatch-lbl" value={hex} placeholder="#RRGGBB" maxLength={7} disabled={!canEdit}
+                aria-invalid={Boolean(swatchErr)} aria-describedby="f-swatch-msg" onChange={(e) => set('swatch_hex', e.target.value.trim() || null)} />
             </span>
-            <small className={hexOk ? 'a-muted' : 'a-bad'}>{hexOk ? 'The colour dot on the product card, as #RRGGBB.' : 'Use the form #RRGGBB, e.g. #7A1F2B'}</small>
-          </label>
+            <small id="f-swatch-msg" className={swatchErr ? 'a-bad' : 'a-muted'}>{swatchErr || 'The colour dot on the product card.'}</small>
+          </div>
         )}
       </div>
+      <div className="a-prow a-pchecks">{F('is_featured')}{F('show_for_home')}{F('is_active')}</div>
+      <div className="a-prow">{F('spec_status')}</div>
       <h3>Text per language</h3>
       <p className="a-muted">Empty cells show the default language on the site.</p>
       <TrEditor fields={TR_FIELDS} tr={p.tr || {}} disabled={!canEdit} onChange={(tr) => set('tr', tr)} />

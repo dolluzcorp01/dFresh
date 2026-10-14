@@ -213,7 +213,21 @@ tr.a-target td { background: #fff6d6; }
 .a-featured-list li.a-off { color: var(--a-muted); }
 .a-featured-list .a-num { min-width: 22px; font-weight: 700; }
 .a-swatch-row { display: flex; align-items: center; gap: 8px; }
-.a-swatch { flex: none; width: 34px; height: 34px; border-radius: 8px; border: 1px solid var(--a-line); background-image: linear-gradient(45deg, #eee 25%, transparent 25%, transparent 75%, #eee 75%); background-size: 10px 10px; }
+/* product editor rows (Products.js): 4 / 1 / 2-3 columns, inputs top-aligned so they line up; the switches on one line */
+.a-prow { display: grid; gap: 12px; margin-bottom: 12px; grid-template-columns: minmax(0, 1fr); align-items: start; }
+.a-prow-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.a-prow-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.a-prow-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.a-prow .a-field > input, .a-prow .a-field > select, .a-swatch-row input[type="text"] { height: 36px; box-sizing: border-box; }
+.a-pchecks { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 28px; }
+.a-pchecks .a-check { align-items: center; }
+@media (max-width: 900px) { .a-prow-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .a-prow-4, .a-prow-3, .a-prow-2 { grid-template-columns: minmax(0, 1fr); } }
+/* swatch: the product card's colour dot (22 px, white ring, thin outline so white shows); empty / invalid = dashed */
+.a-dot { position: relative; flex: none; width: 22px; height: 22px; border-radius: 50%; background: var(--c); border: 2px solid #fff; box-shadow: 0 0 0 1.5px #e6dfcb; cursor: pointer; }
+.a-dot.a-dot-empty { background: transparent; border: 1.5px dashed #8a8577; box-shadow: none; }
+.a-dot input[type="color"] { position: absolute; inset: -4px; width: calc(100% + 8px); height: calc(100% + 8px); opacity: 0; cursor: pointer; padding: 0; border: 0; }
+.a-dot:focus-within { outline: 2px solid var(--a-ink); outline-offset: 3px; }
 .a-swatch-row input { flex: 1; min-width: 0; }
 .a-pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; background: #efeadb; }
 .a-st-new { background: var(--a-gold); }
