@@ -83,7 +83,10 @@ export default function Modal({ open, onClose, title, className = '', before = n
       >
         {/* One header row: logo left, X right, centred on each other (the X stays first for focus order; CSS puts it right). */}
         <div className="mhead">
-          <button type="button" className="btn b-line xbtn" onClick={() => onClose('x')} aria-label={t('close')}>×</button>
+          <button type="button" className="btn b-line xbtn" onClick={() => onClose('x')} aria-label={t('close')}>
+            {/* a drawn cross, centred by flex: a text "×" sits on the font's baseline, a little high */}
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" /></svg>
+          </button>
           {before}
         </div>
         {!labelledBy && <h3 id={`${id}-h`}>{title}</h3>}

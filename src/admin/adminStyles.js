@@ -193,6 +193,15 @@ tr.a-target td { background: #fff6d6; }
 .a-table th { font-size: 12.5px; color: var(--a-ink2); background: #faf8f1; white-space: nowrap; }
 .a-hover tbody tr { cursor: pointer; }
 .a-hover tbody tr:hover { background: #faf6e6; }
+/* a lead that just arrived (live): a short gold highlight that fades; reduced motion: plain highlight, cleared after 4 s */
+.a-table tbody tr.a-fresh td { animation: a-fresh 4s ease-out forwards; }
+@keyframes a-fresh { 0%, 35% { background: #fff1bf; } 100% { background: transparent; } }
+@media (prefers-reduced-motion: reduce) { .a-table tbody tr.a-fresh td { background: #fff1bf; } }
+/* "N new leads" toast, bottom right; never covers more than its own corner */
+.a-toast { position: fixed; z-index: 80; inset-inline-end: 16px; bottom: 16px; display: flex; align-items: center; gap: 6px; padding: 10px 8px 10px 14px; border-radius: 10px;
+  background: var(--a-ink); color: #fff; box-shadow: 0 10px 30px rgba(18, 18, 20, .25); font-weight: 600; }
+.adm .a-toast a { color: var(--a-gold); text-decoration: none; }
+.a-toast .a-x { color: #fff; }
 .a-num { text-align: end; font-variant-numeric: tabular-nums; }
 .a-off td { color: var(--a-muted); }
 .a-thumb { width: 40px; height: 40px; object-fit: contain; background: #fff; border: 1px solid var(--a-line); border-radius: 6px; }

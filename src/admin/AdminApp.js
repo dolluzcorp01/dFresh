@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 // Only router exports the public site already uses (Link, useLocation...), so this chunk adds 0 KB to main.js.
 import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import Sidebar, { MenuToggle, saveCollapsed, savedCollapsed, useNarrow } from './Sidebar';
+import useLeadPulse from './useLeadPulse';
 import { api } from './adminApi';
 import { mediaUrl } from '../utils/api';
 import { AdminContext, Notice } from './ui';
@@ -77,6 +78,10 @@ export default function AdminApp() {
     api.get('/nav-counts').then((d) => setNewLeads(d.newLeads || 0), () => {});
   }, [me, pathname]);
 
+  // Live: new leads every 15 s (badge, toast, quiet refresh of the Leads list and the Dashboard via leadsVersion)
+  const pulse = useLeadPulse(Boolean(me));
+  useEffect(() => { if (pulse.newLeads !== null) setNewLeads(pulse.newLeads); }, [pulse.newLeads]);
+
   const toggleCollapsed = () => setCollapsed((c) => { saveCollapsed(!c); return !c; });
   const closeDrawer = useCallback((returnFocus) => {
     setMenuOpen(false);
@@ -92,7 +97,7 @@ export default function AdminApp() {
   if (me === undefined) return <main className="adm a-center"><p className="a-muted">Loading...</p></main>;
   if (me === null) return <Login onSignedIn={check} />;
 
-  const ctx = { me, languages, reloadLanguages: loadLanguages };
+  const ctx = { me, languages, reloadLanguages: loadLanguages, leadsVersion: pulse.version };
 
   return (
     <AdminContext.Provider value={ctx}>
@@ -136,6 +141,12 @@ export default function AdminApp() {
           </Routes>
           </ScreenBoundary>
         </main>
+        {pulse.toast && (
+          <div className="a-toast" role="status" aria-live="polite">
+            <Link to="/admin/leads" onClick={pulse.dismissToast}>{pulse.toast}</Link>
+            <button type="button" className="a-x" onClick={pulse.dismissToast} aria-label="Dismiss">×</button>
+          </div>
+        )}
       </div>
     </AdminContext.Provider>
   );

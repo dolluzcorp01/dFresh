@@ -271,6 +271,18 @@ route('get', '/leads/export.xlsx', 'editor', async (req, res) => {
   await audit(null, { empId: by(req), action: 'export', entity: 'lead', after: { filters: req.query, rows: rows.length, file: 'leads.xlsx', bytes } });
 });
 
+// Live admin (polled every 15 s while the tab is visible): leads newer than ?since=<lead_id>. Light: two counts and
+// the newest id. No since = just the newest id (the starting point). { lastId, added, newLeads }
+route('get', '/leads/changes', 'viewer', async (req) => {
+  const since = /^\d{1,15}$/.test(String(req.query.since || '')) ? Number(req.query.since) : null;
+  const [[r]] = await db.query(
+    `SELECT COALESCE(MAX(lead_id), 0) AS last_id, SUM(status = 'new') AS new_leads,
+            SUM(lead_id > ?) AS added FROM leads`,
+    [since === null ? Number.MAX_SAFE_INTEGER : since]
+  );
+  return { lastId: Number(r.last_id), added: Number(r.added) || 0, newLeads: Number(r.new_leads) || 0 };
+});
+
 route('get', '/leads', 'viewer', async (req) => {
   const f = leadFilters(req.query);
   const pg = page(req);

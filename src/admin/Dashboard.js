@@ -1,7 +1,9 @@
 // Dashboard (spec F 1): "Attention needed" first (only what applies, every line a link to where it is fixed; a calm
 // "All good" when nothing is), then the counters (leads today / 7 days / by form, outbox health, translations per
 // language) and quick-jump tiles for the sidebar groups. Lines for screens a role cannot open are left out.
+import { useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import { api } from './adminApi';
 import { Loading, useAdmin, useCan, useLoad } from './ui';
 import Icon from './icons';
 import { groupsFor } from './Sidebar';
@@ -52,7 +54,14 @@ function attentionLines(d, isAdmin) {
 
 export default function Dashboard() {
   const s = useLoad('/dashboard');
-  const { me } = useAdmin();
+  const { me, leadsVersion } = useAdmin();
+  // Live: new leads (AdminApp polls) refresh the counts and the attention panel quietly, without a loading state
+  useEffect(() => {
+    if (!leadsVersion) return undefined;
+    let alive = true;
+    api.get('/dashboard').then((d) => { if (alive) s.setData(d); }, () => {});
+    return () => { alive = false; };
+  }, [leadsVersion]); // eslint-disable-line react-hooks/exhaustive-deps
   const isAdmin = useCan('admin');
   const d = s.data;
   const lines = d ? attentionLines(d, isAdmin) : [];

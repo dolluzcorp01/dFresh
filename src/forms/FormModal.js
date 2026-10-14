@@ -302,7 +302,8 @@ export default function FormModal({ type, prefill, source, onClose }) {
   const logo = <img className="mlogo" src={mediaUrl('/media/logo/dfresh-logo-on-light.webp')} alt="dFresh" width="900" height="498" />;
 
   return (
-    <Modal open onClose={requestClose} closeOnScrim={false} title={t(cfg.title)} before={logo} labelledBy={done ? `${uid}-done` : null}>
+    <Modal open onClose={requestClose} closeOnScrim={false} title={t(cfg.title)} before={logo} labelledBy={done ? `${uid}-done` : null}
+      className={done ? 'm-done' : undefined}>
       {done ? (
         <div className="done" ref={doneRef}>
           <div className="tick" aria-hidden="true">

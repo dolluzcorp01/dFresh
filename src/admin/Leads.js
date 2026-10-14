@@ -1,10 +1,42 @@
 // Leads (spec F 2): filters, table, detail drawer (status, assign, staff notes), outbox rows with retry, Excel / CSV
 // download of the filtered list.
 // ?ref=DFL-... (link in the staff alert e-mail) opens that lead.
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from './adminApi';
 import { Drawer, Loading, fmtDate, useAction, useAdmin, useCan, useLoad } from './ui';
+import rules from '../shared/rules.json';
+
+// Lead drawer: every field of the lead's form, in the form's own order (src/shared/rules.json, the same file the site
+// and the API use), always shown, so leads of one form type line up when compared; an empty one is the label with a
+// blank value. [label, value] per form field; phone also gets its WhatsApp line.
+const formFields = (type) => {
+  const def = rules.forms[type];
+  return (typeof def === 'string' ? rules.forms[def] : def || []).map((x) => x.name);
+};
+function fieldRows(name, l, details) {
+  const d = (k) => details[k] ?? null;
+  switch (name) {
+    case 'first_name': return [['First name', l.first_name]];
+    case 'last_name': return [['Last name', l.last_name]];
+    case 'full_name': return [['Name', l.full_name]];
+    case 'business_name': return [['Business', l.business_name]];
+    case 'firm_name': return [['Firm', l.business_name || d('firm_name')]];
+    case 'business_type': return [['Business type', l.business_type]];
+    case 'town': return [['Town', l.town]];
+    case 'phone': return [['Phone', l.phone && <a href={`tel:+91${l.phone}`}>{l.phone}</a>], ['WhatsApp', l.phone && <a href={`https://wa.me/91${l.phone}`} target="_blank" rel="noreferrer">wa.me/91{l.phone}</a>]];
+    case 'email': return [['E-mail', l.email && <a href={`mailto:${l.email}`}>{l.email}</a>]];
+    case 'products': return [['Products', (l.products || []).map((p) => `${p.product_id} ${p.name || ''}`).join(', ')]];
+    case 'monthly_quantity': return [['Monthly quantity', l.monthly_quantity]];
+    case 'message': return [['Message', l.message]];
+    case 'gst_no': return [['GST no.', d('gst_no')]];
+    case 'areas': return [['Areas covered', d('areas')]];
+    case 'godown_vehicles': return [['Godown / vehicles', d('godown_vehicles')]];
+    case 'brands': return [['Brands handled', d('brands')]];
+    case 'monthly_sales': return [['Monthly tissue sales', d('monthly_sales')]];
+    default: return [[name.replace(/_/g, ' '), l[name] ?? d(name)]];
+  }
+}
 
 const FORMS = ['brochure', 'quote', 'sample', 'distributor', 'contact'];
 const STATUS = ['new', 'contacted', 'qualified', 'won', 'lost', 'spam'];
@@ -18,7 +50,7 @@ export default function Leads() {
   const navigate = useNavigate();
   const params = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const setParams = (next) => navigate({ search: next.toString() ? `?${next}` : '' }, { replace: true });
-  const { languages } = useAdmin();
+  const { languages, leadsVersion } = useAdmin();
   const canEdit = useCan('editor');
   const query = useMemo(() => {
     const q = new URLSearchParams();
@@ -27,6 +59,43 @@ export default function Leads() {
     return q.toString();
   }, [params]);
   const list = useLoad(`/leads?${query}`);
+  // Live: when leads arrive (AdminApp polls), the same query is fetched again quietly: no loading state, the open
+  // drawer and its unsaved edits are untouched (it keeps its own data), filters stay, new rows get a fading highlight,
+  // and when the page is scrolled the rows on screen stay where they are.
+  const [fresh, setFresh] = useState(() => new Set());
+  const anchor = useRef(null);
+  const listRef = useRef(list);
+  listRef.current = list;
+  useEffect(() => {
+    if (!leadsVersion) return undefined;
+    let alive = true;
+    api.get(`/leads?${query}`).then((data) => {
+      const cur = listRef.current;
+      if (!alive || !cur.data) return;
+      const before = new Set(cur.data.rows.map((r) => r.lead_id));
+      const added = data.rows.filter((r) => !before.has(r.lead_id)).map((r) => r.lead_id);
+      if (window.scrollY > 0) {
+        const rows = [...document.querySelectorAll('.a-main tbody tr[data-lead]')];
+        const first = rows.find((tr) => tr.getBoundingClientRect().top >= 0);
+        if (first) anchor.current = { id: first.dataset.lead, top: first.getBoundingClientRect().top };
+      }
+      cur.setData(data);
+      if (added.length) setFresh(new Set(added));
+    }, () => {});
+    return () => { alive = false; };
+  }, [leadsVersion]); // eslint-disable-line react-hooks/exhaustive-deps
+  useLayoutEffect(() => {
+    const a = anchor.current;
+    anchor.current = null;
+    if (!a) return;
+    const tr = document.querySelector(`.a-main tbody tr[data-lead="${a.id}"]`);
+    if (tr) window.scrollBy(0, tr.getBoundingClientRect().top - a.top);
+  }, [list.data]);
+  useEffect(() => {
+    if (!fresh.size) return undefined;
+    const id = setTimeout(() => setFresh(new Set()), 4000);
+    return () => clearTimeout(id);
+  }, [fresh]);
   const [openId, setOpenId] = useState(null);
   const [search, setSearch] = useState(params.get('q') || '');
   const dl = useAction();
@@ -83,7 +152,7 @@ export default function Leads() {
                 <thead><tr><th>Ref</th><th>Received</th><th>Form</th><th>Name</th><th>Business / town</th><th>Phone</th><th>Lang</th><th>Status</th><th>Assigned</th></tr></thead>
                 <tbody>
                   {d.rows.map((r) => (
-                    <tr key={r.lead_id} onClick={() => setOpenId(r.lead_id)} tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && setOpenId(r.lead_id)}>
+                    <tr key={r.lead_id} data-lead={r.lead_id} className={fresh.has(r.lead_id) ? 'a-fresh' : undefined} onClick={() => setOpenId(r.lead_id)} tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && setOpenId(r.lead_id)}>
                       <td><code>{r.lead_ref}</code></td>
                       <td>{fmtDate(r.created_at)}</td>
                       <td>{r.form_type}</td>
@@ -134,12 +203,8 @@ function LeadDrawer({ id, onClose, onChanged }) {
 
   const details = l && l.details_json ? (typeof l.details_json === 'string' ? JSON.parse(l.details_json) : l.details_json) : {};
   const rows = l ? [
-    ['Form', l.form_type], ['Received', fmtDate(l.created_at)], ['Name', l.full_name || [l.first_name, l.last_name].filter(Boolean).join(' ')],
-    ['Business', l.business_name], ['Business type', l.business_type], ['Town', l.town],
-    ['Phone', l.phone && <a href={`tel:+91${l.phone}`}>{l.phone}</a>], ['WhatsApp', l.phone && <a href={`https://wa.me/91${l.phone}`} target="_blank" rel="noreferrer">wa.me/91{l.phone}</a>],
-    ['E-mail', l.email && <a href={`mailto:${l.email}`}>{l.email}</a>],
-    ['Products', (l.products || []).map((p) => `${p.product_id} ${p.name || ''}`).join(', ')], ['Monthly quantity', l.monthly_quantity], ['Message', l.message],
-    ...Object.entries(details).filter(([k]) => k !== 'firm_name').map(([k, v]) => [k.replace(/_/g, ' '), v]),
+    ['Form', l.form_type], ['Received', fmtDate(l.created_at)],
+    ...formFields(l.form_type).flatMap((name) => fieldRows(name, l, details)),
     ['Language', l.lang_code], ['Page', l.source_page], ['Opened from', l.source_ref], ['Consent', l.consent_given ? `Yes, ${fmtDate(l.consent_at)}: "${l.consent_text}"` : 'No'],
     ['Sheet synced', fmtDate(l.sheet_synced_at)],
   ] : [];
@@ -151,7 +216,7 @@ function LeadDrawer({ id, onClose, onChanged }) {
         {l && form && (
           <>
             {act.note}
-            <dl className="a-dl">{rows.filter(([, v]) => v !== null && v !== undefined && v !== '').map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}</dl>
+            <dl className="a-dl">{rows.map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v === null || v === undefined ? '' : v}</dd></div>)}</dl>
             <h3>Handling</h3>
             <div className="a-grid2">
               <label className="a-field"><span>Status</span>
