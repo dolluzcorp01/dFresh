@@ -34,10 +34,10 @@ const SECTIONS = {
     fields: [
       { name: 'kit_key', label: 'Key', required: true, keyField: true }, POSITION,
       { name: 'business_type', label: 'Business type (prefills the quote form)', type: 'select', lookup: 'businessTypes', allowEmpty: false },
-      { name: 'rep_product_id', label: 'Photo from product', type: 'select', lookup: 'products' }, ACTIVE,
+      { name: 'rep_product_id', label: 'Photo from product', type: 'select', lookup: 'products' }, { ...ACTIVE, wide: true },
     ],
     tr: [{ name: 'name', label: 'Name', required: true }, { name: 'tagline', label: 'Tagline', required: true }],
-    links: 'products',
+    links: 'products', // drawer order: fields, Active, text per language, Selected (in order), Products (in order)
     list: (r) => [r.kit_key, r.tr?.en?.name ?? '', r.business_type, (r.products || []).join(', ')],
     head: ['Key', 'Name (EN)', 'Business type', 'Products'],
     defaults: { is_active: 1, products: [] },
@@ -206,14 +206,14 @@ function Editor({ name, cfg, id, lookups, products, rows, onClose, onSaved }) {
         })}
       </div>
       {name === 'towns' && <TownPreview rows={rows} town={row} />}
-      {cfg.links && (
-        <KitProducts all={products} value={row.products || []} disabled={!canEdit} onChange={(v) => set('products', v)} />
-      )}
       {cfg.tr && (
-        <>
+        <div className="a-dsec">
           <h3>Text per language</h3>
           <TrEditor fields={cfg.tr} tr={row.tr || {}} disabled={!canEdit} onChange={(tr) => set('tr', tr)} />
-        </>
+        </div>
+      )}
+      {cfg.links && (
+        <KitProducts all={products} value={row.products || []} disabled={!canEdit} onChange={(v) => set('products', v)} />
       )}
       {name === 'banners' && !creating && (
         <>

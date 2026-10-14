@@ -44,6 +44,7 @@ export default function AdminApp() {
   const [collapsed, setCollapsed] = useState(savedCollapsed);
   const [newLeads, setNewLeads] = useState(0);
   const burgerRef = useRef(null);
+  const styleRef = useRef(null); // the admin <style> tag
   const narrow = useNarrow();
   const [error, setError] = useState(null);
   const { pathname } = useLocation();
@@ -59,8 +60,14 @@ export default function AdminApp() {
     const style = document.createElement('style');
     style.textContent = css;
     document.head.appendChild(style);
-    return () => { meta.remove(); style.remove(); if (icon) icon.remove(); };
+    styleRef.current = style;
+    return () => { meta.remove(); style.remove(); if (icon) icon.remove(); styleRef.current = null; };
   }, []);
+  // Dev hot reload re-runs adminStyles.js but not the effect above: without this an open tab keeps the old CSS
+  // under new markup (e.g. unstyled rows). Same string = nothing to do.
+  useEffect(() => {
+    if (styleRef.current && styleRef.current.textContent !== css) styleRef.current.textContent = css;
+  });
 
   const loadLanguages = useCallback(() => api.get('/languages').then(setLanguages, (e) => setError(e.message)), []);
 

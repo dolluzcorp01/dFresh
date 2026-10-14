@@ -3,8 +3,7 @@
 //   version's main product). A button showing the pick; it opens a search box over a list of photo + ID + name rows.
 //   Keyboard: Enter / Space / Down opens, type to filter, Up / Down move, Enter picks, Esc closes (the drawer stays).
 //   Optional `top` group (e.g. the kit's own products, "In this kit") above all the others.
-// - KitProducts: a kit's product list: tick rows (colour versions under their main product, filter), then drag the
-//   selected ones into the order the site shows.
+// - KitProducts: a kit's products: the selected ones in the site's order (drag), then the list to tick them from.
 // - RepPreview: the larger photo under a "Photo from product" picker, from the unsaved value.
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { mediaUrl } from '../utils/api';
@@ -165,8 +164,8 @@ export function RepPreview({ product }) {
   );
 }
 
-// A kit's products: tick rows (colour versions under their main product, filter), then drag the selected ones into
-// order. value = product IDs in order (saved as kit_products.sort_order).
+// A kit's products: "Selected (in order)" (drag, up / down, remove) above "Products (in order)", the list to tick
+// from (colour versions under their main product, filter). value = product IDs in order (kit_products.sort_order).
 export function KitProducts({ all, value, onChange, disabled }) {
   const [filter, setFilter] = useState('');
   const [drag, setDrag] = useState(null);
@@ -184,48 +183,56 @@ export function KitProducts({ all, value, onChange, disabled }) {
   };
   return (
     <div className="a-kitpick">
-      <h3>Products (in order)</h3>
-      <p className="a-muted a-kitpick-hint">
-        Shown as chips on this kit&apos;s card in the For Business section, in this order, and pre-selected in the quote form
-        when a visitor opens it from this kit.
-      </p>
-      <input type="search" placeholder="Filter by ID or name" aria-label="Filter products" value={filter} onChange={(e) => setFilter(e.target.value)} />
-      <div className="a-pick-list" role="group" aria-label="Products to include">
-        {shown.map(({ p, variant }) => (
-          <label key={p.product_id} className={`a-pick${variant ? ' a-pick-var' : ''}${p.is_active ? '' : ' a-off'}`}>
-            <input type="checkbox" checked={value.includes(p.product_id)} disabled={disabled} onChange={() => toggle(p.product_id)} />
-            <Thumb p={p} size={40} />
-            <code>{p.product_id}</code>
-            <span className="a-pick-name">{productName(p)}{p.is_active ? '' : ' (not active)'}</span>
-          </label>
-        ))}
-        {!shown.length && <p className="a-muted a-pick-none">No product matches.</p>}
-      </div>
-      <h4 className="a-chosen-h">Selected (in order)</h4>
-      <p className="a-muted a-pick-note">{value.length ? `${value.length} selected.${disabled ? '' : ' Drag to change the order on the site.'}` : 'Nothing ticked yet.'}</p>
-      <ol className="a-chosen">
-        {value.map((pid, i) => {
-          const p = byId.get(pid);
-          return (
-            <li key={pid} draggable={!disabled} className={drag === i ? 'a-dragging' : undefined}
-              onDragStart={() => setDrag(i)} onDragOver={(e) => { if (drag !== null) e.preventDefault(); }}
-              onDrop={(e) => { e.preventDefault(); move(drag, i); setDrag(null); }} onDragEnd={() => setDrag(null)}>
-              {!disabled && <span className="a-handle" aria-hidden="true">⠿</span>}
-              <span className="a-num">{i + 1}</span>
-              {p ? <Thumb p={p} size={40} /> : <span className="a-thumb a-thumb-none" style={{ width: 40, height: 40 }} aria-hidden="true" />}
-              <code>{pid}</code>
-              <span className="a-chosen-name">{p ? productName(p) : '(unknown product)'}</span>
-              {!disabled && (
-                <span className="a-chosen-btns">
-                  <button type="button" className="a-btn a-btn-sm a-btn-ghost" onClick={() => move(i, i - 1)} disabled={i === 0} aria-label={`Move ${pid} up`}>↑</button>
-                  <button type="button" className="a-btn a-btn-sm a-btn-ghost" onClick={() => move(i, i + 1)} disabled={i === value.length - 1} aria-label={`Move ${pid} down`}>↓</button>
-                  <button type="button" className="a-btn a-btn-sm a-btn-ghost" onClick={() => toggle(pid)} aria-label={`Remove ${pid}`}>×</button>
-                </span>
-              )}
-            </li>
-          );
-        })}
-      </ol>
+      <section className="a-dsec" aria-labelledby="kit-sel-h">
+        <h3 id="kit-sel-h">Selected (in order)</h3>
+        {value.length ? (
+          <>
+            <p className="a-muted a-pick-note">{`${value.length} selected.${disabled ? '' : ' Drag to change the order on the site.'}`}</p>
+            <ol className="a-chosen">
+              {value.map((pid, i) => {
+                const p = byId.get(pid);
+                return (
+                  <li key={pid} draggable={!disabled} className={drag === i ? 'a-dragging' : undefined}
+                    onDragStart={() => setDrag(i)} onDragOver={(e) => { if (drag !== null) e.preventDefault(); }}
+                    onDrop={(e) => { e.preventDefault(); move(drag, i); setDrag(null); }} onDragEnd={() => setDrag(null)}>
+                    {!disabled && <span className="a-handle" aria-hidden="true">⠿</span>}
+                    <span className="a-num">{i + 1}</span>
+                    {p ? <Thumb p={p} size={40} /> : <span className="a-thumb a-thumb-none" style={{ width: 40, height: 40 }} aria-hidden="true" />}
+                    <code>{pid}</code>
+                    <span className="a-chosen-name">{p ? productName(p) : '(unknown product)'}</span>
+                    {!disabled && (
+                      <span className="a-chosen-btns">
+                        <button type="button" className="a-btn a-btn-sm a-btn-ghost" onClick={() => move(i, i - 1)} disabled={i === 0} aria-label={`Move ${pid} up`}>↑</button>
+                        <button type="button" className="a-btn a-btn-sm a-btn-ghost" onClick={() => move(i, i + 1)} disabled={i === value.length - 1} aria-label={`Move ${pid} down`}>↓</button>
+                        <button type="button" className="a-btn a-btn-sm a-btn-ghost" onClick={() => toggle(pid)} aria-label={`Remove ${pid}`}>×</button>
+                      </span>
+                    )}
+                  </li>
+                );
+              })}
+            </ol>
+          </>
+        ) : <p className="a-muted a-pick-note">No products yet. Tick products below.</p>}
+      </section>
+      <section className="a-dsec" aria-labelledby="kit-all-h">
+        <h3 id="kit-all-h">Products (in order)</h3>
+        <p className="a-muted a-kitpick-hint">
+          Shown as chips on this kit&apos;s card in the For Business section, in the Request a kit WhatsApp message, and
+          pre-selected in the free sample form opened from this kit.
+        </p>
+        <input type="search" placeholder="Filter by ID or name" aria-label="Filter products" value={filter} onChange={(e) => setFilter(e.target.value)} />
+        <div className="a-pick-list" role="group" aria-label="Products to include">
+          {shown.map(({ p, variant }) => (
+            <label key={p.product_id} className={`a-pick${variant ? ' a-pick-var' : ''}${p.is_active ? '' : ' a-off'}`}>
+              <input type="checkbox" checked={value.includes(p.product_id)} disabled={disabled} onChange={() => toggle(p.product_id)} />
+              <Thumb p={p} size={40} />
+              <code>{p.product_id}</code>
+              <span className="a-pick-name">{productName(p)}{p.is_active ? '' : ' (not active)'}</span>
+            </label>
+          ))}
+          {!shown.length && <p className="a-muted a-pick-none">No product matches.</p>}
+        </div>
+      </section>
     </div>
   );
 }

@@ -230,8 +230,9 @@ tr.a-target td { background: #fff6d6; }
 .a-ps-group { padding: 8px 6px 4px; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--a-muted); }
 .a-ps-none { padding: 10px 6px; color: var(--a-muted); font-size: 13px; }
 @media (max-width: 560px) { .a-ps-pop { width: 100%; max-width: none; } }
-.a-kitpick { margin-top: 28px; }
-.a-kitpick h3 { margin: 0 0 4px; }
+/* drawer sections (kits: text per language, Selected, Products) with clear space between them */
+.a-dsec { margin-top: 30px; }
+.adm .a-dsec h3 { margin: 0 0 6px; }
 .a-kitpick-hint { margin: 0 0 10px; font-size: 12.5px; line-height: 1.45; max-width: 70ch; }
 .a-kitpick input[type="search"] { width: 100%; box-sizing: border-box; margin-bottom: 6px; }
 .a-pick-list { max-height: 360px; overflow-y: auto; border: 1px solid var(--a-line); border-radius: 8px; background: #fff; padding: 4px; }
@@ -243,7 +244,6 @@ tr.a-target td { background: #fff6d6; }
 .a-pick-var { padding-left: 34px; }
 .a-pick.a-off { color: var(--a-muted); }
 .a-pick-none { margin: 8px; }
-.a-chosen-h { margin: 18px 0 2px; font-size: 13px; }
 .a-pick-note { margin: 0 0 6px; font-size: 12.5px; }
 .a-chosen { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
 .a-chosen li { display: grid; grid-template-columns: 14px 18px 40px auto minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 4px 6px; border: 1px solid var(--a-line); border-radius: 8px; background: #fffdf6; font-size: 13px; line-height: 1.3; }
