@@ -16,10 +16,21 @@ export function filterKey(cat, categories) {
   return categories.some((c) => c.key === cat) ? cat : 'all';
 }
 
+// Admin order: sort_order ascending, then product ID (the API sends them in this order; kept explicit so every list,
+// filter and search shows the same order). A product without a sort value keeps its place. Colour variants stay
+// inside their card (p.variants), so they are never reordered apart from it.
+export const byAdminOrder = (a, b) => {
+  const sa = Number.isFinite(a.sort) ? a.sort : null;
+  const sb = Number.isFinite(b.sort) ? b.sort : null;
+  if (sa !== null && sb !== null && sa !== sb) return sa - sb;
+  if (sa === null || sb === null) return 0;
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+};
+
 export function filterProducts(products, filter, query) {
   const q = norm(query).trim();
   return products.filter((p) => (filter === 'all' || (filter === 'home' ? p.forHome : p.category === filter))
-    && (!q || haystack(p).includes(q)));
+    && (!q || haystack(p).includes(q))).sort(byAdminOrder);
 }
 
 // [{ key, label, count }] for the chips: All, For Home, then each category in order.

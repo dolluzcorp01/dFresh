@@ -17,7 +17,8 @@ Category shape: `{ key, sort, repProductId, name, count }` where `count` = activ
 (variants not counted). Image `width` / `height` are pixels from `product_images`, `null` when unknown.
 
 Caching: build bootstrap once per language, keep in memory with `contentVersion`; send `ETag` and
-`Cache-Control: public, max-age=60, stale-while-revalidate=600`. Any admin write increments `contentVersion`
+`Cache-Control: no-cache` (the browser revalidates every load; unchanged = a small 304 by ETag, so an admin save
+shows on the next normal reload). Any admin write increments `contentVersion`
 and clears the cache. Safety TTL: an entry older than 5 minutes is rebuilt on the next request, so DB changes
 made outside the admin show up without a restart (if that rebuild fails, the expired copy is served).
 Local dev: `npm run cache:bust` clears the cache now (calls `POST /dev/cache-bust`, which exists only when

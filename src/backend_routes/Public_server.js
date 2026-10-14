@@ -13,7 +13,10 @@ const { STAFF_GROUP } = require('./text-groups');
 const router = express.Router();
 const db = getDBConnection(process.env.DB_NAME || 'dfresh').promise();
 
-const CACHE_CONTROL = 'public, max-age=60, stale-while-revalidate=600';
+// Public content (bootstrap, languages, legal) is revalidated on every load: the ETag makes an unchanged answer a
+// tiny 304, and an admin save (which clears the content cache) shows on the next normal reload. A max-age here let
+// browsers show the old data for up to a minute (and up to 10 minutes with stale-while-revalidate) after a save.
+const CACHE_CONTROL = 'no-cache';
 const IMAGE_SIZES = [400, 800, 1200];
 
 // Legal pages: title key + HTML body key. The bodies are served here, not in the bootstrap ui map.

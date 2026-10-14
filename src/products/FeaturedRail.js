@@ -1,6 +1,7 @@
 // Bestsellers (spec B5): the is_featured products in featured_order as flip cards in a horizontal snap rail
 // with prev / next buttons (preview: scroll by 320px, smooth unless reduced motion).
 import { useRef } from 'react';
+import { byAdminOrder } from './filterProducts';
 import { useI18n } from '../i18n/useT';
 import Kicker from '../components/Kicker';
 import useReducedMotion from '../utils/useReducedMotion';
@@ -11,8 +12,9 @@ export default function FeaturedRail() {
   const { t, data } = useI18n();
   const reduced = useReducedMotion();
   const railRef = useRef(null);
+  // featured order first, then the admin sort order / product ID (byAdminOrder)
   const items = data.products.filter((p) => p.featured)
-    .sort((a, b) => (a.featuredOrder ?? 999) - (b.featuredOrder ?? 999));
+    .sort((a, b) => ((a.featuredOrder ?? 999) - (b.featuredOrder ?? 999)) || byAdminOrder(a, b));
   if (!items.length) return null;
 
   const scroll = (dir) => {
