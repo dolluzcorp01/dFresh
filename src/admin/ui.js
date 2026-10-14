@@ -103,7 +103,9 @@ export function Field({ def, value, onChange, disabled }) {
  * Per-language text side by side: one column per language, one row per field.
  * tr = { lang: { col: value } }; empty cells fall back to the default language on the site.
  */
-export function TrEditor({ fields, tr, onChange, disabled }) {
+// A field with override: true is an optional per-language replacement of a main (base) field: no box for the default
+// language (the main field is its value), and in the others an empty box shows the main value as a grey placeholder.
+export function TrEditor({ fields, tr, onChange, disabled, main = {} }) {
   const { languages } = useAdmin();
   const set = (lang, col, v) => onChange({ ...tr, [lang]: { ...(tr[lang] || {}), [col]: v } });
   return (
@@ -117,13 +119,29 @@ export function TrEditor({ fields, tr, onChange, disabled }) {
       {fields.map((f) => [
         <div key={`${f.name}-l`} className="a-tr-label">{f.label || f.name}{f.required && ' *'}{f.help && <small className="a-muted a-tr-help">{f.help}</small>}</div>,
         ...languages.map((l) => {
+          const isDefault = Number(l.is_default) === 1;
+          if (f.override && isDefault) {
+            return <div key={`${f.name}-${l.lang_code}`} className="a-tr-main a-muted">Uses the main {f.mainLabel || f.name} field</div>;
+          }
           const v = tr[l.lang_code] ? tr[l.lang_code][f.name] ?? '' : '';
-          const missing = !v && f.required && Number(l.is_default) !== 1;
+          const missing = !v && f.required && !isDefault;
           const props = {
             value: v, disabled, 'aria-label': `${f.label || f.name} (${l.lang_code})`, dir: l.dir,
-            className: missing ? 'a-missing' : undefined, placeholder: missing ? 'uses default' : undefined,
+            className: missing ? 'a-missing' : undefined,
+            placeholder: f.override ? main[f.name] || '' : missing ? 'uses default' : undefined,
             onChange: (e) => set(l.lang_code, f.name, e.target.value),
           };
+          if (f.override) {
+            return (
+              <div key={`${f.name}-${l.lang_code}`} className="a-tr-over">
+                <input type="text" {...props} />
+                {v !== '' && !disabled && (
+                  <button type="button" className="a-link" onClick={() => set(l.lang_code, f.name, '')}
+                    aria-label={`Use main value for ${f.label || f.name} (${l.lang_code})`}>Use main value</button>
+                )}
+              </div>
+            );
+          }
           return f.long
             ? <textarea key={`${f.name}-${l.lang_code}`} rows={4} {...props} />
             : <input key={`${f.name}-${l.lang_code}`} type="text" {...props} />;

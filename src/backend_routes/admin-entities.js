@@ -41,7 +41,9 @@ const ENTITIES = {
       cols: {
         name: TEXT(150, { required: true }), one_liner: TEXT(255, { required: true }),
         keywords: TEXT(255, { required: true }), description: TEXT(20000, { required: true }),
-        best_for: TEXT(255, { required: true }), colour_name: TEXT(50), specification: TEXT(255), pack: TEXT(120),
+        best_for: TEXT(255, { required: true }), colour_name: TEXT(50),
+        // override = only for the other languages; the default language's value is products.specification / pack
+        specification: { ...TEXT(255), override: true }, pack: { ...TEXT(120), override: true },
         alt_text: TEXT(255), whatsapp_message: TEXT(500),
       },
     },
@@ -245,7 +247,7 @@ function trValues(e, tr, langs) {
     const row = {};
     for (const [c, def] of Object.entries(e.tr.cols)) {
       const v = values[c];
-      const s = v === null || v === undefined ? '' : String(v).trim();
+      const s = v === null || v === undefined || (def.override && lang === langs.def) ? '' : String(v).trim();
       if (s.length > def.max) throw new InputError(`${c} (${lang}): at most ${def.max} characters`);
       row[c] = s === '' ? null : s;
     }

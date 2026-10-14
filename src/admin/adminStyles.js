@@ -255,6 +255,8 @@ tr.a-target td { background: #fff6d6; }
 .a-tr-label { font-size: 13px; padding-top: 7px; }
 .a-tr-help { display: block; font-size: 11.5px; line-height: 1.35; margin-top: 2px; }
 .a-tr input, .a-tr textarea { width: 100%; }
+.a-tr-over { display: flex; align-items: center; gap: 8px; min-width: 0; } .a-tr-over input { flex: 1; min-width: 0; } .a-tr-over .a-link { flex: none; padding: 4px 0; font-size: 12.5px; white-space: nowrap; }
+.a-tr-over input::placeholder { color: #8a8577; opacity: 1; } .a-tr-main { font-size: 12.5px; padding-top: 7px; }
 
 .a-townmap { margin: 12px 0; max-width: 560px; }
 .a-townmap svg { display: block; width: 100%; height: auto; overflow: visible; background: #fff; border: 1px solid var(--a-line); border-radius: 8px; }

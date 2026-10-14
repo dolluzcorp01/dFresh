@@ -14,7 +14,9 @@ const TR_FIELDS = [
   { name: 'keywords', label: 'Keywords (comma separated)', required: true, help: 'The first 3 show as chips on the product card. All are used for search.' },
   { name: 'description', label: 'Description', required: true, long: true },
   { name: 'best_for', label: 'Best for', required: true }, { name: 'colour_name', label: 'Colour name' },
-  { name: 'specification', label: 'Specification (override)' }, { name: 'pack', label: 'Pack (override)' },
+  // empty = the site uses the main Specification / Pack (the default language has no box: the main field is its value)
+  { name: 'specification', label: 'Specification (this language only)', mainLabel: 'Specification', override: true, help: 'Empty = the main value (grey).' },
+  { name: 'pack', label: 'Pack (this language only)', mainLabel: 'Pack', override: true, help: 'Empty = the main value (grey).' },
   { name: 'alt_text', label: 'Photo alt text', help: 'Describes the photo for Google and screen readers. Not shown on the page.' },
   { name: 'whatsapp_message', label: 'WhatsApp message', long: true },
 ];
@@ -231,7 +233,7 @@ function ProductEditor({ id, initial, cats, all, onClose, onSaved, onAddVariant 
       <div className="a-prow">{F('spec_status')}</div>
       <h3>Text per language</h3>
       <p className="a-muted">Empty cells show the default language on the site.</p>
-      <TrEditor fields={TR_FIELDS} tr={p.tr || {}} disabled={!canEdit} onChange={(tr) => set('tr', tr)} />
+      <TrEditor fields={TR_FIELDS} tr={p.tr || {}} main={p} disabled={!canEdit} onChange={(tr) => set('tr', tr)} />
       {!creating && <Photos product={loaded.data} canEdit={canEdit} onChanged={() => { loaded.reload(); onSaved(null); }} />}
     </Drawer>
   );

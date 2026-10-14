@@ -196,7 +196,7 @@ visit, so a change is live on the next page load. No build or restart is needed.
 | Colour dots and colour names | Yes | Each colour variant: Swatch colour (#RRGGBB), Colour name; label Translations > `colour` |
 | Card with no photo (logo + name + spec drawn automatically) | Yes, automatic | Follows name and specification. |
 | "Know more" | Yes | Translations > `know_more` |
-| Card back: description, specification, pack, best for | Yes | Products > Description, Specification, Pack, Best for (per language overrides for Specification and Pack) |
+| Card back: description, specification, pack, best for | Yes | Products > Description, Specification, Pack, Best for (Specification and Pack "this language only" boxes for the other languages; empty = the main value) |
 | Card back headings (Specifications, Pack, Best for) | Yes | Translations > `specifications`, `pack`, `best_for` |
 | Card back WhatsApp button: message | Yes | Products > WhatsApp message (per product); label Translations > `lbl_whatsapp` |
 | "Request a quote" and "Back" | Yes | Translations > `request_quote`, `back` |

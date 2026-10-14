@@ -23,6 +23,9 @@ const FIELD_GROUPS = [ // [header base, translation column, read-only]
   ['Category', null, true], ['Name', 'name'], ['One_liner', 'one_liner'], ['Keywords', 'keywords'],
   ['Description', 'description'], ['Best_for', 'best_for'], ['Colour', 'colour_name'],
 ];
+// Optional per-language replacements of a main column, e.g. Specification_TA. No column for the default language:
+// Specification / Pack are its value. Empty = the site uses the main column.
+const OVERRIDE_GROUPS = [['Specification', 'specification'], ['Pack', 'pack']];
 const SPEC_HEADER = 'Spec status - INTERNAL, do not publish';
 const isSpecHeader = (h) => /^spec[ _]status\b/i.test(h);
 // The internal column must stand out: red header with white text (6.5:1), light red cells.
@@ -36,19 +39,23 @@ const V02_WIDTHS = {
 
 const LANG_SUFFIX = (lang) => lang.toUpperCase();
 
-/** Ordered language codes for the column groups: en, ta, hi, then the others by sort order. */
+/** Ordered language codes for the column groups: en, ta, hi, then the others by sort order; plus the default. */
 async function columnLanguages(q) {
-  const [rows] = await q.query('SELECT lang_code FROM languages ORDER BY sort_order, lang_code');
+  const [rows] = await q.query('SELECT lang_code, is_default FROM languages ORDER BY sort_order, lang_code');
   const codes = rows.map((r) => r.lang_code);
-  return [...CORE.filter((c) => codes.includes(c)), ...codes.filter((c) => !CORE.includes(c))];
+  const def = (rows.find((r) => Number(r.is_default) === 1) || rows[0]).lang_code;
+  return { langs: [...CORE.filter((c) => codes.includes(c)), ...codes.filter((c) => !CORE.includes(c))], def };
 }
 
-function productColumns(langs) {
+function productColumns(langs, def) {
   const group = (base) => langs.map((l, i) => ({ header: `${base}_${LANG_SUFFIX(l)}`, base, lang: l, idx: i }));
+  const over = (base) => langs.filter((l) => l !== def)
+    .map((l) => ({ header: `${base}_${LANG_SUFFIX(l)}`, base, lang: l, over: OVERRIDE_GROUPS.find((g) => g[0] === base)[1] }));
   return [
     { header: 'Sort_order' }, { header: 'Featured' }, { header: 'Featured_order' }, { header: 'Product_ID' },
     { header: 'Category_key' }, ...group('Category'), ...group('Name'), ...group('One_liner'), ...group('Keywords'),
-    ...group('Description'), { header: 'Specification' }, { header: 'Pack' }, ...group('Best_for'),
+    ...group('Description'), { header: 'Specification' }, ...over('Specification'), { header: 'Pack' }, ...over('Pack'),
+    ...group('Best_for'),
     { header: 'Image_1', image: 1 }, { header: 'Image_2', image: 2 }, { header: 'Image_3', image: 3 },
     { header: 'Alt_text_EN' }, { header: 'WhatsApp_message_EN' }, { header: SPEC_HEADER }, { header: 'Variant_of' },
     ...group('Colour'), { header: 'Swatch_hex' },
@@ -74,6 +81,7 @@ function catName(cats, key, lang) {
 function productCell(col, p, cats) {
   const t = (lang) => p.tr[lang] || {};
   if (col.base === 'Category') return catName(cats, p.category_key, col.lang);
+  if (col.over) return t(col.lang)[col.over] ?? null;
   if (col.base) return t(col.lang)[FIELD_GROUPS.find((g) => g[0] === col.base)[1]] ?? null;
   if (col.image) return (p.images.find((i) => i.position === col.image) || {}).file_name || null;
   switch (col.header) {
@@ -98,7 +106,7 @@ const NUMBER_COLS = new Set(['Sort_order', 'Featured_order']);
 
 /** The branded Product List workbook. who = "Name (EMP_ID)" of the admin exporting it. */
 async function buildWorkbook(q, { who = 'dFresh admin' } = {}) {
-  const langs = await columnLanguages(q);
+  const { langs, def } = await columnLanguages(q);
   const products = await entities.load('products', null, q);
   const cats = await entities.load('categories', null, q);
   const [ui] = await q.query('SELECT k.text_key, t.lang_code, t.value FROM ui_text_keys k LEFT JOIN ui_text t ON t.text_key = k.text_key ORDER BY k.group_name, k.text_key');
@@ -115,6 +123,7 @@ async function buildWorkbook(q, { who = 'dFresh admin' } = {}) {
       ['How to use', true],
       ['• Products sheet: one row per product (Variant_of filled = a colour of that product). Edit, then import in the admin: a dry run shows every change first.'],
       ['• Columns ending _EN / _TA / _HI (and any other language code) are the same field per language. Leave a language empty to show English.'],
+      [`• Specification and Pack are the ${LANG_SUFFIX(def)} value. ${OVERRIDE_GROUPS.map((g) => `${g[0]}_XX`).join(' / ')}: only when that language needs its own text; empty = the main column.`],
       ['• Read-only: Category_XX on Products (edit names on the Categories sheet), Image_1..3 (upload photos in the admin), Products count.'],
       ['• Spec status (the red column) is INTERNAL and never shown on the website. No prices in phase 1.'],
       ['• A product missing from the sheet is deactivated on import, never deleted.'],
@@ -123,7 +132,7 @@ async function buildWorkbook(q, { who = 'dFresh admin' } = {}) {
     ],
   });
 
-  const cols = productColumns(langs);
+  const cols = productColumns(langs, def);
   theme.tableSheet(wb, 'Products', {
     ...meta,
     title: 'dFresh Products',
@@ -200,7 +209,7 @@ function sheetRows(ws, mustHave) {
 }
 
 /** Maps a Products header to { kind, ... } or null (unknown). */
-function classify(header, langCodes) {
+function classify(header, langCodes, def) {
   if (isSpecHeader(header)) return { kind: 'base', col: 'spec_status' };
   const fixed = {
     Sort_order: 'sort_order', Featured: 'is_featured', Featured_order: 'featured_order', Product_ID: 'product_id',
@@ -213,6 +222,8 @@ function classify(header, langCodes) {
   const m = /^([A-Za-z_]+)_([A-Z]{2,10})$/.exec(header);
   if (!m) return null;
   const lang = m[2].toLowerCase();
+  const o = OVERRIDE_GROUPS.find((x) => x[0] === m[1]);
+  if (o) return langCodes.includes(lang) && lang !== def ? { kind: 'tr', lang, col: o[1] } : null; // no default-language override
   const g = FIELD_GROUPS.find((x) => x[0] === m[1]);
   if (!g || !langCodes.includes(lang)) return null;
   return g[2] ? { kind: 'category', lang } : { kind: 'tr', lang, col: g[1] };
@@ -252,7 +263,7 @@ async function diffWorkbook(q, buffer) {
 
   const { header, rows } = sheetRows(ws, 'Product_ID');
   if (!header.includes('Product_ID')) throw new entities.InputError('The Products sheet has no Product_ID column');
-  const columns = header.map((h) => ({ h, c: classify(h, langCodes) }));
+  const columns = header.map((h) => ({ h, c: classify(h, langCodes, def) }));
   const unknownColumns = columns.filter((x) => !x.c).map((x) => `Products!${x.h}`);
   const known = columns.filter((x) => x.c);
 
@@ -375,7 +386,7 @@ async function diffWorkbook(q, buffer) {
   if (cws) {
     const { header: ch, rows: crows } = sheetRows(cws, 'Category_key');
     for (const h of ch) {
-      if (!['Order', 'Category_key', 'Products'].includes(h) && !(classify(h, langCodes) || {}).lang) unknownColumns.push(`Categories!${h}`);
+      if (!['Order', 'Category_key', 'Products'].includes(h) && !(classify(h, langCodes, def) || {}).lang) unknownColumns.push(`Categories!${h}`);
     }
     for (const r of crows) {
       const key = norm(r.Category_key);
@@ -390,7 +401,7 @@ async function diffWorkbook(q, buffer) {
         diffs.push({ field: 'Order', before: cat.sort_order, after: n });
       }
       for (const h of ch) {
-        const c = classify(h, langCodes);
+        const c = classify(h, langCodes, def);
         if (!c || c.kind !== 'category') continue;
         const v = norm(r[h]);
         const old = cat.tr[c.lang] ? cat.tr[c.lang].name : null;
