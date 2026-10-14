@@ -1,6 +1,7 @@
 // Products (spec F 3): the list by category in the site's order, with drag and drop to reorder (main products within
 // their category; colour versions inside their main product, which they always move with), the position as a
-// read-only number, and a small "Featured on Home" list that is dragged the same way. Editor: base fields and
+// read-only number, and a small version of the home page's featured section ("Most loved": the title and kicker come
+// from the site texts feat_h / feat_k) with photo cards that are dragged the same way. Editor: base fields and
 // per-language text side by side, photos (upload -> 1200 WebP <= 150 KB + 400 / 800, reorder 1-3, remove), active
 // toggle, featured order, add colour version. Positions are whole numbers 1, 2, 3 ... kept unique by the server
 // (positions.js); a new product goes to the end of its category.
@@ -22,19 +23,31 @@ const TR_FIELDS = [
 ];
 const HEX = /^#[0-9A-Fa-f]{6}$/;
 
-const baseFields = (cats, cards, creating) => [
+const baseFields = (cats, cards, creating, home) => [
   { name: 'product_id', label: 'Product ID', type: creating ? 'text' : 'readonly', required: true, help: 'e.g. DZIND-DF050; a colour: DZIND-DF008-RED' },
   { name: 'category_key', label: 'Category', type: 'select', options: cats.map((c) => ({ value: c.category_key, label: `${c.tr?.en?.name ?? c.category_key}` })), required: true, allowEmpty: false },
   { name: 'variant_of', label: 'Colour version of', type: 'select', options: cards.map((p) => p.product_id), help: "Leave '-' for a main product. Pick the main product only if this is another colour of it." },
   { name: 'sort_order', label: 'Position', type: 'readonly', help: creating ? 'Goes to the end of its category; drag in the list to move it.' : 'Drag the rows in the list to change it.' },
   { name: 'specification', label: 'Specification', required: true, wide: true },
   { name: 'pack', label: 'Pack', required: true },
-  { name: 'is_featured', label: 'Featured on Home', type: 'bool' },
-  { name: 'featured_order', label: 'Featured order', type: 'number', step: '1', help: 'Empty = last. Whole numbers 1, 2, 3 ..., each used once. Or drag in "Featured on Home".' },
+  { name: 'is_featured', label: `In "${home.title}" on the home page`, type: 'bool' },
+  { name: 'featured_order', label: `"${home.title}" order`, type: 'number', step: '1', help: `${home.hint} Empty = last; 1, 2, 3 ..., each used once. Or drag the cards in "${home.title}".` },
   { name: 'show_for_home', label: 'In "For Home" filter', type: 'bool' },
   { name: 'is_active', label: 'Active (shown on the site)', type: 'bool' },
   { name: 'spec_status', label: 'Spec status (INTERNAL, never shown)', type: 'textarea', wide: true, rows: 2 },
 ];
+
+/** The home page's featured section as the site names it (default language), for the card and the drawer wording. */
+function homeFeatured(ui) {
+  const text = (k) => {
+    const row = ui && (ui.keys || []).find((x) => x.text_key === k);
+    return (row && (row.values[ui.default] || row.values.en)) || '';
+  };
+  const title = text('feat_h') || 'Featured';
+  return { title, kicker: text('feat_k'), hint: `Shown in the ${title} section on the home page, in this order.` };
+}
+
+const thumbUrl = (p) => (p.images && p.images[0] ? mediaUrl(`/media/products/400/${p.images[0].file_name}`) : null);
 
 /** The list in the site's order: categories by position, main products by position, colour versions under them. */
 function grouped(all, cats) {
@@ -54,6 +67,8 @@ function grouped(all, cats) {
 export default function Products() {
   const list = useLoad('/products');
   const cats = useLoad('/categories');
+  const ui = useLoad('/ui-text');
+  const home = useMemo(() => homeFeatured(ui.data), [ui.data]);
   const canEdit = useCan('editor');
   const act = useAction();
   const [open, setOpen] = useState(null); // { id } | { create: {...} }
@@ -92,7 +107,7 @@ export default function Products() {
       className={`${p.is_active ? '' : 'a-off'}${drag && drag.id === p.product_id ? ' a-dragging' : ''}`}>
       <td className="a-handle" aria-hidden="true">{canDrag ? '⠿' : ''}</td>
       <td className="a-num">{pos}</td>
-      <td>{p.images[0] && <img className="a-thumb" src={mediaUrl(`/media/products/400/${p.images[0].file_name}`)} alt="" width="40" height="40" />}</td>
+      <td>{thumbUrl(p) && <img className="a-thumb" src={thumbUrl(p)} alt="" width="40" height="40" />}</td>
       <td><code>{isVariant ? '└ ' : ''}{p.product_id}</code></td>
       <td>{p.tr?.en?.name ?? ''}{isVariant && p.tr?.en?.colour_name ? ` (${p.tr.en.colour_name})` : ''}</td>
       <td className="a-num">{(p.images || []).length}</td>
@@ -112,24 +127,30 @@ export default function Products() {
       </div>
       {act.note}
       <Loading state={list}>
-        {featured.length > 0 && (
-          <div className="a-card a-featured">
-            <h2>Featured on Home</h2>
+        <div className="a-card a-featured">
+          {home.kicker && <p className="a-kicker">{home.kicker}</p>}
+          <h2>{home.title}</h2>
+          <p className="a-muted">{home.hint}{canDrag && featured.length > 1 ? ' Drag the cards to change it.' : ''}</p>
+          {featured.length ? (
             <ol className="a-featured-list">
               {featured.map((p) => (
                 <li key={p.product_id} {...dragProps(p.product_id, 'featured:', featured.map((x) => x.product_id))}
-                  className={`${drag && drag.id === p.product_id ? 'a-dragging' : ''}${p.is_active ? '' : ' a-off'}`}>
-                  {canDrag && <span className="a-handle" aria-hidden="true">⠿</span>}
-                  <span className="a-num">{p.featured_order}</span>
-                  <code>{p.product_id}</code> {p.tr?.en?.name ?? ''}{p.is_active ? '' : ' (not active)'}
+                  className={`${drag && drag.id === p.product_id ? 'a-dragging' : ''}${p.is_active ? '' : ' a-off'}`}
+                  onClick={() => setOpen({ id: p.product_id })} onKeyDown={(e) => e.key === 'Enter' && setOpen({ id: p.product_id })} tabIndex={0}>
+                  <span className="a-feat-photo">
+                    {thumbUrl(p) ? <img src={thumbUrl(p)} alt="" width="96" height="96" /> : <span className="a-muted">No photo</span>}
+                    <span className="a-num">{p.featured_order}</span>
+                  </span>
+                  <code>{p.product_id}</code>
+                  <span className="a-feat-name">{p.tr?.en?.name ?? ''}{p.is_active ? '' : ' (not active)'}</span>
                 </li>
               ))}
             </ol>
-          </div>
-        )}
+          ) : <p>{`No products yet. In a product, tick In "${home.title}" on the home page.`}</p>}
+        </div>
         <div className="a-scroll">
           <table className="a-table a-hover">
-            <thead><tr><th /><th>Pos.</th><th /><th>ID</th><th>Name (EN)</th><th>Photos</th><th>Featured</th><th>Active</th><th>Languages</th></tr></thead>
+            <thead><tr><th /><th>Pos.</th><th /><th>ID</th><th>Name (EN)</th><th>Photos</th><th>{home.title}</th><th>Active</th><th>Languages</th></tr></thead>
             {groups.map((g) => {
               const ids = g.items.map((x) => x.main.product_id);
               const rows = g.items.flatMap(({ main, variants }, i) => {
@@ -151,7 +172,7 @@ export default function Products() {
         </div>
       </Loading>
       {open && cats.data && (
-        <ProductEditor key={open.id || 'new'} id={open.id} initial={open.create} cats={cats.data} all={list.data || []}
+        <ProductEditor key={open.id || 'new'} id={open.id} initial={open.create} cats={cats.data} all={list.data || []} home={home}
           onClose={() => setOpen(null)} onSaved={(id) => { list.reload(); if (id) setOpen({ id }); }}
           onAddVariant={(p) => setOpen({ create: { variant_of: p.product_id, category_key: p.category_key, specification: p.specification, pack: p.pack, is_active: 1, tr: p.tr } })} />
       )}
@@ -159,7 +180,7 @@ export default function Products() {
   );
 }
 
-function ProductEditor({ id, initial, cats, all, onClose, onSaved, onAddVariant }) {
+function ProductEditor({ id, initial, cats, all, home, onClose, onSaved, onAddVariant }) {
   const loaded = useLoad(id ? `/products/${encodeURIComponent(id)}` : null);
   const canEdit = useCan('editor');
   const act = useAction();
@@ -194,7 +215,7 @@ function ProductEditor({ id, initial, cats, all, onClose, onSaved, onAddVariant 
   const showSwatch = swatchShown();
   const hex = p.swatch_hex || '';
   const hexOk = HEX.test(hex);
-  const defs = Object.fromEntries(baseFields(cats, cards.filter((c) => c.product_id !== p.product_id), creating).map((fd) => [fd.name, fd]));
+  const defs = Object.fromEntries(baseFields(cats, cards.filter((c) => c.product_id !== p.product_id), creating, home).map((fd) => [fd.name, fd]));
   const F = (name) => <Field key={name} def={defs[name]} value={p[name]} disabled={!canEdit} onChange={(v) => set(name, v)} />;
 
   return (

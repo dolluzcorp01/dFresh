@@ -205,13 +205,48 @@ tr.a-target td { background: #fff6d6; }
 .a-num { text-align: end; font-variant-numeric: tabular-nums; }
 .a-off td { color: var(--a-muted); }
 .a-thumb { width: 40px; height: 40px; object-fit: contain; background: #fff; border: 1px solid var(--a-line); border-radius: 6px; }
+/* Business kits / categories: "Photo from product" preview, kit product picker */
+.a-thumb { flex: none; box-sizing: border-box; } .a-thumb-none { display: inline-block; background: repeating-linear-gradient(45deg, #fff 0 4px, #f3efe3 4px 8px); }
+.a-repfield { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.a-rep { display: flex; align-items: center; gap: 10px; margin: 0; font-size: 12.5px; line-height: 1.35; }
+.a-kitpick { margin-top: 28px; }
+.a-kitpick h3 { margin-top: 0; }
+.a-kitpick-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; align-items: start; }
+.a-kitpick input[type="search"] { width: 100%; box-sizing: border-box; margin-bottom: 6px; }
+.a-pick-list { max-height: 340px; overflow-y: auto; border: 1px solid var(--a-line); border-radius: 8px; background: #fff; padding: 4px; }
+.a-pick { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 6px; cursor: pointer; font-size: 13px; line-height: 1.3; }
+.a-pick:hover { background: #fbf8ef; }
+.a-pick input { width: auto; flex: none; }
+.a-pick code { flex: none; font-size: 11.5px; }
+.a-pick-var { padding-left: 30px; }
+.a-pick.a-off { color: var(--a-muted); }
+.a-pick-note { margin: 0 0 6px; font-size: 12.5px; }
+.a-chosen { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.a-chosen li { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border: 1px solid var(--a-line); border-radius: 8px; background: #fffdf6; font-size: 13px; line-height: 1.3; }
+.a-chosen li[draggable="true"] { cursor: grab; }
+.a-chosen .a-num { min-width: 18px; font-weight: 700; }
+.a-chosen code { flex: none; font-size: 11.5px; }
+.a-chosen-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.a-chosen-btns { display: flex; gap: 2px; flex: none; }
+.a-chosen-btns .a-btn { min-width: 28px; padding: 2px 6px; }
 .a-handle { cursor: grab; color: var(--a-muted); }
 .a-dragging, .a-dragging td { opacity: .45; }
-.a-featured h2 { margin-bottom: 6px; }
-.a-featured-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
-.a-featured-list li { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border: 1px solid var(--a-line); border-radius: 8px; background: #fffdf6; }
+/* Products: a small version of the home page's featured ("Most loved") rail */
+.a-kicker { margin: 0 0 2px; font-size: 11.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--a-muted); }
+.a-featured h2 { margin: 0 0 2px; }
+.a-featured > .a-muted { margin: 0 0 10px; }
+.a-featured-list { list-style: none; margin: 0; padding: 2px 2px 8px; display: flex; gap: 10px; overflow-x: auto; }
+.a-featured-list li { flex: none; width: 128px; display: flex; flex-direction: column; gap: 4px; padding: 8px; border: 1px solid var(--a-line); border-radius: 10px; background: #fffdf6; cursor: pointer; font-size: 12.5px; line-height: 1.3; }
+.a-featured-list li[draggable="true"] { cursor: grab; }
+.a-featured-list li:hover { border-color: var(--a-ink); }
+.a-featured-list li:focus-visible { outline: 2px solid var(--a-ink); outline-offset: 2px; }
 .a-featured-list li.a-off { color: var(--a-muted); }
-.a-featured-list .a-num { min-width: 22px; font-weight: 700; }
+.a-featured-list li.a-off img { opacity: .5; }
+.a-featured-list code { font-size: 11px; }
+.a-feat-photo { position: relative; display: grid; place-items: center; height: 96px; border-radius: 8px; background: #fff; font-size: 11px; }
+.a-feat-photo img { width: 96px; height: 96px; object-fit: contain; }
+.a-feat-photo .a-num { position: absolute; top: 4px; left: 4px; min-width: 22px; height: 22px; padding: 0 4px; border-radius: 11px; background: var(--a-ink); color: #fff; font-weight: 700; font-size: 12px; line-height: 22px; text-align: center; box-sizing: border-box; }
+.a-feat-name { font-weight: 600; overflow-wrap: anywhere; }
 .a-swatch-row { display: flex; align-items: center; gap: 8px; }
 /* product editor rows (Products.js): 4 / 1 / 2-3 columns, inputs top-aligned so they line up; the switches on one line */
 .a-prow { display: grid; gap: 12px; margin-bottom: 12px; grid-template-columns: minmax(0, 1fr); align-items: start; }

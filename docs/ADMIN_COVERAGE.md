@@ -19,7 +19,7 @@ Effort to make a "No" editable: **small** = under 1 day, **medium** = 1 to 3 day
 
 "Translations > `key`" means: admin sidebar **Translations**, search for that key, edit the cell (one column per language).
 
-**Roles.** Leads, Products, Translations, Banners, Kits, Towns, Categories, Size picker, Form options and Brochures need the
+**Roles.** Leads, Products, Translations, Banners, Business kits, Towns, Categories, Size picker, Form options and Brochures need the
 **editor** role. **Settings**, **Languages** and **Excel import** need the **admin** role.
 
 **When edits show.** Every admin save clears the site's content cache and the pre-rendered pages are rebuilt on the next
@@ -119,7 +119,7 @@ visit, so a change is live on the next page load. No build or restart is needed.
 | Item | Admin can change? | Where in the admin / what it would take |
 |---|---|---|
 | Eyebrow, heading, paragraph | Yes | Translations > `feat_k`, `feat_h`, `feat_p` |
-| Which products are featured and their order | Yes | Products > Featured on Home + Featured order |
+| Which products are featured and their order | Yes | Products > "Most loved" card (same title as the home section, photo cards, drag to order) + drawer "In "Most loved" on the home page" / "Most loved" order |
 | The cards themselves | Yes | Same cards as the products drawer, see section 12 |
 | Arrow labels | Yes | Translations > `feat_prev`, `feat_next` |
 
@@ -140,10 +140,10 @@ visit, so a change is live on the next page load. No build or restart is needed.
 | Item | Admin can change? | Where in the admin / what it would take |
 |---|---|---|
 | Eyebrow, heading, paragraph | Yes | Translations > `for_business`, `biz_h`, `biz_p` |
-| Which kits, order, name, tagline | Yes | Kits: Active, drag to reorder, Name, Tagline, Add |
-| Products listed in each kit | Yes | Kits > Products (in order) |
-| Kit photo | Yes | Kits > Photo from product |
-| Business type the "free sample" form is pre-filled with | Yes | Kits > Business type |
+| Which kits, order, name, tagline | Yes | Business kits: Active, drag to reorder, Name, Tagline, Add |
+| Products listed in each kit | Yes | Business kits > Products (in order): tick in a list (filter, colour versions under their product), drag to order |
+| Kit photo | Yes | Business kits > Photo from product (live photo preview) |
+| Business type the "free sample" form is pre-filled with | Yes | Business kits > Business type |
 | "Request this kit" WhatsApp message | Yes | Translations > `wa_kit` ({kit} and {items} are filled in) and `kit_cta` for the label |
 | "Get a free sample" label | Yes | Translations > `sample` (shared, see note 6) |
 | Kit numbers 01, 02... and button colours | No | Automatic from the order. Design. |
