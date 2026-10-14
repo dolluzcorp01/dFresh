@@ -293,9 +293,12 @@ Screens:
    translations per language, and quick-jump tiles for the sidebar groups.
 2. **Leads** - table with filters (form, status, date, language, search), detail drawer, status change,
    assign, staff notes, CSV export, retry failed e-mail / sheet sync.
-3. **Products** - list with category/variant tree; edit base fields + per-language text side by side;
-   images: upload (auto-convert to 1200x1200 WebP <= 150 KB, generate sizes), reorder 1-3; featured order;
-   active toggle; add colour variant.
+3. **Products** - list by category in the site's order, drag and drop to reorder (main products within their
+   category, colour versions inside their main product), position shown read-only; a "Featured on Home" list
+   dragged the same way (ticking Featured with no number = last, unticking closes the gap); edit base fields +
+   per-language text side by side; images: upload (auto-convert to 1200x1200 WebP <= 150 KB, generate sizes),
+   reorder 1-3; active toggle; add colour version; swatch colour (with preview) only for colour versions and
+   products that have them.
 4. **Excel import / export** - export in EXACTLY the Product List v0.2 layout (columns `_EN/_TA/_HI`, plus a
    column set per extra active language); import shows a dry-run diff (added / changed / removed rows) and
    applies only on confirm. Unknown columns are reported, not ignored silently.

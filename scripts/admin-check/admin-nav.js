@@ -42,8 +42,8 @@ const db = getDBConnection(process.env.DB_NAME || 'dfresh').promise();
 const SCREENS = [
   ['', 'Dashboard', '', 'viewer', null],
   ['leads', 'Leads', 'sales', 'viewer', null],
-  ['products', 'Products', 'catalogue', 'viewer', null],
   ['categories', 'Categories', 'catalogue', 'viewer', ['/categories', ['category_key']]],
+  ['products', 'Products', 'catalogue', 'viewer', null],
   ['kits', 'Business kits', 'catalogue', 'viewer', ['/kits', ['kit_key']]],
   ['size-picker', 'Size picker (Try it)', 'catalogue', 'viewer', ['/size-picker', ['position']]],
   ['import-export', 'Excel import / export', 'catalogue', 'editor', null],

@@ -34,7 +34,7 @@ export default function ProductsDrawer({ open, animate = true, inline = false, o
   const [shown, setShown] = useState(!animate);
   const [q, setQ] = useState('');
   const filter = filterKey(cat, data.categories);
-  const list = filterProducts(data.products, filter, q);
+  const list = filterProducts(data.products, filter, q, data.categories);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
 

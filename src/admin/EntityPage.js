@@ -9,12 +9,14 @@ import { LAND, MAP_H, MAP_W } from '../shared/mapShape';
 
 const ACTIVE = { name: 'is_active', label: 'Active', type: 'bool' };
 const ORDER = { name: 'sort_order', label: 'Order', type: 'number', step: '1' };
+// Banners, kits, categories: the position is set by dragging the rows (1, 2, 3 ...; a new row goes to the end)
+const POSITION = { name: 'sort_order', label: 'Position', type: 'readonly', help: 'Drag the rows in the list to change it. A new one goes to the end.' };
 
 const SECTIONS = {
   banners: {
     title: 'Banners', keys: ['banner_key'], reorder: true,
     fields: [
-      { name: 'banner_key', label: 'Key', required: true, keyField: true }, ORDER,
+      { name: 'banner_key', label: 'Key', required: true, keyField: true }, POSITION,
       { name: 'theme', label: 'Theme', type: 'select', options: ['light', 'dark'], allowEmpty: false, help: 'dark = gold button on a dark photo' },
       { name: 'cta_action', label: 'Button action', type: 'select', options: ['products', 'products_home', 'products_category', 'section', 'form'], allowEmpty: false },
       { name: 'cta_target', label: 'Button target', help: 'category key, section id or form type' },
@@ -28,7 +30,7 @@ const SECTIONS = {
   kits: {
     title: 'Business kits', keys: ['kit_key'], reorder: true,
     fields: [
-      { name: 'kit_key', label: 'Key', required: true, keyField: true }, ORDER,
+      { name: 'kit_key', label: 'Key', required: true, keyField: true }, POSITION,
       { name: 'business_type', label: 'Business type (prefills the quote form)', type: 'select', lookup: 'businessTypes', allowEmpty: false },
       { name: 'rep_product_id', label: 'Photo from product', type: 'select', lookup: 'products' }, ACTIVE,
     ],
@@ -58,7 +60,7 @@ const SECTIONS = {
   },
   categories: {
     title: 'Categories', keys: ['category_key'], reorder: true,
-    fields: [{ name: 'category_key', label: 'Key', required: true, keyField: true }, ORDER, { name: 'rep_product_id', label: 'Photo from product', type: 'select', lookup: 'products' }, ACTIVE],
+    fields: [{ name: 'category_key', label: 'Key', required: true, keyField: true }, POSITION, { name: 'rep_product_id', label: 'Photo from product', type: 'select', lookup: 'products' }, ACTIVE],
     tr: [{ name: 'name', label: 'Name', required: true }],
     list: (r) => [r.category_key, r.tr?.en?.name ?? '', r.rep_product_id],
     head: ['Key', 'Name (EN)', 'Photo from'],

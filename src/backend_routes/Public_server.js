@@ -129,7 +129,11 @@ async function buildBootstrap(lang, fallback, activeLanguages) {
       ],
       defaultCols: [{ col: 'name', as: 'name_default' }],
       where: 'b.is_active = 1 AND b.category_key IN (SELECT category_key FROM categories WHERE is_active = 1)',
-      orderBy: 'b.sort_order, b.product_id',
+      // admin order: category position, then the main product's position (a colour version right after its main
+      // product, in its own position among the colour versions), then product ID
+      orderBy: '(SELECT c.sort_order FROM categories c WHERE c.category_key = b.category_key), b.category_key, '
+        + 'COALESCE((SELECT m.sort_order FROM products m WHERE m.product_id = b.variant_of), b.sort_order), '
+        + 'b.variant_of IS NOT NULL, b.sort_order, b.product_id',
     }),
     db.query('SELECT product_id, position, file_name, width, height FROM product_images ORDER BY product_id, position')
       .then(([r]) => r),

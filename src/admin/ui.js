@@ -115,7 +115,7 @@ export function TrEditor({ fields, tr, onChange, disabled }) {
         </div>
       ))}
       {fields.map((f) => [
-        <div key={`${f.name}-l`} className="a-tr-label">{f.label || f.name}{f.required && ' *'}</div>,
+        <div key={`${f.name}-l`} className="a-tr-label">{f.label || f.name}{f.required && ' *'}{f.help && <small className="a-muted a-tr-help">{f.help}</small>}</div>,
         ...languages.map((l) => {
           const v = tr[l.lang_code] ? tr[l.lang_code][f.name] ?? '' : '';
           const missing = !v && f.required && Number(l.is_default) !== 1;

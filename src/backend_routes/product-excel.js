@@ -329,6 +329,44 @@ async function diffWorkbook(q, buffer) {
       errors.push(`${at} (${id}): ${err.message}`);
     }
   }
+  // Positions (positions.js rules), checked on what the sheet would leave behind: Sort_order is unique among the main
+  // products of a category and among the colour versions of a main product; Featured_order is unique among featured
+  // products (a featured product without one goes last; a product that is not featured has none).
+  const rowOf = new Map(rows.map((r) => [norm(r.Product_ID), r._row]));
+  const final = new Map([...current.values()].map((p) => [p.product_id, {
+    id: p.product_id, category_key: p.category_key, variant_of: p.variant_of, sort_order: Number(p.sort_order),
+    is_featured: Number(p.is_featured), featured_order: p.featured_order === null ? null : Number(p.featured_order),
+  }]));
+  for (const item of plan) final.set(item.id, { ...(final.get(item.id) || { id: item.id }), ...item.base, id: item.id });
+  const where = (id) => (rowOf.has(id) ? `${id} (row ${rowOf.get(id)})` : `${id} (not in the sheet)`);
+  const groups = new Map();
+  for (const p of final.values()) {
+    const g = p.variant_of ? `among the colour versions of ${p.variant_of}` : `in the category ${p.category_key}`;
+    const key = `${g}|${p.sort_order}`;
+    groups.set(key, [...(groups.get(key) || []), p.id]);
+  }
+  for (const [key, ids] of groups) {
+    if (ids.length > 1) {
+      const [g, pos] = key.split('|');
+      errors.push(`Sort_order ${pos} is used ${ids.length} times ${g}: ${ids.map(where).join(', ')}. Use 1, 2, 3 ... once each.`);
+    }
+  }
+  const featuredRows = [...final.values()].filter((p) => p.is_featured);
+  const byOrder = new Map();
+  for (const p of featuredRows.filter((x) => x.featured_order !== null)) byOrder.set(p.featured_order, [...(byOrder.get(p.featured_order) || []), p.id]);
+  for (const [n, ids] of byOrder) if (ids.length > 1) errors.push(`Featured_order ${n} is used ${ids.length} times: ${ids.map(where).join(', ')}. Use 1, 2, 3 ... once each.`);
+  const positionNotes = [];
+  let nextFeatured = Math.max(0, ...featuredRows.map((p) => p.featured_order || 0));
+  for (const item of plan) {
+    const p = final.get(item.id);
+    if (!p.is_featured && p.featured_order !== null) item.base.featured_order = null;
+    else if (p.is_featured && p.featured_order === null) {
+      nextFeatured += 1;
+      item.base.featured_order = nextFeatured;
+      positionNotes.push(`${item.id}: Featured with an empty Featured_order: it goes last (${nextFeatured}).`);
+    }
+  }
+
   const removed = [...current.values()].filter((p) => !seen.has(p.product_id) && p.is_active).map((p) => ({ product: p.product_id }));
 
   // Categories sheet (optional)
@@ -365,8 +403,17 @@ async function diffWorkbook(q, buffer) {
       if (diffs.length) categories.push({ category: key, diffs, trRows, order: diffs.find((d) => d.field === 'Order')?.after });
     }
   }
+  // Categories sheet Order: whole numbers from 1, each used once (positions.js)
+  const catOrder = new Map(cats.map((c) => [c.category_key, Number(c.sort_order)]));
+  for (const c of categories) if (c.order !== undefined) catOrder.set(c.category, c.order);
+  const usedOrder = new Map();
+  for (const [k, n] of catOrder) {
+    if (!Number.isInteger(n) || n < 1) errors.push(`Categories: Order of ${k} must be a whole number from 1 (1, 2, 3 ...)`);
+    usedOrder.set(n, [...(usedOrder.get(n) || []), k]);
+  }
+  for (const [n, ks] of usedOrder) if (ks.length > 1) errors.push(`Categories: Order ${n} is used ${ks.length} times (${ks.join(', ')}). Use 1, 2, 3 ... once each.`);
   const unknownSheets = wb.worksheets.map((s) => s.name).filter((n) => !['Read_Me', 'Products', 'Categories', 'UI_Text'].includes(n));
-  const notes = wb.getWorksheet('UI_Text') ? ['UI_Text sheet is not imported here: use Translations (CSV) for UI text.'] : [];
+  const notes = [...positionNotes, ...(wb.getWorksheet('UI_Text') ? ['UI_Text sheet is not imported here: use Translations (CSV) for UI text.'] : [])];
 
   return {
     ok: errors.length === 0,

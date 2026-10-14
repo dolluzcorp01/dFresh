@@ -14,6 +14,7 @@ const entities = require('./admin-entities');
 const media = require('./admin-media');
 const excel = require('./product-excel');
 const theme = require('./excel-theme');
+const positions = require('./positions');
 const csv = require('./csv');
 const contentCache = require('./content-cache');
 const { audit } = require('./audit');
@@ -504,6 +505,13 @@ const AUDIT_LABEL = {
   'form-options': 'form_option', 'size-picker': 'size_picker',
 };
 
+// Featured on Home: the featured products in their new order (drag and drop), 1..n.
+route('post', '/products/featured-order', 'editor', async (req) => tx(async (q) => {
+  const [before] = await q.query('SELECT product_id, featured_order FROM products WHERE is_featured = 1 ORDER BY featured_order');
+  await positions.reorderFeatured(q, req.body.order);
+  await audit(q, { empId: by(req), action: 'reorder', entity: 'featured', before, after: { order: req.body.order } });
+}), { content: true });
+
 for (const name of Object.keys(entities.ENTITIES)) {
   const e = entities.ENTITIES[name];
   const label = AUDIT_LABEL[name];
@@ -516,14 +524,23 @@ for (const name of Object.keys(entities.ENTITIES)) {
     return row;
   });
 
+  // Drag and drop. Products: one category's main products or one main product's colour versions at a time
+  // ({ category } or { parent }); categories, kits, banners: the whole list (positions.js: exactly every row, 1..n).
   route('post', `/${name}/reorder`, 'editor', async (req) => tx(async (q) => {
     const before = (await entities.load(name, null, q)).map((r) => ({ id: entities.idOf(e, r), sort_order: r.sort_order }));
-    await entities.reorder(q, name, req.body.order);
-    await audit(q, { empId: by(req), action: 'reorder', entity: label, before, after: { order: req.body.order } });
+    if (positions.has(name)) {
+      const of = name === 'products' ? { category_key: req.body.category || null, variant_of: req.body.parent || null } : {};
+      if (name === 'products' && !of.category_key && !of.variant_of) throw new InputError('Say which category (or main product) is reordered');
+      await positions.reorder(q, name, req.body.order, of);
+    } else {
+      await entities.reorder(q, name, req.body.order);
+    }
+    await audit(q, { empId: by(req), action: 'reorder', entity: label, before, after: { order: req.body.order, ...(name === 'products' ? { category: req.body.category, parent: req.body.parent } : {}) } });
   }), { content: true });
 
   route('post', `/${name}`, 'editor', async (req) => tx(async (q) => {
     if (name === 'banners') bannerGuard(req.body, null);
+    await positions.prepare(q, name, req.body, null); // a new row without a position goes to the end of its list
     const keyValues = await entities.create(q, name, req.body || {}, by(req));
     const after = await entities.load(name, keyValues, q);
     if (name === 'categories') await categorySeoTexts(q, after, by(req));
@@ -536,7 +553,9 @@ for (const name of Object.keys(entities.ENTITIES)) {
     const before = await entities.load(name, keyValues, q);
     if (!before) throw new InputError('Not found', 404);
     if (name === 'banners') bannerGuard(req.body || {}, before);
+    const tidy = await positions.prepare(q, name, req.body || {}, before);
     await entities.update(q, name, keyValues, req.body || {}, by(req));
+    await positions.tidyUp(q, name, tidy);
     const after = await entities.load(name, keyValues, q);
     await audit(q, { empId: by(req), action: 'update', entity: label, entityId: req.params.id, before, after });
     return after;
@@ -548,6 +567,7 @@ for (const name of Object.keys(entities.ENTITIES)) {
       const row = await entities.load(name, keyValues, q);
       if (!row) throw new InputError('Not found', 404);
       await entities.remove(q, name, keyValues);
+      await positions.afterDelete(q, name, row);
       if (name === 'categories') await q.query('DELETE FROM ui_text_keys WHERE text_key IN (?, ?)', seoKeys(row.category_key));
       await audit(q, { empId: by(req), action: 'delete', entity: label, entityId: req.params.id, before: row });
       return row;

@@ -19,13 +19,19 @@ class InputError extends Error {
 
 const KEY = (max) => ({ type: 'key', max });
 const TEXT = (max, extra = {}) => ({ type: 'text', max, ...extra });
+// A position in a list: whole number from 1 (unique in its list: positions.js)
+const POSITION = { type: 'int', min: 1 };
 
 const ENTITIES = {
   products: {
-    table: 'products', keys: ['product_id'], order: 'b.sort_order, b.product_id', updatedBy: true,
+    // admin order (positions.js): category position, main product position, colour versions under their main product
+    table: 'products', keys: ['product_id'], updatedBy: true,
+    order: '(SELECT c.sort_order FROM categories c WHERE c.category_key = b.category_key), b.category_key, '
+      + 'COALESCE((SELECT m.sort_order FROM products m WHERE m.product_id = b.variant_of), b.sort_order), '
+      + 'b.variant_of IS NOT NULL, b.sort_order, b.product_id',
     cols: {
       product_id: KEY(30), category_key: KEY(30), variant_of: { ...KEY(30), nullable: true },
-      sort_order: { type: 'decimal' }, is_featured: { type: 'bool' }, featured_order: { type: 'int', nullable: true },
+      sort_order: POSITION, is_featured: { type: 'bool' }, featured_order: { ...POSITION, nullable: true },
       show_for_home: { type: 'bool' }, swatch_hex: { type: 'hex', nullable: true },
       specification: TEXT(255, { required: true }), pack: TEXT(120, { required: true }),
       spec_status: TEXT(255, { nullable: true }), is_active: { type: 'bool' },
@@ -42,13 +48,13 @@ const ENTITIES = {
   },
   categories: {
     table: 'categories', keys: ['category_key'], order: 'b.sort_order, b.category_key',
-    cols: { category_key: KEY(30), sort_order: { type: 'int' }, rep_product_id: { ...KEY(30), nullable: true }, is_active: { type: 'bool' } },
+    cols: { category_key: KEY(30), sort_order: POSITION, rep_product_id: { ...KEY(30), nullable: true }, is_active: { type: 'bool' } },
     tr: { table: 'category_translations', cols: { name: TEXT(100, { required: true }) } },
   },
   banners: {
     table: 'banners', keys: ['banner_key'], order: 'b.sort_order, b.banner_key', updatedBy: true,
     cols: {
-      banner_key: KEY(40), sort_order: { type: 'int' }, theme: { type: 'enum', values: ['light', 'dark'] },
+      banner_key: KEY(40), sort_order: POSITION, theme: { type: 'enum', values: ['light', 'dark'] },
       cta_action: { type: 'enum', values: ['products', 'products_home', 'products_category', 'section', 'form'] },
       cta_target: TEXT(60, { nullable: true }), desktop_file: { ...TEXT(150), readOnly: true },
       mobile_file: { ...TEXT(150), readOnly: true }, is_active: { type: 'bool' }, note: TEXT(255, { nullable: true }),
@@ -57,7 +63,7 @@ const ENTITIES = {
   },
   kits: {
     table: 'kits', keys: ['kit_key'], order: 'b.sort_order, b.kit_key',
-    cols: { kit_key: KEY(40), sort_order: { type: 'int' }, business_type: KEY(40), rep_product_id: { ...KEY(30), nullable: true }, is_active: { type: 'bool' } },
+    cols: { kit_key: KEY(40), sort_order: POSITION, business_type: KEY(40), rep_product_id: { ...KEY(30), nullable: true }, is_active: { type: 'bool' } },
     tr: { table: 'kit_translations', cols: { name: TEXT(100, { required: true }), tagline: TEXT(255, { required: true }) } },
     links: { table: 'kit_products', item: 'product_id', field: 'products' },
   },
@@ -122,7 +128,8 @@ function coerce(name, def, raw) {
     }
     case 'int': {
       const n = Number(s);
-      if (!Number.isInteger(n) || Math.abs(n) > 2147483647) throw new InputError(`${name}: whole number`);
+      if (!Number.isInteger(n) || Math.abs(n) > 2147483647) throw new InputError(`${name}: whole number${def.min !== undefined ? ` from ${def.min} (1, 2, 3 ...)` : ''}`);
+      if (def.min !== undefined && n < def.min) throw new InputError(`${name}: whole number from ${def.min} (1, 2, 3 ...)`);
       return n;
     }
     case 'decimal': {

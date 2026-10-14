@@ -17,7 +17,7 @@ export const GROUPS = [
   { key: 'sales', label: 'Sales', icon: 'sales', items: [item('leads', 'Leads', 'viewer', 'leads')] },
   {
     key: 'catalogue', label: 'Catalogue', icon: 'catalogue', items: [
-      item('products', 'Products', 'viewer', 'products'), item('categories', 'Categories', 'viewer', 'categories'),
+      item('categories', 'Categories', 'viewer', 'categories'), item('products', 'Products', 'viewer', 'products'),
       item('kits', 'Kits', 'viewer', 'kits'), item('size-picker', 'Size picker', 'viewer', 'ruler'),
       item('import-export', 'Excel import / export', 'editor', 'sheet'),
     ],
