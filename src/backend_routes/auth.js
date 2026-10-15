@@ -80,8 +80,11 @@ async function isRevoked(empId, issuedAtS) {
 async function readSession(req) {
   const claims = verify(req.cookies && req.cookies[SESSION_COOKIE], 'session');
   if (!claims) return null;
+  // the employee must still be active in dAdmin too: someone who left the company loses access at once
   const [[user]] = await db.query(
-    'SELECT emp_id, role FROM admin_users WHERE emp_id = ? AND is_active = 1', [claims.sub]
+    `SELECT a.emp_id, a.role FROM admin_users a
+       JOIN \`${DADMIN}\`.employee e ON e.emp_id = a.emp_id AND e.deleted_time IS NULL AND e.active = 1
+      WHERE a.emp_id = ? AND a.is_active = 1`, [claims.sub]
   );
   if (!user) return null;
   if (await isRevoked(user.emp_id, claims.iat)) return null;

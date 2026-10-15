@@ -306,14 +306,34 @@ tr.a-group th:has(.a-placeline) { height: 36px; box-sizing: border-box; } /* sam
 .a-townside .a-prow:last-child { margin-bottom: 0; }
 @media (max-width: 1199px) { .a-townmapsec { grid-template-columns: minmax(0, 1fr); } }
 /* Translations: help list, the tools card; Languages: how-to card */
-.a-helplist { margin: 4px 0 0; padding-inline-start: 18px; }
-.a-helplist li { margin: 2px 0; }
 .a-trtools .a-trmissing { margin: 0 0 10px; }
 .a-trtools .a-toolbar:last-child { margin-bottom: 0; }
-.a-howto h2 { margin: 0 0 6px; font-size: 15px; }
-.a-howto ol { margin: 0 0 8px; padding-inline-start: 20px; }
-.a-howto li { margin: 3px 0; }
-.a-howto p { margin: 0; }
+/* Info / help card (InfoCard): one style on every page, the light-blue info look */
+.a-infocard { margin: 0 0 14px; padding: 12px 14px; border: 1px solid #c9d8e6; border-radius: 8px; background: #eef3f8; font-size: 13.5px; line-height: 1.5; }
+.a-infocard-h { margin: 0 0 6px; font-size: 14px; font-weight: 700; }
+.a-infocard-b ul, .a-infocard-b ol { margin: 0; padding-inline-start: 20px; }
+.a-infocard-b li { margin: 2px 0; }
+.a-infocard-b p { margin: 6px 0 0; }
+/* Admin users: avatar, person cell, status badge, add form with the employee picker */
+.a-avatar { display: inline-block; flex: none; border-radius: 50%; object-fit: cover; }
+.a-avatar-i { display: inline-grid; place-items: center; background: #e9e3d2; color: var(--a-ink2); font-weight: 700; }
+.a-person { display: inline-flex; align-items: center; gap: 10px; }
+.a-person-sub { display: block; font-size: 12px; }
+.a-leftbadge { margin-inline-start: 8px; background: #8a6a0c; }
+.a-status { display: inline-flex; align-items: center; height: 22px; padding: 0 10px; border-radius: 999px; font-size: 12px; font-weight: 700; }
+.a-status-on { background: #e3f3e8; color: #1d6b3a; }
+.a-status-off { background: #ecebe7; color: #5b5850; }
+.a-adduser h2 { margin: 0 0 10px; font-size: 15px; }
+.a-adduser-row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) auto; gap: 12px; align-items: start; }
+.a-adduser-btn { margin-top: 24px; }
+@media (max-width: 700px) { .a-adduser-row { grid-template-columns: minmax(0, 1fr); } .a-adduser-btn { margin-top: 0; justify-self: start; } }
+.a-emppick { position: relative; min-width: 0; }
+.a-emppick input { width: 100%; box-sizing: border-box; }
+.a-emppick-chosen { display: flex; align-items: center; gap: 10px; min-height: 37px; padding: 4px 8px; border: 1px solid var(--a-line); border-radius: 8px; background: #fff; }
+.a-emppick-chosen .a-link { margin-inline-start: auto; }
+.a-emppick-list { position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; right: 0; max-height: 320px; overflow-y: auto; list-style: none; margin: 0; padding: 4px; background: #fff; border: 1px solid var(--a-line); border-radius: 10px; box-shadow: 0 10px 30px rgba(18, 18, 20, .18); }
+.a-emppick-list li[role="option"] { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 6px; cursor: pointer; min-height: 44px; box-sizing: border-box; }
+.a-emppick-text { min-width: 0; }
 /* Excel import: before / after values wrap (long text, Tamil / Hindi keep their shaping via the cell's lang) */
 .a-difftable td { vertical-align: top; }
 .a-difftable td:nth-child(3), .a-difftable td:nth-child(4) { min-width: 160px; max-width: 440px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }

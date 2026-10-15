@@ -1114,27 +1114,81 @@ route('post', '/mail-logo/test-mail', 'admin', async (req) => {
   return { to, logo: url ? 'url' : 'builtin', mail_id: ins.insertId, provider_id: r.providerId };
 });
 
+// dAdmin employee (read only; named columns only, never the rest of that table): name, e-mail, active, photo, and
+// job_position / emp_department, which are ids into dadmin.job_position_config / department_config.
 const USER_SELECT = `SELECT a.emp_id, a.role, a.is_active, a.created_by, a.created_at,
   TRIM(CONCAT(COALESCE(e.emp_first_name, ''), ' ', COALESCE(e.emp_last_name, ''))) AS name, e.emp_mail_id AS email,
-  e.deleted_time IS NOT NULL AS deleted_in_dadmin
+  e.job_position, e.emp_department, e.emp_profile_img AS photo,
+  (e.emp_id IS NOT NULL AND (e.deleted_time IS NOT NULL OR e.active <> 1)) AS left_company,
+  e.emp_id IS NULL AS not_in_dadmin
   FROM admin_users a LEFT JOIN \`${auth.DADMIN}\`.employee e ON e.emp_id = a.emp_id`;
 const ROLES = Object.keys(auth.ROLE_RANK);
 
+// Job title and department names. Production needs SELECT on these two dadmin tables (database/README.md); without it
+// the names are simply left out.
+async function dadminNames(q) {
+  const out = { jobs: new Map(), depts: new Map() };
+  try {
+    const [jobs] = await q.query(`SELECT job_id, job_name FROM \`${auth.DADMIN}\`.job_position_config`);
+    for (const j of jobs) out.jobs.set(String(j.job_id), j.job_name);
+    const [depts] = await q.query(`SELECT department_id, department_name FROM \`${auth.DADMIN}\`.department_config`);
+    for (const d of depts) out.depts.set(String(d.department_id), d.department_name);
+  } catch (err) {
+    if (!/denied|ER_TABLEACCESS|ER_NO_SUCH_TABLE/i.test(`${err.code} ${err.message}`)) throw err;
+  }
+  return out;
+}
+// A photo the browser can show: a URL or an image data URL of a sane size, else none (initials instead).
+const photoOf = (v) => (typeof v === 'string' && (/^https?:\/\//.test(v) || (/^data:image\//.test(v) && v.length < 300000)) ? v : null);
+function withNames(rows, names) {
+  return rows.map(({ job_position: job, emp_department: dept, photo, ...r }) => ({
+    ...r, designation: names.jobs.get(String(job)) || null, department: names.depts.get(String(dept)) || null, photo: photoOf(photo),
+    left_company: Number(r.left_company) === 1, not_in_dadmin: Number(r.not_in_dadmin) === 1,
+  }));
+}
+// Active admins whose dAdmin account is still active (the ones who can actually sign in).
+async function activeAdmins(q, exceptEmpId) {
+  const [[r]] = await q.query(
+    `SELECT COUNT(*) AS n FROM admin_users a JOIN \`${auth.DADMIN}\`.employee e ON e.emp_id = a.emp_id AND e.deleted_time IS NULL AND e.active = 1
+      WHERE a.is_active = 1 AND a.role = 'admin' AND a.emp_id <> ?`, [exceptEmpId || '']
+  );
+  return Number(r.n);
+}
+
+// The Add picker: active dAdmin employees who are not dFresh admin users yet, by name or emp_id.
+route('get', '/users/employees', 'admin', async (req) => {
+  const term = String(req.query.q || '').trim().slice(0, 60);
+  const like = `%${term.replace(/[%_\\]/g, (c) => `\\${c}`)}%`;
+  const [rows] = await db.query(
+    `SELECT e.emp_id, TRIM(CONCAT(COALESCE(e.emp_first_name, ''), ' ', COALESCE(e.emp_last_name, ''))) AS name,
+            e.emp_mail_id AS email, e.job_position, e.emp_department, e.emp_profile_img AS photo, 0 AS left_company, 0 AS not_in_dadmin
+       FROM \`${auth.DADMIN}\`.employee e
+      WHERE e.deleted_time IS NULL AND e.active = 1
+        AND NOT EXISTS (SELECT 1 FROM admin_users a WHERE a.emp_id = e.emp_id)
+        AND (? = '' OR e.emp_id LIKE ? OR CONCAT(COALESCE(e.emp_first_name, ''), ' ', COALESCE(e.emp_last_name, '')) LIKE ?)
+      ORDER BY e.emp_first_name, e.emp_last_name LIMIT 20`,
+    [term, like, like]
+  );
+  return withNames(rows, await dadminNames(db)).map(({ left_company: _l, not_in_dadmin: _n, ...r }) => r); // eslint-disable-line no-unused-vars
+});
+
 route('get', '/users', 'admin', async () => {
-  const [rows] = await db.query(`${USER_SELECT} ORDER BY a.is_active DESC, a.emp_id`);
-  return rows;
+  const [rows] = await db.query(`${USER_SELECT} ORDER BY a.is_active DESC, name, a.emp_id`);
+  return withNames(rows, await dadminNames(db));
 });
 
 route('post', '/users', 'admin', async (req) => tx(async (q) => {
   const empId = str(req.body.emp_id, 20);
   if (!empId || !/^[A-Za-z0-9_-]{1,20}$/.test(empId)) throw new InputError('emp_id like DZIND148');
   if (!ROLES.includes(req.body.role)) throw new InputError(`role: ${ROLES.join(', ')}`);
-  const [[emp]] = await q.query(`SELECT emp_id FROM \`${auth.DADMIN}\`.employee WHERE emp_id = ? AND deleted_time IS NULL`, [empId]);
+  const [[emp]] = await q.query(`SELECT emp_id FROM \`${auth.DADMIN}\`.employee WHERE emp_id = ? AND deleted_time IS NULL AND active = 1`, [empId]);
   if (!emp) throw new InputError('No active dAdmin employee with that emp_id');
+  const [[already]] = await q.query('SELECT emp_id FROM admin_users WHERE emp_id = ?', [emp.emp_id]);
+  if (already) throw new InputError(`${emp.emp_id} is already a dFresh admin user`);
   await q.query('INSERT INTO admin_users (emp_id, role, is_active, created_by) VALUES (?, ?, 1, ?)', [emp.emp_id, req.body.role, by(req)]);
   const [[after]] = await q.query(`${USER_SELECT} WHERE a.emp_id = ?`, [emp.emp_id]);
-  await audit(q, { empId: by(req), action: 'create', entity: 'admin_user', entityId: emp.emp_id, after });
-  return after;
+  await audit(q, { empId: by(req), action: 'create', entity: 'admin_user', entityId: emp.emp_id, after: { role: after.role, is_active: after.is_active } });
+  return withNames([after], await dadminNames(q))[0];
 }), { status: 201 });
 
 route('put', '/users/:empId', 'admin', async (req) => tx(async (q) => {
@@ -1148,12 +1202,18 @@ route('put', '/users/:empId', 'admin', async (req) => tx(async (q) => {
   if ('is_active' in req.body) set.is_active = entities.coerce('is_active', { type: 'bool' }, req.body.is_active);
   if (!Object.keys(set).length) throw new InputError('Nothing to change');
   if (before.emp_id === by(req) && (set.is_active === 0 || (set.role && set.role !== 'admin'))) {
-    throw new InputError('You cannot remove your own admin access (ask another admin)');
+    throw new InputError('You cannot deactivate yourself or remove your own admin role (ask another admin)');
+  }
+  // there must always be at least one active admin who can sign in
+  const losesAdmin = before.role === 'admin' && Number(before.is_active) === 1 && (set.is_active === 0 || (set.role && set.role !== 'admin'));
+  if (losesAdmin && (await activeAdmins(q, before.emp_id)) === 0) {
+    throw new InputError('There must always be at least one active admin. Make someone else admin first.');
   }
   await q.query(`UPDATE admin_users SET ${Object.keys(set).map((c) => `${c} = ?`).join(', ')} WHERE emp_id = ?`, [...Object.values(set), before.emp_id]);
   const [[after]] = await q.query(`${USER_SELECT} WHERE a.emp_id = ?`, [before.emp_id]);
-  await audit(q, { empId: by(req), action: 'update', entity: 'admin_user', entityId: before.emp_id, before, after });
-  return after;
+  const action = set.role && set.role !== before.role ? 'role_change' : set.is_active === 0 ? 'deactivate' : set.is_active === 1 ? 'reactivate' : 'update';
+  await audit(q, { empId: by(req), action, entity: 'admin_user', entityId: before.emp_id, before: { role: before.role, is_active: before.is_active }, after: { role: after.role, is_active: after.is_active } });
+  return withNames([after], await dadminNames(q))[0];
 }));
 
 route('get', '/audit', 'admin', async (req) => {

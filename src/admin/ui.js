@@ -43,6 +43,24 @@ export function Notice({ kind = 'info', children, onClose }) {
   );
 }
 
+/** The help / info card at the top of an admin page (one style everywhere): a heading and short text or a list. */
+export function InfoCard({ title, children }) {
+  return (
+    <section className="a-infocard" aria-label={title || 'Help'}>
+      {title && <h2 className="a-infocard-h">{title}</h2>}
+      <div className="a-infocard-b">{children}</div>
+    </section>
+  );
+}
+
+/** A person's photo, or their initials in a circle. */
+export function Avatar({ name, photo, size = 32 }) {
+  const initials = String(name || '?').split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join('');
+  return photo
+    ? <img className="a-avatar" src={photo} alt="" width={size} height={size} style={{ width: size, height: size }} />
+    : <span className="a-avatar a-avatar-i" aria-hidden="true" style={{ width: size, height: size, fontSize: Math.round(size * 0.4) }}>{initials}</span>;
+}
+
 /** Runs async actions with a busy flag and a message line. */
 export function useAction() {
   const [busy, setBusy] = useState(false);

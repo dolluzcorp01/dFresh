@@ -15,6 +15,8 @@ const DADMIN_TABLES = [
   ['employee', 'SELECT'],
   ['login_session_revoke', 'SELECT'],
   ['login_otp', 'SELECT, INSERT, UPDATE, DELETE'],
+  ['job_position_config', 'SELECT'], // Admin users: job title shown with the name
+  ['department_config', 'SELECT'], // Admin users: department
 ];
 
 function fail(msg) {

@@ -7,7 +7,7 @@
 import { useEffect, useState } from 'react';
 import { api } from './adminApi';
 import { API_BASE, mediaUrl } from '../utils/api';
-import { Loading, Notice, fmtDate, useAction, useLoad } from './ui';
+import { InfoCard, Loading, fmtDate, useAction, useLoad } from './ui';
 import { ProductSelect } from './ProductSelect';
 
 const HTTPS = /^https:\/\/[^\s"'<>]+$/;
@@ -34,12 +34,13 @@ export default function Settings() {
   return (
     <section>
       <h1>Settings</h1>
-      <Notice>
-        Addresses are not set here: the office and godown names and addresses are edited in Translations, group Contact
-        details (<code>c_office</code>, <code>c_office_a</code>, <code>c_godown</code>, <code>c_godown_a</code>), one text per language. That one copy is used in the
-        contact section, the footer, the Google Maps search and Google business data. The footer company line is built
-        from <code>company_name</code>, <code>cin</code> and <code>gstin</code> below.
-      </Notice>
+      <InfoCard title="Addresses are not set here">
+        <ul>
+          <li>Office and godown names and addresses: Translations, group Contact details (<code>c_office</code>, <code>c_office_a</code>, <code>c_godown</code>, <code>c_godown_a</code>), one text per language.</li>
+          <li>That one copy is used in the contact section, the footer, the Google Maps search and Google business data.</li>
+          <li>The footer company line is built from <code>company_name</code>, <code>cin</code> and <code>gstin</code> below.</li>
+        </ul>
+      </InfoCard>
       {act.note}
       <Loading state={list}>
         <div className="a-scroll">

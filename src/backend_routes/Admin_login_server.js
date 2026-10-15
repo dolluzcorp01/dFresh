@@ -114,7 +114,7 @@ router.post('/admin/login', async (req, res) => {
   try {
     const [[emp]] = await db.query(
       `SELECT emp_id, emp_first_name, emp_last_name, emp_mail_id, account_pass
-         FROM \`${auth.DADMIN}\`.employee WHERE LOWER(emp_mail_id) = ? AND deleted_time IS NULL LIMIT 1`,
+         FROM \`${auth.DADMIN}\`.employee WHERE LOWER(emp_mail_id) = ? AND deleted_time IS NULL AND active = 1 LIMIT 1`,
       [email]
     );
     const ok = emp && emp.account_pass && await bcrypt.compare(password, emp.account_pass);
@@ -193,7 +193,7 @@ router.post('/admin/login/resend', async (req, res) => {
     const [[emp]] = await db.query(
       `SELECT e.emp_id, e.emp_first_name, e.emp_mail_id FROM \`${auth.DADMIN}\`.employee e
          JOIN admin_users a ON a.emp_id = e.emp_id AND a.is_active = 1
-        WHERE e.emp_id = ? AND e.deleted_time IS NULL`,
+        WHERE e.emp_id = ? AND e.deleted_time IS NULL AND e.active = 1`,
       [challenge.sub]
     );
     if (!emp) return expired(res, 'This account can no longer sign in to dFresh admin.');

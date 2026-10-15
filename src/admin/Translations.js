@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { api } from './adminApi';
-import { Loading, Notice, useAction, useAdmin, useCan, useLoad } from './ui';
+import { InfoCard, Loading, Notice, useAction, useAdmin, useCan, useLoad } from './ui';
 import { COUNTS } from '../shared/countText';
 
 export default function Translations() {
@@ -54,14 +54,13 @@ export default function Translations() {
   return (
     <section>
       <h1>Translations</h1>
-      <Notice>
-        <strong>Live numbers in any text</strong>
-        <ul className="a-helplist">
+      <InfoCard title="Live numbers in any text">
+        <ul>
           <li>{COUNTS.map((c) => <code key={c}>{`{${c}}`}</code>).reduce((a, b) => [a, ', ', b])} show the current count, e.g. 25</li>
           <li>Add <code>_word</code> for the number in words: <code>{'{towns_word}'}</code> shows &quot;six&quot; (words come from <code>num_words</code>, group &quot;Numbers in text&quot;)</li>
           <li>Other names like <code>{'{name}'}</code> are filled by the site. Keep them exactly as they are, do not translate them.</li>
         </ul>
-      </Notice>
+      </InfoCard>
       <div className="a-card a-trtools">
       <p className="a-muted a-trmissing">Missing per language: {languages.map((l) => <span key={l.lang_code} className={missingCount[l.lang_code] ? 'a-bad' : ''}> {l.lang_code} {missingCount[l.lang_code]} </span>)}</p>
       <div className="a-toolbar">

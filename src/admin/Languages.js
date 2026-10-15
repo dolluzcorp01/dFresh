@@ -5,7 +5,7 @@
 // ready (subset size) / rebuilding / using full font (a rebuild failed) / - while the language is off.
 import { useState } from 'react';
 import { api } from './adminApi';
-import { Drawer, Field, Loading, nextOrder, useAction, useAdmin, useCan, useLoad } from './ui';
+import { Drawer, Field, InfoCard, Loading, nextOrder, useAction, useAdmin, useCan, useLoad } from './ui';
 
 const FIELDS = [
   { name: 'lang_code', label: 'Code (URL prefix)', required: true, help: '2-3 lower-case letters, e.g. te' },
@@ -51,15 +51,14 @@ export default function Languages() {
   return (
     <section>
       <h1>Languages</h1>
-      <div className="a-card a-howto">
-        <h2>How to add a language</h2>
+      <InfoCard title="How to add a language">
         <ol>
           <li>Click Add language and pick its script. The script sets the font and the text direction.</li>
           <li>Translate it in Translations and in the product Excel.</li>
           <li>When the Translated % is high enough, click Switch on. It appears in the site&apos;s language switcher at once.</li>
         </ol>
-        <p className="a-muted">Anything not translated shows in English. Fonts are prepared automatically, no developer needed.</p>
-      </div>
+        <p>Anything not translated shows in English. Fonts are prepared automatically, no developer needed.</p>
+      </InfoCard>
       {isAdmin && <div className="a-toolbar"><button type="button" className="a-btn" onClick={() => setOpen({ create: true })}>Add language</button></div>}
       {act.note}
       <Loading state={list}>

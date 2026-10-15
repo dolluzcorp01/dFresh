@@ -28,6 +28,8 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON dfresh.* TO 'dfresh_app'@'localhost';
 GRANT SELECT ON dadmin.employee TO 'dfresh_app'@'localhost';
 GRANT SELECT ON dadmin.login_session_revoke TO 'dfresh_app'@'localhost';
 GRANT SELECT, INSERT, UPDATE, DELETE ON dadmin.login_otp TO 'dfresh_app'@'localhost';
+GRANT SELECT ON dadmin.job_position_config TO 'dfresh_app'@'localhost';  -- Admin users: job title (optional)
+GRANT SELECT ON dadmin.department_config TO 'dfresh_app'@'localhost';    -- Admin users: department (optional)
 ```
 
 ## Source of truth

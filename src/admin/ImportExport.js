@@ -4,7 +4,7 @@
 // Choosing another file or "Clear" drops the previous result; after an apply the form resets and says what changed.
 import { useRef, useState } from 'react';
 import { api } from './adminApi';
-import { Notice, useAction, useCan } from './ui';
+import { InfoCard, Notice, useAction, useCan } from './ui';
 
 const show = (v) => (v === null || v === undefined || v === '' ? <em className="a-muted">empty</em> : String(v));
 // a column like Name_TA / Pack_HI: its language, so the browser picks the right font and shaping
@@ -46,6 +46,13 @@ export default function ImportExport() {
   return (
     <section>
       <h1>Excel import / export</h1>
+      <InfoCard title="How the import works">
+        <ul>
+          <li>Export the list, edit it in Excel, then choose it here and run the dry run: it lists every change and every error.</li>
+          <li>Apply changes is offered only for that same file with 0 errors. A product missing from the sheet is switched off, never deleted.</li>
+          <li>Photos are uploaded in Products; UI texts are edited in Translations.</li>
+        </ul>
+      </InfoCard>
       {act.note}
       <div className="a-card">
         <h2>Export</h2>
