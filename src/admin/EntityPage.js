@@ -12,9 +12,9 @@ import { fontVar, loadFont } from '../i18n/fonts';
 import { LAND, MAP_H, MAP_W } from '../shared/mapShape';
 
 const KEY_HINT = 'Internal name (a-z, 0-9, -). Used in photo names, analytics and lead source.';
+const RENAME_NOTE_BANNER = "The banner's texts, the leads from its form button and its history move to the new key; photos keep working. Analytics keeps the old key for earlier clicks.";
 const KEY_INFO = "Not shown to visitors. 2 to 30 characters: lowercase a-z, digits 0-9 and hyphens. It starts the names of this banner's uploaded photo files, it is sent with the analytics click event (banner_click), and leads sent from this banner's form button record it as their source. Renaming moves the texts, those leads and the history to the new key in one step; analytics keeps the old key for earlier clicks.";
 const ACTIVE = { name: 'is_active', label: 'Active', type: 'bool' };
-const ORDER = { name: 'sort_order', label: 'Order', type: 'number', step: '1' };
 // Banners, kits, categories: the position is set by dragging the rows (1, 2, 3 ...; a new row goes to the end)
 const POSITION = { name: 'sort_order', label: 'Position', type: 'readonly', help: 'Drag the rows in the list to change it. A new one goes to the end.' };
 
@@ -28,7 +28,8 @@ const SECTIONS = {
       { name: 'cta_target', label: 'Button target' }, // a dropdown that follows Button action (BannerTarget)
       { name: 'note', label: 'Internal note' }, ACTIVE,
     ],
-    layout: 'banners', // drawer rows: BannerFields; list: Desktop / Mobile photo switch
+    layout: 'banners', // drawer rows (Editor)
+    rename: { field: 'banner_key', note: RENAME_NOTE_BANNER },
     tr: [
       { name: 'headline', label: 'Headline', required: true, long: true, help: '{count} = number of active products', info: '{count} becomes the number of active products on the site: main products only, not colour versions ({products} works too).' },
       { name: 'cta_label', label: 'Button label', required: true },
@@ -56,17 +57,24 @@ const SECTIONS = {
     defaults: { is_active: 1, products: [] },
   },
   towns: {
-    title: 'Towns', keys: ['town_key'], reorder: true,
+    title: 'Towns', keys: ['town_key'], reorder: true, layout: 'towns',
+    rename: { field: 'town_key', note: "The town's names per language and its history move to the new key. Leads keep the town the visitor typed." },
     fields: [
-      { name: 'town_key', label: 'Key', required: true, keyField: true }, ORDER, { name: 'is_base', label: 'Godown base', type: 'bool' },
-      { name: 'map_x', label: 'Map x (0-600)', type: 'number', step: '1' }, { name: 'map_y', label: 'Map y (0-360)', type: 'number', step: '1' },
-      { name: 'label_dx', label: 'Name: move right (+) or left (-)', type: 'number', step: '1', help: 'map units from the pin' },
-      { name: 'label_dy', label: 'Name: move down (+) or up (-)', type: 'number', step: '1', help: 'map units from the pin; -20 = just above' },
-      { name: 'label_anchor', label: 'Name: which part sits at that point', type: 'select', allowEmpty: false, options: [
-        { value: 'start', label: 'its start (name runs to the right)' }, { value: 'middle', label: 'its middle (centred)' },
-        { value: 'end', label: 'its end (name runs to the left)' },
+      { name: 'town_key', label: 'Key', required: true, keyField: true, help: 'Internal name (a-z, 0-9, -). Not shown on the site.',
+        info: "2 to 30 characters: lowercase a-z, digits 0-9 and hyphens. It ties the town's names per language and its history together. Leads keep the town name the visitor typed, never this key." },
+      { name: 'sort_order', label: 'Order', type: 'readonly', help: 'Drag the rows in the list to change it.', info: 'The order of the town names under the map on the home page. A new town goes to the end.' },
+      { name: 'map_x', label: 'Map x', type: 'number', step: '1', help: '0-600, left to right. Or drag the pin.' },
+      { name: 'map_y', label: 'Map y', type: 'number', step: '1', help: '0-360, top to bottom. Or drag the pin.' },
+      { name: 'label_dx', label: 'Name offset across', type: 'number', step: '1', help: '+ right, - left. Or drag the name.', info: 'Map units from the pin to the point the name is placed at.' },
+      { name: 'label_dy', label: 'Name offset down', type: 'number', step: '1', help: '+ down, - up; -20 = just above.', info: 'Map units from the pin to the point the name is placed at. -20 puts the name just above the pin.' },
+      { name: 'label_anchor', label: 'Name alignment', type: 'select', allowEmpty: false, help: 'Which part of the name sits at that point.', options: [
+        { value: 'start', label: 'start (runs to the right)' }, { value: 'middle', label: 'middle (centred)' },
+        { value: 'end', label: 'end (runs to the left)' },
       ] },
-      { name: 'lat', label: 'Latitude', type: 'number' }, { name: 'lng', label: 'Longitude', type: 'number' }, ACTIVE,
+      { name: 'lat', label: 'Latitude', type: 'number', help: 'For Google: base town only.', info: "Only the godown base town's latitude and longitude are used: they go into the site's structured data for Google (LocalBusiness, geo). Other towns' values are not used anywhere yet." },
+      { name: 'lng', label: 'Longitude', type: 'number', help: 'For Google: base town only.', info: "Only the godown base town's latitude and longitude are used (Google structured data)." },
+      { name: 'is_base', label: 'Godown base', type: 'bool', info: 'The town the goods ship from: the dark pin with a star. One town only; ticking it here unticks the other.' },
+      { name: 'is_active', label: 'Active (shown on the map)', type: 'bool' },
     ],
     tr: [{ name: 'name', label: 'Name', required: true }],
     list: (r) => [r.town_key, r.tr?.en?.name ?? '', r.is_base ? 'base' : '', r.map_x != null ? `${r.map_x}, ${r.map_y}` : ''],
@@ -110,15 +118,19 @@ const SECTIONS = {
     defaults: { scale: 0.5, is_active: 1 },
   },
   'form-options': {
-    title: 'Form options', keys: ['list_key', 'option_value'],
+    title: 'Form options', keys: ['list_key', 'option_value'], reorder: true, groupBy: 'list_key', layout: 'options',
+    rename: { field: 'option_value', note: 'Kits that use it follow. Only possible while no lead uses it.' },
     fields: [
-      { name: 'list_key', label: 'List', type: 'select', options: ['business_type', 'monthly_sales', 'yes_no'], allowEmpty: false, keyField: true },
-      { name: 'option_value', label: 'Stored value', required: true, keyField: true, help: 'saved in leads; never change it once used' }, ORDER, ACTIVE,
+      { name: 'list_key', label: 'List', type: 'select', allowEmpty: false, keyField: true, help: 'Which dropdown on the site this option belongs to.' },
+      { name: 'option_value', label: 'Stored value', required: true, keyField: true, help: 'a-z, 0-9 and _. Saved in leads.',
+        info: 'What a lead stores (the label is only shown). It can change while no lead uses it; once a lead uses it, it stays, so old leads keep their label.' },
+      { name: 'sort_order', label: 'Order', type: 'readonly', help: 'Drag the rows in the list to change it.' },
+      { name: 'is_active', label: 'Active (shown in the form)', type: 'bool', info: 'Off = hidden from the form. Leads that already chose it keep it and still show its label.' },
     ],
     tr: [{ name: 'label', label: 'Label', required: true }],
-    list: (r) => [r.list_key, r.option_value, r.tr?.en?.label ?? ''],
-    nameCol: 2,
-    head: ['List', 'Value', 'Label (EN)'],
+    list: (r) => [r.option_value, r.tr?.en?.label ?? '', r.used ? `${r.used.leads} lead(s)${r.used.kits ? `, ${r.used.kits} kit(s)` : ''}` : ''],
+    nameCol: 1,
+    head: ['Stored value', 'Label (EN)', 'Used in'],
     defaults: { is_active: 1, list_key: 'business_type' },
   },
 };
@@ -144,18 +156,26 @@ export default function EntityPage({ name }) {
   }), [products.data, options.data]);
 
   // drag = a local order until "Save order" (useOrderDraft); the list shows it with the new positions
-  const draft = useOrderDraft((_, ids) => api.send('POST', `/${name}/reorder`, { order: ids.map(decodeURIComponent) }), () => list.reload());
-  const savedIds = (list.data || []).map((r) => rowId(cfg.keys, r));
-  const shownIds = draft.order('all', savedIds);
+  // grouped lists (form options: one group per list) are dragged and saved per group
+  const draft = useOrderDraft((scope, ids) => api.send('POST', `/${name}/reorder`, {
+    order: ids.map(decodeURIComponent), ...(cfg.groupBy ? { list: scope.slice('group:'.length) } : {}),
+  }), () => list.reload());
   const byId = new Map((list.data || []).map((r) => [rowId(cfg.keys, r), r]));
-  const shown = shownIds.map((id, i) => byId.get(id) && (draft.dirty && 'sort_order' in byId.get(id) ? { ...byId.get(id), sort_order: i + 1 } : byId.get(id))).filter(Boolean);
-  const drop = (target) => {
-    if (!drag || drag === target) return;
-    const ids = [...shownIds];
-    const from = ids.indexOf(drag);
+  const groupKeys = cfg.groupBy ? [...new Set((list.data || []).map((r) => r[cfg.groupBy]))] : [null];
+  const groups = groupKeys.map((g) => {
+    const scope = cfg.groupBy ? `group:${g}` : 'all';
+    const savedIds = (list.data || []).filter((r) => !cfg.groupBy || r[cfg.groupBy] === g).map((r) => rowId(cfg.keys, r));
+    const ids = draft.order(scope, savedIds);
+    const rowsShown = ids.map((id, i) => byId.get(id) && (draft.order(scope, null) && 'sort_order' in byId.get(id) ? { ...byId.get(id), sort_order: i + 1 } : byId.get(id))).filter(Boolean);
+    return { key: g, scope, savedIds, ids, rows: rowsShown };
+  });
+  const drop = (target, grp) => {
+    if (!drag || drag.id === target || drag.scope !== grp.scope) return;
+    const ids = [...grp.ids];
+    const from = ids.indexOf(drag.id);
     ids.splice(ids.indexOf(target), 0, ids.splice(from, 1)[0]);
     setDrag(null);
-    draft.set('all', ids, savedIds);
+    draft.set(grp.scope, ids, grp.savedIds);
   };
   const openDrawer = (o) => draft.guard(() => setOpen(o));
 
@@ -178,14 +198,21 @@ export default function EntityPage({ name }) {
         <div className="a-scroll">
           <table className="a-table a-hover">
             <thead><tr>{cfg.reorder && <th />}{cfg.head.map((h) => <th key={h}>{h}</th>)}<th>Active</th></tr></thead>
-            <tbody>
-              {shown.filter((r) => !onlyMissing || missingOf(r).length).map((r) => {
+            {groups.map((grp) => (
+            <tbody key={grp.scope}>
+              {cfg.groupBy && (
+                <tr className="a-group"><th colSpan={cfg.head.length + 2}>
+                  {(OPTION_LISTS[grp.key] || {}).title || grp.key} <span className="a-muted a-group-use">{(OPTION_LISTS[grp.key] || {}).used || 'Not used by any form yet'}</span>
+                </th></tr>
+              )}
+              {grp.rows.filter((r) => !onlyMissing || missingOf(r).length).map((r) => {
                 const id = rowId(cfg.keys, r);
                 const missing = missingOf(r);
                 return (
-                  <tr key={id} className={`${r.is_active === 0 ? 'a-off' : ''}${drag === id ? ' a-dragging' : ''}`} onClick={() => openDrawer({ id })} tabIndex={0}
+                  <tr key={id} className={`${r.is_active === 0 ? 'a-off' : ''}${drag && drag.id === id ? ' a-dragging' : ''}`} onClick={() => openDrawer({ id })} tabIndex={0}
                     onKeyDown={(e) => e.key === 'Enter' && openDrawer({ id })}
-                    draggable={cfg.reorder && canEdit && !onlyMissing} onDragStart={() => setDrag(id)} onDragOver={(e) => e.preventDefault()} onDrop={() => drop(id)}
+                    draggable={cfg.reorder && canEdit && !onlyMissing} onDragStart={() => setDrag({ id, scope: grp.scope })}
+                    onDragOver={(e) => { if (drag && drag.scope === grp.scope) e.preventDefault(); }} onDrop={() => drop(id, grp)}
                     onDragEnd={() => setDrag(null)}>
                     {cfg.reorder && <td className="a-handle" aria-hidden="true">{onlyMissing ? '' : '⠿'}</td>}
                     {cfg.list(r, { products: products.data || [] }).map((v, i) => (
@@ -199,11 +226,12 @@ export default function EntityPage({ name }) {
                 );
               })}
             </tbody>
+            ))}
           </table>
         </div>
       </Loading>
       {open && (
-        <Editor name={name} cfg={cfg} id={open.id} lookups={lookups} products={products.data || []} rows={list.data || []} onClose={() => setOpen(null)}
+        <Editor name={name} cfg={cfg} id={open.id} lookups={lookups} products={products.data || []} rows={list.data || []} lists={groupKeys} onClose={() => setOpen(null)}
           onSaved={(id) => { list.reload(); setOpen(id ? { id } : null); }} cats={cats.data || []} uiText={uiText.data} />
       )}
       {draft.ui}
@@ -211,7 +239,7 @@ export default function EntityPage({ name }) {
   );
 }
 
-function Editor({ name, cfg, id, lookups, products, rows, cats, uiText, onClose, onSaved }) {
+function Editor({ name, cfg, id, lookups, products, rows, lists, cats, uiText, onClose, onSaved }) {
   const loaded = useLoad(id ? `/${name}/${id}` : null);
   const canEdit = useCan('editor');
   const act = useAction();
@@ -234,9 +262,11 @@ function Editor({ name, cfg, id, lookups, products, rows, cats, uiText, onClose,
   };
 
   const [preview, setPreview] = useState(null); // banners: 'desktop' | 'mobile' while the large preview is open
-  const keyChanged = name === 'banners' && !creating && loaded.data && String(row.banner_key || '').trim() !== loaded.data.banner_key;
+  const [newList, setNewList] = useState(false); // form options: typing a new list key instead of picking one
+  const rn = cfg.rename && cfg.rename.field;
+  const keyChanged = Boolean(rn && !creating && loaded.data && String(row[rn] ?? '').trim() !== String(loaded.data[rn]));
   const save = () => {
-    if (keyChanged && !window.confirm(`Rename "${loaded.data.banner_key}" to "${String(row.banner_key).trim()}"?\n\n${RENAME_NOTE}`)) return undefined;
+    if (keyChanged && !window.confirm(`Rename "${loaded.data[rn]}" to "${String(row[rn]).trim()}"?\n\nRenaming updates all references. ${cfg.rename.note}`)) return undefined;
     return act.run(async () => {
       const saved = creating ? await api.send('POST', `/${name}`, row) : await api.send('PUT', `/${name}/${id}`, row);
       setDraft(null);
@@ -300,10 +330,46 @@ function Editor({ name, cfg, id, lookups, products, rows, cats, uiText, onClose,
               {fld('banner_key', { keyField: false })}{fld('sort_order')}{fld('theme')}
               {fld('cta_action', { help: `Button opens: ${buttonOpens(row, cats)}` })}
             </div>
-            {keyChanged && <p className="a-replace-note">Renaming updates all references. {RENAME_NOTE}</p>}
+            {keyChanged && <p className="a-replace-note">Renaming updates all references. {cfg.rename.note}</p>}
             <div className={`a-prow a-prow-4 a-banrow2${hasTarget ? '' : ' a-notarget'}`}>
               <div className="a-banote">{fld('note')}</div>
               {hasTarget && fld('cta_target')}
+            </div>
+            <div className="a-prow a-pchecks">{fld('is_active')}</div>
+          </>
+        );
+      })() : cfg.layout === 'towns' ? (() => {
+        // Key | Order | Map x | Map y, then the name offsets, then latitude / longitude (the checkboxes come after the map)
+        const fld = (n, extra) => renderField({ ...cfg.fields.find((x) => x.name === n), ...extra });
+        return (
+          <>
+            <div className="a-prow a-prow-4">{fld('town_key', { keyField: false })}{fld('sort_order')}{fld('map_x')}{fld('map_y')}</div>
+            {keyChanged && <p className="a-replace-note">Renaming updates all references. {cfg.rename.note}</p>}
+            <div className="a-prow a-prow-3">{fld('label_dx')}{fld('label_dy')}{fld('label_anchor')}</div>
+            <div className="a-prow a-prow-2">{fld('lat')}{fld('lng')}</div>
+          </>
+        );
+      })() : cfg.layout === 'options' ? (() => {
+        const fld = (n, extra) => renderField({ ...cfg.fields.find((x) => x.name === n), ...extra });
+        const used = (loaded.data && loaded.data.used) || { leads: 0, kits: 0 };
+        const listField = creating && newList
+          ? fld('list_key', { type: 'text', label: 'New list key', help: 'a-z, 0-9 and _, e.g. delivery_slot. A form must use it to show it.' })
+          : fld('list_key', { options: lists.map((l) => ({ value: l, label: (OPTION_LISTS[l] || {}).title ? `${OPTION_LISTS[l].title} (${l})` : l })) });
+        return (
+          <>
+            <div className="a-prow a-prow-3">
+              <div className="a-fieldplus">
+                {listField}
+                {creating && canEdit && (
+                  <button type="button" className="a-link" onClick={() => { setNewList((x) => !x); set('list_key', newList ? (lists[0] || '') : ''); }}>
+                    {newList ? 'Pick an existing list' : 'New list'}
+                  </button>
+                )}
+              </div>
+              {fld('option_value', creating || used.leads === 0
+                ? { keyField: false, ...(creating ? {} : { help: used.kits ? `Not in any lead; ${used.kits} kit(s) use it (they follow a rename).` : 'Not used in any lead yet: can still change.' }) }
+                : { help: `Used in ${used.leads} lead(s): cannot change.` })}
+              {fld('sort_order')}
             </div>
             <div className="a-prow a-pchecks">{fld('is_active')}</div>
           </>
@@ -314,7 +380,6 @@ function Editor({ name, cfg, id, lookups, products, rows, cats, uiText, onClose,
         </div>
       )) : <div className="a-grid2">{cfg.fields.map(renderField)}</div>}
       {name === 'size-picker' && <DefaultNote row={row} rows={rows} />}
-      {name === 'towns' && <TownPreview rows={rows} town={row} />}
       {cfg.tr && (
         <div className="a-dsec">
           <h3>Text per language</h3>
@@ -324,6 +389,14 @@ function Editor({ name, cfg, id, lookups, products, rows, cats, uiText, onClose,
       )}
       {cfg.links && (
         <KitProducts all={products} value={row.products || []} disabled={!canEdit} onChange={(v) => set('products', v)} />
+      )}
+      {name === 'towns' && (
+        <div className="a-dsec">
+          <h3>Map preview</h3>
+          <TownPreview rows={rows} town={row} selfKey={loaded.data ? loaded.data.town_key : null} disabled={!canEdit} onMove={(patch) => setDraft({ ...row, ...patch })} />
+          <div className="a-prow a-pchecks">{renderField(cfg.fields.find((x) => x.name === 'is_base'))}{renderField(cfg.fields.find((x) => x.name === 'is_active'))}</div>
+          <BaseNote row={row} rows={rows} />
+        </div>
       )}
       {name === 'banners' && !creating && (
         <>
@@ -357,7 +430,6 @@ function Editor({ name, cfg, id, lookups, products, rows, cats, uiText, onClose,
   );
 }
 
-const RENAME_NOTE = "The banner's texts, the leads from its form button and its history move to the new key; photos keep working. Analytics keeps the old key for earlier clicks.";
 const BANNER_SIZE = { desktop: [1920, 800], mobile: [1080, 1350] };
 
 // Banners list: one photo column per kind (desktop 96x54, mobile 43x54), each with its own warning when that photo is
@@ -435,6 +507,21 @@ function BannerPreview({ row, start, count, ui, onClose }) {
   );
 }
 
+// Form option lists: their name and where the site uses them (src/forms/formConfig.js + shared/rules.json, kits).
+const OPTION_LISTS = {
+  business_type: { title: 'Business type', used: 'Used in: quote and free sample forms (Business type); Business kits (prefill)' },
+  monthly_sales: { title: 'Monthly sales', used: 'Used in: distributor form (Monthly sales)' },
+  yes_no: { title: 'Yes / No', used: 'Used in: distributor form (Godown and vehicles?)' },
+};
+
+// Towns: ticking Godown base here replaces the town that has it now (the server unticks that one).
+function BaseNote({ row, rows }) {
+  if (!Number(row.is_base)) return null;
+  const other = rows.find((r) => Number(r.is_base) === 1 && r.town_key !== row.town_key);
+  if (!other) return null;
+  return <p className="a-replace-note">This replaces {other.tr?.en?.name || other.town_key} as the godown base.</p>;
+}
+
 // Banners: what Button target can be for each Button action (validated again by the API, Admin_server.js).
 const SECTION_TARGETS = ['business', 'where', 'about', 'contact', 'products'];
 const FORM_TARGETS = ['sample', 'quote', 'distributor'];
@@ -507,32 +594,60 @@ function DefaultNote({ row, rows }) {
 }
 
 // Towns: the site's map (same land, pins and name sizes as src/home/WhereMap.js) with the town being edited drawn from
-// the unsaved values, so the pin and the name can be placed before saving. Other active towns are shown faded.
-function TownPreview({ rows, town }) {
+// the unsaved values: drag its pin to set Map x / y, drag its name to set the name offsets (the fields follow live).
+// Other active towns are shown faded. Nothing is saved until Save.
+function TownPreview({ rows, town, selfKey, onMove, disabled }) {
+  const svgRef = useRef(null);
+  const [dragging, setDragging] = useState(null); // 'pin' | 'name'
   const name = (t) => (t.tr && t.tr.en && t.tr.en.name) || t.town_key || '';
   const placed = (t) => t.map_x !== null && t.map_x !== undefined && t.map_x !== '' && t.map_y !== null && t.map_y !== undefined && t.map_y !== '';
-  const others = rows.filter((t) => t.town_key !== town.town_key && t.is_active && placed(t));
+  const others = rows.filter((t) => t.town_key !== (selfKey || town.town_key) && t.is_active && placed(t)); // saved key: a typed new key must not show the town twice
+  const at = (e) => {
+    const svg = svgRef.current;
+    const pt = svg.createSVGPoint();
+    pt.x = e.clientX; pt.y = e.clientY;
+    const p = pt.matrixTransform(svg.getScreenCTM().inverse());
+    return { x: Math.round(Math.min(MAP_W, Math.max(0, p.x))), y: Math.round(Math.min(MAP_H, Math.max(0, p.y))) };
+  };
+  const start = (what) => (e) => {
+    if (disabled) return;
+    e.preventDefault();
+    svgRef.current.setPointerCapture(e.pointerId);
+    setDragging(what);
+  };
+  const move = (e) => {
+    if (!dragging) return;
+    const p = at(e);
+    if (dragging === 'pin') onMove({ map_x: p.x, map_y: p.y });
+    else onMove({ label_dx: p.x - Number(town.map_x), label_dy: p.y - Number(town.map_y) });
+  };
   const pin = (t, current) => {
     const x = Number(t.map_x);
     const y = Number(t.map_y);
     const base = Number(t.is_base) === 1;
     return (
-      <g key={t.town_key || 'new'} opacity={current ? 1 : 0.35}>
-        <circle cx={x} cy={y} r={base ? 11 : 7} fill={base ? '#121214' : '#E5BF24'} stroke="#fff" strokeWidth="3" />
+      <g key={t.town_key || 'new'} opacity={current ? 1 : 0.35} className={current && !disabled ? 'a-tp-cur' : undefined}>
+        <circle cx={x} cy={y} r={base ? 11 : 7} fill={base ? '#121214' : '#E5BF24'} stroke="#fff" strokeWidth="3"
+          {...(current ? { onPointerDown: start('pin'), 'data-drag': 'pin' } : {})} />
         <text x={x + Number(t.label_dx || 0)} y={y + Number(t.label_dy || 0)} textAnchor={t.label_anchor || 'middle'}
-          fontFamily="Saira, sans-serif" fontWeight="700" fontSize="18" fill="#121214">{name(t)}{base ? ' ★' : ''}</text>
+          fontFamily="Saira, sans-serif" fontWeight="700" fontSize="18" fill="#121214"
+          {...(current ? { onPointerDown: start('name'), 'data-drag': 'name' } : {})}>{name(t)}{base ? ' ★' : ''}</text>
       </g>
     );
   };
   return (
     <figure className="a-townmap">
-      <svg viewBox={`0 0 ${MAP_W} ${MAP_H}`} role="img" aria-label="Preview of the delivery map">
+      <svg ref={svgRef} viewBox={`0 0 ${MAP_W} ${MAP_H}`} role="img" aria-label="Preview of the delivery map"
+        onPointerMove={move} onPointerUp={() => setDragging(null)} onPointerCancel={() => setDragging(null)}
+        className={dragging ? 'a-tp-dragging' : undefined}>
         <path d={LAND} fill="#FFF3CF" stroke="#EEE4C8" strokeWidth="2" />
         {others.map((t) => pin(t, false))}
         {placed(town) ? pin(town, true) : null}
       </svg>
       <figcaption className="a-muted">
-        {placed(town) ? 'Preview: this town in full colour, the others faded. Not saved until you press Save.' : 'Enter Map x and Map y to place this town.'}
+        {placed(town)
+          ? `${disabled ? '' : 'Drag the pin or the name to move them. '}This town in full colour, the others faded. Not saved until you press Save.`
+          : 'Enter Map x and Map y to place this town.'}
       </figcaption>
     </figure>
   );

@@ -153,7 +153,8 @@ const css = `
 tr.a-target td { background: #fff6d6; }
 
 .a-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--a-ink); background: var(--a-ink); color: #fff; font-family: inherit; font-weight: 600; font-size: 13.5px; line-height: 17px; padding: 9px 14px; border-radius: 8px; cursor: pointer; text-decoration: none; box-sizing: border-box; }
-.a-btn:disabled { opacity: .5; cursor: not-allowed; }
+/* disabled: grey, whatever the variant (primary, outline, danger) */
+.a-btn:disabled, .a-btn:disabled:hover { background: #e4e1d8; border-color: #e4e1d8; color: #6b675e; opacity: 1; cursor: not-allowed; }
 .a-btn-ghost { background: transparent; color: var(--a-ink); border-color: var(--a-line); }
 .a-btn-danger { background: var(--a-bad); border-color: var(--a-bad); }
 .a-btn-sm { padding: 5px 9px; font-size: 12.5px; line-height: 16px; }
@@ -283,6 +284,14 @@ tr.a-target td { background: #fff6d6; }
 .a-chip[aria-pressed="true"] { background: var(--a-ink); border-color: var(--a-ink); color: #fff; }
 .a-chip:focus-visible { outline: 2px solid var(--a-ink); outline-offset: 2px; }
 .a-chip b { font-weight: 700; }
+/* Form options: group header says where the list is used; "New list" link under the List field */
+.a-group-use { margin-inline-start: 10px; font-weight: 400; font-size: 12px; text-transform: none; letter-spacing: 0; }
+.a-fieldplus { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.a-fieldplus .a-link { align-self: flex-start; padding: 2px 0; font-size: 12.5px; }
+/* Towns: the edited pin and name can be dragged on the preview map */
+.a-townmap svg { touch-action: none; }
+.a-tp-cur circle, .a-tp-cur text { cursor: grab; }
+.a-tp-dragging, .a-tp-dragging .a-tp-cur circle, .a-tp-dragging .a-tp-cur text { cursor: grabbing; }
 /* Excel import: before / after values wrap (long text, Tamil / Hindi keep their shaping via the cell's lang) */
 .a-difftable td { vertical-align: top; }
 .a-difftable td:nth-child(3), .a-difftable td:nth-child(4) { min-width: 160px; max-width: 440px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }

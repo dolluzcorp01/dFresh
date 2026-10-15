@@ -67,13 +67,13 @@ export default function Translations() {
           <option value="">All languages</option>{languages.filter((l) => l.lang_code !== def).map((l) => <option key={l.lang_code} value={l.lang_code}>{l.name_en}</option>)}
         </select>
         <label className="a-inline"><input type="checkbox" checked={missingOnly} onChange={(e) => setMissingOnly(e.target.checked)} /> Missing only</label>
-        {canEdit && <button type="button" className="a-btn a-btn-ghost" onClick={() => act.run(() => api.download('/ui-text/export.xlsx', 'dFresh_Translations.xlsx'))}>Export Excel</button>}
+        {canEdit && <button type="button" className="a-btn" onClick={() => act.run(() => api.download('/ui-text/export.xlsx', 'dFresh_Translations.xlsx'))}>Export Excel</button>}
         {canEdit && <button type="button" className="a-btn a-btn-ghost" onClick={() => act.run(() => api.download('/ui-text/export.csv', 'translations.csv'))} title="The file to edit and import back">Export CSV (for import)</button>}
       </div>
       {canEdit && (
         <div className="a-toolbar">
           <input type="file" accept=".csv,text/csv" onChange={(e) => { setCsvFile(e.target.files[0] || null); setCsvReport(null); }} />
-          <button type="button" className="a-btn a-btn-ghost" disabled={!csvFile || act.busy} onClick={() => csvRun(true)}>Check CSV</button>
+          <button type="button" className="a-btn" disabled={!csvFile || act.busy} onClick={() => csvRun(true)}>Check CSV</button>
           {csvReport && csvReport.dryRun && !csvReport.errors.length && csvReport.changes > 0 && <button type="button" className="a-btn" disabled={act.busy} onClick={() => csvRun(false)}>Import {csvReport.changes} change(s)</button>}
         </div>
       )}

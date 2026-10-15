@@ -509,6 +509,79 @@ async function renameBanner(q, from, to, empId) {
   return k;
 }
 
+// Town key: what uses it: the towns row + town_translations (ON UPDATE CASCADE) and the audit history. Leads keep the
+// town the visitor typed (text), never the key; the site uses the key only inside the page (map pins).
+const TOWN_KEY = /^[a-z0-9-]{2,30}$/;
+async function townKeyCheck(q, key, self) {
+  const k = String(key || '').trim();
+  if (!k) throw new InputError('Key is required');
+  if (!TOWN_KEY.test(k)) throw new InputError('Key: 2 to 30 characters, only lowercase letters a-z, digits 0-9 and hyphens (-). No spaces.');
+  const [[taken]] = await q.query('SELECT town_key FROM towns WHERE town_key = ? AND town_key <> ?', [k, self || '']);
+  if (taken) throw new InputError(`Key '${k}' is already used by another town. Pick another one.`);
+  return k;
+}
+async function renameTown(q, from, to, empId) {
+  const k = await townKeyCheck(q, to, from);
+  await q.query('UPDATE towns SET town_key = ? WHERE town_key = ?', [k, from]); // translations cascade
+  await q.query("UPDATE audit_log SET entity_id = ? WHERE entity_type = 'town' AND entity_id = ?", [k, from]);
+  await audit(q, { empId, action: 'rename', entity: 'town', entityId: k, before: { town_key: from }, after: { town_key: k } });
+  return k;
+}
+// Godown base: one town only; saving one as the base unticks the others.
+async function oneBaseTown(q, row) {
+  if (Number(row.is_base) === 1) await q.query('UPDATE towns SET is_base = 0 WHERE town_key <> ? AND is_base = 1', [row.town_key]);
+}
+
+// Form options: where each stored value is used. Leads keep the stored value (business_type column; monthly_sales and
+// godown_vehicles (yes_no) inside details_json); kits keep a business_type. A value used by a lead never changes (old
+// leads must stay readable); an unused one can be renamed (kits follow, in the same transaction).
+const OPTION_VALUE = /^[a-z0-9_]{1,40}$/;
+const LIST_KEY = /^[a-z0-9_]{2,40}$/;
+async function optionUse(q, list, value) {
+  let leads = 0;
+  if (list === 'business_type') [[{ n: leads }]] = await q.query('SELECT COUNT(*) AS n FROM leads WHERE business_type = ?', [value]);
+  else if (list === 'monthly_sales') [[{ n: leads }]] = await q.query("SELECT COUNT(*) AS n FROM leads WHERE JSON_UNQUOTE(JSON_EXTRACT(details_json, '$.monthly_sales')) = ?", [value]);
+  else if (list === 'yes_no') [[{ n: leads }]] = await q.query("SELECT COUNT(*) AS n FROM leads WHERE JSON_UNQUOTE(JSON_EXTRACT(details_json, '$.godown_vehicles')) = ?", [value]);
+  const [[{ n: kits }]] = list === 'business_type' ? await q.query('SELECT COUNT(*) AS n FROM kits WHERE business_type = ?', [value]) : [[{ n: 0 }]];
+  return { leads: Number(leads), kits: Number(kits) };
+}
+async function optionGuard(q, body, current) {
+  if (!current) {
+    const list = String(body.list_key || '').trim();
+    if (!LIST_KEY.test(list)) throw new InputError('List: 2 to 40 characters, only lowercase letters a-z, digits 0-9 and _ (e.g. business_type).');
+    body.list_key = list;
+    const v = String(body.option_value || '').trim();
+    if (!OPTION_VALUE.test(v)) throw new InputError('Stored value: only lowercase letters a-z, digits 0-9 and _ (e.g. under_50k), up to 40.');
+    const [[taken]] = await q.query('SELECT option_value FROM form_options WHERE list_key = ? AND option_value = ?', [list, v]);
+    if (taken) throw new InputError(`'${v}' is already in the list ${list}.`);
+    body.option_value = v;
+  }
+}
+async function renameOption(q, current, to, empId) {
+  const v = String(to || '').trim();
+  if (!OPTION_VALUE.test(v)) throw new InputError('Stored value: only lowercase letters a-z, digits 0-9 and _ (e.g. under_50k), up to 40.');
+  const use = await optionUse(q, current.list_key, current.option_value);
+  if (use.leads) throw new InputError(`'${current.option_value}' is used in ${use.leads} lead(s), so it cannot change (old leads must stay readable). Add a new option and switch this one off instead.`);
+  const [[taken]] = await q.query('SELECT option_value FROM form_options WHERE list_key = ? AND option_value = ?', [current.list_key, v]);
+  if (taken) throw new InputError(`'${v}' is already in the list ${current.list_key}.`);
+  await q.query('UPDATE form_options SET option_value = ? WHERE list_key = ? AND option_value = ?', [v, current.list_key, current.option_value]); // translations cascade
+  if (current.list_key === 'business_type') await q.query('UPDATE kits SET business_type = ? WHERE business_type = ?', [v, current.option_value]);
+  const oldId = `${current.list_key}~${current.option_value}`;
+  const newId = `${current.list_key}~${v}`;
+  await q.query("UPDATE audit_log SET entity_id = ? WHERE entity_type = 'form_option' AND entity_id = ?", [newId, oldId]);
+  await audit(q, { empId, action: 'rename', entity: 'form_option', entityId: newId, before: { option_value: current.option_value }, after: { option_value: v } });
+  return [current.list_key, v];
+}
+// Drag and drop inside one list: `values` must be exactly that list's stored values; they become 1..n.
+async function reorderOptions(q, list, values) {
+  const [rows] = await q.query('SELECT option_value FROM form_options WHERE list_key = ?', [list]);
+  const have = new Set(rows.map((r) => r.option_value));
+  if (!Array.isArray(values) || values.length !== have.size || new Set(values).size !== values.length || values.some((x) => !have.has(x))) {
+    throw new InputError('The order must list every option of the list exactly once (reload the page and drag again)');
+  }
+  for (const [i, v] of values.entries()) await q.query('UPDATE form_options SET sort_order = ? WHERE list_key = ? AND option_value = ?', [i + 1, list, v]);
+}
+
 async function bannerGuard(q, body, current) {
   if (!current) body.banner_key = await bannerKeyCheck(q, body.banner_key, null);
   const desktop = current ? current.desktop_file : '';
@@ -578,6 +651,7 @@ for (const name of Object.keys(entities.ENTITIES)) {
   route('get', `/${name}`, 'viewer', async () => {
     const rows = await entities.load(name);
     if (name === 'banners') for (const r of rows) r.photo_check = await media.bannerPhotoCheck(r);
+    if (name === 'form-options') for (const r of rows) r.used = await optionUse(db, r.list_key, r.option_value);
     return rows;
   });
 
@@ -585,6 +659,7 @@ for (const name of Object.keys(entities.ENTITIES)) {
     const row = await entities.load(name, entities.parseId(e, req.params.id));
     if (!row) throw new InputError('Not found', 404);
     if (name === 'banners') row.photo_check = await media.bannerPhotoCheck(row);
+    if (name === 'form-options') row.used = await optionUse(db, row.list_key, row.option_value);
     return row;
   });
 
@@ -592,7 +667,10 @@ for (const name of Object.keys(entities.ENTITIES)) {
   // ({ category } or { parent }); categories, kits, banners: the whole list (positions.js: exactly every row, 1..n).
   route('post', `/${name}/reorder`, 'editor', async (req) => tx(async (q) => {
     const before = (await entities.load(name, null, q)).map((r) => ({ id: entities.idOf(e, r), sort_order: r.sort_order }));
-    if (positions.has(name)) {
+    if (name === 'form-options') {
+      if (!req.body.list) throw new InputError('Say which list is reordered');
+      await reorderOptions(q, String(req.body.list), (req.body.order || []).map((x) => String(x).split('~').pop()));
+    } else if (positions.has(name)) {
       const of = name === 'products' ? { category_key: req.body.category || null, variant_of: req.body.parent || null } : {};
       if (name === 'products' && !of.category_key && !of.variant_of) throw new InputError('Say which category (or main product) is reordered');
       await positions.reorder(q, name, req.body.order, of);
@@ -604,10 +682,13 @@ for (const name of Object.keys(entities.ENTITIES)) {
 
   route('post', `/${name}`, 'editor', async (req) => tx(async (q) => {
     if (name === 'banners') await bannerGuard(q, req.body, null);
+    if (name === 'towns') req.body.town_key = await townKeyCheck(q, req.body.town_key, null);
+    if (name === 'form-options') await optionGuard(q, req.body, null);
     await positions.prepare(q, name, req.body, null); // a new row without a position goes to the end of its list
     const keyValues = await entities.create(q, name, req.body || {}, by(req));
     const after = await entities.load(name, keyValues, q);
     if (name === 'size-picker') await oneSelectedFirst(q, after);
+    if (name === 'towns') await oneBaseTown(q, after);
     if (name === 'categories') await categorySeoTexts(q, after, by(req));
     await audit(q, { empId: by(req), action: 'create', entity: label, entityId: entities.idOf(e, after), after });
     return after;
@@ -621,12 +702,20 @@ for (const name of Object.keys(entities.ENTITIES)) {
     if (name === 'banners' && req.body && req.body.banner_key !== undefined && String(req.body.banner_key).trim() !== before.banner_key) {
       keyValues = [await renameBanner(q, before.banner_key, req.body.banner_key, by(req))];
     }
+    if (name === 'towns' && req.body && req.body.town_key !== undefined && String(req.body.town_key).trim() !== before.town_key) {
+      keyValues = [await renameTown(q, before.town_key, req.body.town_key, by(req))];
+    }
+    if (name === 'form-options' && req.body && req.body.option_value !== undefined && String(req.body.option_value).trim() !== before.option_value) {
+      keyValues = await renameOption(q, before, req.body.option_value, by(req));
+    }
     if (name === 'banners') await bannerGuard(q, req.body || {}, before);
     const tidy = await positions.prepare(q, name, req.body || {}, before);
     await entities.update(q, name, keyValues, req.body || {}, by(req));
     await positions.tidyUp(q, name, tidy);
     const after = await entities.load(name, keyValues, q);
     if (name === 'size-picker') await oneSelectedFirst(q, after);
+    if (name === 'towns') await oneBaseTown(q, after);
+    if (name === 'form-options') after.used = await optionUse(q, after.list_key, after.option_value);
     await audit(q, { empId: by(req), action: 'update', entity: label, entityId: entities.idOf(e, after), before, after });
     return after;
   }), { content: true });
