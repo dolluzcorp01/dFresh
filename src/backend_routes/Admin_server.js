@@ -928,6 +928,9 @@ route('post', '/languages', 'admin', async (req) => tx(async (q) => {
   const code = String(req.body.lang_code || '').trim();
   if (!/^[a-z]{2,3}$/.test(code)) throw new InputError('lang_code: 2-3 lower-case letters (the URL prefix, e.g. te)');
   const vals = { lang_code: code, ...langValues(req.body, true), is_default: 0 };
+  // a new language goes to the end of the list (any number from the form is ignored); FOR UPDATE: no shared number
+  const [[n]] = await q.query('SELECT COALESCE(MAX(sort_order), 0) + 1 AS next FROM languages FOR UPDATE');
+  vals.sort_order = Number(n.next);
   const cols = Object.keys(vals);
   await q.query(`INSERT INTO languages (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`, Object.values(vals));
   const [[after]] = await q.query(`${LANG_SELECT} WHERE lang_code = ?`, [code]);

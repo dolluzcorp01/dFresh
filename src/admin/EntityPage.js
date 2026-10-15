@@ -7,7 +7,7 @@ import { api, rowId } from './adminApi';
 import { mediaUrl } from '../utils/api';
 import { KitProducts, ProductField, RepPreview, Thumb, productName } from './ProductSelect';
 import useOrderDraft from './useOrderDraft';
-import { Drawer, Field, InfoTip, Loading, MissingBadges, TrEditor, missingTexts, useAction, useAdmin, useCan, useLoad } from './ui';
+import { Drawer, Field, InfoTip, Loading, MissingBadges, TrEditor, missingTexts, nextOrder, useAction, useAdmin, useCan, useLoad } from './ui';
 import { fontVar, loadFont } from '../i18n/fonts';
 import { LAND, MAP_H, MAP_W } from '../shared/mapShape';
 
@@ -234,7 +234,7 @@ export default function EntityPage({ name }) {
         </div>
       </Loading>
       {open && (
-        <Editor name={name} cfg={cfg} id={open.id} lookups={lookups} products={products.data || []} rows={list.data || []} lists={groupKeys} onClose={() => setOpen(null)}
+        <Editor name={name} cfg={cfg} id={open.id} lookups={lookups} products={products.data || []} rows={list.data || []} listRows={list.data} lists={groupKeys} onClose={() => setOpen(null)}
           onSaved={(id) => { list.reload(); setOpen(id ? { id } : null); }} cats={cats.data || []} uiText={uiText.data} placesOf={placesOf} />
       )}
       {draft.ui}
@@ -242,7 +242,7 @@ export default function EntityPage({ name }) {
   );
 }
 
-function Editor({ name, cfg, id, lookups, products, rows, lists, cats, uiText, placesOf, onClose, onSaved }) {
+function Editor({ name, cfg, id, lookups, products, rows, listRows, lists, cats, uiText, placesOf, onClose, onSaved }) {
   const loaded = useLoad(id ? `/${name}/${id}` : null);
   const canEdit = useCan('editor');
   const act = useAction();
@@ -270,10 +270,8 @@ function Editor({ name, cfg, id, lookups, products, rows, lists, cats, uiText, p
   const keyChanged = Boolean(rn && !creating && loaded.data && String(row[rn] ?? '').trim() !== String(loaded.data[rn]));
   const [tried, setTried] = useState(false); // a save was attempted: empty required texts turn red
   // Add: the number the new row will get (the end of its list; per list for form options). The server assigns it.
-  const nextOrder = (() => {
-    const scope = cfg.groupBy && row ? rows.filter((r) => r[cfg.groupBy] === row[cfg.groupBy]) : rows; // row: null while loading
-    return scope.reduce((m, r) => Math.max(m, Number(r.sort_order) || 0), 0) + 1;
-  })();
+  // Add: the end of its list (per list for form options, following the List choice); '...' until the list is loaded
+  const newOrder = nextOrder(listRows, cfg.groupBy && row ? (r) => r[cfg.groupBy] === row[cfg.groupBy] : undefined);
   const save = () => {
     setTried(true);
     // towns: latitude / longitude inside India, or nothing is sent
@@ -304,7 +302,7 @@ function Editor({ name, cfg, id, lookups, products, rows, lists, cats, uiText, p
   function renderField(f) {
     const def = { ...f, type: f.keyField && !creating ? 'readonly' : f.type, options: f.lookup ? lookups[f.lookup] : f.options };
     if (creating && f.name === 'sort_order') {
-      return <Field key={f.name} def={{ ...def, type: 'readonly', help: NEW_ORDER_HINT, info: undefined }} value={nextOrder} disabled />;
+      return <Field key={f.name} def={{ ...def, type: 'readonly', help: NEW_ORDER_HINT, info: undefined }} value={newOrder} disabled />;
     }
     if (name === 'banners' && f.name === 'cta_target') {
       return <Field key={f.name} def={{ ...def, type: 'select', options: targetChoices(row.cta_action, cats), allowEmpty: false, required: true }} value={row.cta_target ?? ''} disabled={!canEdit} onChange={(v) => set(f.name, v)} />;

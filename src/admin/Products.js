@@ -8,7 +8,7 @@
 import { useMemo, useState } from 'react';
 import { api } from './adminApi';
 import { mediaUrl } from '../utils/api';
-import { Drawer, Field, Loading, MissingBadges, Notice, TrEditor, missingTexts, useAction, useAdmin, useCan, useLoad } from './ui';
+import { Drawer, Field, Loading, MissingBadges, Notice, TrEditor, missingTexts, nextOrder, useAction, useAdmin, useCan, useLoad } from './ui';
 import { ProductField } from './ProductSelect';
 import useOrderDraft from './useOrderDraft';
 
@@ -196,7 +196,7 @@ export default function Products() {
         </div>
       </Loading>
       {opened && cats.data && (
-        <ProductEditor key={opened.id || 'new'} id={opened.id} initial={opened.create} cats={cats.data} all={list.data || []} home={home}
+        <ProductEditor key={opened.id || 'new'} id={opened.id} initial={opened.create} cats={cats.data} all={list.data || []} listRows={list.data} home={home}
           onClose={() => setOpen(null)} onSaved={(id) => { list.reload(); if (id) setOpen({ id }); }}
           onAddVariant={(p) => setOpen({ create: { variant_of: p.product_id, category_key: p.category_key, specification: p.specification, pack: p.pack, is_active: 1, tr: p.tr } })} />
       )}
@@ -205,13 +205,15 @@ export default function Products() {
   );
 }
 
-function ProductEditor({ id, initial, cats, all, home, onClose, onSaved, onAddVariant }) {
+function ProductEditor({ id, initial, cats, all, listRows, home, onClose, onSaved, onAddVariant }) {
   const loaded = useLoad(id ? `/products/${encodeURIComponent(id)}` : null);
   const canEdit = useCan('editor');
   const act = useAction();
   const [draft, setDraft] = useState(null);
   const creating = !id;
-  const p = draft || (creating ? { tr: {}, ...initial } : loaded.data);
+  // Add: the category the dropdown shows first is really chosen (it used to be only displayed, so the position was
+  // counted for "no category" until the category was changed)
+  const p = draft || (creating ? { tr: {}, category_key: cats[0] ? cats[0].category_key : undefined, ...initial } : loaded.data);
   const cards = all.filter((x) => !x.variant_of);
 
   const [swatchErr, setSwatchErr] = useState(null);
@@ -246,9 +248,8 @@ function ProductEditor({ id, initial, cats, all, home, onClose, onSaved, onAddVa
   // Add: the numbers the new product will get (the end of its category / of its main product's colours / of the featured
   // list), following the choices live; the server assigns them on create
   const preview = creating ? {
-    sort_order: all.filter((x) => (p.variant_of ? x.variant_of === p.variant_of : !x.variant_of && x.category_key === p.category_key))
-      .reduce((m, x) => Math.max(m, Number(x.sort_order) || 0), 0) + 1,
-    featured_order: Number(p.is_featured) ? all.reduce((m, x) => Math.max(m, Number(x.is_featured) ? Number(x.featured_order) || 0 : 0), 0) + 1 : '',
+    sort_order: nextOrder(listRows, (x) => (p.variant_of ? x.variant_of === p.variant_of : !x.variant_of && x.category_key === p.category_key)),
+    featured_order: Number(p.is_featured) ? nextOrder(listRows, (x) => Number(x.is_featured) === 1, 'featured_order') : '', // empty while unticked
   } : {};
   const F = (name) => <Field key={name} def={defs[name]} value={name in preview ? preview[name] : p[name]} disabled={!canEdit} onChange={(v) => set(name, v)} />;
 

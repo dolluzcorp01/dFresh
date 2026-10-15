@@ -5,7 +5,7 @@
 // ready (subset size) / rebuilding / using full font (a rebuild failed) / - while the language is off.
 import { useState } from 'react';
 import { api } from './adminApi';
-import { Drawer, Field, Loading, useAction, useAdmin, useCan, useLoad } from './ui';
+import { Drawer, Field, Loading, nextOrder, useAction, useAdmin, useCan, useLoad } from './ui';
 
 const FIELDS = [
   { name: 'lang_code', label: 'Code (URL prefix)', required: true, help: '2-3 lower-case letters, e.g. te' },
@@ -89,14 +89,14 @@ export default function Languages() {
           </table>
         </div>
       </Loading>
-      {open && <LangEditor row={open.row} scripts={(fonts.data && fonts.data.scripts) || []} onClose={() => setOpen(null)} onSaved={() => { setOpen(null); changed(); }} />}
+      {open && <LangEditor row={open.row} rows={list.data} scripts={(fonts.data && fonts.data.scripts) || []} onClose={() => setOpen(null)} onSaved={() => { setOpen(null); changed(); }} />}
     </section>
   );
 }
 
-function LangEditor({ row, scripts, onClose, onSaved }) {
+function LangEditor({ row, rows, scripts, onClose, onSaved }) {
   const act = useAction();
-  const [v, setV] = useState(row ? { ...row } : { sort_order: 99, script: '' });
+  const [v, setV] = useState(row ? { ...row } : { script: '' });
   const pick = scripts.find((s) => s.script === v.script);
   const save = () => act.run(async () => {
     if (!v.script) throw new Error('Pick the script the language is written in');
@@ -111,7 +111,9 @@ function LangEditor({ row, scripts, onClose, onSaved }) {
       {act.note}
       <div className="a-grid2">
         {FIELDS.map((f) => (
-          <Field key={f.name} def={f.name === 'lang_code' && row ? { ...f, type: 'readonly' } : f} value={v[f.name]} onChange={(x) => setV({ ...v, [f.name]: x })} />
+          f.name === 'sort_order' && !row
+            ? <Field key={f.name} def={{ ...f, type: 'readonly', help: 'New items go to the end. Drag in the list to move.' }} value={nextOrder(rows)} disabled />
+            : <Field key={f.name} def={f.name === 'lang_code' && row ? { ...f, type: 'readonly' } : f} value={v[f.name]} onChange={(x) => setV({ ...v, [f.name]: x })} />
         ))}
         <Field
           def={{ name: 'script', label: 'Script (sets the font and the direction)', type: 'select', options: scripts.map((s) => s.script), allowEmpty: true, required: true }}

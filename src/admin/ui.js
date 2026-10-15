@@ -98,6 +98,16 @@ export function InfoTip({ text }) {
   );
 }
 
+/**
+ * The number a new row gets in an Add drawer: the last one + 1 among the rows of its group (inGroup), in `field`.
+ * '...' until the list has loaded (rows undefined / null), never a guess. Every Add drawer uses this; the server
+ * assigns the final number on create anyway (positions.js, form options, languages).
+ */
+export function nextOrder(rows, inGroup = () => true, field = 'sort_order') {
+  if (!rows) return '...';
+  return rows.filter(inGroup).reduce((m, r) => Math.max(m, Number(r[field]) || 0), 0) + 1;
+}
+
 /** One form control. def: { name, label, type: text|textarea|number|bool|select|readonly, options, help, info, error } */
 export function Field({ def, value, onChange, disabled }) {
   const id = `f-${def.name}`;
