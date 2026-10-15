@@ -98,8 +98,9 @@ export default function Translations() {
                     {cols.map((l) => (k.default_only && l.lang_code !== def ? (
                       <td key={l.lang_code}><small className="a-muted">Staff e-mails use {def} only</small></td>
                     ) : (
-                      <td key={l.lang_code} className={k.values[l.lang_code] ? '' : 'a-missing'}>
+                      <td key={l.lang_code} className={k.values[l.lang_code] || l.lang_code !== def ? '' : 'a-missing'}>
                         <Cell value={k.values[l.lang_code] || ''} dir={l.dir} disabled={!canEdit} label={`${k.text_key} ${l.lang_code}`}
+                          placeholder={l.lang_code !== def ? 'uses default' : undefined}
                           max={k.max_chars} onSave={(v) => save(k.text_key, l.lang_code, v)} />
                       </td>
                     )))}
@@ -116,14 +117,14 @@ export default function Translations() {
 
 // Saves on blur when the text changed. max (Google and sharing texts): a live "n / max" counter, red when over;
 // a longer text still saves (Google just cuts it short).
-function Cell({ value, onSave, disabled, dir, label, max }) {
+function Cell({ value, onSave, disabled, dir, label, max, placeholder }) {
   const [v, setV] = useState(value);
   const [prev, setPrev] = useState(value);
   if (prev !== value) { setPrev(value); setV(value); }
   const n = [...v].length;
   return (
     <>
-      <textarea rows={Math.min(6, Math.max(1, Math.ceil(v.length / 40)))} value={v} dir={dir} disabled={disabled} aria-label={label}
+      <textarea rows={Math.min(6, Math.max(1, Math.ceil(v.length / 40)))} value={v} dir={dir} disabled={disabled} aria-label={label} placeholder={placeholder}
         onChange={(e) => setV(e.target.value)} onBlur={() => v !== value && onSave(v)} />
       {max ? <small className={`a-count${n > max ? ' a-bad' : ''}`} aria-live="polite">{n} / {max}{n > max ? ' - Google may cut it short' : ''}</small> : null}
     </>

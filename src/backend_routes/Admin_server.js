@@ -694,7 +694,12 @@ for (const name of Object.keys(entities.ENTITIES)) {
   route('post', `/${name}`, 'editor', async (req) => tx(async (q) => {
     if (name === 'banners') await bannerGuard(q, req.body, null);
     if (name === 'towns') { req.body.town_key = await townKeyCheck(q, req.body.town_key, null); townGeoCheck(req.body); }
-    if (name === 'form-options') await optionGuard(q, req.body, null);
+    if (name === 'form-options') {
+      await optionGuard(q, req.body, null);
+      // the end of its list (the number the form showed is only a preview)
+      const [[n]] = await q.query('SELECT COALESCE(MAX(sort_order), 0) + 1 AS next FROM form_options WHERE list_key = ? FOR UPDATE', [req.body.list_key]);
+      req.body.sort_order = Number(n.next);
+    }
     await positions.prepare(q, name, req.body, null); // a new row without a position goes to the end of its list
     const keyValues = await entities.create(q, name, req.body || {}, by(req));
     const after = await entities.load(name, keyValues, q);

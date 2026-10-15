@@ -15,6 +15,7 @@ const LISTS = {
   categories: { table: 'categories', key: 'category_key' },
   kits: { table: 'kits', key: 'kit_key' },
   banners: { table: 'banners', key: 'banner_key' },
+  towns: { table: 'towns', key: 'town_key' },
   'size-picker': { table: 'size_picker', key: 'size_id' },
 };
 const has = (name) => Boolean(LISTS[name]);
@@ -31,7 +32,8 @@ const sameScope = (name, a, b) => name !== 'products' || ((a.variant_of || null)
 async function nextPosition(q, name, row) {
   const { table } = LISTS[name];
   const s = scopeOf(name, row);
-  const [[r]] = await q.query(`SELECT COALESCE(MAX(sort_order), 0) + 1 AS n FROM ${table} WHERE ${s.where}`, s.params);
+  // FOR UPDATE: a second admin adding to the same list at the same moment waits for this transaction (no shared number)
+  const [[r]] = await q.query(`SELECT COALESCE(MAX(sort_order), 0) + 1 AS n FROM ${table} WHERE ${s.where} FOR UPDATE`, s.params);
   return Number(r.n);
 }
 
@@ -68,8 +70,9 @@ async function prepare(q, name, body, before) {
   const row = { ...(before || {}), ...body };
   const moved = before && !sameScope(name, before, row);
   if (!before || moved) {
-    if (blank(body.sort_order) || moved) body.sort_order = await nextPosition(q, name, row);
-    else await assertFree(q, name, row, (body.sort_order = positive('sort_order', body.sort_order)), body[keyName]);
+    // a new row (or one moved to another list) always goes to the end: the number the admin's form showed is only a
+    // preview, so two people adding at once never get the same position
+    body.sort_order = await nextPosition(q, name, row);
   } else if (!blank(body.sort_order) && Number(body.sort_order) !== Number(before.sort_order)) {
     body.sort_order = positive('sort_order', body.sort_order);
     await assertFree(q, name, row, body.sort_order, before[keyName]);
@@ -79,6 +82,7 @@ async function prepare(q, name, body, before) {
   const tidy = { oldScope: moved ? before : null, featured: false };
   if (name !== 'products') return tidy;
 
+  if (!before) delete body.featured_order; // a new featured product goes last (below); the form's number is a preview
   const featured = 'is_featured' in body ? Number(coerce('is_featured', { type: 'bool' }, body.is_featured)) === 1 : Boolean(before && Number(before.is_featured));
   const wasFeatured = Boolean(before && Number(before.is_featured));
   if (!featured) {
@@ -86,7 +90,7 @@ async function prepare(q, name, body, before) {
     tidy.featured = wasFeatured; // close the gap it leaves
   } else if (blank(body.featured_order)) {
     if (!wasFeatured || blank(before.featured_order)) {
-      const [[r]] = await q.query('SELECT COALESCE(MAX(featured_order), 0) + 1 AS n FROM products WHERE is_featured = 1 AND product_id <> ?', [row.product_id || '']);
+      const [[r]] = await q.query('SELECT COALESCE(MAX(featured_order), 0) + 1 AS n FROM products WHERE is_featured = 1 AND product_id <> ? FOR UPDATE', [row.product_id || '']);
       body.featured_order = Number(r.n); // newly featured: last
     } else delete body.featured_order;
   } else {

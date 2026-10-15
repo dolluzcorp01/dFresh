@@ -29,11 +29,13 @@ const baseFields = (cats, cards, creating, home) => [
   { name: 'product_id', label: 'Product ID', type: creating ? 'text' : 'readonly', required: true, help: 'e.g. DZIND-DF050; a colour: DZIND-DF008-RED' },
   { name: 'category_key', label: 'Category', type: 'select', options: cats.map((c) => ({ value: c.category_key, label: `${c.tr?.en?.name ?? c.category_key}` })), required: true, allowEmpty: false },
   { name: 'variant_of', label: 'Colour version of', type: 'select', options: cards.map((p) => p.product_id), help: "Leave '-' for a main product. Pick the main product only if this is another colour of it." },
-  { name: 'sort_order', label: 'Position', type: 'readonly', help: creating ? 'Goes to the end of its category; drag in the list to move it.' : 'Drag the rows in the list to change it.' },
+  { name: 'sort_order', label: 'Position', type: 'readonly', help: creating ? 'New items go to the end. Drag in the list to move.' : 'Drag the rows in the list to change it.' },
   { name: 'specification', label: 'Specification', required: true, wide: true },
   { name: 'pack', label: 'Pack', required: true },
   { name: 'is_featured', label: `In "${home.title}" on the home page`, type: 'bool' },
-  { name: 'featured_order', label: `"${home.title}" order`, type: 'number', step: '1', help: `${home.hint} Empty = last; 1, 2, 3 ..., each used once. Or drag the cards in "${home.title}".` },
+  creating
+    ? { name: 'featured_order', label: `"${home.title}" order`, type: 'readonly', help: 'New items go to the end. Drag in the list to move.' }
+    : { name: 'featured_order', label: `"${home.title}" order`, type: 'number', step: '1', help: `${home.hint} Empty = last; 1, 2, 3 ..., each used once. Or drag the cards in "${home.title}".` },
   { name: 'show_for_home', label: 'In "For Home" filter', type: 'bool' },
   { name: 'is_active', label: 'Active (shown on the site)', type: 'bool' },
   { name: 'spec_status', label: 'Spec status (INTERNAL, never shown)', type: 'textarea', wide: true, rows: 2 },
@@ -215,7 +217,9 @@ function ProductEditor({ id, initial, cats, all, home, onClose, onSaved, onAddVa
   const [swatchErr, setSwatchErr] = useState(null);
   const set = (k, v) => { if (k === 'swatch_hex') setSwatchErr(null); setDraft({ ...p, [k]: v }); };
   const swatchShown = () => Boolean(p.variant_of) || (!creating && all.some((x) => x.variant_of === p.product_id));
+  const [tried, setTried] = useState(false); // a save was attempted: empty required texts turn red
   const save = () => {
+    setTried(true);
     // a shown swatch must be a #RRGGBB colour (it is the dot on the product card)
     if (swatchShown() && !HEX.test(p.swatch_hex || '')) {
       setSwatchErr(p.swatch_hex ? 'Use the form #RRGGBB, e.g. #7A1F2B' : 'Pick a colour or type #RRGGBB');
@@ -239,7 +243,14 @@ function ProductEditor({ id, initial, cats, all, home, onClose, onSaved, onAddVa
   const hex = p.swatch_hex || '';
   const hexOk = HEX.test(hex);
   const defs = Object.fromEntries(baseFields(cats, cards.filter((c) => c.product_id !== p.product_id), creating, home).map((fd) => [fd.name, fd]));
-  const F = (name) => <Field key={name} def={defs[name]} value={p[name]} disabled={!canEdit} onChange={(v) => set(name, v)} />;
+  // Add: the numbers the new product will get (the end of its category / of its main product's colours / of the featured
+  // list), following the choices live; the server assigns them on create
+  const preview = creating ? {
+    sort_order: all.filter((x) => (p.variant_of ? x.variant_of === p.variant_of : !x.variant_of && x.category_key === p.category_key))
+      .reduce((m, x) => Math.max(m, Number(x.sort_order) || 0), 0) + 1,
+    featured_order: Number(p.is_featured) ? all.reduce((m, x) => Math.max(m, Number(x.is_featured) ? Number(x.featured_order) || 0 : 0), 0) + 1 : '',
+  } : {};
+  const F = (name) => <Field key={name} def={defs[name]} value={name in preview ? preview[name] : p[name]} disabled={!canEdit} onChange={(v) => set(name, v)} />;
 
   return (
     <Drawer title={creating ? (initial.variant_of ? `New colour of ${initial.variant_of}` : 'New product') : `${p.product_id}`} onClose={onClose}
@@ -282,7 +293,7 @@ function ProductEditor({ id, initial, cats, all, home, onClose, onSaved, onAddVa
       <div className="a-prow">{F('spec_status')}</div>
       <h3>Text per language</h3>
       <p className="a-muted">Empty cells show the default language on the site.</p>
-      <TrEditor fields={TR_FIELDS} tr={p.tr || {}} main={p} disabled={!canEdit} onChange={(tr) => set('tr', tr)} />
+      <TrEditor fields={TR_FIELDS} tr={p.tr || {}} main={p} disabled={!canEdit} onChange={(tr) => set('tr', tr)} strict={tried} />
       {!creating && <Photos product={loaded.data} canEdit={canEdit} onChanged={() => { loaded.reload(); onSaved(null); }} />}
     </Drawer>
   );

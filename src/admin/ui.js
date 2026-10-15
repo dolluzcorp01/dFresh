@@ -132,8 +132,12 @@ export function Field({ def, value, onChange, disabled }) {
  */
 // A field with override: true is an optional per-language replacement of a main (base) field: no box for the default
 // language (the main field is its value), and in the others an empty box shows the main value as a grey placeholder.
-export function TrEditor({ fields, tr, onChange, disabled, main = {} }) {
+// strict (after a save attempt): a required box is red when it is empty in the default language, or in another
+// language whose row has other texts (a language is all or nothing). Otherwise an empty box is a normal box with a grey
+// "uses default" placeholder: the site shows the default language there.
+export function TrEditor({ fields, tr, onChange, disabled, main = {}, strict = false }) {
   const { languages } = useAdmin();
+  const started = (lang) => Object.values(tr[lang] || {}).some((x) => String(x ?? '').trim() !== '');
   const set = (lang, col, v) => onChange({ ...tr, [lang]: { ...(tr[lang] || {}), [col]: v } });
   return (
     <div className="a-tr" style={{ '--cols': languages.length }}>
@@ -151,11 +155,12 @@ export function TrEditor({ fields, tr, onChange, disabled, main = {} }) {
             return <div key={`${f.name}-${l.lang_code}`} className="a-tr-main a-muted">Uses the main {f.mainLabel || f.name} field</div>;
           }
           const v = tr[l.lang_code] ? tr[l.lang_code][f.name] ?? '' : '';
-          const missing = !v && f.required && !isDefault;
+          const empty = String(v).trim() === '';
+          const error = strict && empty && f.required && (isDefault || started(l.lang_code));
           const props = {
             value: v, disabled, 'aria-label': `${f.label || f.name} (${l.lang_code})`, dir: l.dir,
-            className: missing ? 'a-missing' : undefined,
-            placeholder: f.override ? main[f.name] || '' : missing ? 'uses default' : undefined,
+            className: error ? 'a-missing' : undefined, 'aria-invalid': error || undefined,
+            placeholder: f.override ? main[f.name] || '' : empty && !isDefault ? 'uses default' : undefined,
             onChange: (e) => set(l.lang_code, f.name, e.target.value),
           };
           if (f.override) {

@@ -11,6 +11,7 @@ import { Drawer, Field, InfoTip, Loading, MissingBadges, TrEditor, missingTexts,
 import { fontVar, loadFont } from '../i18n/fonts';
 import { LAND, MAP_H, MAP_W } from '../shared/mapShape';
 
+const NEW_ORDER_HINT = 'New items go to the end. Drag in the list to move.';
 const KEY_HINT = 'Internal name (a-z, 0-9, -). Used in photo names, analytics and lead source.';
 const RENAME_NOTE_BANNER = "The banner's texts, the leads from its form button and its history move to the new key; photos keep working. Analytics keeps the old key for earlier clicks.";
 const KEY_INFO = "Not shown to visitors. 2 to 30 characters: lowercase a-z, digits 0-9 and hyphens. It starts the names of this banner's uploaded photo files, it is sent with the analytics click event (banner_click), and leads sent from this banner's form button record it as their source. Renaming moves the texts, those leads and the history to the new key in one step; analytics keeps the old key for earlier clicks.";
@@ -267,9 +268,16 @@ function Editor({ name, cfg, id, lookups, products, rows, lists, cats, uiText, p
   const [newList, setNewList] = useState(false); // form options: typing a new list key instead of picking one
   const rn = cfg.rename && cfg.rename.field;
   const keyChanged = Boolean(rn && !creating && loaded.data && String(row[rn] ?? '').trim() !== String(loaded.data[rn]));
+  const [tried, setTried] = useState(false); // a save was attempted: empty required texts turn red
+  // Add: the number the new row will get (the end of its list; per list for form options). The server assigns it.
+  const nextOrder = (() => {
+    const scope = cfg.groupBy && row ? rows.filter((r) => r[cfg.groupBy] === row[cfg.groupBy]) : rows; // row: null while loading
+    return scope.reduce((m, r) => Math.max(m, Number(r.sort_order) || 0), 0) + 1;
+  })();
   const save = () => {
+    setTried(true);
     // towns: latitude / longitude inside India, or nothing is sent
-    if (name === 'towns') {
+    if (name === 'towns' && Number(row.is_base) === 1) {
       const bad = geoErrors(row);
       if (bad.lat || bad.lng) { act.setMsg({ kind: 'error', text: [bad.lat, bad.lng].filter(Boolean).join(' ') }); return undefined; }
     }
@@ -295,6 +303,9 @@ function Editor({ name, cfg, id, lookups, products, rows, lists, cats, uiText, p
 
   function renderField(f) {
     const def = { ...f, type: f.keyField && !creating ? 'readonly' : f.type, options: f.lookup ? lookups[f.lookup] : f.options };
+    if (creating && f.name === 'sort_order') {
+      return <Field key={f.name} def={{ ...def, type: 'readonly', help: NEW_ORDER_HINT, info: undefined }} value={nextOrder} disabled />;
+    }
     if (name === 'banners' && f.name === 'cta_target') {
       return <Field key={f.name} def={{ ...def, type: 'select', options: targetChoices(row.cta_action, cats), allowEmpty: false, required: true }} value={row.cta_target ?? ''} disabled={!canEdit} onChange={(v) => set(f.name, v)} />;
     }
@@ -353,9 +364,10 @@ function Editor({ name, cfg, id, lookups, products, rows, lists, cats, uiText, p
           <>
             <div className="a-prow a-prow-2">{fld('town_key', { keyField: false })}{fld('sort_order')}</div>
             {keyChanged && <p className="a-replace-note">Renaming updates all references. {cfg.rename.note}</p>}
-            <div className="a-prow a-prow-2">{fld('lat', { error: bad.lat })}{fld('lng', { error: bad.lng })}</div>
             <div className="a-prow a-pchecks">{fld('is_base')}{fld('is_active')}</div>
             <BaseNote row={row} rows={rows} />
+            {/* only the godown base's latitude / longitude are used (Google); others keep theirs, hidden */}
+            {Number(row.is_base) === 1 && <div className="a-prow a-prow-2">{fld('lat', { error: bad.lat })}{fld('lng', { error: bad.lng })}</div>}
           </>
         );
       })() : cfg.layout === 'options' ? (() => {
@@ -394,7 +406,7 @@ function Editor({ name, cfg, id, lookups, products, rows, lists, cats, uiText, p
       {cfg.tr && (
         <div className="a-dsec">
           <h3>Text per language</h3>
-          <TrEditor fields={cfg.tr} tr={row.tr || {}} disabled={!canEdit} onChange={(tr) => set('tr', tr)} />
+          <TrEditor fields={cfg.tr} tr={row.tr || {}} disabled={!canEdit} onChange={(tr) => set('tr', tr)} strict={tried} />
           {name === 'banners' && <HeadlinePreview tr={row.tr || {}} count={liveCount(products, cats)} />}
         </div>
       )}
