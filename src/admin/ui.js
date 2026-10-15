@@ -83,7 +83,7 @@ export function InfoTip({ text }) {
   );
 }
 
-/** One form control. def: { name, label, type: text|textarea|number|bool|select|readonly, options, help, info } */
+/** One form control. def: { name, label, type: text|textarea|number|bool|select|readonly, options, help, info, error } */
 export function Field({ def, value, onChange, disabled }) {
   const id = `f-${def.name}`;
   const common = { id, disabled: disabled || def.type === 'readonly', name: def.name };
@@ -106,7 +106,7 @@ export function Field({ def, value, onChange, disabled }) {
     <label className={`a-field${def.type === 'bool' ? ' a-check' : ''}${def.wide ? ' a-wide' : ''}`} htmlFor={id}>
       <span>{def.label || def.name}{def.required && ' *'}<InfoTip text={def.info} /></span>
       {control}
-      {def.help && <small className="a-muted">{def.help}</small>}
+      {def.error ? <small className="a-bad" role="alert">{def.error}</small> : def.help && <small className="a-muted">{def.help}</small>}
     </label>
   );
 }

@@ -292,6 +292,13 @@ tr.a-target td { background: #fff6d6; }
 .a-townmap svg { touch-action: none; }
 .a-tp-cur circle, .a-tp-cur text { cursor: grab; }
 .a-tp-dragging, .a-tp-dragging .a-tp-cur circle, .a-tp-dragging .a-tp-cur text { cursor: grabbing; }
+/* Towns: checkboxes in row 1 line up with the inputs (below the label line); map + its fields side by side, the fields
+   below the map when the drawer is narrower (window under 1200px) */
+.a-townrow1 .a-check { align-self: start; height: 36px; margin-top: 24px; }
+.a-townmapsec { display: grid; grid-template-columns: minmax(0, 560px) minmax(0, 1fr); gap: 20px; align-items: start; }
+.a-townmapsec .a-townmap { margin: 0; }
+.a-townside .a-prow:last-child { margin-bottom: 0; }
+@media (max-width: 1199px) { .a-townmapsec { grid-template-columns: minmax(0, 1fr); } }
 /* Excel import: before / after values wrap (long text, Tamil / Hindi keep their shaping via the cell's lang) */
 .a-difftable td { vertical-align: top; }
 .a-difftable td:nth-child(3), .a-difftable td:nth-child(4) { min-width: 160px; max-width: 440px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }

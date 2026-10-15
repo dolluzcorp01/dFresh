@@ -527,6 +527,17 @@ async function renameTown(q, from, to, empId) {
   await audit(q, { empId, action: 'rename', entity: 'town', entityId: k, before: { town_key: from }, after: { town_key: k } });
   return k;
 }
+// Latitude / longitude: inside India (the admin checks the same, EntityPage.js GEO); empty is allowed.
+function townGeoCheck(body) {
+  for (const [k, min, max, label] of [['lat', 6, 37, 'Latitude'], ['lng', 68, 98, 'Longitude']]) {
+    if (!(k in body)) continue;
+    const v = body[k];
+    if (v === null || v === undefined || String(v).trim() === '') continue;
+    const n = Number(v);
+    if (!Number.isFinite(n) || n < min || n > max) throw new InputError(`${label} must be a number from ${min} to ${max} (India).`);
+  }
+}
+
 // Godown base: one town only; saving one as the base unticks the others.
 async function oneBaseTown(q, row) {
   if (Number(row.is_base) === 1) await q.query('UPDATE towns SET is_base = 0 WHERE town_key <> ? AND is_base = 1', [row.town_key]);
@@ -682,7 +693,7 @@ for (const name of Object.keys(entities.ENTITIES)) {
 
   route('post', `/${name}`, 'editor', async (req) => tx(async (q) => {
     if (name === 'banners') await bannerGuard(q, req.body, null);
-    if (name === 'towns') req.body.town_key = await townKeyCheck(q, req.body.town_key, null);
+    if (name === 'towns') { req.body.town_key = await townKeyCheck(q, req.body.town_key, null); townGeoCheck(req.body); }
     if (name === 'form-options') await optionGuard(q, req.body, null);
     await positions.prepare(q, name, req.body, null); // a new row without a position goes to the end of its list
     const keyValues = await entities.create(q, name, req.body || {}, by(req));
@@ -702,6 +713,7 @@ for (const name of Object.keys(entities.ENTITIES)) {
     if (name === 'banners' && req.body && req.body.banner_key !== undefined && String(req.body.banner_key).trim() !== before.banner_key) {
       keyValues = [await renameBanner(q, before.banner_key, req.body.banner_key, by(req))];
     }
+    if (name === 'towns') townGeoCheck(req.body || {});
     if (name === 'towns' && req.body && req.body.town_key !== undefined && String(req.body.town_key).trim() !== before.town_key) {
       keyValues = [await renameTown(q, before.town_key, req.body.town_key, by(req))];
     }

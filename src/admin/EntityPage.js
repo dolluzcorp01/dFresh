@@ -266,6 +266,11 @@ function Editor({ name, cfg, id, lookups, products, rows, lists, cats, uiText, o
   const rn = cfg.rename && cfg.rename.field;
   const keyChanged = Boolean(rn && !creating && loaded.data && String(row[rn] ?? '').trim() !== String(loaded.data[rn]));
   const save = () => {
+    // towns: latitude / longitude inside India, or nothing is sent
+    if (name === 'towns') {
+      const bad = geoErrors(row);
+      if (bad.lat || bad.lng) { act.setMsg({ kind: 'error', text: [bad.lat, bad.lng].filter(Boolean).join(' ') }); return undefined; }
+    }
     if (keyChanged && !window.confirm(`Rename "${loaded.data[rn]}" to "${String(row[rn]).trim()}"?\n\nRenaming updates all references. ${cfg.rename.note}`)) return undefined;
     return act.run(async () => {
       const saved = creating ? await api.send('POST', `/${name}`, row) : await api.send('PUT', `/${name}/${id}`, row);
@@ -339,14 +344,15 @@ function Editor({ name, cfg, id, lookups, products, rows, lists, cats, uiText, o
           </>
         );
       })() : cfg.layout === 'towns' ? (() => {
-        // Key | Order | Map x | Map y, then the name offsets, then latitude / longitude (the checkboxes come after the map)
+        // Key | Order | Godown base | Active, then Latitude | Longitude; the map fields sit next to the map (below)
         const fld = (n, extra) => renderField({ ...cfg.fields.find((x) => x.name === n), ...extra });
+        const bad = geoErrors(row);
         return (
           <>
-            <div className="a-prow a-prow-4">{fld('town_key', { keyField: false })}{fld('sort_order')}{fld('map_x')}{fld('map_y')}</div>
+            <div className="a-prow a-prow-4 a-townrow1">{fld('town_key', { keyField: false })}{fld('sort_order')}{fld('is_base')}{fld('is_active')}</div>
             {keyChanged && <p className="a-replace-note">Renaming updates all references. {cfg.rename.note}</p>}
-            <div className="a-prow a-prow-3">{fld('label_dx')}{fld('label_dy')}{fld('label_anchor')}</div>
-            <div className="a-prow a-prow-2">{fld('lat')}{fld('lng')}</div>
+            <BaseNote row={row} rows={rows} />
+            <div className="a-prow a-prow-2">{fld('lat', { error: bad.lat })}{fld('lng', { error: bad.lng })}</div>
           </>
         );
       })() : cfg.layout === 'options' ? (() => {
@@ -393,9 +399,15 @@ function Editor({ name, cfg, id, lookups, products, rows, lists, cats, uiText, o
       {name === 'towns' && (
         <div className="a-dsec">
           <h3>Map preview</h3>
-          <TownPreview rows={rows} town={row} selfKey={loaded.data ? loaded.data.town_key : null} disabled={!canEdit} onMove={(patch) => setDraft({ ...row, ...patch })} />
-          <div className="a-prow a-pchecks">{renderField(cfg.fields.find((x) => x.name === 'is_base'))}{renderField(cfg.fields.find((x) => x.name === 'is_active'))}</div>
-          <BaseNote row={row} rows={rows} />
+          <div className="a-townmapsec">
+            <TownPreview rows={rows} town={row} selfKey={loaded.data ? loaded.data.town_key : null} disabled={!canEdit} onMove={(patch) => setDraft({ ...row, ...patch })} />
+            {/* next to the map (below it in a narrower drawer); live-linked to dragging the pin and the name */}
+            <div className="a-townside">
+              <div className="a-prow a-prow-2">{renderField(cfg.fields.find((x) => x.name === 'map_x'))}{renderField(cfg.fields.find((x) => x.name === 'map_y'))}</div>
+              <div className="a-prow a-prow-2">{renderField(cfg.fields.find((x) => x.name === 'label_dx'))}{renderField(cfg.fields.find((x) => x.name === 'label_dy'))}</div>
+              <div className="a-prow">{renderField(cfg.fields.find((x) => x.name === 'label_anchor'))}</div>
+            </div>
+          </div>
         </div>
       )}
       {name === 'banners' && !creating && (
@@ -513,6 +525,19 @@ const OPTION_LISTS = {
   monthly_sales: { title: 'Monthly sales', used: 'Used in: distributor form (Monthly sales)' },
   yes_no: { title: 'Yes / No', used: 'Used in: distributor form (Godown and vehicles?)' },
 };
+
+// Towns: latitude 6-37 and longitude 68-98 (India); empty is allowed. Same limits in the API (Admin_server.js).
+const GEO = { lat: [6, 37, 'Latitude'], lng: [68, 98, 'Longitude'] };
+function geoErrors(row) {
+  const out = {};
+  for (const [k, [min, max, label]] of Object.entries(GEO)) {
+    const v = row[k];
+    if (v === null || v === undefined || String(v).trim() === '') continue;
+    const n = Number(v);
+    if (!Number.isFinite(n) || n < min || n > max) out[k] = `${label} must be a number from ${min} to ${max} (India).`;
+  }
+  return out;
+}
 
 // Towns: ticking Godown base here replaces the town that has it now (the server unticks that one).
 function BaseNote({ row, rows }) {
