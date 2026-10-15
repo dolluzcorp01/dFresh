@@ -10,6 +10,7 @@ import { api } from './adminApi';
 import { mediaUrl } from '../utils/api';
 import { Drawer, Field, Loading, Notice, TrEditor, useAction, useCan, useLoad } from './ui';
 import { ProductField } from './ProductSelect';
+import useOrderDraft from './useOrderDraft';
 
 const TR_FIELDS = [
   { name: 'name', label: 'Name', required: true }, { name: 'one_liner', label: 'One-liner', required: true },
@@ -72,7 +73,7 @@ export default function Products() {
   const home = useMemo(() => homeFeatured(ui.data), [ui.data]);
   const canEdit = useCan('editor');
   const act = useAction();
-  const [open, setOpen] = useState(null); // { id } | { create: {...} }
+  const [opened, setOpen] = useState(null); // { id } | { create: {...} }
   const [filter, setFilter] = useState('');
   const [drag, setDrag] = useState(null); // { id, scope }
 
@@ -83,28 +84,37 @@ export default function Products() {
   const featured = useMemo(() => (list.data || []).filter((p) => Number(p.is_featured))
     .sort((a, b) => (Number(a.featured_order) || 999) - (Number(b.featured_order) || 999)), [list.data]);
 
-  // Drop a dragged row on another row of the same list: the whole list in its new order goes to the server.
-  const dropOn = (target, scope, ids) => {
+  // A drop changes a local order per list (scope); "Save order" sends each changed list (useOrderDraft).
+  const draft = useOrderDraft((scope, order) => {
+    const [kind, key] = scope.split(':');
+    const url = kind === 'featured' ? '/products/featured-order' : '/products/reorder';
+    return api.send('POST', url, kind === 'featured' ? { order } : { order, ...(kind === 'cat' ? { category: key } : { parent: key }) });
+  }, () => list.reload());
+  const open = (o) => draft.guard(() => setOpen(o));
+  /** items in the list's unsaved order, if it has one */
+  const inOrder = (scope, items, idOf) => {
+    const saved = items.map(idOf);
+    return draft.order(scope, saved).map((x) => items.find((it) => idOf(it) === x)).filter(Boolean);
+  };
+  const dropOn = (target, scope, ids, savedIds) => {
     if (!drag || drag.scope !== scope || drag.id === target) { setDrag(null); return; }
     const order = ids.filter((x) => x !== drag.id);
     order.splice(order.indexOf(target) + (ids.indexOf(drag.id) < ids.indexOf(target) ? 1 : 0), 0, drag.id);
     setDrag(null);
-    const [kind, key] = scope.split(':');
-    const url = kind === 'featured' ? '/products/featured-order' : '/products/reorder';
-    const body = kind === 'featured' ? { order } : { order, ...(kind === 'cat' ? { category: key } : { parent: key }) };
-    act.run(async () => { await api.send('POST', url, body); list.reload(); }, 'Order saved');
+    draft.set(scope, order, savedIds);
   };
-  const dragProps = (id, scope, ids) => (canDrag ? {
+  const dragProps = (id, scope, ids, savedIds) => (canDrag ? {
     draggable: true,
     onDragStart: (e) => { e.stopPropagation(); setDrag({ id, scope }); },
     onDragOver: (e) => { if (drag && drag.scope === scope) e.preventDefault(); },
-    onDrop: (e) => { e.preventDefault(); e.stopPropagation(); dropOn(id, scope, ids); },
+    onDrop: (e) => { e.preventDefault(); e.stopPropagation(); dropOn(id, scope, ids, savedIds); },
     onDragEnd: () => setDrag(null),
   } : {});
+  const featuredShown = inOrder('featured:', featured, (p) => p.product_id);
 
-  const row = (p, pos, scope, ids, isVariant) => (
-    <tr key={p.product_id} {...dragProps(p.product_id, scope, ids)} onClick={() => setOpen({ id: p.product_id })} tabIndex={0}
-      onKeyDown={(e) => e.key === 'Enter' && setOpen({ id: p.product_id })}
+  const row = (p, pos, scope, ids, savedIds, isVariant) => (
+    <tr key={p.product_id} {...dragProps(p.product_id, scope, ids, savedIds)} onClick={() => open({ id: p.product_id })} tabIndex={0}
+      onKeyDown={(e) => e.key === 'Enter' && open({ id: p.product_id })}
       className={`${p.is_active ? '' : 'a-off'}${drag && drag.id === p.product_id ? ' a-dragging' : ''}`}>
       <td className="a-handle" aria-hidden="true">{canDrag ? '⠿' : ''}</td>
       <td className="a-num">{pos}</td>
@@ -123,8 +133,8 @@ export default function Products() {
       <h1>Products</h1>
       <div className="a-toolbar">
         <input type="search" placeholder="Filter by ID or name" aria-label="Filter" value={filter} onChange={(e) => setFilter(e.target.value)} />
-        {canEdit && <button type="button" className="a-btn" onClick={() => setOpen({ create: { is_active: 1 } })}>Add product</button>}
-        {canEdit && <span className="a-muted">{f ? 'Clear the filter to drag rows.' : 'Drag rows to change the order (colour versions move with their product).'}</span>}
+        {canEdit && <button type="button" className="a-btn" onClick={() => open({ create: { is_active: 1 } })}>Add product</button>}
+        {canEdit && <span className="a-muted">{f ? 'Clear the filter to drag rows.' : 'Drag rows to change the order (colour versions move with their product), then Save order.'}</span>}
       </div>
       {act.note}
       <Loading state={list}>
@@ -134,13 +144,13 @@ export default function Products() {
           <p className="a-muted">{home.hint}{canDrag && featured.length > 1 ? ' Drag the cards to change it.' : ''}</p>
           {featured.length ? (
             <ol className="a-featured-list">
-              {featured.map((p) => (
-                <li key={p.product_id} {...dragProps(p.product_id, 'featured:', featured.map((x) => x.product_id))}
+              {featuredShown.map((p, i) => (
+                <li key={p.product_id} {...dragProps(p.product_id, 'featured:', featuredShown.map((x) => x.product_id), featured.map((x) => x.product_id))}
                   className={`${drag && drag.id === p.product_id ? 'a-dragging' : ''}${p.is_active ? '' : ' a-off'}`}
-                  onClick={() => setOpen({ id: p.product_id })} onKeyDown={(e) => e.key === 'Enter' && setOpen({ id: p.product_id })} tabIndex={0}>
+                  onClick={() => open({ id: p.product_id })} onKeyDown={(e) => e.key === 'Enter' && open({ id: p.product_id })} tabIndex={0}>
                   <span className="a-feat-photo">
                     {thumbUrl(p) ? <img src={thumbUrl(p)} alt="" width="96" height="96" /> : <span className="a-muted">No photo</span>}
-                    <span className="a-num">{p.featured_order}</span>
+                    <span className="a-num">{i + 1}</span>
                   </span>
                   <code>{p.product_id}</code>
                   <span className="a-feat-name">{p.tr?.en?.name ?? ''}{p.is_active ? '' : ' (not active)'}</span>
@@ -153,12 +163,16 @@ export default function Products() {
           <table className="a-table a-hover">
             <thead><tr><th /><th>Pos.</th><th /><th>ID</th><th>Name (EN)</th><th>Photos</th><th>{home.title}</th><th>Active</th><th>Languages</th></tr></thead>
             {groups.map((g) => {
-              const ids = g.items.map((x) => x.main.product_id);
-              const rows = g.items.flatMap(({ main, variants }, i) => {
+              const savedIds = g.items.map((x) => x.main.product_id);
+              const items = inOrder(`cat:${g.key}`, g.items, (x) => x.main.product_id);
+              const ids = items.map((x) => x.main.product_id);
+              const rows = items.flatMap(({ main, variants: savedVariants }, i) => {
+                const variants = inOrder(`var:${main.product_id}`, savedVariants, (v) => v.product_id);
                 const vids = variants.map((v) => v.product_id);
+                const savedVids = savedVariants.map((v) => v.product_id);
                 return [
-                  match(main) || variants.some(match) ? row(main, i + 1, `cat:${g.key}`, ids, false) : null,
-                  ...variants.filter((v) => match(v) || match(main)).map((v) => row(v, `${i + 1}.${vids.indexOf(v.product_id) + 1}`, `var:${main.product_id}`, vids, true)),
+                  match(main) || variants.some(match) ? row(main, i + 1, `cat:${g.key}`, ids, savedIds, false) : null,
+                  ...variants.filter((v) => match(v) || match(main)).map((v) => row(v, `${i + 1}.${vids.indexOf(v.product_id) + 1}`, `var:${main.product_id}`, vids, savedVids, true)),
                 ];
               }).filter(Boolean);
               if (!rows.length) return null;
@@ -172,11 +186,12 @@ export default function Products() {
           </table>
         </div>
       </Loading>
-      {open && cats.data && (
-        <ProductEditor key={open.id || 'new'} id={open.id} initial={open.create} cats={cats.data} all={list.data || []} home={home}
+      {opened && cats.data && (
+        <ProductEditor key={opened.id || 'new'} id={opened.id} initial={opened.create} cats={cats.data} all={list.data || []} home={home}
           onClose={() => setOpen(null)} onSaved={(id) => { list.reload(); if (id) setOpen({ id }); }}
           onAddVariant={(p) => setOpen({ create: { variant_of: p.product_id, category_key: p.category_key, specification: p.specification, pack: p.pack, is_active: 1, tr: p.tr } })} />
       )}
+      {draft.ui}
     </section>
   );
 }

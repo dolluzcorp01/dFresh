@@ -6,6 +6,7 @@ import { isValidElement, useMemo, useState } from 'react';
 import { api, rowId } from './adminApi';
 import { mediaUrl } from '../utils/api';
 import { KitProducts, ProductField, RepPreview, Thumb, productName } from './ProductSelect';
+import useOrderDraft from './useOrderDraft';
 import { Drawer, Field, Loading, TrEditor, useAction, useCan, useLoad } from './ui';
 import { LAND, MAP_H, MAP_W } from '../shared/mapShape';
 
@@ -18,15 +19,23 @@ const SECTIONS = {
   banners: {
     title: 'Banners', keys: ['banner_key'], reorder: true,
     fields: [
-      { name: 'banner_key', label: 'Key', required: true, keyField: true }, POSITION,
+      { name: 'banner_key', label: 'Key', required: true, keyField: true, help: 'Internal name, not shown on the site. Set once; do not change.' }, POSITION,
       { name: 'theme', label: 'Theme', type: 'select', options: ['light', 'dark'], allowEmpty: false, help: 'dark = gold button on a dark photo' },
       { name: 'cta_action', label: 'Button action', type: 'select', options: ['products', 'products_home', 'products_category', 'section', 'form'], allowEmpty: false },
-      { name: 'cta_target', label: 'Button target', help: 'category key, section id or form type' },
+      { name: 'cta_target', label: 'Button target' }, // a dropdown that follows Button action (BannerTarget)
       { name: 'note', label: 'Internal note', wide: true }, ACTIVE,
     ],
-    tr: [{ name: 'headline', label: 'Headline', required: true, long: true }, { name: 'cta_label', label: 'Button label', required: true }],
-    list: (r) => [r.banner_key, r.tr?.en?.headline ?? '', r.theme, `${r.cta_action ?? ''}${r.cta_target ? `: ${r.cta_target}` : ''}`],
-    head: ['Key', 'Headline (EN)', 'Theme', 'Button'],
+    tr: [
+      { name: 'headline', label: 'Headline', required: true, long: true, help: '{count} = the number of active products (main products, not colour versions).' },
+      { name: 'cta_label', label: 'Button label', required: true },
+    ],
+    list: (r) => [
+      r.desktop_file
+        ? <img className="a-bthumb" src={mediaUrl(`/media/banners/desktop/${r.desktop_file}`)} alt="" width="96" height="54" loading="lazy" />
+        : <span className="a-bthumb a-thumb-none" aria-hidden="true" />,
+      r.banner_key, r.tr?.en?.headline ?? '', r.theme, `${r.cta_action ?? ''}${r.cta_target ? `: ${r.cta_target}` : ''}`,
+    ],
+    head: ['Photo', 'Key', 'Headline (EN)', 'Theme', 'Button'],
     defaults: { theme: 'light', cta_action: 'products', is_active: 0 },
   },
   kits: {
@@ -88,7 +97,7 @@ const SECTIONS = {
         r.sort_order,
         <span className="a-prodcell">{p && <Thumb p={p} size={32} />}<code>{r.product_id}</code>{p ? productName(p) : ''}</span>,
         r.size_label, Number(r.scale).toFixed(2),
-        r.is_default ? <span className="a-badge">Selected first</span> : '',
+        r.is_default ? <span className="a-firstbadge">Selected first</span> : '',
       ];
     },
     head: ['Position', 'Product', 'Size label', 'Drawing scale', 'Selected first'],
@@ -110,7 +119,8 @@ const SECTIONS = {
 export default function EntityPage({ name }) {
   const cfg = SECTIONS[name];
   const list = useLoad(`/${name}`);
-  const products = useLoad(cfg.fields.some((f) => f.lookup === 'products') || cfg.links ? '/products' : null);
+  const products = useLoad(cfg.fields.some((f) => f.lookup === 'products') || cfg.links || name === 'banners' ? '/products' : null);
+  const cats = useLoad(name === 'banners' ? '/categories' : null);
   const options = useLoad(cfg.fields.some((f) => f.lookup === 'businessTypes') ? '/form-options' : null);
   const canEdit = useCan('editor');
   const act = useAction();
@@ -122,22 +132,29 @@ export default function EntityPage({ name }) {
     businessTypes: (options.data || []).filter((o) => o.list_key === 'business_type').map((o) => o.option_value),
   }), [products.data, options.data]);
 
+  // drag = a local order until "Save order" (useOrderDraft); the list shows it with the new positions
+  const draft = useOrderDraft((_, ids) => api.send('POST', `/${name}/reorder`, { order: ids.map(decodeURIComponent) }), () => list.reload());
+  const savedIds = (list.data || []).map((r) => rowId(cfg.keys, r));
+  const shownIds = draft.order('all', savedIds);
+  const byId = new Map((list.data || []).map((r) => [rowId(cfg.keys, r), r]));
+  const shown = shownIds.map((id, i) => byId.get(id) && (draft.dirty && 'sort_order' in byId.get(id) ? { ...byId.get(id), sort_order: i + 1 } : byId.get(id))).filter(Boolean);
   const drop = (target) => {
     if (!drag || drag === target) return;
-    const ids = (list.data || []).map((r) => rowId(cfg.keys, r));
+    const ids = [...shownIds];
     const from = ids.indexOf(drag);
     ids.splice(ids.indexOf(target), 0, ids.splice(from, 1)[0]);
     setDrag(null);
-    act.run(async () => { await api.send('POST', `/${name}/reorder`, { order: ids.map(decodeURIComponent) }); list.reload(); }, 'Order saved');
+    draft.set('all', ids, savedIds);
   };
+  const openDrawer = (o) => draft.guard(() => setOpen(o));
 
   return (
     <section>
       <h1>{cfg.title}</h1>
       {cfg.hint && <p className="a-muted a-pagehint">{cfg.hint}</p>}
       <div className="a-toolbar">
-        {canEdit && <button type="button" className="a-btn" onClick={() => setOpen({ create: true })}>Add</button>}
-        {cfg.reorder && canEdit && <span className="a-muted">Drag rows to change the order.</span>}
+        {canEdit && <button type="button" className="a-btn" onClick={() => openDrawer({ create: true })}>Add</button>}
+        {cfg.reorder && canEdit && <span className="a-muted">Drag rows to change the order, then Save order.</span>}
       </div>
       {act.note}
       <Loading state={list}>
@@ -145,12 +162,13 @@ export default function EntityPage({ name }) {
           <table className="a-table a-hover">
             <thead><tr>{cfg.reorder && <th />}{cfg.head.map((h) => <th key={h}>{h}</th>)}<th>Active</th>{cfg.tr && <th>Languages</th>}</tr></thead>
             <tbody>
-              {(list.data || []).map((r) => {
+              {shown.map((r) => {
                 const id = rowId(cfg.keys, r);
                 return (
-                  <tr key={id} className={r.is_active === 0 ? 'a-off' : ''} onClick={() => setOpen({ id })} tabIndex={0}
-                    onKeyDown={(e) => e.key === 'Enter' && setOpen({ id })}
-                    draggable={cfg.reorder && canEdit} onDragStart={() => setDrag(id)} onDragOver={(e) => e.preventDefault()} onDrop={() => drop(id)}>
+                  <tr key={id} className={`${r.is_active === 0 ? 'a-off' : ''}${drag === id ? ' a-dragging' : ''}`} onClick={() => openDrawer({ id })} tabIndex={0}
+                    onKeyDown={(e) => e.key === 'Enter' && openDrawer({ id })}
+                    draggable={cfg.reorder && canEdit} onDragStart={() => setDrag(id)} onDragOver={(e) => e.preventDefault()} onDrop={() => drop(id)}
+                    onDragEnd={() => setDrag(null)}>
                     {cfg.reorder && <td className="a-handle" aria-hidden="true">⠿</td>}
                     {cfg.list(r, { products: products.data || [] }).map((v, i) => <td key={i}>{v === null || v === undefined ? '' : isValidElement(v) ? v : String(v)}</td>)}
                     <td>{r.is_active === undefined ? '' : r.is_active ? 'Yes' : 'No'}</td>
@@ -164,13 +182,14 @@ export default function EntityPage({ name }) {
       </Loading>
       {open && (
         <Editor name={name} cfg={cfg} id={open.id} lookups={lookups} products={products.data || []} rows={list.data || []} onClose={() => setOpen(null)}
-          onSaved={(id) => { list.reload(); setOpen(id ? { id } : null); }} />
+          onSaved={(id) => { list.reload(); setOpen(id ? { id } : null); }} cats={cats.data || []} />
       )}
+      {draft.ui}
     </section>
   );
 }
 
-function Editor({ name, cfg, id, lookups, products, rows, onClose, onSaved }) {
+function Editor({ name, cfg, id, lookups, products, rows, cats, onClose, onSaved }) {
   const loaded = useLoad(id ? `/${name}/${id}` : null);
   const canEdit = useCan('editor');
   const act = useAction();
@@ -183,6 +202,11 @@ function Editor({ name, cfg, id, lookups, products, rows, onClose, onSaved }) {
     if (name === 'size-picker' && k === 'product_id' && !String(row.size_label || '').trim()) {
       const size = sizeOf(products.find((p) => p.product_id === v));
       if (size) next.size_label = size;
+    }
+    // banners: a new Button action keeps the target if it is still one of its choices, else takes its first choice
+    if (name === 'banners' && k === 'cta_action') {
+      const choices = targetChoices(v, cats);
+      if (!choices.some((c) => c.value === row.cta_target)) next.cta_target = choices.length ? choices[0].value : null;
     }
     setDraft(next);
   };
@@ -207,6 +231,15 @@ function Editor({ name, cfg, id, lookups, products, rows, onClose, onSaved }) {
 
   function renderField(f) {
     const def = { ...f, type: f.keyField && !creating ? 'readonly' : f.type, options: f.lookup ? lookups[f.lookup] : f.options };
+    if (name === 'banners' && f.name === 'cta_target') {
+      const choices = targetChoices(row.cta_action, cats);
+      return [
+        choices.length
+          ? <Field key={f.name} def={{ ...def, type: 'select', options: choices, allowEmpty: false, required: true }} value={row.cta_target ?? ''} disabled={!canEdit} onChange={(v) => set(f.name, v)} />
+          : null,
+        <p key="cta-preview" className="a-wide a-muted a-ctaprev">Button opens: <strong>{buttonOpens(row, cats)}</strong></p>,
+      ];
+    }
     if (name === 'size-picker' && f.name === 'scale') {
       return (
         <div key={f.name} className="a-scalefield">
@@ -246,6 +279,7 @@ function Editor({ name, cfg, id, lookups, products, rows, onClose, onSaved }) {
         <div className="a-dsec">
           <h3>Text per language</h3>
           <TrEditor fields={cfg.tr} tr={row.tr || {}} disabled={!canEdit} onChange={(tr) => set('tr', tr)} />
+          {name === 'banners' && <HeadlinePreview tr={row.tr || {}} count={liveCount(products, cats)} />}
         </div>
       )}
       {cfg.links && (
@@ -272,6 +306,48 @@ function Editor({ name, cfg, id, lookups, products, rows, onClose, onSaved }) {
       )}
       {name === 'banners' && creating && <p className="a-muted">Create the banner first, then upload both photos and switch it on.</p>}
     </Drawer>
+  );
+}
+
+// Banners: what Button target can be for each Button action (validated again by the API, Admin_server.js).
+const SECTION_TARGETS = ['business', 'where', 'about', 'contact', 'products'];
+const FORM_TARGETS = ['sample', 'quote', 'distributor'];
+function targetChoices(action, cats) {
+  if (action === 'products_category') return cats.map((c) => ({ value: c.category_key, label: `${c.tr?.en?.name ?? c.category_key}${c.is_active ? '' : ' (not active)'}` }));
+  if (action === 'section') return SECTION_TARGETS.map((s) => ({ value: s, label: s }));
+  if (action === 'form') return FORM_TARGETS.map((s) => ({ value: s, label: s }));
+  return []; // products, products_home: no target
+}
+function buttonOpens(row, cats) {
+  const t = row.cta_target;
+  switch (row.cta_action) {
+    case 'products': return 'the products drawer (all products)';
+    case 'products_home': return 'the products drawer, "For Home" filter';
+    case 'products_category': {
+      const c = cats.find((x) => x.category_key === t);
+      return t ? `${c ? c.tr?.en?.name ?? t : t} category` : 'pick a category';
+    }
+    case 'section': return t ? (t === 'products' ? 'the products drawer (the Products link)' : `the "${t}" section of the home page`) : 'pick a section';
+    case 'form': return t ? `the ${t} form` : 'pick a form';
+    default: return '-';
+  }
+}
+
+// {count} in a banner headline: active main products (not colour versions) in active categories, as on the site.
+function liveCount(products, cats) {
+  const on = new Set(cats.filter((c) => c.is_active).map((c) => c.category_key));
+  return products.filter((p) => !p.variant_of && p.is_active && on.has(p.category_key)).length;
+}
+function HeadlinePreview({ tr, count }) {
+  const used = Object.entries(tr).filter(([, t]) => t && /\{(count|products)\}/.test(t.headline || ''));
+  if (!used.length) return null;
+  return (
+    <p className="a-muted a-ctaprev">
+      On the site now ({count} active products):{' '}
+      {used.map(([lang, t], i) => (
+        <span key={lang} lang={lang}>{i ? ' · ' : ''}<code>{lang}</code> {t.headline.replace(/\{(count|products)\}/g, String(count))}</span>
+      ))}
+    </p>
   );
 }
 

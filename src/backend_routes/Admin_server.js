@@ -480,11 +480,31 @@ route('post', '/banners/:id/image', 'editor', async (req) => {
 // ---------------------------------------------------------------------------------------------
 // Generic content sections (products, categories, banners, kits, towns, form-options, size-picker)
 // ---------------------------------------------------------------------------------------------
-function bannerGuard(body, current) {
+// Button target per Button action (the admin offers the same choices, EntityPage.js): products / products_home have
+// none (stored empty), products_category = a category key, section = a home section, form = a lead form.
+const BANNER_SECTIONS = ['business', 'where', 'about', 'contact', 'products'];
+const BANNER_FORMS = ['sample', 'quote', 'distributor'];
+async function bannerGuard(q, body, current) {
   const desktop = current ? current.desktop_file : '';
   const mobile = current ? current.mobile_file : '';
   const active = 'is_active' in body ? Number(entities.coerce('is_active', { type: 'bool' }, body.is_active)) : (current ? current.is_active : 0);
   if (active && (!desktop || !mobile)) throw new InputError('Upload the desktop and the mobile photo before switching the banner on');
+  if (!('cta_action' in body) && !('cta_target' in body)) return;
+  const action = 'cta_action' in body ? body.cta_action : current && current.cta_action;
+  const target = 'cta_target' in body ? body.cta_target : current && current.cta_target;
+  const t = target === null || target === undefined ? '' : String(target).trim();
+  if (action === 'products' || action === 'products_home') { body.cta_target = null; return; }
+  if (action === 'products_category') {
+    const [[cat]] = await q.query('SELECT category_key FROM categories WHERE category_key = ?', [t]);
+    if (!cat) throw new InputError('Button target: pick one of the categories');
+  } else if (action === 'section') {
+    if (!BANNER_SECTIONS.includes(t)) throw new InputError(`Button target: one of ${BANNER_SECTIONS.join(', ')}`);
+  } else if (action === 'form') {
+    if (!BANNER_FORMS.includes(t)) throw new InputError(`Button target: one of ${BANNER_FORMS.join(', ')}`);
+  } else {
+    throw new InputError('Button action: one of products, products_home, products_category, section, form');
+  }
+  body.cta_target = t;
 }
 
 // A category's own Google / share texts (Translations group "Google and sharing", src/shared/pageMeta.js): created
@@ -551,7 +571,7 @@ for (const name of Object.keys(entities.ENTITIES)) {
   }), { content: true });
 
   route('post', `/${name}`, 'editor', async (req) => tx(async (q) => {
-    if (name === 'banners') bannerGuard(req.body, null);
+    if (name === 'banners') await bannerGuard(q, req.body, null);
     await positions.prepare(q, name, req.body, null); // a new row without a position goes to the end of its list
     const keyValues = await entities.create(q, name, req.body || {}, by(req));
     const after = await entities.load(name, keyValues, q);
@@ -565,7 +585,7 @@ for (const name of Object.keys(entities.ENTITIES)) {
     const keyValues = entities.parseId(e, req.params.id);
     const before = await entities.load(name, keyValues, q);
     if (!before) throw new InputError('Not found', 404);
-    if (name === 'banners') bannerGuard(req.body || {}, before);
+    if (name === 'banners') await bannerGuard(q, req.body || {}, before);
     const tidy = await positions.prepare(q, name, req.body || {}, before);
     await entities.update(q, name, keyValues, req.body || {}, by(req));
     await positions.tidyUp(q, name, tidy);

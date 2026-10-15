@@ -293,9 +293,14 @@ async function buildBootstrap(lang, fallback, activeLanguages) {
     towns: towns.length,
     languages: activeLanguages,
   };
-  // {products}, {towns_word} ... in any text (src/shared/countText.js)
+  // {products}, {towns_word} ... in any text (src/shared/countText.js); banner headlines and buttons too, where
+  // {count} is the same number as {products} (active main products)
   const words = numberWords(ui.num_words);
   for (const [k, v] of Object.entries(ui)) ui[k] = fillCounts(v, stats, words);
+  for (const b of banners) {
+    b.headline = fillCounts(String(b.headline || '').replace(/\{count\}/g, '{products}'), stats, words);
+    b.ctaLabel = fillCounts(String(b.ctaLabel || '').replace(/\{count\}/g, '{products}'), stats, words);
+  }
 
   // The office / godown address is one text per language (Translations c_office_a / c_godown_a, the only copy);
   // the Google Maps search always uses the default language's, so the map finds the same place in every language.

@@ -24,7 +24,7 @@ function BannerCta({ banner, lang, tabIndex }) {
   const label = <><span>{ctaLabel}</span> <span aria-hidden="true">→</span></>;
   const onTrack = () => track('banner_click', { banner: key });
 
-  if (ctaAction === 'section') {
+  if (ctaAction === 'section' && ctaTarget !== 'products') { // "products" is the Products link: the drawer, not an anchor
     return <Link className={cls} to={linkTarget(lang, { hash: ctaTarget })} tabIndex={tabIndex} onClick={onTrack}>{label}</Link>;
   }
   const onClick = (e) => {
