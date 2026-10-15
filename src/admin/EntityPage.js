@@ -2,14 +2,16 @@
 // driven by the definitions below (they mirror backend admin-entities.js). Banners also take desktop / mobile
 // photo uploads and drag-and-drop order; kits take their product list (tick in a list, drag to order); "Photo from
 // product" shows that product's main photo as soon as it is picked; towns show a live map preview (pin + name).
-import { isValidElement, useMemo, useState } from 'react';
+import { isValidElement, useEffect, useMemo, useRef, useState } from 'react';
 import { api, rowId } from './adminApi';
 import { mediaUrl } from '../utils/api';
 import { KitProducts, ProductField, RepPreview, Thumb, productName } from './ProductSelect';
 import useOrderDraft from './useOrderDraft';
-import { Drawer, Field, Loading, TrEditor, useAction, useCan, useLoad } from './ui';
+import { Drawer, Field, Loading, TrEditor, useAction, useAdmin, useCan, useLoad } from './ui';
+import { fontVar, loadFont } from '../i18n/fonts';
 import { LAND, MAP_H, MAP_W } from '../shared/mapShape';
 
+const KEY_HINT = "Internal name, not shown to visitors. 2-30 characters: a-z, 0-9 and -. It names this banner's photo files, its analytics click event and the source of leads from its form button.";
 const ACTIVE = { name: 'is_active', label: 'Active', type: 'bool' };
 const ORDER = { name: 'sort_order', label: 'Order', type: 'number', step: '1' };
 // Banners, kits, categories: the position is set by dragging the rows (1, 2, 3 ...; a new row goes to the end)
@@ -19,20 +21,19 @@ const SECTIONS = {
   banners: {
     title: 'Banners', keys: ['banner_key'], reorder: true,
     fields: [
-      { name: 'banner_key', label: 'Key', required: true, keyField: true, help: 'Internal name, not shown on the site. Set once; do not change.' }, POSITION,
+      { name: 'banner_key', label: 'Key', required: true, keyField: true, help: KEY_HINT }, POSITION,
       { name: 'theme', label: 'Theme', type: 'select', options: ['light', 'dark'], allowEmpty: false, help: 'dark = gold button on a dark photo' },
       { name: 'cta_action', label: 'Button action', type: 'select', options: ['products', 'products_home', 'products_category', 'section', 'form'], allowEmpty: false },
       { name: 'cta_target', label: 'Button target' }, // a dropdown that follows Button action (BannerTarget)
-      { name: 'note', label: 'Internal note', wide: true }, ACTIVE,
+      { name: 'note', label: 'Internal note' }, ACTIVE,
     ],
+    layout: 'banners', // drawer rows: BannerFields; list: Desktop / Mobile photo switch
     tr: [
       { name: 'headline', label: 'Headline', required: true, long: true, help: '{count} = the number of active products (main products, not colour versions).' },
       { name: 'cta_label', label: 'Button label', required: true },
     ],
-    list: (r) => [
-      r.desktop_file
-        ? <img className="a-bthumb" src={mediaUrl(`/media/banners/desktop/${r.desktop_file}`)} alt="" width="96" height="54" loading="lazy" />
-        : <span className="a-bthumb a-thumb-none" aria-hidden="true" />,
+    list: (r, { photoKind = 'desktop' }) => [
+      <BannerThumb r={r} kind={photoKind} />,
       r.banner_key, r.tr?.en?.headline ?? '', r.theme, `${r.cta_action ?? ''}${r.cta_target ? `: ${r.cta_target}` : ''}`,
     ],
     head: ['Photo', 'Key', 'Headline (EN)', 'Theme', 'Button'],
@@ -121,6 +122,8 @@ export default function EntityPage({ name }) {
   const list = useLoad(`/${name}`);
   const products = useLoad(cfg.fields.some((f) => f.lookup === 'products') || cfg.links || name === 'banners' ? '/products' : null);
   const cats = useLoad(name === 'banners' ? '/categories' : null);
+  const uiText = useLoad(name === 'banners' ? '/ui-text' : null); // the banner eyebrow (bn_k) for the preview
+  const [photoKind, setPhotoKind] = useState('desktop');
   const options = useLoad(cfg.fields.some((f) => f.lookup === 'businessTypes') ? '/form-options' : null);
   const canEdit = useCan('editor');
   const act = useAction();
@@ -155,6 +158,13 @@ export default function EntityPage({ name }) {
       <div className="a-toolbar">
         {canEdit && <button type="button" className="a-btn" onClick={() => openDrawer({ create: true })}>Add</button>}
         {cfg.reorder && canEdit && <span className="a-muted">Drag rows to change the order, then Save order.</span>}
+        {cfg.layout === 'banners' && (
+          <span className="a-seg" role="group" aria-label="Photo column shows">
+            {['desktop', 'mobile'].map((k) => (
+              <button key={k} type="button" aria-pressed={photoKind === k} onClick={() => setPhotoKind(k)}>{k === 'desktop' ? 'Desktop' : 'Mobile'}</button>
+            ))}
+          </span>
+        )}
       </div>
       {act.note}
       <Loading state={list}>
@@ -170,7 +180,7 @@ export default function EntityPage({ name }) {
                     draggable={cfg.reorder && canEdit} onDragStart={() => setDrag(id)} onDragOver={(e) => e.preventDefault()} onDrop={() => drop(id)}
                     onDragEnd={() => setDrag(null)}>
                     {cfg.reorder && <td className="a-handle" aria-hidden="true">⠿</td>}
-                    {cfg.list(r, { products: products.data || [] }).map((v, i) => <td key={i}>{v === null || v === undefined ? '' : isValidElement(v) ? v : String(v)}</td>)}
+                    {cfg.list(r, { products: products.data || [], photoKind }).map((v, i) => <td key={i}>{v === null || v === undefined ? '' : isValidElement(v) ? v : String(v)}</td>)}
                     <td>{r.is_active === undefined ? '' : r.is_active ? 'Yes' : 'No'}</td>
                     {cfg.tr && <td>{r.tr ? Object.keys(r.tr).join(' ') : ''}</td>}
                   </tr>
@@ -182,14 +192,14 @@ export default function EntityPage({ name }) {
       </Loading>
       {open && (
         <Editor name={name} cfg={cfg} id={open.id} lookups={lookups} products={products.data || []} rows={list.data || []} onClose={() => setOpen(null)}
-          onSaved={(id) => { list.reload(); setOpen(id ? { id } : null); }} cats={cats.data || []} />
+          onSaved={(id) => { list.reload(); setOpen(id ? { id } : null); }} cats={cats.data || []} uiText={uiText.data} />
       )}
       {draft.ui}
     </section>
   );
 }
 
-function Editor({ name, cfg, id, lookups, products, rows, cats, onClose, onSaved }) {
+function Editor({ name, cfg, id, lookups, products, rows, cats, uiText, onClose, onSaved }) {
   const loaded = useLoad(id ? `/${name}/${id}` : null);
   const canEdit = useCan('editor');
   const act = useAction();
@@ -211,12 +221,17 @@ function Editor({ name, cfg, id, lookups, products, rows, cats, onClose, onSaved
     setDraft(next);
   };
 
-  const save = () => act.run(async () => {
-    const saved = creating ? await api.send('POST', `/${name}`, row) : await api.send('PUT', `/${name}/${id}`, row);
-    setDraft(null);
-    if (!creating) loaded.setData(saved);
-    onSaved(creating ? rowId(cfg.keys, saved) : null);
-  }, 'Saved');
+  const [preview, setPreview] = useState(null); // banners: 'desktop' | 'mobile' while the large preview is open
+  const keyChanged = name === 'banners' && !creating && loaded.data && String(row.banner_key || '').trim() !== loaded.data.banner_key;
+  const save = () => {
+    if (keyChanged && !window.confirm(`Rename "${loaded.data.banner_key}" to "${String(row.banner_key).trim()}"?\n\n${RENAME_NOTE}`)) return undefined;
+    return act.run(async () => {
+      const saved = creating ? await api.send('POST', `/${name}`, row) : await api.send('PUT', `/${name}/${id}`, row);
+      setDraft(null);
+      if (!creating) loaded.setData(saved);
+      onSaved(creating || keyChanged ? rowId(cfg.keys, saved) : null);
+    }, 'Saved');
+  };
   const remove = () => window.confirm('Delete this row? This cannot be undone.') && act.run(async () => {
     await api.send('DELETE', `/${name}/${id}`);
     onSaved(null);
@@ -232,13 +247,7 @@ function Editor({ name, cfg, id, lookups, products, rows, cats, onClose, onSaved
   function renderField(f) {
     const def = { ...f, type: f.keyField && !creating ? 'readonly' : f.type, options: f.lookup ? lookups[f.lookup] : f.options };
     if (name === 'banners' && f.name === 'cta_target') {
-      const choices = targetChoices(row.cta_action, cats);
-      return [
-        choices.length
-          ? <Field key={f.name} def={{ ...def, type: 'select', options: choices, allowEmpty: false, required: true }} value={row.cta_target ?? ''} disabled={!canEdit} onChange={(v) => set(f.name, v)} />
-          : null,
-        <p key="cta-preview" className="a-wide a-muted a-ctaprev">Button opens: <strong>{buttonOpens(row, cats)}</strong></p>,
-      ];
+      return <Field key={f.name} def={{ ...def, type: 'select', options: targetChoices(row.cta_action, cats), allowEmpty: false, required: true }} value={row.cta_target ?? ''} disabled={!canEdit} onChange={(v) => set(f.name, v)} />;
     }
     if (name === 'size-picker' && f.name === 'scale') {
       return (
@@ -268,7 +277,26 @@ function Editor({ name, cfg, id, lookups, products, rows, cats, onClose, onSaved
         </>
       )}>
       {act.note}
-      {cfg.rows ? cfg.rows.map((names, i) => (
+      {cfg.layout === 'banners' ? (() => {
+        // Key | Position | Theme | Button action, then Internal note (cols 1-3) | Button target (col 4, only when the
+        // action has targets; else the note takes the full row), then Active
+        const fld = (n, extra) => renderField({ ...cfg.fields.find((x) => x.name === n), ...extra });
+        const hasTarget = targetChoices(row.cta_action, cats).length > 0;
+        return (
+          <>
+            <div className="a-prow a-prow-4">
+              {fld('banner_key', { keyField: false })}{fld('sort_order')}{fld('theme')}
+              {fld('cta_action', { help: `Button opens: ${buttonOpens(row, cats)}` })}
+            </div>
+            {keyChanged && <p className="a-replace-note">Renaming updates all references. {RENAME_NOTE}</p>}
+            <div className={`a-prow a-prow-4 a-banrow2${hasTarget ? '' : ' a-notarget'}`}>
+              <div className="a-banote">{fld('note')}</div>
+              {hasTarget && fld('cta_target')}
+            </div>
+            <div className="a-prow a-pchecks">{fld('is_active')}</div>
+          </>
+        );
+      })() : cfg.rows ? cfg.rows.map((names, i) => (
         <div key={names.join()} className={`a-prow ${i === 0 ? `a-prow-${names.length}` : 'a-pchecks'}`}>
           {names.map((n) => renderField(cfg.fields.find((f) => f.name === n)))}
         </div>
@@ -291,7 +319,14 @@ function Editor({ name, cfg, id, lookups, products, rows, cats, onClose, onSaved
           <div className="a-photos">
             {[['desktop', '1920x800'], ['mobile', '1080x1350']].map(([kind, size]) => (
               <figure key={kind}>
-                {row[`${kind}_file`] ? <img src={mediaUrl(`/media/banners/${kind}/${row[`${kind}_file`]}`)} alt={`${kind} banner`} className={`a-banner-${kind}`} /> : <p className="a-bad">No {kind} photo</p>}
+                {row[`${kind}_file`]
+                  ? (
+                    <button type="button" className="a-photobtn" onClick={() => setPreview(kind)} aria-label={`Preview the ${kind} banner as on the site`}>
+                      <img src={mediaUrl(`/media/banners/${kind}/${row[`${kind}_file`]}`)} alt={`${kind} banner`} className={`a-banner-${kind}`} />
+                    </button>
+                  )
+                  : <p className="a-bad">No {kind} photo</p>}
+                {row.photo_check && !row.photo_check[kind].ok && row[`${kind}_file`] && <p className="a-bad">Photo problem: {row.photo_check[kind].problem}</p>}
                 <figcaption>{kind} ({size})
                   {canEdit && (
                     <label className="a-btn a-btn-sm a-btn-ghost a-file">Upload
@@ -305,7 +340,85 @@ function Editor({ name, cfg, id, lookups, products, rows, cats, onClose, onSaved
         </>
       )}
       {name === 'banners' && creating && <p className="a-muted">Create the banner first, then upload both photos and switch it on.</p>}
+      {preview && <BannerPreview row={row} start={preview} count={liveCount(products, cats)} ui={uiText} onClose={() => setPreview(null)} />}
     </Drawer>
+  );
+}
+
+const RENAME_NOTE = "The banner's texts, the leads from its form button and its history move to the new key; photos keep working. Analytics keeps the old key for earlier clicks.";
+const BANNER_SIZE = { desktop: [1920, 800], mobile: [1080, 1350] };
+
+// Banners list: the chosen photo (desktop 16:9-ish strip or mobile 4:5), and a warning when either photo is missing or
+// not its exact size (the server reads the files: photo_check).
+function BannerThumb({ r, kind }) {
+  const file = r[`${kind}_file`];
+  const problems = ['desktop', 'mobile'].filter((k) => r.photo_check && !r.photo_check[k].ok).map((k) => `${k}: ${r.photo_check[k].problem}`);
+  return (
+    <span className="a-bthumbcell">
+      {file
+        ? <img className={`a-bthumb a-bthumb-${kind}`} src={mediaUrl(`/media/banners/${kind}/${file}`)} alt="" loading="lazy" />
+        : <span className={`a-bthumb a-bthumb-${kind} a-thumb-none`} aria-hidden="true" />}
+      {problems.length > 0 && <span className="a-warnbadge" title={problems.join('; ')}>{problems.some((p) => /missing|not found/.test(p)) ? 'Photo missing' : 'Wrong size'}</span>}
+    </span>
+  );
+}
+
+// The large preview: the photo with the eyebrow, headline and button over it as the site lays them out (same type
+// scale, scaled to the frame), theme applied, in the chosen language (its own font from languages.font_family).
+function BannerPreview({ row, start, count, ui, onClose }) {
+  const { languages } = useAdmin();
+  const def = languages.find((l) => Number(l.is_default) === 1) || languages[0] || { lang_code: 'en' };
+  const langs = languages.filter((l) => Number(l.is_active) === 1 || l === def);
+  const [kind, setKind] = useState(start);
+  const [lang, setLang] = useState(def.lang_code);
+  const L = languages.find((l) => l.lang_code === lang) || def;
+  const closeRef = useRef(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  useEffect(() => { loadFont(L.font_family); }, [L.font_family]);
+  useEffect(() => {
+    if (closeRef.current) closeRef.current.focus();
+    const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); onCloseRef.current(); } };
+    window.addEventListener('keydown', onKey, true); // before the drawer's own Esc
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, []);
+  const tr = (row.tr || {})[lang] || (row.tr || {})[def.lang_code] || {};
+  const fill = (v) => String(v || '').replace(/\{(count|products)\}/g, String(count));
+  const bnk = ((ui && ui.keys) || []).find((k) => k.text_key === 'bn_k');
+  const eyebrow = bnk ? bnk.values[lang] || bnk.values[def.lang_code] || '' : '';
+  const file = row[`${kind}_file`];
+  const long = L.font_family && def.font_family && L.font_family !== def.font_family; // the site's "long script" sizes
+  return (
+    <div className="a-bp-wrap" role="presentation" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="a-bp-box" role="dialog" aria-modal="true" aria-label={`Banner preview: ${row.banner_key}`}>
+        <div className="a-bp-bar">
+          <span className="a-seg" role="tablist" aria-label="Photo">
+            {['desktop', 'mobile'].map((k) => (
+              <button key={k} type="button" role="tab" aria-selected={kind === k} onClick={() => setKind(k)}>
+                {k === 'desktop' ? 'Desktop' : 'Mobile'} <small>{BANNER_SIZE[k].join('x')}</small>
+              </button>
+            ))}
+          </span>
+          <span className="a-seg" role="group" aria-label="Language">
+            {langs.map((l) => <button key={l.lang_code} type="button" aria-pressed={lang === l.lang_code} onClick={() => setLang(l.lang_code)}>{l.lang_code.toUpperCase()}</button>)}
+          </span>
+          <span className="a-muted a-bp-note">{row.theme === 'dark' ? 'Dark theme: light text, gold button' : 'Light theme: ink text and button'}</span>
+          <button ref={closeRef} type="button" className="a-x" onClick={onClose} aria-label="Close the preview">×</button>
+        </div>
+        <div className={`a-bp a-bp-${kind}${row.theme === 'dark' ? ' a-bp-dark' : ''}${long ? ' a-bp-long' : ''}`} lang={L.html_lang || lang} dir={L.dir || 'ltr'}
+          style={{ '--bp-font': fontVar(L.font_family) || '"Open Sans"', '--bp-disp': long && fontVar(L.font_family) ? `${fontVar(L.font_family)}, "Saira"` : '"Saira"' }}>
+          {file ? <img src={mediaUrl(`/media/banners/${kind}/${file}`)} alt="" /> : <div className="a-bp-none">No {kind} photo</div>}
+          <div className="a-bp-cap">
+            <div className="a-bp-ci">
+              <p className="a-bp-k">{eyebrow}</p>
+              <h2>{fill(tr.headline)}</h2>
+              <span className="a-bp-btn">{fill(tr.cta_label)} <span aria-hidden="true">→</span></span>
+            </div>
+          </div>
+        </div>
+        {row.photo_check && !row.photo_check[kind].ok && <p className="a-bad">This photo: {row.photo_check[kind].problem}</p>}
+      </div>
+    </div>
   );
 }
 

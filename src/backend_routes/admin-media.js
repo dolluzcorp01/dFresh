@@ -102,6 +102,35 @@ async function saveBanner(buf, bannerKey, kind) {
   return { file_name: fileName, bytes: out.length };
 }
 
+// The real size of a banner's two photos, read from the files (a seeded or older file may not be 1920x800 /
+// 1080x1350; a file can be missing on disk). Cached by name + modification time.
+const sizeCache = new Map();
+async function bannerPhotoCheck(row) {
+  const out = {};
+  for (const kind of ['desktop', 'mobile']) {
+    const [w, h] = BANNER[kind];
+    const name = row[`${kind}_file`];
+    if (!name || !SAFE.test(name)) { out[kind] = { ok: false, problem: 'missing' }; continue; }
+    const file = path.join(MEDIA, 'banners', kind, name);
+    let stat;
+    try { stat = fs.statSync(file); } catch { out[kind] = { ok: false, problem: 'file not found' }; continue; }
+    const key = `${kind}/${name}`;
+    let meta = sizeCache.get(key);
+    if (!meta || meta.mtime !== stat.mtimeMs) {
+      try {
+        const m = await sharp(file).metadata();
+        meta = { mtime: stat.mtimeMs, width: m.width, height: m.height };
+      } catch {
+        meta = { mtime: stat.mtimeMs, width: 0, height: 0 };
+      }
+      sizeCache.set(key, meta);
+    }
+    const ok = meta.width === w && meta.height === h;
+    out[kind] = { ok, width: meta.width, height: meta.height, ...(ok ? {} : { problem: `${meta.width}x${meta.height}, should be ${w}x${h}` }) };
+  }
+  return out;
+}
+
 function removeBanner(fileName, kind) {
   if (!fileName || !BANNER[kind] || !OWN_FILE.test(fileName) || !SAFE.test(fileName)) return;
   unlink(path.join(MEDIA, 'banners', kind, fileName));
@@ -194,7 +223,7 @@ function removeBrochure(lang, fileName) {
 }
 
 module.exports = {
-  UploadError, sniff, saveProductImage, removeProductImage, saveBanner, removeBanner,
+  UploadError, sniff, saveProductImage, removeProductImage, saveBanner, removeBanner, bannerPhotoCheck,
   saveShareImage, saveAboutImage, removeSettingImage,
   saveBrochure, brochurePath, removeBrochure, MAX_PRODUCT_BYTES,
 };

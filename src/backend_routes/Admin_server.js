@@ -484,7 +484,33 @@ route('post', '/banners/:id/image', 'editor', async (req) => {
 // none (stored empty), products_category = a category key, section = a home section, form = a lead form.
 const BANNER_SECTIONS = ['business', 'where', 'about', 'contact', 'products'];
 const BANNER_FORMS = ['sample', 'quote', 'distributor'];
+// Banner key: what it is used for (so a rename knows what to move):
+//   - banners row + banner_translations (foreign key ON UPDATE CASCADE: follows by itself)
+//   - leads.source_ref of leads sent from this banner's form button (BannerSlider passes it as the form's ref)
+//   - audit_log.entity_id of this banner's history
+//   - new photo file names start with it (<key>-desktop-<hash>.webp); stored names stay valid after a rename
+//   - the analytics click event (banner_click { banner: key }): outside this database, earlier clicks keep the old key
+const BANNER_KEY = /^[a-z0-9-]{2,30}$/;
+async function bannerKeyCheck(q, key, self) {
+  const k = String(key || '').trim();
+  if (!k) throw new InputError('Key is required');
+  if (!BANNER_KEY.test(k)) throw new InputError('Key: 2 to 30 characters, only lowercase letters a-z, digits 0-9 and hyphens (-). No spaces.');
+  const [[taken]] = await q.query('SELECT banner_key FROM banners WHERE banner_key = ? AND banner_key <> ?', [k, self || '']);
+  if (taken) throw new InputError(`Key '${k}' is already used by another banner. Pick another one.`);
+  return k;
+}
+async function renameBanner(q, from, to, empId) {
+  const k = await bannerKeyCheck(q, to, from);
+  await q.query('UPDATE banners SET banner_key = ?, updated_by = ? WHERE banner_key = ?', [k, empId, from]); // translations cascade
+  // leads from this banner's form; a kit key that happens to be the same word is a kit's lead, left alone
+  await q.query('UPDATE leads SET source_ref = ? WHERE source_ref = ? AND NOT EXISTS (SELECT 1 FROM kits WHERE kit_key = ?)', [k, from, from]);
+  await q.query("UPDATE audit_log SET entity_id = ? WHERE entity_type = 'banner' AND entity_id = ?", [k, from]);
+  await audit(q, { empId, action: 'rename', entity: 'banner', entityId: k, before: { banner_key: from }, after: { banner_key: k } });
+  return k;
+}
+
 async function bannerGuard(q, body, current) {
+  if (!current) body.banner_key = await bannerKeyCheck(q, body.banner_key, null);
   const desktop = current ? current.desktop_file : '';
   const mobile = current ? current.mobile_file : '';
   const active = 'is_active' in body ? Number(entities.coerce('is_active', { type: 'bool' }, body.is_active)) : (current ? current.is_active : 0);
@@ -548,11 +574,17 @@ for (const name of Object.keys(entities.ENTITIES)) {
   const e = entities.ENTITIES[name];
   const label = AUDIT_LABEL[name];
 
-  route('get', `/${name}`, 'viewer', async () => entities.load(name));
+  // banners also get photo_check: each photo's real size (missing / wrong size shows a warning in the admin)
+  route('get', `/${name}`, 'viewer', async () => {
+    const rows = await entities.load(name);
+    if (name === 'banners') for (const r of rows) r.photo_check = await media.bannerPhotoCheck(r);
+    return rows;
+  });
 
   route('get', `/${name}/:id`, 'viewer', async (req) => {
     const row = await entities.load(name, entities.parseId(e, req.params.id));
     if (!row) throw new InputError('Not found', 404);
+    if (name === 'banners') row.photo_check = await media.bannerPhotoCheck(row);
     return row;
   });
 
@@ -582,16 +614,20 @@ for (const name of Object.keys(entities.ENTITIES)) {
   }), { content: true, status: 201 });
 
   route('put', `/${name}/:id`, 'editor', async (req) => tx(async (q) => {
-    const keyValues = entities.parseId(e, req.params.id);
+    let keyValues = entities.parseId(e, req.params.id);
     const before = await entities.load(name, keyValues, q);
     if (!before) throw new InputError('Not found', 404);
+    // a banner's key can be renamed: every reference moves with it, in this same transaction
+    if (name === 'banners' && req.body && req.body.banner_key !== undefined && String(req.body.banner_key).trim() !== before.banner_key) {
+      keyValues = [await renameBanner(q, before.banner_key, req.body.banner_key, by(req))];
+    }
     if (name === 'banners') await bannerGuard(q, req.body || {}, before);
     const tidy = await positions.prepare(q, name, req.body || {}, before);
     await entities.update(q, name, keyValues, req.body || {}, by(req));
     await positions.tidyUp(q, name, tidy);
     const after = await entities.load(name, keyValues, q);
     if (name === 'size-picker') await oneSelectedFirst(q, after);
-    await audit(q, { empId: by(req), action: 'update', entity: label, entityId: req.params.id, before, after });
+    await audit(q, { empId: by(req), action: 'update', entity: label, entityId: entities.idOf(e, after), before, after });
     return after;
   }), { content: true });
 
