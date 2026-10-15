@@ -101,7 +101,7 @@ export function InfoTip({ text }) {
 /** One form control. def: { name, label, type: text|textarea|number|bool|select|readonly, options, help, info, error } */
 export function Field({ def, value, onChange, disabled }) {
   const id = `f-${def.name}`;
-  const common = { id, disabled: disabled || def.type === 'readonly', name: def.name };
+  const common = { id, disabled: disabled || def.type === 'readonly' || def.locked, name: def.name };
   let control;
   if (def.type === 'bool') {
     control = <input type="checkbox" {...common} checked={Boolean(Number(value))} onChange={(e) => onChange(e.target.checked ? 1 : 0)} />;

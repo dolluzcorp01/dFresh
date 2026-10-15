@@ -285,7 +285,11 @@ tr.a-target td { background: #fff6d6; }
 .a-chip:focus-visible { outline: 2px solid var(--a-ink); outline-offset: 2px; }
 .a-chip b { font-weight: 700; }
 /* Form options: group header says where the list is used; "New list" link under the List field */
-.a-group-use { margin-inline-start: 10px; font-weight: 400; font-size: 12px; text-transform: none; letter-spacing: 0; }
+/* click paths (dark, one per line) and the list key (dim) in the group header and at the top of the drawer */
+.a-places { display: flex; flex-direction: column; gap: 2px; text-transform: none; letter-spacing: 0; }
+.a-place { color: var(--a-ink); font-size: 13px; font-weight: 600; line-height: 1.4; }
+.a-placekey { font-size: 12px; font-weight: 400; font-family: ui-monospace, Consolas, monospace; }
+.a-placeshint { margin: 0 0 14px; padding: 10px 12px; border: 1px solid var(--a-line); border-radius: 8px; background: #fff; }
 .a-fieldplus { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .a-fieldplus .a-link { align-self: flex-start; padding: 2px 0; font-size: 12.5px; }
 /* Towns: the edited pin and name can be dragged on the preview map */

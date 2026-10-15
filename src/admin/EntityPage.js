@@ -140,7 +140,9 @@ export default function EntityPage({ name }) {
   const list = useLoad(`/${name}`);
   const products = useLoad(cfg.fields.some((f) => f.lookup === 'products') || cfg.links || name === 'banners' ? '/products' : null);
   const cats = useLoad(name === 'banners' ? '/categories' : null);
-  const uiText = useLoad(name === 'banners' ? '/ui-text' : null); // the banner eyebrow (bn_k) for the preview
+  const uiText = useLoad(name === 'banners' || name === 'form-options' ? '/ui-text' : null); // banner eyebrow; option click paths
+  const bannerRows = useLoad(name === 'form-options' ? '/banners' : null); // banners whose button opens a form
+  const placesOf = (list) => optionPlaces(list, uiText.data, bannerRows.data || []);
   const { languages } = useAdmin();
   const [onlyMissing, setOnlyMissing] = useState(false);
   const missingOf = (r) => (cfg.tr ? missingTexts(r.tr, cfg.tr, languages) : []);
@@ -202,7 +204,7 @@ export default function EntityPage({ name }) {
             <tbody key={grp.scope}>
               {cfg.groupBy && (
                 <tr className="a-group"><th colSpan={cfg.head.length + 2}>
-                  {(OPTION_LISTS[grp.key] || {}).title || grp.key} <span className="a-muted a-group-use">{(OPTION_LISTS[grp.key] || {}).used || 'Not used by any form yet'}</span>
+                  <PlacesList places={placesOf(grp.key)} listKey={grp.key} />
                 </th></tr>
               )}
               {grp.rows.filter((r) => !onlyMissing || missingOf(r).length).map((r) => {
@@ -232,14 +234,14 @@ export default function EntityPage({ name }) {
       </Loading>
       {open && (
         <Editor name={name} cfg={cfg} id={open.id} lookups={lookups} products={products.data || []} rows={list.data || []} lists={groupKeys} onClose={() => setOpen(null)}
-          onSaved={(id) => { list.reload(); setOpen(id ? { id } : null); }} cats={cats.data || []} uiText={uiText.data} />
+          onSaved={(id) => { list.reload(); setOpen(id ? { id } : null); }} cats={cats.data || []} uiText={uiText.data} placesOf={placesOf} />
       )}
       {draft.ui}
     </section>
   );
 }
 
-function Editor({ name, cfg, id, lookups, products, rows, lists, cats, uiText, onClose, onSaved }) {
+function Editor({ name, cfg, id, lookups, products, rows, lists, cats, uiText, placesOf, onClose, onSaved }) {
   const loaded = useLoad(id ? `/${name}/${id}` : null);
   const canEdit = useCan('editor');
   const act = useAction();
@@ -359,11 +361,13 @@ function Editor({ name, cfg, id, lookups, products, rows, lists, cats, uiText, o
       })() : cfg.layout === 'options' ? (() => {
         const fld = (n, extra) => renderField({ ...cfg.fields.find((x) => x.name === n), ...extra });
         const used = (loaded.data && loaded.data.used) || { leads: 0, kits: 0 };
+        const listOptions = lists.map((l) => ({ value: l, label: (OPTION_LISTS[l] || {}).title ? `${OPTION_LISTS[l].title} (${l})` : l }));
         const listField = creating && newList
-          ? fld('list_key', { type: 'text', label: 'New list key', help: 'a-z, 0-9 and _, e.g. delivery_slot. A form must use it to show it.' })
-          : fld('list_key', { options: lists.map((l) => ({ value: l, label: (OPTION_LISTS[l] || {}).title ? `${OPTION_LISTS[l].title} (${l})` : l })) });
+          ? fld('list_key', { type: 'text', keyField: false, label: 'New list key', help: 'a-z, 0-9 and _, e.g. delivery_slot. A form must use it to show it.' })
+          : fld('list_key', { type: 'select', keyField: false, locked: !creating, options: listOptions, help: creating ? 'Which dropdown on the site it belongs to.' : 'Fixed once created.' });
         return (
           <>
+            {row.list_key && placesOf && <div className="a-placeshint"><PlacesList places={placesOf(row.list_key)} listKey={row.list_key} /></div>}
             <div className="a-prow a-prow-3">
               <div className="a-fieldplus">
                 {listField}
@@ -520,12 +524,51 @@ function BannerPreview({ row, start, count, ui, onClose }) {
   );
 }
 
-// Form option lists: their name and where the site uses them (src/forms/formConfig.js + shared/rules.json, kits).
+// Form option lists: which form field shows each list (src/forms/formConfig.js + shared/rules.json), and where on the
+// site each form opens (every openForm() call: header menu, sections, product cards, footer, banners). The click paths
+// are built from the live English site texts (Translations), so they follow any wording change.
 const OPTION_LISTS = {
-  business_type: { title: 'Business type', used: 'Used in: quote and free sample forms (Business type); Business kits (prefill)' },
-  monthly_sales: { title: 'Monthly sales', used: 'Used in: distributor form (Monthly sales)' },
-  yes_no: { title: 'Yes / No', used: 'Used in: distributor form (Godown and vehicles?)' },
+  business_type: { title: 'Business type', forms: ['quote', 'sample'], field: 'fl_type', extra: [['Business kits', 'Business type (pre-fills the free sample form)']] },
+  monthly_sales: { title: 'Monthly sales', forms: ['distributor'], field: 'fl_sales' },
+  yes_no: { title: 'Yes / No', forms: ['distributor'], field: 'fl_gd' },
 };
+// [form, path]: a path step is a site text key ({ t }) or a plain place name (admin only, never shown on the site)
+const FORM_OPENERS = [
+  ['sample', [{ t: 'nav_business' }, 'kit card', { t: 'sample' }]], // BusinessKits.js
+  ['quote', [{ t: 'nav_products' }, 'product card', { t: 'request_quote' }]], // FlipCard.js in the products drawer / page
+  ['quote', [{ t: 'feat_h' }, 'product card', { t: 'request_quote' }]], // FlipCard.js in the featured rail
+  ['sample', [{ t: 'nav_contact' }, { t: 'sample' }]], // ContactBand.js
+  ['distributor', [{ t: 'nav_where' }, { t: 'become_distributor' }]], // WhereMap.js
+  ['quote', ['Phone menu', { t: 'request_quote' }]], // MobileMenu.js
+  ['distributor', ['Phone menu', { t: 'become_distributor' }]], // MobileMenu.js
+  ['quote', ['Footer', { t: 'f_work' }, { t: 'request_quote' }]], // Footer.js
+  ['distributor', ['Footer', { t: 'f_work' }, { t: 'become_distributor' }]], // Footer.js
+];
+function optionPlaces(list, ui, banners) {
+  const cfg = OPTION_LISTS[list];
+  if (!cfg) return [];
+  const text = (k) => {
+    const row = ui && (ui.keys || []).find((x) => x.text_key === k);
+    return (row && (row.values[ui.default] || row.values.en)) || k;
+  };
+  const step = (x) => (typeof x === 'string' ? x : text(x.t));
+  const field = text(cfg.field);
+  const lines = FORM_OPENERS.filter(([form]) => cfg.forms.includes(form)).map(([, path]) => [...path.map(step), field].join(' > '));
+  for (const b of banners) {
+    if (b.is_active && b.cta_action === 'form' && cfg.forms.includes(b.cta_target)) {
+      lines.push(['Home banner', `"${b.tr?.en?.headline ?? b.banner_key}"`, b.tr?.en?.cta_label ?? b.cta_target, field].join(' > '));
+    }
+  }
+  return [...lines, ...(cfg.extra || []).map((p) => p.join(' > '))];
+}
+function PlacesList({ places, listKey }) {
+  return (
+    <span className="a-places">
+      {places.length ? places.map((p) => <span key={p} className="a-place">{p}</span>) : <span className="a-place">Not used by any form yet</span>}
+      <span className="a-muted a-placekey">{listKey}</span>
+    </span>
+  );
+}
 
 // Towns: latitude 6-37 and longitude 68-98 (India); empty is allowed. Same limits in the API (Admin_server.js).
 const GEO = { lat: [6, 37, 'Latitude'], lng: [68, 98, 'Longitude'] };
