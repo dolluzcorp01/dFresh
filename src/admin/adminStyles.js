@@ -334,6 +334,17 @@ tr.a-group th:has(.a-placeline) { height: 36px; box-sizing: border-box; } /* sam
 .a-emppick-list { position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; right: 0; max-height: 320px; overflow-y: auto; list-style: none; margin: 0; padding: 4px; background: #fff; border: 1px solid var(--a-line); border-radius: 10px; box-shadow: 0 10px 30px rgba(18, 18, 20, .18); }
 .a-emppick-list li[role="option"] { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 6px; cursor: pointer; min-height: 44px; box-sizing: border-box; }
 .a-emppick-text { min-width: 0; }
+/* In-app confirmation dialog (ConfirmDialog) and pending edits */
+.a-cd-wrap { position: fixed; inset: 0; z-index: 110; display: grid; place-items: center; padding: 16px; background: rgba(18, 18, 20, .45); }
+.a-cd { width: min(460px, 100%); padding: 20px 22px; background: #fff; border-radius: 12px; box-shadow: 0 20px 50px rgba(18, 18, 20, .3); }
+.a-cd h2 { margin: 0 0 8px; font-size: 17px; }
+.a-cd p { margin: 0 0 18px; color: var(--a-ink2); font-size: 14px; line-height: 1.5; }
+.a-cd-btns { display: flex; flex-wrap: wrap; gap: 8px; }
+.a-unsaved { margin-inline-start: auto; margin-inline-end: 8px; padding: 2px 10px; border-radius: 999px; background: #fdf0d2; border: 1px solid #e3b44f; color: #6b4a00; font-size: 12px; font-weight: 700; white-space: nowrap; }
+.a-drawer header .a-unsaved + .a-x { margin-inline-start: 0; }
+tr.a-pending > td { background: #fff8e1; }
+td.a-pending { background: #fff8e1; box-shadow: inset 3px 0 0 #e3b44f; }
+.a-pending-btns { display: inline-flex; gap: 6px; }
 /* Excel import: before / after values wrap (long text, Tamil / Hindi keep their shaping via the cell's lang) */
 .a-difftable td { vertical-align: top; }
 .a-difftable td:nth-child(3), .a-difftable td:nth-child(4) { min-width: 160px; max-width: 440px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }

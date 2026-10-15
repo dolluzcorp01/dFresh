@@ -1,9 +1,10 @@
-// Translations (spec F 5): every ui_text key x language, grouped; missing cells highlighted; inline edit;
+// Translations (spec F 5): every ui_text key x language, grouped; missing cells highlighted; inline edit (pending until
+// Save in the bottom bar);
 // "missing only" filter; CSV export / import (dry run first) for translators.
 import { useMemo, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { api } from './adminApi';
-import { InfoCard, Loading, Notice, useAction, useAdmin, useCan, useLoad } from './ui';
+import { InfoCard, Loading, Notice, useAction, useAdmin, useCan, useLeaveGuard, useLoad } from './ui';
 import { COUNTS } from '../shared/countText';
 
 export default function Translations() {
@@ -39,11 +40,25 @@ export default function Translations() {
     return [...by.entries()];
   }, [grid.data, q, missingOnly, cols, def]);
 
-  const save = (key, code, value) => act.run(async () => {
-    await api.send('PUT', `/ui-text/${encodeURIComponent(key)}/${code}`, { value });
-    grid.setData((d) => ({ ...d, keys: d.keys.map((k) => (k.text_key === key ? { ...k, values: { ...k.values, [code]: value.trim() ? value : undefined } } : k)) }));
-    reloadLanguages(); // the missing counts come from the server
+  // Edited cells are pending (highlighted) until "Save" in the bar at the bottom; Cancel puts the saved texts back.
+  // Each saved text is one PUT (the server logs it in the audit log).
+  const [pending, setPending] = useState({}); // "key|lang" -> text
+  const pendingCount = Object.keys(pending).length;
+  const edit = (key, code, value, saved) => setPending((p) => {
+    const n = { ...p };
+    if (value === saved) delete n[`${key}|${code}`]; else n[`${key}|${code}`] = value;
+    return n;
   });
+  const saveAll = () => act.run(async () => {
+    for (const [id, value] of Object.entries(pending)) {
+      const [key, code] = id.split('|');
+      await api.send('PUT', `/ui-text/${encodeURIComponent(key)}/${code}`, { value });
+      grid.setData((d) => ({ ...d, keys: d.keys.map((k) => (k.text_key === key ? { ...k, values: { ...k.values, [code]: value.trim() ? value : undefined } } : k)) }));
+      setPending((p) => { const n = { ...p }; delete n[id]; return n; });
+    }
+    reloadLanguages(); // the missing counts come from the server
+  }, `${pendingCount} text(s) saved`);
+  useLeaveGuard(pendingCount > 0);
 
   const csvRun = (dry) => act.run(async () => {
     const r = await api.upload(`/ui-text/import?dryRun=${dry ? 1 : 0}`, csvFile);
@@ -101,10 +116,10 @@ export default function Translations() {
                     {cols.map((l) => (k.default_only && l.lang_code !== def ? (
                       <td key={l.lang_code}><small className="a-muted">Staff e-mails use {def} only</small></td>
                     ) : (
-                      <td key={l.lang_code} className={k.values[l.lang_code] || l.lang_code !== def ? '' : 'a-missing'}>
-                        <Cell value={k.values[l.lang_code] || ''} dir={l.dir} disabled={!canEdit} label={`${k.text_key} ${l.lang_code}`}
+                      <td key={l.lang_code} className={`${pending[`${k.text_key}|${l.lang_code}`] !== undefined ? 'a-pending' : ''}${k.values[l.lang_code] || l.lang_code !== def ? '' : ' a-missing'}`}>
+                        <Cell value={pending[`${k.text_key}|${l.lang_code}`] ?? (k.values[l.lang_code] || '')} dir={l.dir} disabled={!canEdit || act.busy} label={`${k.text_key} ${l.lang_code}`}
                           placeholder={l.lang_code !== def ? 'uses default' : undefined}
-                          max={k.max_chars} onSave={(v) => save(k.text_key, l.lang_code, v)} />
+                          max={k.max_chars} onChange={(v) => edit(k.text_key, l.lang_code, v, k.values[l.lang_code] || '')} />
                       </td>
                     )))}
                   </tr>
@@ -114,21 +129,29 @@ export default function Translations() {
           </table>
         </div>
       </Loading>
+      {pendingCount > 0 && (
+        <div className="a-orderbar" role="region" aria-label="Unsaved texts">
+          <strong>{pendingCount} unsaved text{pendingCount === 1 ? '' : 's'}</strong>
+          <span className="a-muted">Not saved yet: the site still shows the old texts.</span>
+          <span className="a-orderbar-btns">
+            <button type="button" className="a-btn" onClick={saveAll} disabled={act.busy}>{act.busy ? 'Saving...' : 'Save'}</button>
+            <button type="button" className="a-btn a-btn-ghost" onClick={() => setPending({})} disabled={act.busy}>Cancel</button>
+          </span>
+        </div>
+      )}
     </section>
   );
 }
 
-// Saves on blur when the text changed. max (Google and sharing texts): a live "n / max" counter, red when over;
-// a longer text still saves (Google just cuts it short).
-function Cell({ value, onSave, disabled, dir, label, max, placeholder }) {
-  const [v, setV] = useState(value);
-  const [prev, setPrev] = useState(value);
-  if (prev !== value) { setPrev(value); setV(value); }
+// One text (controlled: the pending edit or the saved text). max (Google and sharing texts): a live "n / max" counter,
+// red when over; a longer text still saves (Google just cuts it short).
+function Cell({ value, onChange, disabled, dir, label, max, placeholder }) {
+  const v = value;
   const n = [...v].length;
   return (
     <>
       <textarea rows={Math.min(6, Math.max(1, Math.ceil(v.length / 40)))} value={v} dir={dir} disabled={disabled} aria-label={label} placeholder={placeholder}
-        onChange={(e) => setV(e.target.value)} onBlur={() => v !== value && onSave(v)} />
+        onChange={(e) => onChange(e.target.value)} />
       {max ? <small className={`a-count${n > max ? ' a-bad' : ''}`} aria-live="polite">{n} / {max}{n > max ? ' - Google may cut it short' : ''}</small> : null}
     </>
   );

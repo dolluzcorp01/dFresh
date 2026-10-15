@@ -8,7 +8,7 @@ import Sidebar, { MenuToggle, saveCollapsed, savedCollapsed, useNarrow } from '.
 import useLeadPulse from './useLeadPulse';
 import { api } from './adminApi';
 import { mediaUrl } from '../utils/api';
-import { AdminContext, Notice } from './ui';
+import { AdminContext, ConfirmProvider, Notice } from './ui';
 import Login from './Login';
 import Dashboard from './Dashboard';
 import Leads from './Leads';
@@ -109,6 +109,7 @@ export default function AdminApp() {
   return (
     <AdminContext.Provider value={ctx}>
       <div className={`adm a-shell${collapsed ? ' collapsed' : ''}`}>
+        <ConfirmProvider>
         <header className="a-top">
           {/* Under 900px only: the button left of the logo opens / closes the drawer. On desktop the sidebar's pinned
               toggle collapses / expands it. */}
@@ -154,6 +155,7 @@ export default function AdminApp() {
             <button type="button" className="a-x" onClick={pulse.dismissToast} aria-label="Dismiss">×</button>
           </div>
         )}
+        </ConfirmProvider>
       </div>
     </AdminContext.Provider>
   );

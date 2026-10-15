@@ -4,10 +4,10 @@
 // mail_logo_url also gets a live preview on the e-mail's ink header (the typed URL, or the built-in logo when
 // empty), the server's last check of the saved URL, and "Send test mail" (MAIL_TEST_TO locally, the signed-in
 // admin's own e-mail in production). Saving a URL is refused by the server unless it passes the check.
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { api } from './adminApi';
 import { API_BASE, mediaUrl } from '../utils/api';
-import { InfoCard, Loading, fmtDate, useAction, useLoad } from './ui';
+import { InfoCard, Loading, fmtDate, useAction, useConfirm, useLeaveGuard, useLoad } from './ui';
 import { ProductSelect } from './ProductSelect';
 
 const HTTPS = /^https:\/\/[^\s"'<>]+$/;
@@ -31,6 +31,15 @@ export default function Settings() {
     const el = id && list.data ? document.getElementById(id) : null;
     if (el) { el.scrollIntoView({ block: 'center' }); el.classList.add('a-target'); }
   }, [list.data]);
+  // rows with an unsaved value: leaving the page asks first (Save is per row)
+  const [dirtyKeys, setDirtyKeys] = useState(() => new Set());
+  const markDirty = useCallback((key, on) => setDirtyKeys((d) => {
+    if (d.has(key) === on) return d;
+    const n = new Set(d);
+    if (on) n.add(key); else n.delete(key);
+    return n;
+  }), []);
+  useLeaveGuard(dirtyKeys.size > 0);
   return (
     <section>
       <h1>Settings</h1>
@@ -46,7 +55,7 @@ export default function Settings() {
         <div className="a-scroll">
           <table className="a-table">
             <thead><tr><th>Setting</th><th>Value</th><th>Public</th><th /></tr></thead>
-            <tbody>{(list.data || []).map((s) => <Row key={s.setting_key} s={s} act={act} cards={cards} onSaved={list.reload} />)}</tbody>
+            <tbody>{(list.data || []).map((s) => <Row key={s.setting_key} s={s} act={act} cards={cards} onSaved={list.reload} onDirty={markDirty} />)}</tbody>
           </table>
         </div>
       </Loading>
@@ -54,9 +63,10 @@ export default function Settings() {
   );
 }
 
-function Row({ s, act, cards, onSaved }) {
+function Row({ s, act, cards, onSaved, onDirty }) {
   const [v, setV] = useState(s.setting_value || '');
   const dirty = v !== (s.setting_value || '');
+  useEffect(() => { onDirty(s.setting_key, dirty); }, [dirty]); // eslint-disable-line react-hooks/exhaustive-deps
   const save = () => act.run(async () => { await api.send('PUT', `/settings/${s.setting_key}`, { value: v }); onSaved(); }, `${s.setting_key} saved`);
   const picture = PICTURES[s.setting_key];
   let control;
@@ -98,7 +108,11 @@ function Picture({ s, cfg, act, onSaved }) {
     onSaved();
     return r;
   }).then((r) => r && act.setMsg({ kind: 'ok', text: `${s.setting_key} saved: ${Math.round(r.original_bytes / 1024)} KB in -> ${r.width} x ${r.height}, ${Math.round(r.bytes / 1024)} KB` }));
-  const remove = () => window.confirm('Remove this picture?') && act.run(async () => { await api.send('PUT', `/settings/${s.setting_key}`, { value: '' }); onSaved(); }, `${s.setting_key} removed`);
+  const confirm = useConfirm();
+  const remove = async () => {
+    if (!(await confirm({ title: 'Remove this picture?', message: cfg.emptyText, action: 'Remove', danger: true }))) return;
+    act.run(async () => { await api.send('PUT', `/settings/${s.setting_key}`, { value: '' }); onSaved(); }, `${s.setting_key} removed`);
+  };
   return (
     <div className="a-picture">
       {src

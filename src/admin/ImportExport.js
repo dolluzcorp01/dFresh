@@ -4,7 +4,7 @@
 // Choosing another file or "Clear" drops the previous result; after an apply the form resets and says what changed.
 import { useRef, useState } from 'react';
 import { api } from './adminApi';
-import { InfoCard, Notice, useAction, useCan } from './ui';
+import { InfoCard, Notice, useAction, useCan, useConfirm } from './ui';
 
 const show = (v) => (v === null || v === undefined || v === '' ? <em className="a-muted">empty</em> : String(v));
 // a column like Name_TA / Pack_HI: its language, so the browser picks the right font and shaping
@@ -37,11 +37,17 @@ export default function ImportExport() {
   });
   const hasChanges = report && report.summary.added + report.summary.changed + report.summary.removed + report.summary.categories > 0;
   const canApply = Boolean(report && report.dryRun && report.ok && report.file === file && report.fileHash && hasChanges);
-  const apply = () => canApply && window.confirm('Apply these changes to the live site?') && act.run(async () => {
-    const r = await api.upload(`/products/import?dryRun=0&hash=${encodeURIComponent(report.fileHash)}`, file);
-    setApplied({ added: r.summary.added, changed: r.summary.changed, removed: r.summary.removed, categories: r.summary.categories });
-    reset();
-  });
+  const confirm = useConfirm();
+  const apply = async () => {
+    if (!canApply) return;
+    const s = report.summary;
+    if (!(await confirm({ title: 'Apply these changes to the live site?', message: `${s.added} added, ${s.changed} changed, ${s.removed} switched off, ${s.categories} category change(s). Visitors see them at once.`, action: 'Apply changes', danger: true }))) return;
+    act.run(async () => {
+      const r = await api.upload(`/products/import?dryRun=0&hash=${encodeURIComponent(report.fileHash)}`, file);
+      setApplied({ added: r.summary.added, changed: r.summary.changed, removed: r.summary.removed, categories: r.summary.categories });
+      reset();
+    });
+  };
 
   return (
     <section>

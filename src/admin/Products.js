@@ -8,7 +8,7 @@
 import { useMemo, useState } from 'react';
 import { api } from './adminApi';
 import { mediaUrl } from '../utils/api';
-import { Drawer, Field, Loading, MissingBadges, Notice, TrEditor, missingTexts, nextOrder, useAction, useAdmin, useCan, useLoad } from './ui';
+import { Drawer, Field, Loading, MissingBadges, Notice, TrEditor, missingTexts, nextOrder, useAction, useAdmin, useCan, useConfirm, useLoad } from './ui';
 import { ProductField } from './ProductSelect';
 import useOrderDraft from './useOrderDraft';
 
@@ -254,7 +254,7 @@ function ProductEditor({ id, initial, cats, all, listRows, home, onClose, onSave
   const F = (name) => <Field key={name} def={defs[name]} value={name in preview ? preview[name] : p[name]} disabled={!canEdit} onChange={(v) => set(name, v)} />;
 
   return (
-    <Drawer title={creating ? (initial.variant_of ? `New colour of ${initial.variant_of}` : 'New product') : `${p.product_id}`} onClose={onClose}
+    <Drawer title={creating ? (initial.variant_of ? `New colour of ${initial.variant_of}` : 'New product') : `${p.product_id}`} onClose={onClose} dirty={draft !== null}
       footer={canEdit && (
         <>
           <button type="button" className="a-btn" onClick={save} disabled={act.busy}>{creating ? 'Create' : 'Save'}</button>
@@ -310,7 +310,11 @@ function Photos({ product, canEdit, onChanged }) {
     onChanged();
     return r;
   }).then((r) => r && act.setMsg({ kind: 'ok', text: `Saved ${r.file_name}: ${Math.round(r.original_bytes / 1024)} KB in -> ${Math.round(r.bytes / 1024)} KB WebP 1200x1200 (+ 400, 800)` }));
-  const remove = (pos) => window.confirm(`Remove photo ${pos}?`) && act.run(async () => { await api.send('DELETE', `/products/${id}/images/${pos}`); onChanged(); }, 'Removed');
+  const confirm = useConfirm();
+  const remove = async (pos) => {
+    if (!(await confirm({ title: `Remove photo ${pos}?`, message: 'The photo file is deleted. The other photos keep their order.', action: 'Remove', danger: true }))) return;
+    act.run(async () => { await api.send('DELETE', `/products/${id}/images/${pos}`); onChanged(); }, 'Removed');
+  };
   const move = (pos, dir) => {
     const order = images.map((i) => i.position);
     const at = order.indexOf(pos);

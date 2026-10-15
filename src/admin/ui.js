@@ -1,5 +1,6 @@
 // Small shared pieces for the admin screens (staff tool: plain layout, English labels).
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { api } from './adminApi';
 
 export const AdminContext = createContext(null);
@@ -237,16 +238,118 @@ export function MissingBadges({ missing }) {
   ));
 }
 
-export function Drawer({ title, onClose, children, footer }) {
+// ---------------------------------------------------------------------------------------------------------------
+// In-app confirmations (never the browser's alert / confirm / prompt). confirm(opts) -> Promise: true (the action),
+// 'alt' (a second action, e.g. "Discard"), false (Cancel, Esc, click outside).
+// opts: { title, message, action = 'OK', cancel = 'Cancel', danger (red action button), alt }
+const ConfirmContext = createContext(null);
+export const useConfirm = () => useContext(ConfirmContext);
+
+export function ConfirmProvider({ children }) {
+  const [req, setReq] = useState(null); // { opts, resolve }
+  const confirm = useCallback((opts) => new Promise((resolve) => setReq({ opts, resolve })), []);
+  const done = (value) => {
+    if (req) req.resolve(value);
+    setReq(null);
+  };
+  return (
+    <ConfirmContext.Provider value={confirm}>
+      {children}
+      {req && <ConfirmDialog {...req.opts} onDone={done} />}
+    </ConfirmContext.Provider>
+  );
+}
+
+export function ConfirmDialog({ title, message, action = 'OK', cancel = 'Cancel', danger = false, alt = null, onDone }) {
+  const boxRef = useRef(null);
+  const actionRef = useRef(null);
+  const cancelRef = useRef(null);
+  const doneRef = useRef(onDone);
+  doneRef.current = onDone;
   useEffect(() => {
-    const onKey = (e) => e.key === 'Escape' && onClose();
+    const before = document.activeElement;
+    // a destructive action starts on the safe button, so Enter never deletes by reflex
+    const first = danger ? cancelRef.current : actionRef.current;
+    if (first) first.focus();
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault(); e.stopImmediatePropagation(); // the drawer under it stays open
+        doneRef.current(false);
+      } else if (e.key === 'Tab') { // focus stays in the dialog
+        const items = [...boxRef.current.querySelectorAll('button:not([disabled])')];
+        const i = items.indexOf(document.activeElement);
+        if (e.shiftKey && i <= 0) { e.preventDefault(); items[items.length - 1].focus(); }
+        else if (!e.shiftKey && i === items.length - 1) { e.preventDefault(); items[0].focus(); }
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => {
+      window.removeEventListener('keydown', onKey, true);
+      if (before && before.focus && document.contains(before)) before.focus({ preventScroll: true });
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  return (
+    <div className="a-cd-wrap" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) onDone(false); }}>
+      <div ref={boxRef} className="a-cd" role="alertdialog" aria-modal="true" aria-labelledby="a-cd-t" aria-describedby={message ? 'a-cd-m' : undefined}>
+        <h2 id="a-cd-t">{title}</h2>
+        {message && <p id="a-cd-m">{message}</p>}
+        <div className="a-cd-btns">
+          <button ref={actionRef} type="button" className={`a-btn${danger ? ' a-btn-danger' : ''}`} onClick={() => onDone(true)}>{action}</button>
+          {alt && <button type="button" className="a-btn a-btn-ghost" onClick={() => onDone('alt')}>{alt}</button>}
+          <button ref={cancelRef} type="button" className="a-btn a-btn-ghost" onClick={() => onDone(false)}>{cancel}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export const DISCARD = { title: 'Discard unsaved changes?', message: 'Your changes have not been saved.', action: 'Discard', cancel: 'Keep editing', danger: true };
+
+/**
+ * While `dirty`: following an admin link asks "Discard unsaved changes?" first, and closing / reloading the tab gets the
+ * browser's own "Leave site?" warning (the only thing a browser allows there). Nothing happens when not dirty.
+ */
+export function useLeaveGuard(dirty) {
+  const confirm = useConfirm();
+  const navigate = useNavigate();
+  useEffect(() => {
+    if (!dirty) return undefined;
+    const onUnload = (e) => { e.preventDefault(); e.returnValue = ''; };
+    const onClick = (e) => {
+      const a = e.target.closest && e.target.closest('a[href]');
+      if (!a || a.target === '_blank' || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      const url = new URL(a.href, window.location.href);
+      if (url.origin !== window.location.origin || url.pathname + url.search === window.location.pathname + window.location.search) return;
+      e.preventDefault();
+      e.stopPropagation();
+      confirm(DISCARD).then((ok) => { if (ok) navigate(url.pathname + url.search + url.hash); });
+    };
+    window.addEventListener('beforeunload', onUnload);
+    document.addEventListener('click', onClick, true);
+    return () => {
+      window.removeEventListener('beforeunload', onUnload);
+      document.removeEventListener('click', onClick, true);
+    };
+  }, [dirty, confirm, navigate]);
+}
+
+// dirty: closing (X, Esc, click outside) asks "Discard unsaved changes?" first, and so does leaving the page.
+export function Drawer({ title, onClose, children, footer, dirty = false }) {
+  const confirm = useConfirm();
+  useLeaveGuard(dirty);
+  const close = useCallback(() => {
+    if (!dirty) { onClose(); return; }
+    confirm(DISCARD).then((ok) => { if (ok) onClose(); });
+  }, [dirty, onClose, confirm]);
+  useEffect(() => {
+    const onKey = (e) => e.key === 'Escape' && close();
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [close]);
   return (
-    <div className="a-drawer-wrap" role="presentation" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div className="a-drawer-wrap" role="presentation" onMouseDown={(e) => e.target === e.currentTarget && close()}>
       <aside className="a-drawer" role="dialog" aria-modal="true" aria-label={title}>
-        <header><h2>{title}</h2><button type="button" className="a-x" onClick={onClose} aria-label="Close">×</button></header>
+        <header><h2>{title}</h2>{dirty && <span className="a-unsaved">Unsaved changes</span>}<button type="button" className="a-x" onClick={close} aria-label="Close">×</button></header>
         <div className="a-drawer-body">{children}</div>
         {footer && <footer>{footer}</footer>}
       </aside>

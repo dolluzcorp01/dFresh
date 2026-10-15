@@ -5,12 +5,12 @@
 // Save posts each changed list (the server writes the audit log entry) and shows a short "Order saved" toast.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-
-const ASK = 'You have an unsaved order. Save or discard?';
+import { useConfirm } from './ui';
 
 /** saveOne(scope, ids) posts one list; onSaved() reloads the page data. */
 export default function useOrderDraft(saveOne, onSaved) {
   const navigate = useNavigate();
+  const confirm = useConfirm();
   const [pending, setPending] = useState({}); // scope -> ids in the new order
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -78,14 +78,19 @@ export default function useOrderDraft(saveOne, onSaved) {
     };
   }, [dirty, navigate]);
 
-  const answer = async (choice) => {
-    const then = ask && ask.then;
+  // the save-or-discard question, in the shared in-app dialog
+  useEffect(() => {
+    if (!ask) return;
+    const then = ask.then;
     setAsk(null);
-    if (choice === 'keep') return;
-    if (choice === 'save' && !(await save())) return; // a failed save stays on the page with its error
-    if (choice === 'discard') cancel();
-    if (then) then();
-  };
+    confirm({ title: 'You have an unsaved order', message: 'Save it or discard it?', action: 'Save order', alt: 'Discard', cancel: 'Keep editing' })
+      .then(async (choice) => {
+        if (!choice) return;
+        if (choice === true && !(await save())) return; // a failed save stays on the page with its error
+        if (choice === 'alt') cancel();
+        if (then) then();
+      });
+  }, [ask]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const ui = (
     <>
@@ -101,32 +106,7 @@ export default function useOrderDraft(saveOne, onSaved) {
         </div>
       )}
       {toast && <div className="a-toast" role="status">Order saved</div>}
-      {ask && <AskDialog onAnswer={answer} busy={busy} />}
     </>
   );
   return { order, set, dirty, guard, ui };
-}
-
-function AskDialog({ onAnswer, busy }) {
-  const first = useRef(null);
-  const answerRef = useRef(onAnswer);
-  answerRef.current = onAnswer;
-  useEffect(() => {
-    if (first.current) first.current.focus();
-    const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); answerRef.current('keep'); } };
-    window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
-  }, []);
-  return (
-    <div className="a-ask-wrap" role="presentation">
-      <div className="a-ask" role="alertdialog" aria-modal="true" aria-labelledby="a-ask-q">
-        <p id="a-ask-q">{ASK}</p>
-        <div className="a-row">
-          <button ref={first} type="button" className="a-btn" disabled={busy} onClick={() => onAnswer('save')}>Save order</button>
-          <button type="button" className="a-btn a-btn-ghost" disabled={busy} onClick={() => onAnswer('discard')}>Discard</button>
-          <button type="button" className="a-link" onClick={() => onAnswer('keep')}>Keep editing</button>
-        </div>
-      </div>
-    </div>
-  );
 }

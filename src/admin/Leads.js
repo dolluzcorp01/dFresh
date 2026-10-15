@@ -211,6 +211,7 @@ function LeadDrawer({ id, onClose, onChanged }) {
 
   return (
     <Drawer title={l ? `Lead ${l.lead_ref}` : 'Lead'} onClose={onClose}
+      dirty={Boolean(form && l && (form.status !== l.status || form.assigned_to !== (l.assigned_to || '') || form.staff_notes !== (l.staff_notes || '')))}
       footer={canEdit && form ? <button type="button" className="a-btn" onClick={save} disabled={act.busy}>Save</button> : null}>
       <Loading state={lead}>
         {l && form && (

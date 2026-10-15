@@ -7,7 +7,7 @@ import { api, rowId } from './adminApi';
 import { mediaUrl } from '../utils/api';
 import { KitProducts, ProductField, RepPreview, Thumb, productName } from './ProductSelect';
 import useOrderDraft from './useOrderDraft';
-import { Drawer, Field, InfoTip, Loading, MissingBadges, TrEditor, missingTexts, nextOrder, useAction, useAdmin, useCan, useLoad } from './ui';
+import { Drawer, Field, InfoTip, Loading, MissingBadges, TrEditor, missingTexts, nextOrder, useAction, useAdmin, useCan, useConfirm, useLoad } from './ui';
 import { fontVar, loadFont } from '../i18n/fonts';
 import { LAND, MAP_H, MAP_W } from '../shared/mapShape';
 
@@ -272,14 +272,15 @@ function Editor({ name, cfg, id, lookups, products, rows, listRows, lists, cats,
   // Add: the number the new row will get (the end of its list; per list for form options). The server assigns it.
   // Add: the end of its list (per list for form options, following the List choice); '...' until the list is loaded
   const newOrder = nextOrder(listRows, cfg.groupBy && row ? (r) => r[cfg.groupBy] === row[cfg.groupBy] : undefined);
-  const save = () => {
+  const confirm = useConfirm();
+  const save = async () => {
     setTried(true);
     // towns: latitude / longitude inside India, or nothing is sent
     if (name === 'towns' && Number(row.is_base) === 1) {
       const bad = geoErrors(row);
       if (bad.lat || bad.lng) { act.setMsg({ kind: 'error', text: [bad.lat, bad.lng].filter(Boolean).join(' ') }); return undefined; }
     }
-    if (keyChanged && !window.confirm(`Rename "${loaded.data[rn]}" to "${String(row[rn]).trim()}"?\n\nRenaming updates all references. ${cfg.rename.note}`)) return undefined;
+    if (keyChanged && !(await confirm({ title: `Rename "${loaded.data[rn]}" to "${String(row[rn]).trim()}"?`, message: `Renaming updates all references. ${cfg.rename.note}`, action: 'Rename' }))) return undefined;
     return act.run(async () => {
       const saved = creating ? await api.send('POST', `/${name}`, row) : await api.send('PUT', `/${name}/${id}`, row);
       setDraft(null);
@@ -287,10 +288,13 @@ function Editor({ name, cfg, id, lookups, products, rows, listRows, lists, cats,
       onSaved(creating || keyChanged ? rowId(cfg.keys, saved) : null);
     }, 'Saved');
   };
-  const remove = () => window.confirm('Delete this row? This cannot be undone.') && act.run(async () => {
-    await api.send('DELETE', `/${name}/${id}`);
-    onSaved(null);
-  });
+  const remove = async () => {
+    if (!(await confirm({ title: `Delete ${cfg.title1 ? cfg.title1(row) : decodeURIComponent(id).replace('~', ' / ')}?`, message: 'This cannot be undone.', action: 'Delete', danger: true }))) return;
+    act.run(async () => {
+      await api.send('DELETE', `/${name}/${id}`);
+      onSaved(null);
+    });
+  };
   const uploadBanner = (kind, file) => act.run(async () => {
     const r = await api.upload(`/${name}/${id}/image?kind=${kind}`, file);
     loaded.reload();
@@ -327,7 +331,7 @@ function Editor({ name, cfg, id, lookups, products, rows, listRows, lists, cats,
   }
 
   return (
-    <Drawer title={creating ? `New - ${cfg.title}` : `${cfg.title}: ${cfg.title1 ? cfg.title1(row) : decodeURIComponent(id).replace('~', ' / ')}`} onClose={onClose}
+    <Drawer title={creating ? `New - ${cfg.title}` : `${cfg.title}: ${cfg.title1 ? cfg.title1(row) : decodeURIComponent(id).replace('~', ' / ')}`} onClose={onClose} dirty={draft !== null}
       footer={canEdit && (
         <>
           <button type="button" className="a-btn" onClick={save} disabled={act.busy}>{creating ? 'Create' : 'Save'}</button>

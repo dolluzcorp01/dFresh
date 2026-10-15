@@ -4,7 +4,7 @@
 // emp_id is a string like DZIND148 (never a number).
 import { useEffect, useRef, useState } from 'react';
 import { api } from './adminApi';
-import { Avatar, InfoCard, Loading, fmtDate, useAction, useAdmin, useLoad } from './ui';
+import { Avatar, InfoCard, Loading, fmtDate, useAction, useAdmin, useConfirm, useLeaveGuard, useLoad } from './ui';
 
 const ROLES = ['viewer', 'editor', 'admin'];
 const ROLE_HELP = {
@@ -29,17 +29,28 @@ export default function Users() {
       setPick(null); setPickerKey((k) => k + 1); list.reload();
     }, `${pick.name} added as ${role}`);
   };
+  const confirm = useConfirm();
   const update = (u, body, ok) => act.run(async () => { await api.send('PUT', `/users/${encodeURIComponent(u.emp_id)}`, body); list.reload(); }, ok);
-  const changeRole = (u, next) => {
-    if (next === u.role) return;
-    if (!window.confirm(`Change role of ${u.name || u.emp_id} to ${next}?`)) return;
-    update(u, { role: next }, `${u.name || u.emp_id} is now ${next}`);
-  };
-  const toggle = (u) => {
-    const question = u.is_active
-      ? `Deactivate ${u.name || u.emp_id}? They can no longer sign in to dFresh admin.`
-      : `Reactivate ${u.name || u.emp_id}? They can sign in to dFresh admin again (as ${u.role}).`;
-    if (window.confirm(question)) update(u, { is_active: u.is_active ? 0 : 1 }, `${u.name || u.emp_id} ${u.is_active ? 'deactivated' : 'reactivated'}`);
+  // a role picked in the list is only pending: the row is highlighted with Save / Cancel; Save sends it (audited)
+  const [pending, setPending] = useState({}); // emp_id -> role
+  const pickRole = (u, next) => setPending((p) => {
+    const n = { ...p };
+    if (next === u.role) delete n[u.emp_id]; else n[u.emp_id] = next;
+    return n;
+  });
+  const cancelRole = (u) => setPending((p) => { const n = { ...p }; delete n[u.emp_id]; return n; });
+  const saveRole = (u) => act.run(async () => {
+    await api.send('PUT', `/users/${encodeURIComponent(u.emp_id)}`, { role: pending[u.emp_id] });
+    cancelRole(u);
+    list.reload();
+  }, `${u.name || u.emp_id} is now ${pending[u.emp_id]}`);
+  useLeaveGuard(Object.keys(pending).length > 0);
+  const toggle = async (u) => {
+    const who = u.name || u.emp_id;
+    const ok = await confirm(u.is_active
+      ? { title: `Deactivate ${who}?`, message: 'They can no longer sign in to dFresh admin.', action: 'Deactivate', danger: true }
+      : { title: `Reactivate ${who}?`, message: `They can sign in to dFresh admin again, as ${u.role}.`, action: 'Reactivate' });
+    if (ok) update(u, { is_active: u.is_active ? 0 : 1 }, `${who} ${u.is_active ? 'deactivated' : 'reactivated'}`);
   };
 
   return (
@@ -71,8 +82,9 @@ export default function Users() {
             <tbody>
               {(list.data || []).map((u) => {
                 const self = u.emp_id === me.emp_id;
+                const next = pending[u.emp_id];
                 return (
-                  <tr key={u.emp_id} className={u.is_active ? '' : 'a-off'}>
+                  <tr key={u.emp_id} className={`${u.is_active ? '' : 'a-off'}${next ? ' a-pending' : ''}`}>
                     <td>
                       <span className="a-person">
                         <Avatar name={u.name || u.emp_id} photo={u.photo} />
@@ -87,15 +99,20 @@ export default function Users() {
                     <td><code>{u.emp_id}</code></td>
                     <td>{u.email}</td>
                     <td>
-                      <select aria-label={`Role of ${u.name || u.emp_id}`} value={u.role} disabled={self || act.busy} title={self ? 'You cannot change your own role' : undefined}
-                        onChange={(e) => changeRole(u, e.target.value)}>
+                      <select aria-label={`Role of ${u.name || u.emp_id}`} value={next || u.role} disabled={self || act.busy} title={self ? 'You cannot change your own role' : undefined}
+                        onChange={(e) => pickRole(u, e.target.value)}>
                         {ROLES.map((r) => <option key={r}>{r}</option>)}
                       </select>
                     </td>
                     <td><span className={`a-status ${u.is_active ? 'a-status-on' : 'a-status-off'}`}>{u.is_active ? 'Active' : 'Inactive'}</span></td>
                     <td>{fmtDate(u.created_at)}<small className="a-muted a-person-sub">by {u.created_by || '-'}</small></td>
                     <td>
-                      {!self && (
+                      {next ? (
+                        <span className="a-pending-btns">
+                          <button type="button" className="a-btn a-btn-sm" disabled={act.busy} onClick={() => saveRole(u)}>Save</button>
+                          <button type="button" className="a-btn a-btn-sm a-btn-ghost" disabled={act.busy} onClick={() => cancelRole(u)}>Cancel</button>
+                        </span>
+                      ) : !self && (
                         <button type="button" className="a-btn a-btn-sm a-btn-ghost" disabled={act.busy} onClick={() => toggle(u)}>
                           {u.is_active ? 'Deactivate' : 'Reactivate'}
                         </button>

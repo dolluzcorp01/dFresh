@@ -1,7 +1,7 @@
 // Brochures (spec F 9): one PDF per language (<= 5 MB, checked as a real PDF), replace, download, delete.
 // A language without its own brochure gets the default language's.
 import { api } from './adminApi';
-import { Loading, fmtDate, useAction, useAdmin, useCan, useLoad } from './ui';
+import { Loading, fmtDate, useAction, useAdmin, useCan, useConfirm, useLoad } from './ui';
 
 export default function Brochures() {
   const list = useLoad('/brochures');
@@ -11,7 +11,11 @@ export default function Brochures() {
   const byLang = new Map((list.data || []).map((b) => [b.lang_code, b]));
 
   const upload = (lang, file) => act.run(async () => { await api.upload(`/brochures/${lang}`, file); list.reload(); }, `${lang} brochure saved`);
-  const remove = (lang) => window.confirm(`Delete the ${lang} brochure?`) && act.run(async () => { await api.send('DELETE', `/brochures/${lang}`); list.reload(); }, 'Deleted');
+  const confirm = useConfirm();
+  const remove = async (lang) => {
+    if (!(await confirm({ title: `Delete the ${lang.toUpperCase()} brochure?`, message: 'Visitors asking for it in this language get no download until a new PDF is uploaded.', action: 'Delete', danger: true }))) return;
+    act.run(async () => { await api.send('DELETE', `/brochures/${lang}`); list.reload(); }, 'Deleted');
+  };
 
   return (
     <section>

@@ -5,7 +5,7 @@
 // ready (subset size) / rebuilding / using full font (a rebuild failed) / - while the language is off.
 import { useState } from 'react';
 import { api } from './adminApi';
-import { Drawer, Field, InfoCard, Loading, nextOrder, useAction, useAdmin, useCan, useLoad } from './ui';
+import { Drawer, Field, InfoCard, Loading, nextOrder, useAction, useAdmin, useCan, useConfirm, useLoad } from './ui';
 
 const FIELDS = [
   { name: 'lang_code', label: 'Code (URL prefix)', required: true, help: '2-3 lower-case letters, e.g. te' },
@@ -38,15 +38,23 @@ export default function Languages() {
   const [open, setOpen] = useState(null);
 
   const changed = () => { list.reload(); reloadLanguages(); };
-  const toggle = (l) => (!l.is_active || window.confirm(`Switch off ${l.name_en}? It disappears from the site's language switcher.`)) && act.run(async () => {
+  const confirm = useConfirm();
+  const toggle = async (l) => {
+    if (l.is_active && !(await confirm({ title: `Switch off ${l.name_en}?`, message: "It disappears from the site's language switcher. Its texts stay saved.", action: 'Switch off', danger: true }))) return;
+    toggleNow(l);
+  };
+  const toggleNow = (l) => act.run(async () => {
     await api.send('PUT', `/languages/${l.lang_code}`, { is_active: l.is_active ? 0 : 1 });
     changed();
   }, `${l.name_en} switched ${l.is_active ? 'off' : 'on'}`);
-  const remove = (l) => window.confirm(`Delete ${l.name_en} and all its translations? This cannot be undone.`) && act.run(async () => {
-    const r = await api.send('DELETE', `/languages/${l.lang_code}`);
-    changed();
-    return r;
-  }, `${l.name_en} deleted`);
+  const remove = async (l) => {
+    if (!(await confirm({ title: `Delete ${l.name_en}?`, message: 'All its translations are deleted too. This cannot be undone.', action: 'Delete', danger: true }))) return;
+    act.run(async () => {
+      const r = await api.send('DELETE', `/languages/${l.lang_code}`);
+      changed();
+      return r;
+    }, `${l.name_en} deleted`);
+  };
 
   return (
     <section>
@@ -95,7 +103,9 @@ export default function Languages() {
 
 function LangEditor({ row, rows, scripts, onClose, onSaved }) {
   const act = useAction();
-  const [v, setV] = useState(row ? { ...row } : { script: '' });
+  const [start] = useState(() => (row ? { ...row } : { script: '' }));
+  const [v, setV] = useState(start);
+  const dirty = JSON.stringify(v) !== JSON.stringify(start);
   const pick = scripts.find((s) => s.script === v.script);
   const save = () => act.run(async () => {
     if (!v.script) throw new Error('Pick the script the language is written in');
@@ -105,7 +115,7 @@ function LangEditor({ row, rows, scripts, onClose, onSaved }) {
     onSaved();
   });
   return (
-    <Drawer title={row ? `Edit ${row.name_en}` : 'Add language (starts switched off)'} onClose={onClose}
+    <Drawer title={row ? `Edit ${row.name_en}` : 'Add language (starts switched off)'} onClose={onClose} dirty={dirty}
       footer={<button type="button" className="a-btn" onClick={save} disabled={act.busy}>{row ? 'Save' : 'Add'}</button>}>
       {act.note}
       <div className="a-grid2">
