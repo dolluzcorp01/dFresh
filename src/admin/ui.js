@@ -71,7 +71,19 @@ export function Loading({ state, children }) {
   return children;
 }
 
-/** One form control. def: { name, label, type: text|textarea|number|bool|select|readonly, options, help } */
+/**
+ * A small (i) next to a label: the longer explanation, shown on hover or keyboard focus (and read by screen readers).
+ * Hints stay at most 2 lines; the detail goes here. A click on it never reaches the control the label belongs to.
+ */
+export function InfoTip({ text }) {
+  if (!text) return null;
+  return (
+    <span className="a-info" tabIndex={0} role="note" aria-label={text} data-tip={text}
+      onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}>i</span>
+  );
+}
+
+/** One form control. def: { name, label, type: text|textarea|number|bool|select|readonly, options, help, info } */
 export function Field({ def, value, onChange, disabled }) {
   const id = `f-${def.name}`;
   const common = { id, disabled: disabled || def.type === 'readonly', name: def.name };
@@ -92,7 +104,7 @@ export function Field({ def, value, onChange, disabled }) {
   }
   return (
     <label className={`a-field${def.type === 'bool' ? ' a-check' : ''}${def.wide ? ' a-wide' : ''}`} htmlFor={id}>
-      <span>{def.label || def.name}{def.required && ' *'}</span>
+      <span>{def.label || def.name}{def.required && ' *'}<InfoTip text={def.info} /></span>
       {control}
       {def.help && <small className="a-muted">{def.help}</small>}
     </label>
@@ -117,7 +129,7 @@ export function TrEditor({ fields, tr, onChange, disabled, main = {} }) {
         </div>
       ))}
       {fields.map((f) => [
-        <div key={`${f.name}-l`} className="a-tr-label">{f.label || f.name}{f.required && ' *'}{f.help && <small className="a-muted a-tr-help">{f.help}</small>}</div>,
+        <div key={`${f.name}-l`} className="a-tr-label">{f.label || f.name}{f.required && ' *'}<InfoTip text={f.info} />{f.help && <small className="a-muted a-tr-help">{f.help}</small>}</div>,
         ...languages.map((l) => {
           const isDefault = Number(l.is_default) === 1;
           if (f.override && isDefault) {
@@ -149,6 +161,32 @@ export function TrEditor({ fields, tr, onChange, disabled, main = {} }) {
       ])}
     </div>
   );
+}
+
+/**
+ * Required per-language texts that are empty, for every active language except the default one (the default is
+ * required on save anyway). Languages come from Setup > Languages, so a new language is checked as soon as it is on.
+ * fields: [{ name, label, required }]. Returns [{ lang, name, fields: [labels] }].
+ */
+export function missingTexts(tr, fields, languages) {
+  const required = fields.filter((f) => f.required);
+  const out = [];
+  for (const l of languages) {
+    if (Number(l.is_default) === 1 || Number(l.is_active) !== 1) continue;
+    const t = (tr || {})[l.lang_code] || {};
+    const empty = required.filter((f) => !String(t[f.name] ?? '').trim());
+    if (empty.length) out.push({ lang: l.lang_code, name: l.name_en || l.lang_code, fields: empty.map((f) => f.label || f.name) });
+  }
+  return out;
+}
+
+/** "TA missing" badges for a list row (hover: which fields are empty). */
+export function MissingBadges({ missing }) {
+  return missing.map((m) => (
+    <span key={m.lang} className="a-trmiss" title={`${m.name}: ${m.fields.join(', ')} ${m.fields.length === 1 ? 'is' : 'are'} empty`}>
+      {m.lang.toUpperCase()} missing
+    </span>
+  ));
 }
 
 export function Drawer({ title, onClose, children, footer }) {

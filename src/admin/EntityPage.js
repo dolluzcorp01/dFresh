@@ -7,11 +7,12 @@ import { api, rowId } from './adminApi';
 import { mediaUrl } from '../utils/api';
 import { KitProducts, ProductField, RepPreview, Thumb, productName } from './ProductSelect';
 import useOrderDraft from './useOrderDraft';
-import { Drawer, Field, Loading, TrEditor, useAction, useAdmin, useCan, useLoad } from './ui';
+import { Drawer, Field, Loading, MissingBadges, TrEditor, missingTexts, useAction, useAdmin, useCan, useLoad } from './ui';
 import { fontVar, loadFont } from '../i18n/fonts';
 import { LAND, MAP_H, MAP_W } from '../shared/mapShape';
 
-const KEY_HINT = "Internal name, not shown to visitors. 2-30 characters: a-z, 0-9 and -. It names this banner's photo files, its analytics click event and the source of leads from its form button.";
+const KEY_HINT = 'Internal name (a-z, 0-9, -). Used in photo names, analytics and lead source.';
+const KEY_INFO = "Not shown to visitors. 2 to 30 characters: lowercase a-z, digits 0-9 and hyphens. It starts the names of this banner's uploaded photo files, it is sent with the analytics click event (banner_click), and leads sent from this banner's form button record it as their source. Renaming moves the texts, those leads and the history to the new key in one step; analytics keeps the old key for earlier clicks.";
 const ACTIVE = { name: 'is_active', label: 'Active', type: 'bool' };
 const ORDER = { name: 'sort_order', label: 'Order', type: 'number', step: '1' };
 // Banners, kits, categories: the position is set by dragging the rows (1, 2, 3 ...; a new row goes to the end)
@@ -21,7 +22,7 @@ const SECTIONS = {
   banners: {
     title: 'Banners', keys: ['banner_key'], reorder: true,
     fields: [
-      { name: 'banner_key', label: 'Key', required: true, keyField: true, help: KEY_HINT }, POSITION,
+      { name: 'banner_key', label: 'Key', required: true, keyField: true, help: KEY_HINT, info: KEY_INFO }, POSITION,
       { name: 'theme', label: 'Theme', type: 'select', options: ['light', 'dark'], allowEmpty: false, help: 'dark = gold button on a dark photo' },
       { name: 'cta_action', label: 'Button action', type: 'select', options: ['products', 'products_home', 'products_category', 'section', 'form'], allowEmpty: false },
       { name: 'cta_target', label: 'Button target' }, // a dropdown that follows Button action (BannerTarget)
@@ -29,14 +30,15 @@ const SECTIONS = {
     ],
     layout: 'banners', // drawer rows: BannerFields; list: Desktop / Mobile photo switch
     tr: [
-      { name: 'headline', label: 'Headline', required: true, long: true, help: '{count} = the number of active products (main products, not colour versions).' },
+      { name: 'headline', label: 'Headline', required: true, long: true, help: '{count} = number of active products', info: '{count} becomes the number of active products on the site: main products only, not colour versions ({products} works too).' },
       { name: 'cta_label', label: 'Button label', required: true },
     ],
-    list: (r, { photoKind = 'desktop' }) => [
-      <BannerThumb r={r} kind={photoKind} />,
+    list: (r) => [
+      <BannerThumb r={r} kind="desktop" />, <BannerThumb r={r} kind="mobile" />,
       r.banner_key, r.tr?.en?.headline ?? '', r.theme, `${r.cta_action ?? ''}${r.cta_target ? `: ${r.cta_target}` : ''}`,
     ],
-    head: ['Photo', 'Key', 'Headline (EN)', 'Theme', 'Button'],
+    head: ['Desktop', 'Mobile', 'Key', 'Headline (EN)', 'Theme', 'Button'],
+    nameCol: 3, // the cell that carries the "TA missing" badges
     defaults: { theme: 'light', cta_action: 'products', is_active: 0 },
   },
   kits: {
@@ -49,6 +51,7 @@ const SECTIONS = {
     tr: [{ name: 'name', label: 'Name', required: true }, { name: 'tagline', label: 'Tagline', required: true }],
     links: 'products', // drawer order: fields, Active, text per language, Selected (in order), Products (in order)
     list: (r) => [r.kit_key, r.tr?.en?.name ?? '', r.business_type, (r.products || []).join(', ')],
+    nameCol: 1,
     head: ['Key', 'Name (EN)', 'Business type', 'Products'],
     defaults: { is_active: 1, products: [] },
   },
@@ -67,6 +70,7 @@ const SECTIONS = {
     ],
     tr: [{ name: 'name', label: 'Name', required: true }],
     list: (r) => [r.town_key, r.tr?.en?.name ?? '', r.is_base ? 'base' : '', r.map_x != null ? `${r.map_x}, ${r.map_y}` : ''],
+    nameCol: 1,
     head: ['Key', 'Name (EN)', 'Base', 'Map'],
     defaults: { is_active: 1, label_dx: 0, label_dy: -20, label_anchor: 'middle' },
   },
@@ -75,6 +79,7 @@ const SECTIONS = {
     fields: [{ name: 'category_key', label: 'Key', required: true, keyField: true }, POSITION, { name: 'rep_product_id', label: 'Photo from product', type: 'select', lookup: 'products' }, ACTIVE],
     tr: [{ name: 'name', label: 'Name', required: true }],
     list: (r) => [r.category_key, r.tr?.en?.name ?? '', r.rep_product_id],
+    nameCol: 1,
     head: ['Key', 'Name (EN)', 'Photo from'],
     defaults: { is_active: 1 },
   },
@@ -85,7 +90,7 @@ const SECTIONS = {
       { name: 'sort_order', label: 'Position', type: 'readonly', help: 'Drag the rows in the list to change it.' },
       { name: 'product_id', label: 'Product', type: 'select', lookup: 'products', allowEmpty: false, required: true },
       { name: 'size_label', label: 'Size label', required: true, help: 'e.g. 30×30 (filled from the product when empty)' },
-      { name: 'scale', label: 'Drawing scale', type: 'number', step: '0.01', min: 0.1, max: 1, help: 'How big the drawing looks compared with the largest size (1 = largest). Suggested: size / largest size, e.g. 20x20 vs 40x40 = 0.5.' },
+      { name: 'scale', label: 'Drawing scale', type: 'number', step: '0.01', min: 0.1, max: 1, help: '1 = largest size. e.g. 20x20 vs 40x40 = 0.5', info: 'How big the drawing looks compared with the largest size (1 = largest). Suggested: size / largest size, e.g. 20x20 vs 40x40 = 0.5. From 0.1 to 1.' },
       { name: 'is_default', label: 'Selected first', type: 'bool' },
       { name: 'is_active', label: 'Active (shown on the site)', type: 'bool' },
     ],
@@ -112,6 +117,7 @@ const SECTIONS = {
     ],
     tr: [{ name: 'label', label: 'Label', required: true }],
     list: (r) => [r.list_key, r.option_value, r.tr?.en?.label ?? ''],
+    nameCol: 2,
     head: ['List', 'Value', 'Label (EN)'],
     defaults: { is_active: 1, list_key: 'business_type' },
   },
@@ -123,7 +129,9 @@ export default function EntityPage({ name }) {
   const products = useLoad(cfg.fields.some((f) => f.lookup === 'products') || cfg.links || name === 'banners' ? '/products' : null);
   const cats = useLoad(name === 'banners' ? '/categories' : null);
   const uiText = useLoad(name === 'banners' ? '/ui-text' : null); // the banner eyebrow (bn_k) for the preview
-  const [photoKind, setPhotoKind] = useState('desktop');
+  const { languages } = useAdmin();
+  const [onlyMissing, setOnlyMissing] = useState(false);
+  const missingOf = (r) => (cfg.tr ? missingTexts(r.tr, cfg.tr, languages) : []);
   const options = useLoad(cfg.fields.some((f) => f.lookup === 'businessTypes') ? '/form-options' : null);
   const canEdit = useCan('editor');
   const act = useAction();
@@ -157,32 +165,36 @@ export default function EntityPage({ name }) {
       {cfg.hint && <p className="a-muted a-pagehint">{cfg.hint}</p>}
       <div className="a-toolbar">
         {canEdit && <button type="button" className="a-btn" onClick={() => openDrawer({ create: true })}>Add</button>}
-        {cfg.reorder && canEdit && <span className="a-muted">Drag rows to change the order, then Save order.</span>}
-        {cfg.layout === 'banners' && (
-          <span className="a-seg" role="group" aria-label="Photo column shows">
-            {['desktop', 'mobile'].map((k) => (
-              <button key={k} type="button" aria-pressed={photoKind === k} onClick={() => setPhotoKind(k)}>{k === 'desktop' ? 'Desktop' : 'Mobile'}</button>
-            ))}
-          </span>
+        {cfg.reorder && canEdit && <span className="a-muted">{onlyMissing ? 'Show all rows to drag them.' : 'Drag rows to change the order, then Save order.'}</span>}
+        {cfg.tr && (
+          <button type="button" className="a-chip" aria-pressed={onlyMissing} onClick={() => setOnlyMissing((x) => !x)}
+            title="Only rows where an active language has an empty required text">
+            Missing translations <b>{(list.data || []).filter((r) => missingOf(r).length).length}</b>
+          </button>
         )}
       </div>
       {act.note}
       <Loading state={list}>
         <div className="a-scroll">
           <table className="a-table a-hover">
-            <thead><tr>{cfg.reorder && <th />}{cfg.head.map((h) => <th key={h}>{h}</th>)}<th>Active</th>{cfg.tr && <th>Languages</th>}</tr></thead>
+            <thead><tr>{cfg.reorder && <th />}{cfg.head.map((h) => <th key={h}>{h}</th>)}<th>Active</th></tr></thead>
             <tbody>
-              {shown.map((r) => {
+              {shown.filter((r) => !onlyMissing || missingOf(r).length).map((r) => {
                 const id = rowId(cfg.keys, r);
+                const missing = missingOf(r);
                 return (
                   <tr key={id} className={`${r.is_active === 0 ? 'a-off' : ''}${drag === id ? ' a-dragging' : ''}`} onClick={() => openDrawer({ id })} tabIndex={0}
                     onKeyDown={(e) => e.key === 'Enter' && openDrawer({ id })}
-                    draggable={cfg.reorder && canEdit} onDragStart={() => setDrag(id)} onDragOver={(e) => e.preventDefault()} onDrop={() => drop(id)}
+                    draggable={cfg.reorder && canEdit && !onlyMissing} onDragStart={() => setDrag(id)} onDragOver={(e) => e.preventDefault()} onDrop={() => drop(id)}
                     onDragEnd={() => setDrag(null)}>
-                    {cfg.reorder && <td className="a-handle" aria-hidden="true">⠿</td>}
-                    {cfg.list(r, { products: products.data || [], photoKind }).map((v, i) => <td key={i}>{v === null || v === undefined ? '' : isValidElement(v) ? v : String(v)}</td>)}
+                    {cfg.reorder && <td className="a-handle" aria-hidden="true">{onlyMissing ? '' : '⠿'}</td>}
+                    {cfg.list(r, { products: products.data || [] }).map((v, i) => (
+                      <td key={i}>
+                        {v === null || v === undefined ? '' : isValidElement(v) ? v : String(v)}
+                        {i === cfg.nameCol && <MissingBadges missing={missing} />}
+                      </td>
+                    ))}
                     <td>{r.is_active === undefined ? '' : r.is_active ? 'Yes' : 'No'}</td>
-                    {cfg.tr && <td>{r.tr ? Object.keys(r.tr).join(' ') : ''}</td>}
                   </tr>
                 );
               })}
@@ -348,17 +360,18 @@ function Editor({ name, cfg, id, lookups, products, rows, cats, uiText, onClose,
 const RENAME_NOTE = "The banner's texts, the leads from its form button and its history move to the new key; photos keep working. Analytics keeps the old key for earlier clicks.";
 const BANNER_SIZE = { desktop: [1920, 800], mobile: [1080, 1350] };
 
-// Banners list: the chosen photo (desktop 16:9-ish strip or mobile 4:5), and a warning when either photo is missing or
-// not its exact size (the server reads the files: photo_check).
+// Banners list: one photo column per kind (desktop 96x54, mobile 43x54), each with its own warning when that photo is
+// missing or not its exact size (the server reads the files: photo_check).
 function BannerThumb({ r, kind }) {
   const file = r[`${kind}_file`];
-  const problems = ['desktop', 'mobile'].filter((k) => r.photo_check && !r.photo_check[k].ok).map((k) => `${k}: ${r.photo_check[k].problem}`);
+  const check = r.photo_check && r.photo_check[kind];
+  const bad = check && !check.ok;
   return (
     <span className="a-bthumbcell">
       {file
         ? <img className={`a-bthumb a-bthumb-${kind}`} src={mediaUrl(`/media/banners/${kind}/${file}`)} alt="" loading="lazy" />
         : <span className={`a-bthumb a-bthumb-${kind} a-thumb-none`} aria-hidden="true" />}
-      {problems.length > 0 && <span className="a-warnbadge" title={problems.join('; ')}>{problems.some((p) => /missing|not found/.test(p)) ? 'Photo missing' : 'Wrong size'}</span>}
+      {bad && <span className="a-warnbadge" title={`${kind}: ${check.problem}`}>{/missing|not found/.test(check.problem) ? 'Photo missing' : 'Wrong size'}</span>}
     </span>
   );
 }

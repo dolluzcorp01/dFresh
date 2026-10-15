@@ -8,19 +8,19 @@
 import { useMemo, useState } from 'react';
 import { api } from './adminApi';
 import { mediaUrl } from '../utils/api';
-import { Drawer, Field, Loading, Notice, TrEditor, useAction, useCan, useLoad } from './ui';
+import { Drawer, Field, Loading, MissingBadges, Notice, TrEditor, missingTexts, useAction, useAdmin, useCan, useLoad } from './ui';
 import { ProductField } from './ProductSelect';
 import useOrderDraft from './useOrderDraft';
 
 const TR_FIELDS = [
   { name: 'name', label: 'Name', required: true }, { name: 'one_liner', label: 'One-liner', required: true },
-  { name: 'keywords', label: 'Keywords (comma separated)', required: true, help: 'The first 3 show as chips on the product card. All are used for search.' },
+  { name: 'keywords', label: 'Keywords (comma separated)', required: true, help: 'First 3 = chips on the card.', info: 'The first 3 keywords show as chips on the product card. All of them are used by the site search.' },
   { name: 'description', label: 'Description', required: true, long: true },
   { name: 'best_for', label: 'Best for', required: true }, { name: 'colour_name', label: 'Colour name' },
   // empty = the site uses the main Specification / Pack (the default language has no box: the main field is its value)
   { name: 'specification', label: 'Specification (this language only)', mainLabel: 'Specification', override: true, help: 'Empty = the main value (grey).' },
   { name: 'pack', label: 'Pack (this language only)', mainLabel: 'Pack', override: true, help: 'Empty = the main value (grey).' },
-  { name: 'alt_text', label: 'Photo alt text', help: 'Describes the photo for Google and screen readers. Not shown on the page.' },
+  { name: 'alt_text', label: 'Photo alt text', help: 'For Google and screen readers.', info: 'Describes the photo for Google and screen readers. Not shown on the page.' },
   { name: 'whatsapp_message', label: 'WhatsApp message', long: true },
 ];
 const HEX = /^#[0-9A-Fa-f]{6}$/;
@@ -75,12 +75,16 @@ export default function Products() {
   const act = useAction();
   const [opened, setOpen] = useState(null); // { id } | { create: {...} }
   const [filter, setFilter] = useState('');
+  const { languages } = useAdmin();
+  const [onlyMissing, setOnlyMissing] = useState(false);
+  const missingOf = (p) => missingTexts(p.tr, TR_FIELDS, languages);
   const [drag, setDrag] = useState(null); // { id, scope }
 
   const groups = useMemo(() => grouped(list.data || [], cats.data || []), [list.data, cats.data]);
   const f = filter.trim().toLowerCase();
-  const match = (p) => !f || p.product_id.toLowerCase().includes(f) || Object.values(p.tr).some((t) => (t.name || '').toLowerCase().includes(f));
-  const canDrag = canEdit && !f;
+  const match = (p) => (!f || p.product_id.toLowerCase().includes(f) || Object.values(p.tr).some((t) => (t.name || '').toLowerCase().includes(f)))
+    && (!onlyMissing || missingOf(p).length > 0);
+  const canDrag = canEdit && !f && !onlyMissing;
   const featured = useMemo(() => (list.data || []).filter((p) => Number(p.is_featured))
     .sort((a, b) => (Number(a.featured_order) || 999) - (Number(b.featured_order) || 999)), [list.data]);
 
@@ -120,11 +124,10 @@ export default function Products() {
       <td className="a-num">{pos}</td>
       <td>{thumbUrl(p) && <img className="a-thumb" src={thumbUrl(p)} alt="" width="40" height="40" />}</td>
       <td><code>{isVariant ? '└ ' : ''}{p.product_id}</code></td>
-      <td>{p.tr?.en?.name ?? ''}{isVariant && p.tr?.en?.colour_name ? ` (${p.tr.en.colour_name})` : ''}</td>
+      <td>{p.tr?.en?.name ?? ''}{isVariant && p.tr?.en?.colour_name ? ` (${p.tr.en.colour_name})` : ''}<MissingBadges missing={missingOf(p)} /></td>
       <td className="a-num">{(p.images || []).length}</td>
       <td>{Number(p.is_featured) ? `Yes (${p.featured_order ?? '-'})` : ''}</td>
       <td>{p.is_active ? 'Yes' : 'No'}</td>
-      <td>{Object.keys(p.tr).join(' ')}</td>
     </tr>
   );
 
@@ -134,7 +137,11 @@ export default function Products() {
       <div className="a-toolbar">
         <input type="search" placeholder="Filter by ID or name" aria-label="Filter" value={filter} onChange={(e) => setFilter(e.target.value)} />
         {canEdit && <button type="button" className="a-btn" onClick={() => open({ create: { is_active: 1 } })}>Add product</button>}
-        {canEdit && <span className="a-muted">{f ? 'Clear the filter to drag rows.' : 'Drag rows to change the order (colour versions move with their product), then Save order.'}</span>}
+        <button type="button" className="a-chip" aria-pressed={onlyMissing} onClick={() => setOnlyMissing((x) => !x)}
+          title="Only products where an active language has an empty required text">
+          Missing translations <b>{(list.data || []).filter((p) => missingOf(p).length).length}</b>
+        </button>
+        {canEdit && <span className="a-muted">{f || onlyMissing ? 'Clear the filters to drag rows.' : 'Drag rows to change the order (colour versions move with their product), then Save order.'}</span>}
       </div>
       {act.note}
       <Loading state={list}>
@@ -161,7 +168,7 @@ export default function Products() {
         </div>
         <div className="a-scroll">
           <table className="a-table a-hover">
-            <thead><tr><th /><th>Pos.</th><th /><th>ID</th><th>Name (EN)</th><th>Photos</th><th>{home.title}</th><th>Active</th><th>Languages</th></tr></thead>
+            <thead><tr><th /><th>Pos.</th><th /><th>ID</th><th>Name (EN)</th><th>Photos</th><th>{home.title}</th><th>Active</th></tr></thead>
             {groups.map((g) => {
               const savedIds = g.items.map((x) => x.main.product_id);
               const items = inOrder(`cat:${g.key}`, g.items, (x) => x.main.product_id);
@@ -178,7 +185,7 @@ export default function Products() {
               if (!rows.length) return null;
               return (
                 <tbody key={g.key}>
-                  <tr className="a-group"><th colSpan={9}>{g.name} <span className="a-muted">({g.items.length})</span></th></tr>
+                  <tr className="a-group"><th colSpan={8}>{g.name} <span className="a-muted">({g.items.length})</span></th></tr>
                   {rows}
                 </tbody>
               );

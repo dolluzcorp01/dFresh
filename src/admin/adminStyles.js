@@ -272,6 +272,17 @@ tr.a-target td { background: #fff6d6; }
 .a-bp-mobile .a-bp-btn { font-size: 3.85cqw; padding: 4.1cqw 6.15cqw; gap: 2.56cqw; }
 .a-bp-mobile.a-bp-long .a-bp-k { font-size: 3.46cqw; }
 .a-bp-mobile.a-bp-long h2 { font-size: 6.15cqw; }
+/* (i) tooltips next to labels (InfoTip): hints stay at most 2 lines, the detail shows on hover / focus */
+.a-info { position: relative; display: inline-grid; place-items: center; width: 15px; height: 15px; margin-inline-start: 6px; border-radius: 50%; border: 1px solid var(--a-ink2); color: var(--a-ink2); font: 700 10px/1 Georgia, serif; font-style: italic; vertical-align: 1px; cursor: help; }
+.a-info:hover, .a-info:focus-visible { background: var(--a-ink); border-color: var(--a-ink); color: #fff; outline: none; }
+.a-info::after { content: attr(data-tip); position: absolute; z-index: 60; top: calc(100% + 8px); left: -8px; width: max-content; max-width: 300px; padding: 8px 10px; border-radius: 8px; background: var(--a-ink); color: #fff; font: 400 12.5px/1.45 'Open Sans', system-ui, sans-serif; font-style: normal; white-space: normal; text-align: start; box-shadow: 0 8px 24px rgba(18, 18, 20, .25); opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .15s; }
+.a-info:hover::after, .a-info:focus-visible::after { opacity: 1; visibility: visible; }
+/* missing translations: amber badge in the name cell, filter chip above lists */
+.a-trmiss { display: inline-flex; align-items: center; height: 18px; margin-inline-start: 6px; padding: 0 7px; border-radius: 999px; background: #fdf0d2; border: 1px solid #e3b44f; color: #6b4a00; font-size: 11px; font-weight: 700; line-height: 1; white-space: nowrap; vertical-align: 1px; cursor: help; }
+.a-chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--a-line); border-radius: 999px; background: #fff; font-family: inherit; font-size: 13px; font-weight: 600; line-height: 17px; padding: 9px 14px; color: var(--a-ink); cursor: pointer; }
+.a-chip[aria-pressed="true"] { background: var(--a-ink); border-color: var(--a-ink); color: #fff; }
+.a-chip:focus-visible { outline: 2px solid var(--a-ink); outline-offset: 2px; }
+.a-chip b { font-weight: 700; }
 /* Excel import: before / after values wrap (long text, Tamil / Hindi keep their shaping via the cell's lang) */
 .a-difftable td { vertical-align: top; }
 .a-difftable td:nth-child(3), .a-difftable td:nth-child(4) { min-width: 160px; max-width: 440px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }
