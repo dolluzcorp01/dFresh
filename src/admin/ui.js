@@ -75,11 +75,26 @@ export function Loading({ state, children }) {
  * A small (i) next to a label: the longer explanation, shown on hover or keyboard focus (and read by screen readers).
  * Hints stay at most 2 lines; the detail goes here. A click on it never reaches the control the label belongs to.
  */
+// The bubble exists only while it is open and is placed in window coordinates (position: fixed), kept inside the
+// window: a hidden tooltip must never widen a drawer or a table (it used to give the Towns drawer a sideways scroll).
 export function InfoTip({ text }) {
+  const ref = useRef(null);
+  const [at, setAt] = useState(null); // { left, top } while open
   if (!text) return null;
+  const show = () => {
+    const r = ref.current.getBoundingClientRect();
+    const width = Math.min(300, window.innerWidth - 16);
+    const left = Math.max(8, Math.min(r.left - 8, window.innerWidth - width - 8));
+    const below = r.bottom + 8;
+    setAt({ left, top: below, width });
+  };
   return (
-    <span className="a-info" tabIndex={0} role="note" aria-label={text} data-tip={text}
-      onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}>i</span>
+    <span ref={ref} className="a-info" tabIndex={0} role="note" aria-label={text}
+      onMouseEnter={show} onMouseLeave={() => setAt(null)} onFocus={show} onBlur={() => setAt(null)}
+      onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}>
+      i
+      {at && <span className="a-tip" aria-hidden="true" style={{ left: at.left, top: at.top, maxWidth: at.width }}>{text}</span>}
+    </span>
   );
 }
 

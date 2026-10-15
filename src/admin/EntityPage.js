@@ -344,15 +344,16 @@ function Editor({ name, cfg, id, lookups, products, rows, lists, cats, uiText, o
           </>
         );
       })() : cfg.layout === 'towns' ? (() => {
-        // Key | Order | Godown base | Active, then Latitude | Longitude; the map fields sit next to the map (below)
+        // Key | Order, Latitude | Longitude, then the two checkboxes; the map fields sit next to the map (below)
         const fld = (n, extra) => renderField({ ...cfg.fields.find((x) => x.name === n), ...extra });
         const bad = geoErrors(row);
         return (
           <>
-            <div className="a-prow a-prow-4 a-townrow1">{fld('town_key', { keyField: false })}{fld('sort_order')}{fld('is_base')}{fld('is_active')}</div>
+            <div className="a-prow a-prow-2">{fld('town_key', { keyField: false })}{fld('sort_order')}</div>
             {keyChanged && <p className="a-replace-note">Renaming updates all references. {cfg.rename.note}</p>}
-            <BaseNote row={row} rows={rows} />
             <div className="a-prow a-prow-2">{fld('lat', { error: bad.lat })}{fld('lng', { error: bad.lng })}</div>
+            <div className="a-prow a-pchecks">{fld('is_base')}{fld('is_active')}</div>
+            <BaseNote row={row} rows={rows} />
           </>
         );
       })() : cfg.layout === 'options' ? (() => {

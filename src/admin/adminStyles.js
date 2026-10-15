@@ -194,6 +194,7 @@ tr.a-target td { background: #fff6d6; }
 .a-note-warn { background: #fdf4e3; border-color: #ecd09a; color: var(--a-warn); }
 
 .a-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.a-outbox td:nth-child(2) { overflow-wrap: anywhere; min-width: 120px; }
 .a-table { width: 100%; border-collapse: collapse; background: var(--a-card); }
 .a-table th, .a-table td { text-align: start; padding: 7px 9px; border-bottom: 1px solid var(--a-line); vertical-align: middle; }
 .a-table th { font-size: 12.5px; color: var(--a-ink2); background: #faf8f1; white-space: nowrap; }
@@ -276,8 +277,7 @@ tr.a-target td { background: #fff6d6; }
 /* (i) tooltips next to labels (InfoTip): hints stay at most 2 lines, the detail shows on hover / focus */
 .a-info { position: relative; display: inline-grid; place-items: center; width: 15px; height: 15px; margin-inline-start: 6px; border-radius: 50%; border: 1px solid var(--a-ink2); color: var(--a-ink2); font: 700 10px/1 Georgia, serif; font-style: italic; vertical-align: 1px; cursor: help; }
 .a-info:hover, .a-info:focus-visible { background: var(--a-ink); border-color: var(--a-ink); color: #fff; outline: none; }
-.a-info::after { content: attr(data-tip); position: absolute; z-index: 60; top: calc(100% + 8px); left: -8px; width: max-content; max-width: 300px; padding: 8px 10px; border-radius: 8px; background: var(--a-ink); color: #fff; font: 400 12.5px/1.45 'Open Sans', system-ui, sans-serif; font-style: normal; white-space: normal; text-align: start; box-shadow: 0 8px 24px rgba(18, 18, 20, .25); opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .15s; }
-.a-info:hover::after, .a-info:focus-visible::after { opacity: 1; visibility: visible; }
+.a-tip { position: fixed; z-index: 120; width: max-content; padding: 8px 10px; border-radius: 8px; background: var(--a-ink); color: #fff; font: 400 12.5px/1.45 'Open Sans', system-ui, sans-serif; font-style: normal; white-space: normal; text-align: start; box-shadow: 0 8px 24px rgba(18, 18, 20, .25); pointer-events: none; }
 /* missing translations: amber badge in the name cell, filter chip above lists */
 .a-trmiss { display: inline-flex; align-items: center; height: 18px; margin-inline-start: 6px; padding: 0 7px; border-radius: 999px; background: #fdf0d2; border: 1px solid #e3b44f; color: #6b4a00; font-size: 11px; font-weight: 700; line-height: 1; white-space: nowrap; vertical-align: 1px; cursor: help; }
 .a-chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--a-line); border-radius: 999px; background: #fff; font-family: inherit; font-size: 13px; font-weight: 600; line-height: 17px; padding: 9px 14px; color: var(--a-ink); cursor: pointer; }
@@ -292,10 +292,9 @@ tr.a-target td { background: #fff6d6; }
 .a-townmap svg { touch-action: none; }
 .a-tp-cur circle, .a-tp-cur text { cursor: grab; }
 .a-tp-dragging, .a-tp-dragging .a-tp-cur circle, .a-tp-dragging .a-tp-cur text { cursor: grabbing; }
-/* Towns: checkboxes in row 1 line up with the inputs (below the label line); map + its fields side by side, the fields
-   below the map when the drawer is narrower (window under 1200px) */
-.a-townrow1 .a-check { align-self: start; height: 36px; margin-top: 24px; }
-.a-townmapsec { display: grid; grid-template-columns: minmax(0, 560px) minmax(0, 1fr); gap: 20px; align-items: start; }
+/* Towns: map + its fields side by side (fractions, nothing fixed: the map scales to its column), the fields below the
+   map when the drawer is narrower (window under 1200px) */
+.a-townmapsec { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 20px; align-items: start; }
 .a-townmapsec .a-townmap { margin: 0; }
 .a-townside .a-prow:last-child { margin-bottom: 0; }
 @media (max-width: 1199px) { .a-townmapsec { grid-template-columns: minmax(0, 1fr); } }
@@ -424,8 +423,8 @@ tr.a-target td { background: #fff6d6; }
 .a-tr-over { display: flex; align-items: center; gap: 8px; min-width: 0; } .a-tr-over input { flex: 1; min-width: 0; } .a-tr-over .a-link { flex: none; padding: 4px 0; font-size: 12.5px; white-space: nowrap; }
 .a-tr-over input::placeholder { color: #8a8577; opacity: 1; } .a-tr-main { font-size: 12.5px; padding-top: 7px; }
 
-.a-townmap { margin: 12px 0; max-width: 560px; }
-.a-townmap svg { display: block; width: 100%; height: auto; overflow: visible; background: #fff; border: 1px solid var(--a-line); border-radius: 8px; }
+.a-townmap { margin: 12px 0; max-width: 100%; min-width: 0; }
+.a-townmap svg { display: block; width: 100%; max-width: 100%; height: auto; overflow: visible; background: #fff; border: 1px solid var(--a-line); border-radius: 8px; }
 .a-townmap figcaption { font-size: 12px; margin-top: 4px; }
 .a-count { display: block; text-align: end; font-size: 11px; color: var(--a-muted); }
 .a-count.a-bad { color: #b42318; }
@@ -444,7 +443,7 @@ tr.a-target td { background: #fff6d6; }
 .a-drawer header, .a-drawer footer { display: flex; gap: 10px; align-items: center; padding: 12px 16px; background: #fff; border-bottom: 1px solid var(--a-line); }
 .a-drawer header h2 { margin: 0; flex: 1; font-size: 17px; overflow-wrap: anywhere; }
 .a-drawer footer { border-top: 1px solid var(--a-line); border-bottom: 0; flex-wrap: wrap; }
-.a-drawer-body { padding: 16px; overflow-y: auto; flex: 1; }
+.a-drawer-body { padding: 16px; overflow-y: auto; overflow-x: hidden; flex: 1; min-width: 0; } /* x: safety net only, nothing should be wider */
 
 @media (max-width: 900px) {
   .a-shell { grid-template-columns: minmax(0, 1fr); }

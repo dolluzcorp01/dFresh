@@ -233,7 +233,9 @@ function LeadDrawer({ id, onClose, onChanged }) {
               </label>
             </div>
             <h3>E-mail and sheet</h3>
-            <table className="a-table">
+            {/* its own sideways scroll on a phone; long addresses wrap first */}
+            <div className="a-scroll">
+            <table className="a-table a-outbox">
               <thead><tr><th>Type</th><th>To / target</th><th>Status</th><th>Tries</th><th /></tr></thead>
               <tbody>
                 {l.outbox.mail.map((m) => (
@@ -254,6 +256,7 @@ function LeadDrawer({ id, onClose, onChanged }) {
                 ))}
               </tbody>
             </table>
+            </div>
           </>
         )}
       </Loading>
