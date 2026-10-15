@@ -358,7 +358,8 @@ async function reorder(q, name, ids) {
 async function completeness(q = db) {
   const langs = await languages(q);
   // staff e-mail words are read in the default language only: never "missing" in another language
-  const parts = [{ name: 'ui_text', table: 'ui_text', keys: ['text_key'], skip: 'd.text_key NOT IN (SELECT text_key FROM ui_text_keys WHERE group_name = ?)', skipParams: [STAFF_GROUP] },
+  // ui_text: a blank value counts as not translated, in every language (the Translations page counts the same way)
+  const parts = [{ name: 'ui_text', table: 'ui_text', keys: ['text_key'], value: 'value', skip: 'd.text_key NOT IN (SELECT text_key FROM ui_text_keys WHERE group_name = ?)', skipParams: [STAFF_GROUP] },
     ...TRANSLATED.map((t) => ({ name: t.name, table: t.tr.table, keys: t.keys }))];
   const out = Object.fromEntries(langs.codes.map((l) => [l, { have: 0, total: 0, parts: {} }]));
   for (const p of parts) {
@@ -366,8 +367,8 @@ async function completeness(q = db) {
     const [rows] = await q.query(
       `SELECT l.lang_code, COUNT(d.lang_code) AS total, COUNT(x.lang_code) AS have
          FROM languages l
-         JOIN ${p.table} d ON d.lang_code = ?${p.skip ? ` AND ${p.skip}` : ''}
-         LEFT JOIN ${p.table} x ON ${on} AND x.lang_code = l.lang_code
+         JOIN ${p.table} d ON d.lang_code = ?${p.skip ? ` AND ${p.skip}` : ''}${p.value ? ` AND TRIM(d.${p.value}) <> ''` : ''}
+         LEFT JOIN ${p.table} x ON ${on} AND x.lang_code = l.lang_code${p.value ? ` AND TRIM(x.${p.value}) <> ''` : ''}
         GROUP BY l.lang_code`,
       [langs.def, ...(p.skipParams || [])]
     );

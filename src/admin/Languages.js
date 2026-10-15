@@ -38,7 +38,7 @@ export default function Languages() {
   const [open, setOpen] = useState(null);
 
   const changed = () => { list.reload(); reloadLanguages(); };
-  const toggle = (l) => act.run(async () => {
+  const toggle = (l) => (!l.is_active || window.confirm(`Switch off ${l.name_en}? It disappears from the site's language switcher.`)) && act.run(async () => {
     await api.send('PUT', `/languages/${l.lang_code}`, { is_active: l.is_active ? 0 : 1 });
     changed();
   }, `${l.name_en} switched ${l.is_active ? 'off' : 'on'}`);
@@ -51,17 +51,26 @@ export default function Languages() {
   return (
     <section>
       <h1>Languages</h1>
-      <p className="a-muted">A new language starts switched off. Translate it (Translations, product Excel), check the percentage, then switch it on: it appears in the switcher and routes at once, with the default language for anything not translated.</p>
-      <p className="a-muted">Pick the language's Script when you add it: it sets the font and the text direction. The server prepares that font for the language's text by itself, also whenever a text with new characters is saved; the Script / font column shows ready (size), rebuilding, or using full font. No developer or command needed.</p>
+      <div className="a-card a-howto">
+        <h2>How to add a language</h2>
+        <ol>
+          <li>Click Add language and pick its script. The script sets the font and the text direction.</li>
+          <li>Translate it in Translations and in the product Excel.</li>
+          <li>When the Translated % is high enough, click Switch on. It appears in the site&apos;s language switcher at once.</li>
+        </ol>
+        <p className="a-muted">Anything not translated shows in English. Fonts are prepared automatically, no developer needed.</p>
+      </div>
       {isAdmin && <div className="a-toolbar"><button type="button" className="a-btn" onClick={() => setOpen({ create: true })}>Add language</button></div>}
       {act.note}
       <Loading state={list}>
         <div className="a-scroll">
-          <table className="a-table">
+          <table className={`a-table${isAdmin ? ' a-hover' : ''}`}>
             <thead><tr><th>Code</th><th>Name</th><th>Switcher</th><th>Script / font</th><th>Translated</th><th>Status</th><th /></tr></thead>
             <tbody>
               {(list.data || []).map((l) => (
-                <tr key={l.lang_code} className={l.is_active ? '' : 'a-off'}>
+                // the whole row opens the drawer (as on every admin list); the buttons in it do not
+                <tr key={l.lang_code} className={l.is_active ? '' : 'a-off'}
+                  {...(isAdmin ? { onClick: () => setOpen({ row: l }), tabIndex: 0, onKeyDown: (e) => e.key === 'Enter' && e.target === e.currentTarget && setOpen({ row: l }) } : {})}>
                   <td><code>{l.lang_code}</code></td>
                   <td>{l.name_en} · {l.native_name}{Number(l.is_default) === 1 && ' (default)'}</td>
                   <td>{l.switch_label}</td>
@@ -71,9 +80,8 @@ export default function Languages() {
                   </td>
                   <td>{l.is_active ? 'On' : 'Off'}</td>
                   <td className="a-row">
-                    {isAdmin && <button type="button" className="a-btn a-btn-sm a-btn-ghost" onClick={() => setOpen({ row: l })}>Edit</button>}
-                    {isAdmin && Number(l.is_default) !== 1 && <button type="button" className="a-btn a-btn-sm" onClick={() => toggle(l)} disabled={act.busy}>{l.is_active ? 'Switch off' : 'Switch on'}</button>}
-                    {isAdmin && Number(l.is_default) !== 1 && !l.is_active && <button type="button" className="a-btn a-btn-sm a-btn-danger" onClick={() => remove(l)} disabled={act.busy}>Delete</button>}
+                    {isAdmin && Number(l.is_default) !== 1 && <button type="button" className="a-btn a-btn-sm a-btn-ghost" onClick={(e) => { e.stopPropagation(); toggle(l); }} disabled={act.busy}>{l.is_active ? 'Switch off' : 'Switch on'}</button>}
+                    {isAdmin && Number(l.is_default) !== 1 && !l.is_active && <button type="button" className="a-btn a-btn-sm a-btn-danger" onClick={(e) => { e.stopPropagation(); remove(l); }} disabled={act.busy}>Delete</button>}
                   </td>
                 </tr>
               ))}

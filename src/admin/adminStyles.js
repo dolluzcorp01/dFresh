@@ -305,6 +305,15 @@ tr.a-group th:has(.a-placeline) { height: 36px; box-sizing: border-box; } /* sam
 .a-townmapsec .a-townmap { margin: 0; }
 .a-townside .a-prow:last-child { margin-bottom: 0; }
 @media (max-width: 1199px) { .a-townmapsec { grid-template-columns: minmax(0, 1fr); } }
+/* Translations: help list, the tools card; Languages: how-to card */
+.a-helplist { margin: 4px 0 0; padding-inline-start: 18px; }
+.a-helplist li { margin: 2px 0; }
+.a-trtools .a-trmissing { margin: 0 0 10px; }
+.a-trtools .a-toolbar:last-child { margin-bottom: 0; }
+.a-howto h2 { margin: 0 0 6px; font-size: 15px; }
+.a-howto ol { margin: 0 0 8px; padding-inline-start: 20px; }
+.a-howto li { margin: 3px 0; }
+.a-howto p { margin: 0; }
 /* Excel import: before / after values wrap (long text, Tamil / Hindi keep their shaping via the cell's lang) */
 .a-difftable td { vertical-align: top; }
 .a-difftable td:nth-child(3), .a-difftable td:nth-child(4) { min-width: 160px; max-width: 440px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }

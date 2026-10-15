@@ -8,7 +8,7 @@ import { COUNTS } from '../shared/countText';
 
 export default function Translations() {
   const grid = useLoad('/ui-text');
-  const { languages } = useAdmin();
+  const { languages, reloadLanguages } = useAdmin();
   const canEdit = useCan('editor');
   const act = useAction();
   // ?lang=ta&missing=1 (dashboard "not translated yet" links) opens the grid already filtered
@@ -21,11 +21,11 @@ export default function Translations() {
   const def = grid.data ? grid.data.default : 'en';
   const cols = languages.filter((l) => !lang || l.lang_code === lang || l.lang_code === def);
 
-  const missingCount = useMemo(() => {
-    const out = {};
-    for (const l of languages) out[l.lang_code] = (grid.data ? grid.data.keys : []).filter((k) => !k.default_only && !k.values[l.lang_code]).length;
-    return out;
-  }, [grid.data, languages]);
+  // the server's count (GET /languages completeness, ui_text part): the same numbers as the Languages page
+  const missingCount = useMemo(() => Object.fromEntries(languages.map((l) => {
+    const part = l.completeness && l.completeness.parts && l.completeness.parts.ui_text;
+    return [l.lang_code, part ? part.total - part.have : 0];
+  })), [languages]);
 
   const groups = useMemo(() => {
     const keys = (grid.data ? grid.data.keys : []).filter((k) => {
@@ -42,25 +42,28 @@ export default function Translations() {
   const save = (key, code, value) => act.run(async () => {
     await api.send('PUT', `/ui-text/${encodeURIComponent(key)}/${code}`, { value });
     grid.setData((d) => ({ ...d, keys: d.keys.map((k) => (k.text_key === key ? { ...k, values: { ...k.values, [code]: value.trim() ? value : undefined } } : k)) }));
+    reloadLanguages(); // the missing counts come from the server
   });
 
   const csvRun = (dry) => act.run(async () => {
     const r = await api.upload(`/ui-text/import?dryRun=${dry ? 1 : 0}`, csvFile);
     setCsvReport(r);
-    if (!dry) { grid.reload(); setCsvFile(null); }
+    if (!dry) { grid.reload(); setCsvFile(null); reloadLanguages(); }
   }, dry ? null : 'Imported');
 
   return (
     <section>
       <h1>Translations</h1>
       <Notice>
-        Live numbers: type {COUNTS.map((c) => <code key={c}>{`{${c}}`}</code>).reduce((a, b) => [a, ', ', b])} in any text and the site
-        shows the current count in digits (products, categories, towns and languages that are switched on). Add <code>_word</code>{' '}
-        for the number as a word, e.g. <code>{'{towns_word}'}</code> shows &quot;six&quot;; the words come from <code>num_words</code>{' '}
-        (group Numbers in text) in each language. Other <code>{'{...}'}</code> names (like <code>{'{name}'}</code>) are filled by the
-        site in that one text: keep them as they are.
+        <strong>Live numbers in any text</strong>
+        <ul className="a-helplist">
+          <li>{COUNTS.map((c) => <code key={c}>{`{${c}}`}</code>).reduce((a, b) => [a, ', ', b])} show the current count, e.g. 25</li>
+          <li>Add <code>_word</code> for the number in words: <code>{'{towns_word}'}</code> shows &quot;six&quot; (words come from <code>num_words</code>, group &quot;Numbers in text&quot;)</li>
+          <li>Other names like <code>{'{name}'}</code> are filled by the site. Keep them exactly as they are, do not translate them.</li>
+        </ul>
       </Notice>
-      <p className="a-muted">Missing per language: {languages.map((l) => <span key={l.lang_code} className={missingCount[l.lang_code] ? 'a-bad' : ''}> {l.lang_code} {missingCount[l.lang_code]} </span>)}</p>
+      <div className="a-card a-trtools">
+      <p className="a-muted a-trmissing">Missing per language: {languages.map((l) => <span key={l.lang_code} className={missingCount[l.lang_code] ? 'a-bad' : ''}> {l.lang_code} {missingCount[l.lang_code]} </span>)}</p>
       <div className="a-toolbar">
         <input type="search" placeholder="Search key or text" aria-label="Search" value={q} onChange={(e) => setQ(e.target.value)} />
         <select aria-label="Language" value={lang} onChange={(e) => setLang(e.target.value)}>
@@ -68,15 +71,16 @@ export default function Translations() {
         </select>
         <label className="a-inline"><input type="checkbox" checked={missingOnly} onChange={(e) => setMissingOnly(e.target.checked)} /> Missing only</label>
         {canEdit && <button type="button" className="a-btn" onClick={() => act.run(() => api.download('/ui-text/export.xlsx', 'dFresh_Translations.xlsx'))}>Export Excel</button>}
-        {canEdit && <button type="button" className="a-btn a-btn-ghost" onClick={() => act.run(() => api.download('/ui-text/export.csv', 'translations.csv'))} title="The file to edit and import back">Export CSV (for import)</button>}
+        {canEdit && <button type="button" className="a-btn" onClick={() => act.run(() => api.download('/ui-text/export.csv', 'dFresh_Translations.csv'))} title="The file to edit and import back">Export CSV (for import)</button>}
       </div>
       {canEdit && (
         <div className="a-toolbar">
-          <input type="file" accept=".csv,text/csv" onChange={(e) => { setCsvFile(e.target.files[0] || null); setCsvReport(null); }} />
+          <input type="file" accept=".csv,text/csv" aria-label="Translations CSV file" onChange={(e) => { setCsvFile(e.target.files[0] || null); setCsvReport(null); }} />
           <button type="button" className="a-btn" disabled={!csvFile || act.busy} onClick={() => csvRun(true)}>Check CSV</button>
           {csvReport && csvReport.dryRun && !csvReport.errors.length && csvReport.changes > 0 && <button type="button" className="a-btn" disabled={act.busy} onClick={() => csvRun(false)}>Import {csvReport.changes} change(s)</button>}
         </div>
       )}
+      </div>
       {csvReport && (
         <Notice kind={csvReport.errors.length ? 'error' : 'info'}>
           {csvReport.dryRun ? 'Check' : 'Imported'}: {csvReport.changes} change(s).

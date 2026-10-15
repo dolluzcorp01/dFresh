@@ -778,7 +778,7 @@ route('get', '/ui-text/export.csv', 'editor', async (req, res) => {
   const body = csv.stringify([['key', 'group', 'description', ...langs.codes],
     ...rows.map((r) => [r.text_key, r.group_name, r.description, ...langs.codes.map((l) => r.values[l] ?? '')])]);
   await audit(null, { empId: by(req), action: 'export', entity: 'ui_text', after: { rows: rows.length, languages: langs.codes } });
-  res.set({ 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="dfresh-translations-${new Date().toISOString().slice(0, 10)}.csv"`, 'Cache-Control': 'no-store' });
+  res.set({ 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="dFresh_Translations.csv"', 'Cache-Control': 'no-store' });
   res.send(body);
 });
 
