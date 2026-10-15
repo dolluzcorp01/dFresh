@@ -88,7 +88,7 @@ export function Field({ def, value, onChange, disabled }) {
   } else if (def.type === 'textarea') {
     control = <textarea {...common} rows={def.rows || 3} value={value ?? ''} onChange={(e) => onChange(e.target.value)} />;
   } else {
-    control = <input type={def.type === 'number' ? 'number' : 'text'} step={def.step || 'any'} {...common} value={value ?? ''} onChange={(e) => onChange(e.target.value)} />;
+    control = <input type={def.type === 'number' ? 'number' : 'text'} step={def.step || 'any'} min={def.min} max={def.max} {...common} value={value ?? ''} onChange={(e) => onChange(e.target.value)} />;
   }
   return (
     <label className={`a-field${def.type === 'bool' ? ' a-check' : ''}${def.wide ? ' a-wide' : ''}`} htmlFor={id}>

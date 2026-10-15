@@ -2,10 +2,10 @@
 // driven by the definitions below (they mirror backend admin-entities.js). Banners also take desktop / mobile
 // photo uploads and drag-and-drop order; kits take their product list (tick in a list, drag to order); "Photo from
 // product" shows that product's main photo as soon as it is picked; towns show a live map preview (pin + name).
-import { useMemo, useState } from 'react';
+import { isValidElement, useMemo, useState } from 'react';
 import { api, rowId } from './adminApi';
 import { mediaUrl } from '../utils/api';
-import { KitProducts, ProductField, RepPreview } from './ProductSelect';
+import { KitProducts, ProductField, RepPreview, Thumb, productName } from './ProductSelect';
 import { Drawer, Field, Loading, TrEditor, useAction, useCan, useLoad } from './ui';
 import { LAND, MAP_H, MAP_W } from '../shared/mapShape';
 
@@ -69,16 +69,30 @@ const SECTIONS = {
     defaults: { is_active: 1 },
   },
   'size-picker': {
-    title: 'Size picker (Try it)', keys: ['position'],
+    title: 'Size picker', keys: ['size_id'], reorder: true,
+    hint: "Controls the 'Pick a size' napkin card in the For Business section. The 'Roll it out' card has no settings here.",
     fields: [
-      { name: 'position', label: 'Position', type: 'number', step: '1', required: true, keyField: true },
-      { name: 'product_id', label: 'Product', type: 'select', lookup: 'products', allowEmpty: false },
-      { name: 'size_label', label: 'Size label', required: true, help: 'e.g. 30×30' },
-      { name: 'scale', label: 'Drawing scale (0-1)', type: 'number', step: '0.01' }, { name: 'is_default', label: 'Selected first', type: 'bool' },
+      { name: 'sort_order', label: 'Position', type: 'readonly', help: 'Drag the rows in the list to change it.' },
+      { name: 'product_id', label: 'Product', type: 'select', lookup: 'products', allowEmpty: false, required: true },
+      { name: 'size_label', label: 'Size label', required: true, help: 'e.g. 30×30 (filled from the product when empty)' },
+      { name: 'scale', label: 'Drawing scale', type: 'number', step: '0.01', min: 0.1, max: 1, help: 'How big the drawing looks compared with the largest size (1 = largest). Suggested: size / largest size, e.g. 20x20 vs 40x40 = 0.5.' },
+      { name: 'is_default', label: 'Selected first', type: 'bool' },
+      { name: 'is_active', label: 'Active (shown on the site)', type: 'bool' },
     ],
-    list: (r) => [r.position, r.product_id, r.size_label, r.scale, r.is_default ? 'default' : ''],
-    head: ['Position', 'Product', 'Label', 'Scale', ''],
-    defaults: { scale: 0.5 },
+    // drawer: one row of fields, one row of checkboxes
+    rows: [['sort_order', 'product_id', 'size_label', 'scale'], ['is_default', 'is_active']],
+    title1: (r) => r.size_label || 'size',
+    list: (r, { products }) => {
+      const p = products.find((x) => x.product_id === r.product_id);
+      return [
+        r.sort_order,
+        <span className="a-prodcell">{p && <Thumb p={p} size={32} />}<code>{r.product_id}</code>{p ? productName(p) : ''}</span>,
+        r.size_label, Number(r.scale).toFixed(2),
+        r.is_default ? <span className="a-badge">Selected first</span> : '',
+      ];
+    },
+    head: ['Position', 'Product', 'Size label', 'Drawing scale', 'Selected first'],
+    defaults: { scale: 0.5, is_active: 1 },
   },
   'form-options': {
     title: 'Form options', keys: ['list_key', 'option_value'],
@@ -120,6 +134,7 @@ export default function EntityPage({ name }) {
   return (
     <section>
       <h1>{cfg.title}</h1>
+      {cfg.hint && <p className="a-muted a-pagehint">{cfg.hint}</p>}
       <div className="a-toolbar">
         {canEdit && <button type="button" className="a-btn" onClick={() => setOpen({ create: true })}>Add</button>}
         {cfg.reorder && canEdit && <span className="a-muted">Drag rows to change the order.</span>}
@@ -128,7 +143,7 @@ export default function EntityPage({ name }) {
       <Loading state={list}>
         <div className="a-scroll">
           <table className="a-table a-hover">
-            <thead><tr>{cfg.reorder && <th />}{cfg.head.map((h) => <th key={h}>{h}</th>)}<th>Active</th><th>Languages</th></tr></thead>
+            <thead><tr>{cfg.reorder && <th />}{cfg.head.map((h) => <th key={h}>{h}</th>)}<th>Active</th>{cfg.tr && <th>Languages</th>}</tr></thead>
             <tbody>
               {(list.data || []).map((r) => {
                 const id = rowId(cfg.keys, r);
@@ -137,9 +152,9 @@ export default function EntityPage({ name }) {
                     onKeyDown={(e) => e.key === 'Enter' && setOpen({ id })}
                     draggable={cfg.reorder && canEdit} onDragStart={() => setDrag(id)} onDragOver={(e) => e.preventDefault()} onDrop={() => drop(id)}>
                     {cfg.reorder && <td className="a-handle" aria-hidden="true">⠿</td>}
-                    {cfg.list(r).map((v, i) => <td key={i}>{v === null || v === undefined ? '' : String(v)}</td>)}
+                    {cfg.list(r, { products: products.data || [] }).map((v, i) => <td key={i}>{v === null || v === undefined ? '' : isValidElement(v) ? v : String(v)}</td>)}
                     <td>{r.is_active === undefined ? '' : r.is_active ? 'Yes' : 'No'}</td>
-                    <td>{r.tr ? Object.keys(r.tr).join(' ') : ''}</td>
+                    {cfg.tr && <td>{r.tr ? Object.keys(r.tr).join(' ') : ''}</td>}
                   </tr>
                 );
               })}
@@ -162,7 +177,15 @@ function Editor({ name, cfg, id, lookups, products, rows, onClose, onSaved }) {
   const [draft, setDraft] = useState(null);
   const creating = !id;
   const row = draft || (creating ? { tr: {}, ...cfg.defaults } : loaded.data);
-  const set = (k, v) => setDraft({ ...row, [k]: v });
+  const set = (k, v) => {
+    const next = { ...row, [k]: v };
+    // size picker: a picked product fills an empty size label from its own size (e.g. 20×20)
+    if (name === 'size-picker' && k === 'product_id' && !String(row.size_label || '').trim()) {
+      const size = sizeOf(products.find((p) => p.product_id === v));
+      if (size) next.size_label = size;
+    }
+    setDraft(next);
+  };
 
   const save = () => act.run(async () => {
     const saved = creating ? await api.send('POST', `/${name}`, row) : await api.send('PUT', `/${name}/${id}`, row);
@@ -182,8 +205,29 @@ function Editor({ name, cfg, id, lookups, products, rows, onClose, onSaved }) {
 
   if (!creating && !loaded.data) return <Drawer title={cfg.title} onClose={onClose}><Loading state={loaded}>{null}</Loading></Drawer>;
 
+  function renderField(f) {
+    const def = { ...f, type: f.keyField && !creating ? 'readonly' : f.type, options: f.lookup ? lookups[f.lookup] : f.options };
+    if (name === 'size-picker' && f.name === 'scale') {
+      return (
+        <div key={f.name} className="a-scalefield">
+          <Field def={def} value={row[f.name]} disabled={!canEdit} onChange={(v) => set(f.name, v)} />
+          <ScalePreview scale={row[f.name]} />
+        </div>
+      );
+    }
+    if (f.lookup !== 'products') return <Field key={f.name} def={def} value={row[f.name]} disabled={!canEdit} onChange={(v) => set(f.name, v)} />;
+    // a product: the photo picker; "Photo from product" also shows the larger photo (kits: their own products first)
+    const picker = (
+      <ProductField key={f.name} name={f.name} label={f.label} help={f.help} required={f.required} products={products} value={row[f.name]}
+        allowEmpty={f.allowEmpty !== false} disabled={!canEdit} onChange={(v) => set(f.name, v)}
+        top={cfg.links && (row.products || []).length ? { label: 'In this kit', ids: row.products } : null} />
+    );
+    if (f.name !== 'rep_product_id') return picker;
+    return <div key={f.name} className="a-repfield">{picker}<RepPreview product={products.find((p) => p.product_id === row[f.name])} /></div>;
+  }
+
   return (
-    <Drawer title={creating ? `New - ${cfg.title}` : `${cfg.title}: ${decodeURIComponent(id).replace('~', ' / ')}`} onClose={onClose}
+    <Drawer title={creating ? `New - ${cfg.title}` : `${cfg.title}: ${cfg.title1 ? cfg.title1(row) : decodeURIComponent(id).replace('~', ' / ')}`} onClose={onClose}
       footer={canEdit && (
         <>
           <button type="button" className="a-btn" onClick={save} disabled={act.busy}>{creating ? 'Create' : 'Save'}</button>
@@ -191,20 +235,12 @@ function Editor({ name, cfg, id, lookups, products, rows, onClose, onSaved }) {
         </>
       )}>
       {act.note}
-      <div className="a-grid2">
-        {cfg.fields.map((f) => {
-          const def = { ...f, type: f.keyField && !creating ? 'readonly' : f.type, options: f.lookup ? lookups[f.lookup] : f.options };
-          if (f.lookup !== 'products') return <Field key={f.name} def={def} value={row[f.name]} disabled={!canEdit} onChange={(v) => set(f.name, v)} />;
-          // a product: the photo picker; "Photo from product" also shows the larger photo (kits: their own products first)
-          const picker = (
-            <ProductField key={f.name} name={f.name} label={f.label} help={f.help} required={f.required} products={products} value={row[f.name]}
-              allowEmpty={f.allowEmpty !== false} disabled={!canEdit} onChange={(v) => set(f.name, v)}
-              top={cfg.links && (row.products || []).length ? { label: 'In this kit', ids: row.products } : null} />
-          );
-          if (f.name !== 'rep_product_id') return picker;
-          return <div key={f.name} className="a-repfield">{picker}<RepPreview product={products.find((p) => p.product_id === row[f.name])} /></div>;
-        })}
-      </div>
+      {cfg.rows ? cfg.rows.map((names, i) => (
+        <div key={names.join()} className={`a-prow ${i === 0 ? `a-prow-${names.length}` : 'a-pchecks'}`}>
+          {names.map((n) => renderField(cfg.fields.find((f) => f.name === n)))}
+        </div>
+      )) : <div className="a-grid2">{cfg.fields.map(renderField)}</div>}
+      {name === 'size-picker' && <DefaultNote row={row} rows={rows} />}
       {name === 'towns' && <TownPreview rows={rows} town={row} />}
       {cfg.tr && (
         <div className="a-dsec">
@@ -237,6 +273,35 @@ function Editor({ name, cfg, id, lookups, products, rows, onClose, onSaved }) {
       {name === 'banners' && creating && <p className="a-muted">Create the banner first, then upload both photos and switch it on.</p>}
     </Drawer>
   );
+}
+
+// Size picker: a product's size from its name or specification ("20×20", "20 x 20 cm" -> "20×20").
+function sizeOf(p) {
+  if (!p) return null;
+  const m = /(\d+)\s*[×xX]\s*(\d+)/.exec(`${p.tr?.en?.name ?? ''} ${p.specification ?? ''}`);
+  return m ? `${m[1]}×${m[2]}` : null;
+}
+
+// Size picker: the napkin drawing at this scale inside the outline of the largest size (1).
+function ScalePreview({ scale }) {
+  const n = Number(scale);
+  const ok = Number.isFinite(n) && n >= 0.1 && n <= 1;
+  return (
+    <figure className="a-scaleprev" aria-label={ok ? `Drawing at ${Math.round(n * 100)}% of the largest size` : 'Scale must be 0.1 to 1'}>
+      <span className="a-scaleprev-max" aria-hidden="true">
+        {ok && <span className="a-scaleprev-nap" style={{ width: `${n * 100}%`, height: `${n * 100}%` }} />}
+      </span>
+      <figcaption className={ok ? 'a-muted' : 'a-bad'}>{ok ? `${Math.round(n * 100)}%` : '0.1 - 1'}</figcaption>
+    </figure>
+  );
+}
+
+// Size picker: ticking "Selected first" here replaces the size that has it now (the server unticks that one).
+function DefaultNote({ row, rows }) {
+  if (!Number(row.is_default)) return null;
+  const other = rows.find((r) => Number(r.is_default) === 1 && r.size_id !== row.size_id);
+  if (!other) return null;
+  return <p className="a-replace-note">This replaces {other.size_label} as the first selected size.</p>;
 }
 
 // Towns: the site's map (same land, pins and name sizes as src/home/WhereMap.js) with the town being edited drawn from

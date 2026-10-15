@@ -45,7 +45,7 @@ const SCREENS = [
   ['categories', 'Categories', 'catalogue', 'viewer', ['/categories', ['category_key']]],
   ['products', 'Products', 'catalogue', 'viewer', null],
   ['kits', 'Business kits', 'catalogue', 'viewer', ['/kits', ['kit_key']]],
-  ['size-picker', 'Size picker (Try it)', 'catalogue', 'viewer', ['/size-picker', ['position']]],
+  ['size-picker', 'Size picker', 'catalogue', 'viewer', ['/size-picker', ['size_label']]],
   ['import-export', 'Excel import / export', 'catalogue', 'editor', null],
   ['banners', 'Banners', 'content', 'viewer', ['/banners', ['banner_key']]],
   ['translations', 'Translations', 'content', 'viewer', null],

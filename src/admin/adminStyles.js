@@ -205,6 +205,16 @@ tr.a-target td { background: #fff6d6; }
 .a-num { text-align: end; font-variant-numeric: tabular-nums; }
 .a-off td { color: var(--a-muted); }
 .a-thumb { width: 40px; height: 40px; object-fit: contain; background: #fff; border: 1px solid var(--a-line); border-radius: 6px; }
+/* Size picker: page hint, product cell, "Selected first" badge, scale field with its live napkin preview */
+.a-pagehint { margin: -6px 0 12px; max-width: 80ch; }
+.a-prodcell { display: inline-flex; align-items: center; gap: 8px; }
+.a-prodcell code { font-size: 11.5px; white-space: nowrap; }
+.a-badge { display: inline-block; padding: 2px 9px; border-radius: 999px; background: var(--a-ink); color: #fff; font-size: 11.5px; font-weight: 700; white-space: nowrap; }
+.a-scalefield { display: grid; grid-template-columns: minmax(0, 1fr) 64px; gap: 10px; align-items: start; min-width: 0; }
+.a-scaleprev { margin: 22px 0 0; display: grid; justify-items: center; gap: 2px; font-size: 11.5px; }
+.a-scaleprev-max { position: relative; display: grid; place-items: center; width: 56px; height: 56px; border: 1.5px dashed #b9b2a0; border-radius: 4px; box-sizing: border-box; }
+.a-scaleprev-nap { display: block; background: linear-gradient(135deg, #fff, #F5F0E3); box-shadow: inset 0 0 0 1px #e7dfca, 0 4px 8px -4px rgba(120, 90, 0, .35); background-image: linear-gradient(#e7dfca, #e7dfca), linear-gradient(#e7dfca, #e7dfca), linear-gradient(135deg, #fff, #F5F0E3); background-size: 1px 100%, 100% 1px, 100% 100%; background-position: 50% 0, 0 50%, 0 0; background-repeat: no-repeat; transition: width .2s ease, height .2s ease; }
+.a-replace-note { margin: 0 0 12px; padding: 8px 12px; border-radius: 8px; background: #fbf3d5; font-size: 13px; }
 /* Product pickers (ProductSelect.js): "Photo from product" + preview, the photo dropdown, a kit's product list */
 .a-thumb { flex: none; box-sizing: border-box; display: block; } .a-thumb-none { background: repeating-linear-gradient(45deg, #fff 0 4px, #f3efe3 4px 8px); }
 .a-repfield { display: flex; flex-direction: column; gap: 8px; min-width: 0; }

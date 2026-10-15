@@ -87,8 +87,12 @@ const ENTITIES = {
     tr: { table: 'form_option_translations', cols: { label: TEXT(120, { required: true }) } },
   },
   'size-picker': {
-    table: 'size_picker', keys: ['position'], order: 'b.position',
-    cols: { position: { type: 'int' }, product_id: KEY(30), size_label: TEXT(20, { required: true }), scale: { type: 'decimal' }, is_default: { type: 'bool' } },
+    // size_id: stable key (auto); sort_order: dragged (positions.js); one is_default at most (Admin_server.js)
+    table: 'size_picker', keys: ['size_id'], order: 'b.sort_order, b.size_id',
+    cols: {
+      size_id: { type: 'int', auto: true }, sort_order: POSITION, product_id: KEY(30), size_label: TEXT(20, { required: true }),
+      scale: { type: 'decimal', min: 0.1, max: 1 }, is_default: { type: 'bool' }, is_active: { type: 'bool' },
+    },
   },
 };
 
@@ -137,6 +141,9 @@ function coerce(name, def, raw) {
     case 'decimal': {
       const n = Number(s);
       if (!Number.isFinite(n)) throw new InputError(`${name}: number`);
+      if ((def.min !== undefined && n < def.min) || (def.max !== undefined && n > def.max)) {
+        throw new InputError(`${name}: a number from ${def.min} to ${def.max}`);
+      }
       return n;
     }
     case 'bool':
@@ -217,7 +224,7 @@ async function load(name, keyValues = null, q = db) {
 function baseValues(e, body, creating) {
   const out = {};
   for (const [c, def] of Object.entries(e.cols)) {
-    if (def.readOnly) continue;
+    if (def.readOnly || def.auto) continue; // auto: the database numbers it
     if (!creating && e.keys.includes(c)) continue;
     if (!creating && !(c in body)) continue;
     if (creating && !(c in body) && (def.nullable || def.type === 'bool')) {
@@ -300,10 +307,10 @@ async function create(q, name, body, empId) {
   const langs = await languages(q);
   const base = baseValues(e, body, true);
   if (e.updatedBy) base.updated_by = empId;
-  for (const [c, def] of Object.entries(e.cols)) if (def.readOnly && !(c in base)) base[c] = '';
+  for (const [c, def] of Object.entries(e.cols)) if (def.readOnly && !def.auto && !(c in base)) base[c] = '';
   const cols = Object.keys(base);
-  await q.query(`INSERT INTO ${e.table} (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`, Object.values(base));
-  const keyValues = e.keys.map((k) => base[k]);
+  const [ins] = await q.query(`INSERT INTO ${e.table} (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`, Object.values(base));
+  const keyValues = e.keys.map((k) => (e.cols[k].auto ? ins.insertId : base[k]));
   if (e.tr) {
     const rows = trValues(e, body.tr, langs);
     if (!rows[langs.def]) throw new InputError(`The ${langs.def} text is required`);

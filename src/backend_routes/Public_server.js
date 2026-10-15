@@ -166,7 +166,7 @@ async function buildBootstrap(lang, fallback, activeLanguages) {
       baseCols: ['list_key', 'option_value'], trCols: [{ col: 'label' }],
       where: 'b.is_active = 1', orderBy: 'b.list_key, b.sort_order, b.option_value',
     }),
-    db.query('SELECT position, product_id, size_label, scale, is_default FROM size_picker ORDER BY position')
+    db.query('SELECT sort_order AS position, product_id, size_label, scale, is_default FROM size_picker WHERE is_active = 1 ORDER BY sort_order, size_id')
       .then(([r]) => r),
     db.query('SELECT setting_key, setting_value FROM site_settings WHERE is_public = 1 ORDER BY setting_key')
       .then(([r]) => r),

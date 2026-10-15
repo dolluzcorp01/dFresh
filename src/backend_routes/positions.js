@@ -1,9 +1,10 @@
-// Positions (sort order 1, 2, 3 ...) for products, categories, kits and banners, and the featured order of products.
+// Positions (sort order 1, 2, 3 ...) for products, categories, kits, banners and the size picker, and the featured
+// order of products.
 // A position is a whole number from 1, unique in its list:
 //   main product:   among the main products of its category
 //   colour version: among the colour versions of its main product
 //   featured order: among the featured products (empty when not featured)
-//   category, kit, banner: in its whole list
+//   category, kit, banner, size: in its whole list
 // The admin moves rows by drag and drop (reorder = the full list in its new order); a new row, a product moved to
 // another category / main product, or a newly featured product without a number goes to the end; leaving a list
 // closes the gap. A typed position that is taken is refused with a clear message.
@@ -14,6 +15,7 @@ const LISTS = {
   categories: { table: 'categories', key: 'category_key' },
   kits: { table: 'kits', key: 'kit_key' },
   banners: { table: 'banners', key: 'banner_key' },
+  'size-picker': { table: 'size_picker', key: 'size_id' },
 };
 const has = (name) => Boolean(LISTS[name]);
 const blank = (v) => v === undefined || v === null || String(v).trim() === '';
@@ -118,7 +120,7 @@ async function reorder(q, name, ids, of = {}) {
   const { table, key } = LISTS[name];
   const s = scopeOf(name, of);
   const [rows] = await q.query(`SELECT ${key} AS k FROM ${table} WHERE ${s.where}`, s.params);
-  const have = new Set(rows.map((r) => r.k));
+  const have = new Set(rows.map((r) => String(r.k))); // ids arrive as strings (size_id is a number)
   if (ids.length !== have.size || new Set(ids).size !== ids.length || ids.some((x) => !have.has(x))) {
     throw new InputError('The order must list every row of the list exactly once (reload the page and drag again)');
   }

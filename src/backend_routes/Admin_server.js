@@ -505,6 +505,11 @@ const AUDIT_LABEL = {
   'form-options': 'form_option', 'size-picker': 'size_picker',
 };
 
+// Size picker: "Selected first" belongs to one size only; ticking it on one row unticks the others.
+async function oneSelectedFirst(q, row) {
+  if (Number(row.is_default) === 1) await q.query('UPDATE size_picker SET is_default = 0 WHERE size_id <> ? AND is_default = 1', [row.size_id]);
+}
+
 // Featured on Home: the featured products in their new order (drag and drop), 1..n.
 route('post', '/products/featured-order', 'editor', async (req) => tx(async (q) => {
   const [before] = await q.query('SELECT product_id, featured_order FROM products WHERE is_featured = 1 ORDER BY featured_order');
@@ -543,6 +548,7 @@ for (const name of Object.keys(entities.ENTITIES)) {
     await positions.prepare(q, name, req.body, null); // a new row without a position goes to the end of its list
     const keyValues = await entities.create(q, name, req.body || {}, by(req));
     const after = await entities.load(name, keyValues, q);
+    if (name === 'size-picker') await oneSelectedFirst(q, after);
     if (name === 'categories') await categorySeoTexts(q, after, by(req));
     await audit(q, { empId: by(req), action: 'create', entity: label, entityId: entities.idOf(e, after), after });
     return after;
@@ -557,6 +563,7 @@ for (const name of Object.keys(entities.ENTITIES)) {
     await entities.update(q, name, keyValues, req.body || {}, by(req));
     await positions.tidyUp(q, name, tidy);
     const after = await entities.load(name, keyValues, q);
+    if (name === 'size-picker') await oneSelectedFirst(q, after);
     await audit(q, { empId: by(req), action: 'update', entity: label, entityId: req.params.id, before, after });
     return after;
   }), { content: true });
