@@ -277,7 +277,7 @@ tr.a-target td { background: #fff6d6; }
 /* (i) tooltips next to labels (InfoTip): hints stay at most 2 lines, the detail shows on hover / focus */
 .a-info { position: relative; display: inline-grid; place-items: center; width: 15px; height: 15px; margin-inline-start: 6px; border-radius: 50%; border: 1px solid var(--a-ink2); color: var(--a-ink2); font: 700 10px/1 Georgia, serif; font-style: italic; vertical-align: 1px; cursor: help; }
 .a-info:hover, .a-info:focus-visible { background: var(--a-ink); border-color: var(--a-ink); color: #fff; outline: none; }
-.a-tip { position: fixed; z-index: 120; width: max-content; padding: 8px 10px; border-radius: 8px; background: var(--a-ink); color: #fff; font: 400 12.5px/1.45 'Open Sans', system-ui, sans-serif; font-style: normal; white-space: normal; text-align: start; box-shadow: 0 8px 24px rgba(18, 18, 20, .25); pointer-events: none; }
+.a-tip { position: fixed; z-index: 120; width: max-content; padding: 8px 10px; border-radius: 8px; background: var(--a-ink); color: #fff; font: 400 12.5px/1.45 'Open Sans', system-ui, sans-serif; font-style: normal; white-space: pre-line; text-align: start; box-shadow: 0 8px 24px rgba(18, 18, 20, .25); pointer-events: none; }
 /* missing translations: amber badge in the name cell, filter chip above lists */
 .a-trmiss { display: inline-flex; align-items: center; height: 18px; margin-inline-start: 6px; padding: 0 7px; border-radius: 999px; background: #fdf0d2; border: 1px solid #e3b44f; color: #6b4a00; font-size: 11px; font-weight: 700; line-height: 1; white-space: nowrap; vertical-align: 1px; cursor: help; }
 .a-chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--a-line); border-radius: 999px; background: #fff; font-family: inherit; font-size: 13px; font-weight: 600; line-height: 17px; padding: 9px 14px; color: var(--a-ink); cursor: pointer; }
@@ -285,10 +285,13 @@ tr.a-target td { background: #fff6d6; }
 .a-chip:focus-visible { outline: 2px solid var(--a-ink); outline-offset: 2px; }
 .a-chip b { font-weight: 700; }
 /* Form options: group header says where the list is used; "New list" link under the List field */
-/* click paths (dark, one per line) and the list key (dim) in the group header and at the top of the drawer */
-.a-places { display: flex; flex-direction: column; gap: 2px; text-transform: none; letter-spacing: 0; }
-.a-place { color: var(--a-ink); font-size: 13px; font-weight: 600; line-height: 1.4; }
-.a-placekey { font-size: 12px; font-weight: 400; font-family: ui-monospace, Consolas, monospace; }
+/* option list header / drawer hint: one line, the path dark, the list key dim, (i) with every place */
+.a-placeline { display: flex; align-items: center; gap: 10px; min-width: 0; text-transform: none; letter-spacing: 0; white-space: nowrap; }
+.a-place { color: var(--a-ink); font-size: 13px; font-weight: 600; line-height: 1.4; overflow: hidden; text-overflow: ellipsis; }
+.a-placekey { flex: none; font-size: 12px; font-weight: 400; font-family: ui-monospace, Consolas, monospace; }
+.a-placeline .a-info { flex: none; margin-inline-start: 0; }
+@media (max-width: 700px) { .a-placeline { white-space: normal; flex-wrap: wrap; gap: 4px 10px; } }
+tr.a-group th:has(.a-placeline) { height: 36px; box-sizing: border-box; } /* same height as a normal row */
 .a-placeshint { margin: 0 0 14px; padding: 10px 12px; border: 1px solid var(--a-line); border-radius: 8px; background: #fff; }
 .a-fieldplus { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .a-fieldplus .a-link { align-self: flex-start; padding: 2px 0; font-size: 12.5px; }

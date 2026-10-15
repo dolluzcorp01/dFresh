@@ -7,7 +7,7 @@ import { api, rowId } from './adminApi';
 import { mediaUrl } from '../utils/api';
 import { KitProducts, ProductField, RepPreview, Thumb, productName } from './ProductSelect';
 import useOrderDraft from './useOrderDraft';
-import { Drawer, Field, Loading, MissingBadges, TrEditor, missingTexts, useAction, useAdmin, useCan, useLoad } from './ui';
+import { Drawer, Field, InfoTip, Loading, MissingBadges, TrEditor, missingTexts, useAction, useAdmin, useCan, useLoad } from './ui';
 import { fontVar, loadFont } from '../i18n/fonts';
 import { LAND, MAP_H, MAP_W } from '../shared/mapShape';
 
@@ -528,9 +528,10 @@ function BannerPreview({ row, start, count, ui, onClose }) {
 // site each form opens (every openForm() call: header menu, sections, product cards, footer, banners). The click paths
 // are built from the live English site texts (Translations), so they follow any wording change.
 const OPTION_LISTS = {
-  business_type: { title: 'Business type', forms: ['quote', 'sample'], field: 'fl_type', extra: [['Business kits', 'Business type (pre-fills the free sample form)']] },
-  monthly_sales: { title: 'Monthly sales', forms: ['distributor'], field: 'fl_sales' },
-  yes_no: { title: 'Yes / No', forms: ['distributor'], field: 'fl_gd' },
+  // where: the short form name for the one-line header (admin wording); field: the site's field label (Translations)
+  business_type: { title: 'Business type', where: 'Quote and free sample forms', forms: ['quote', 'sample'], field: 'fl_type', extra: [['Business kits', 'Business type (pre-fills the free sample form)']] },
+  monthly_sales: { title: 'Monthly sales', where: 'Become a distributor form', forms: ['distributor'], field: 'fl_sales' },
+  yes_no: { title: 'Yes / No', where: 'Become a distributor form', forms: ['distributor'], field: 'fl_gd' },
 };
 // [form, path]: a path step is a site text key ({ t }) or a plain place name (admin only, never shown on the site)
 const FORM_OPENERS = [
@@ -544,9 +545,10 @@ const FORM_OPENERS = [
   ['quote', ['Footer', { t: 'f_work' }, { t: 'request_quote' }]], // Footer.js
   ['distributor', ['Footer', { t: 'f_work' }, { t: 'become_distributor' }]], // Footer.js
 ];
+/** { summary: "Form > Field", all: [every click path] } for a list (empty when no form uses it). */
 function optionPlaces(list, ui, banners) {
   const cfg = OPTION_LISTS[list];
-  if (!cfg) return [];
+  if (!cfg) return { summary: '', all: [] };
   const text = (k) => {
     const row = ui && (ui.keys || []).find((x) => x.text_key === k);
     return (row && (row.values[ui.default] || row.values.en)) || k;
@@ -559,13 +561,15 @@ function optionPlaces(list, ui, banners) {
       lines.push(['Home banner', `"${b.tr?.en?.headline ?? b.banner_key}"`, b.tr?.en?.cta_label ?? b.cta_target, field].join(' > '));
     }
   }
-  return [...lines, ...(cfg.extra || []).map((p) => p.join(' > '))];
+  return { summary: `${cfg.where} > ${field}`, all: [...lines, ...(cfg.extra || []).map((p) => p.join(' > '))] };
 }
+// One line: the form and field (dark), the list key (dim), and an (i) with every place it shows on the site.
 function PlacesList({ places, listKey }) {
   return (
-    <span className="a-places">
-      {places.length ? places.map((p) => <span key={p} className="a-place">{p}</span>) : <span className="a-place">Not used by any form yet</span>}
+    <span className="a-placeline">
+      <span className="a-place">{places.summary || 'Not used by any form yet'}</span>
       <span className="a-muted a-placekey">{listKey}</span>
+      {places.all.length > 0 && <InfoTip text={`Shows on the site at:\n${places.all.map((p) => `• ${p}`).join('\n')}`} />}
     </span>
   );
 }
