@@ -1,7 +1,7 @@
 // Home page, sections in spec order (docs/05_FEATURES_SPEC.md B1-B10).
-import { startTransition, useEffect, useState } from 'react';
+import { startTransition, useEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
-import { scrollToSection } from '../utils/scrollToSection';
+import { glideToSection, landOnSection } from '../utils/scrollToSection';
 import Hero from '../home/Hero';
 import BannerSlider from '../home/BannerSlider';
 import Doors from '../home/Doors';
@@ -29,15 +29,26 @@ export default function HomePage() {
     return () => cancelAnimationFrame(id);
   }, [below]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // #section links (header, menu, footer, shared URLs), once the sections exist: the section's top lands right under the
-  // sticky header and stays there while the sections above settle (utils/scrollToSection.js). A language switch keeps
-  // the scroll position. A #section link clicked while the app was still starting changes the address bar before the
-  // router listens, so the router's location has no hash: the address bar's hash is used then.
+  // #section links, once the sections exist (utils/scrollToSection.js): the hash this page was opened with (shared URL,
+  // reload, a link from another page) lands in one instant move; a link clicked here glides there. A language switch
+  // keeps the scroll position. A #section link clicked while the app was still starting changes the address bar
+  // before the router listens, so the router's location has no hash: the address bar's hash is used then.
+  const openedWith = useRef(null); // the location key the page was opened with (an effect may run twice for it)
   useEffect(() => {
     const hash = location.hash || window.location.hash;
-    if (!below || !hash || (location.state && location.state.keepScroll)) return;
+    if (!below) return undefined;
+    if (openedWith.current === null) openedWith.current = location.key;
+    const first = openedWith.current === location.key;
+    if (!hash || (location.state && location.state.keepScroll)) {
+      if (first) document.documentElement.classList.remove('hash-load');
+      return undefined;
+    }
     const el = document.getElementById(decodeURIComponent(hash.slice(1)));
-    return el ? scrollToSection(el) : undefined;
+    if (!el) {
+      document.documentElement.classList.remove('hash-load');
+      return undefined;
+    }
+    return first ? landOnSection(el) : glideToSection(el);
   }, [location.key, below]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (

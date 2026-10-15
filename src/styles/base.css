@@ -74,7 +74,50 @@ img, svg, picture { -webkit-user-drag: none; }
 }
 
 /* Home sections below the hero: the browser skips their layout and paint until they come near the viewport
-   (big main-thread saving on phones at first load). "auto" remembers each real height once it has been shown,
-   so the page does not jump; 900px is only the first estimate. #section links still land: sections above the
-   target stay skipped at their estimate while it scrolls there. */
+   (big main-thread saving on phones at first load). "auto" remembers each real height once it has been shown.
+   The reserved heights below are each section's real English height per width (measured 15 Oct 2026 at 1440,
+   1024, 768 and 390; Tamil runs up to ~15% taller), so the page barely moves when a section first renders.
+   A #section link renders the sections up to its target first (.cv-on, utils/scrollToSection.js) and a #hash
+   page load renders them all (html.hash-load, set in index.js), so the target never moves during the scroll. */
 #main > .sec { content-visibility: auto; contain-intrinsic-size: auto 900px; }
+#main > .doors { contain-intrinsic-size: auto 777px; }
+#main > #range { contain-intrinsic-size: auto 900px; }
+#main > #featured { contain-intrinsic-size: auto 1078px; }
+#main > #play { contain-intrinsic-size: auto 706px; }
+#main > #business { contain-intrinsic-size: auto 890px; }
+#main > #where { contain-intrinsic-size: auto 705px; }
+#main > #about { contain-intrinsic-size: auto 913px; }
+#main > #contact { contain-intrinsic-size: auto 900px; }
+@media (max-width: 1024px) {
+  #main > .doors { contain-intrinsic-size: auto 681px; }
+  #main > #range { contain-intrinsic-size: auto 802px; }
+  #main > #featured { contain-intrinsic-size: auto 1000px; }
+  #main > #play { contain-intrinsic-size: auto 624px; }
+  #main > #business { contain-intrinsic-size: auto 812px; }
+  #main > #where { contain-intrinsic-size: auto 594px; }
+  #main > #about { contain-intrinsic-size: auto 817px; }
+  #main > #contact { contain-intrinsic-size: auto 816px; }
+}
+@media (max-width: 820px) {
+  #main > .doors { contain-intrinsic-size: auto 617px; }
+  #main > #range { contain-intrinsic-size: auto 650px; }
+  #main > #featured { contain-intrinsic-size: auto 938px; }
+  #main > #play { contain-intrinsic-size: auto 937px; }
+  #main > #business { contain-intrinsic-size: auto 1008px; }
+  #main > #where { contain-intrinsic-size: auto 873px; }
+  #main > #about { contain-intrinsic-size: auto 762px; }
+  #main > #contact { contain-intrinsic-size: auto 815px; }
+}
+@media (max-width: 560px) {
+  #main > .doors { contain-intrinsic-size: auto 912px; }
+  #main > #range { contain-intrinsic-size: auto 649px; }
+  #main > #featured { contain-intrinsic-size: auto 964px; }
+  #main > #play { contain-intrinsic-size: auto 1112px; }
+  #main > #business { contain-intrinsic-size: auto 1155px; }
+  #main > #where { contain-intrinsic-size: auto 765px; }
+  #main > #about { contain-intrinsic-size: auto 1421px; }
+  #main > #contact { contain-intrinsic-size: auto 1304px; }
+}
+#main > .sec.cv-on, html.hash-load #main > .sec { content-visibility: visible; }
+/* until a #hash page load has landed: no smooth scrolling (the browser's own jump to the hash must not glide) */
+html.hash-load { scroll-behavior: auto; }

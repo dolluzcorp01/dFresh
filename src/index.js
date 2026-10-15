@@ -9,6 +9,14 @@ import reportWebVitals from './reportWebVitals';
 
 prefetchContent(window.location.pathname);
 
+// A #section in the URL on load (shared link, reload): the browser must not restore an old scroll position or glide
+// on its own; every home section renders at its real height at once; HomePage lands on the section in one move
+// (utils/scrollToSection.js), then smooth scrolling comes back.
+if (window.location.hash) {
+  if ('scrollRestoration' in window.history) window.history.scrollRestoration = 'manual';
+  document.documentElement.classList.add('hash-load');
+}
+
 // The server sends public pages already rendered (src/ssr.js): hydrate that HTML instead of painting again.
 // Hydration waits until the browser has painted the server HTML (the frame after this one; a timer as well in
 // case a hidden tab never paints), so the first screen never waits for it. Clicks in between are replayed by
