@@ -5,6 +5,7 @@
 // - Every write records audit_log (before / after) in the same transaction as the change.
 // - opts.content: a successful write busts the public content cache, so the site shows it on the next request.
 // - DB constraint errors become 400 / 409 with a plain message; nothing else leaks.
+const crypto = require('crypto');
 const fs = require('fs');
 const express = require('express');
 const multer = require('multer');
@@ -383,17 +384,23 @@ route('get', '/products/export.xlsx', 'editor', async (req, res) => {
 route('post', '/products/import', 'admin', async (req) => {
   if (!req.file) throw new InputError('Choose the .xlsx file');
   const dryRun = req.query.dryRun !== '0';
-  const result = await excel.diffWorkbook(db, req.file.buffer);
-  const { plan, ...report } = result;
-  if (dryRun) return { dryRun: true, ...report };
-  if (!result.ok) throw new InputError(`Fix the ${result.errors.length} error(s) first (run the dry run)`);
-  const changes = await tx(async (q) => {
+  // The dry run hands back the file's fingerprint; Apply must send it and the same file: a changed file needs a new
+  // dry run. Apply checks everything again on the live data, inside its transaction.
+  const fileHash = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
+  if (dryRun) {
+    const { plan, ...report } = await excel.diffWorkbook(db, req.file.buffer);
+    return { dryRun: true, fileHash, ...report };
+  }
+  if (req.query.hash !== fileHash) throw new InputError('This file is not the one that passed the dry run (or it changed since). Run the dry run again.');
+  const { report, changes } = await tx(async (q) => {
+    const { plan, ...rep } = await excel.diffWorkbook(q, req.file.buffer);
+    if (!rep.ok) throw new InputError(`Fix the ${rep.errors.length} error(s) first (run the dry run again): ${rep.errors.slice(0, 3).join(' | ')}`);
     const out = await excel.applyPlan(q, plan, by(req));
     for (const c of out) await audit(q, { empId: by(req), action: 'import', entity: c.entity, entityId: c.id, before: c.before, after: c.after });
-    return out;
+    return { report: rep, changes: out };
   });
   contentCache.bust();
-  return { dryRun: false, applied: changes.length, ...report };
+  return { dryRun: false, applied: changes.length, fileHash, ...report };
 }, { before: [upload(5)] });
 
 route('post', '/products/:id/images', 'editor', async (req) => {

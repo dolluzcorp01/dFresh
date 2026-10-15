@@ -205,6 +205,9 @@ tr.a-target td { background: #fff6d6; }
 .a-num { text-align: end; font-variant-numeric: tabular-nums; }
 .a-off td { color: var(--a-muted); }
 .a-thumb { width: 40px; height: 40px; object-fit: contain; background: #fff; border: 1px solid var(--a-line); border-radius: 6px; }
+/* Excel import: before / after values wrap (long text, Tamil / Hindi keep their shaping via the cell's lang) */
+.a-difftable td { vertical-align: top; }
+.a-difftable td:nth-child(3), .a-difftable td:nth-child(4) { min-width: 160px; max-width: 440px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }
 /* Size picker: page hint, product cell, "Selected first" badge, scale field with its live napkin preview */
 .a-pagehint { margin: -6px 0 12px; max-width: 80ch; }
 .a-prodcell { display: inline-flex; align-items: center; gap: 8px; }

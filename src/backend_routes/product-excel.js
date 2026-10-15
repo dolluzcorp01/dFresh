@@ -13,7 +13,10 @@
 //   never written; a difference there is reported, not applied. Images are managed in the admin.
 // - Categories sheet: Order and Category_XX names are applied. UI_Text is not imported here (use the
 //   Translations CSV); unknown sheets and columns are reported.
-// - Any row error blocks the apply; the dry-run lists every error.
+// - Any row error blocks the apply; the dry-run lists every error. A row with an error is never listed as a change.
+// - Checked on what the sheet would leave behind (validateRows): Product_ID format, Category_key exists, Variant_of
+//   (an existing or same-file main product, not itself, no chains, same category), Swatch_hex on a colour version and
+//   on its main product. Apply runs the same checks again (it re-reads the file inside its transaction).
 const ExcelJS = require('exceljs');
 const entities = require('./admin-entities');
 const theme = require('./excel-theme');
@@ -237,6 +240,43 @@ const featured = (v) => {
   throw new entities.InputError('Featured: Yes or No');
 };
 
+const ID_FORMAT = /^DZIND-DF\d{3}(-[A-Z]{3})?$/;
+const yesNo = (v) => (v === null || v === undefined ? v : Number(v) ? 'Yes' : 'No');
+
+/**
+ * Cross-row checks on the final state (DB + sheet). sheetIds: Product_IDs of the sheet rows in order, with their row
+ * numbers. Returns { errors, bad } (bad = product IDs whose row has an error).
+ */
+function validateRows(final, sheetIds, cats) {
+  const errors = [];
+  const bad = new Set();
+  const catKeys = cats.map((c) => c.category_key);
+  const fail = (id, row, msg) => { errors.push(`Products row ${row} (${id}): ${msg}`); bad.add(id); };
+  for (const [id, row] of sheetIds) {
+    const p = final.get(id);
+    if (!p) continue;
+    if (!ID_FORMAT.test(id)) fail(id, row, 'Product_ID must look like DZIND-DF001 (a colour version: DZIND-DF008-BLK).');
+    if (p.category_key && !catKeys.includes(p.category_key)) {
+      fail(id, row, `Category_key '${p.category_key}' does not exist. Use one of: ${catKeys.join(', ')}.`);
+    }
+    if (p.variant_of) {
+      const main = final.get(p.variant_of);
+      let linkOk = false;
+      if (p.variant_of === id) fail(id, row, `Variant_of '${p.variant_of}' is this product itself. Leave it empty for a main product.`);
+      else if (!main) fail(id, row, `Variant_of '${p.variant_of}' is not a product.`);
+      else if (main.variant_of) fail(id, row, `Variant_of '${p.variant_of}' is a colour version itself (of ${main.variant_of}). Point to the main product ${main.variant_of}.`);
+      else if (main.category_key !== p.category_key) fail(id, row, `a colour version must be in the same category as its main product: ${p.variant_of} is in '${main.category_key}', this row in '${p.category_key}'.`);
+      else if ([...final.values()].some((x) => x.variant_of === id)) fail(id, row, `it has colour versions of its own, so it cannot be a colour version (Variant_of '${p.variant_of}'). No chains.`);
+      else linkOk = true;
+      // a missing swatch is only worth saying once the link itself is right
+      if (linkOk && !p.swatch_hex) fail(id, row, 'Swatch_hex is required for a colour version (e.g. #7A1F2B).');
+    }
+    const versions = [...final.values()].filter((x) => x.variant_of === id).map((x) => x.id);
+    if (!p.variant_of && versions.length && !p.swatch_hex) fail(id, row, `Swatch_hex is required: it has colour versions (${versions.join(', ')}).`);
+  }
+  return { errors, bad };
+}
+
 const same = (a, b) => {
   if (a === null || a === undefined || b === null || b === undefined) return (a ?? null) === (b ?? null);
   if (typeof a === 'number' || typeof b === 'number') return Number(a) === Number(b);
@@ -293,7 +333,9 @@ async function diffWorkbook(q, buffer) {
           if (c.col === 'product_id') continue;
           const v = c.col === 'is_featured' ? featured(raw) : entities.coerce(h, pdef.cols[c.col], norm(raw));
           base[c.col] = v;
-          if (!before || !same(before[c.col], v)) diffs.push({ field: h, before: before ? before[c.col] : null, after: v });
+          // shown to people: Featured as Yes / No
+          const show = c.col === 'is_featured' ? yesNo : (x) => x;
+          if (!before || !same(before[c.col], v)) diffs.push({ field: h, before: before ? show(before[c.col]) : null, after: show(v) });
         } else if (c.kind === 'tr') {
           const def2 = pdef.tr.cols[c.col];
           const v = norm(raw);
@@ -338,6 +380,17 @@ async function diffWorkbook(q, buffer) {
     } catch (err) {
       if (!(err instanceof entities.InputError)) throw err;
       errors.push(`${at} (${id}): ${err.message}`);
+    }
+  }
+  // Cross-row checks (validateRows) on DB + sheet; a row that fails is dropped from the plan and the change lists.
+  {
+    const state = new Map([...current.values()].map((p) => [p.product_id, { id: p.product_id, category_key: p.category_key, variant_of: p.variant_of, swatch_hex: p.swatch_hex }]));
+    for (const item of plan) state.set(item.id, { ...(state.get(item.id) || { id: item.id }), ...item.base, id: item.id });
+    const sheetIds = rows.map((r) => [norm(r.Product_ID), r._row]).filter(([id]) => id && state.has(id));
+    const checked = validateRows(state, [...new Map(sheetIds)], cats);
+    errors.push(...checked.errors);
+    for (const list of [plan, added, changed]) {
+      for (let i = list.length - 1; i >= 0; i--) if (checked.bad.has(list[i].id || list[i].product)) list.splice(i, 1);
     }
   }
   // Positions (positions.js rules), checked on what the sheet would leave behind: Sort_order is unique among the main
@@ -425,6 +478,10 @@ async function diffWorkbook(q, buffer) {
   for (const [n, ks] of usedOrder) if (ks.length > 1) errors.push(`Categories: Order ${n} is used ${ks.length} times (${ks.join(', ')}). Use 1, 2, 3 ... once each.`);
   const unknownSheets = wb.worksheets.map((s) => s.name).filter((n) => !['Read_Me', 'Products', 'Categories', 'UI_Text'].includes(n));
   const notes = [...positionNotes, ...(wb.getWorksheet('UI_Text') ? ['UI_Text sheet is not imported here: use Translations (CSV) for UI text.'] : [])];
+
+  // in sheet order: "Products row 6" before "Products row 7"; other messages keep their place after them
+  const rowNo = (e) => { const m = /^Products row (\d+)/.exec(e); return m ? Number(m[1]) : Infinity; };
+  errors.sort((a, b) => rowNo(a) - rowNo(b));
 
   return {
     ok: errors.length === 0,
