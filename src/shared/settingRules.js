@@ -3,6 +3,8 @@
 // (e.g. "+91 93302 59330"), error a plain sentence (null = fine). Empty is always allowed here; settings without a
 // rule are saved as typed. whatsapp_number is never typed: it follows whatsapp_display (wa.me needs digits only).
 // CommonJS: required by the server, imported by the admin.
+const { parseFocus, formatFocus } = require('./photoFocus');
+
 const EMAIL = /^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]{2,}$/;
 
 // "+91 93302 59330", "+919330259330", "+91-93302-59330" -> "+91 93302 59330"; anything else -> null
@@ -23,6 +25,10 @@ const RULES = {
   ga4_measurement_id: {
     tidy: (v) => (/^G-[A-Z0-9]{4,15}$/i.test(v) ? v.toUpperCase() : null),
     message: 'Use the GA4 Measurement ID, like G-XXXXXXXXXX, or leave it empty.',
+  },
+  about_image_focus: {
+    tidy: (v) => { const f = parseFocus(v); return f ? formatFocus(f) : null; },
+    message: 'A point like 70% 50% (across, down; 0 to 100).',
   },
   gsheet_spreadsheet_id: {
     // the ID, or the whole sheet link (the ID is taken out of it)

@@ -12,6 +12,7 @@ import { API_BASE, mediaUrl } from '../utils/api';
 import { InfoCard, Loading, fmtDate, useAction, useConfirm, useLeaveGuard, useLoad } from './ui';
 import { ProductSelect } from './ProductSelect';
 import { DERIVED, checkSetting, whatsappNumber } from '../shared/settingRules';
+import { ABOUT, DEFAULT_FOCUS, formatFocus, parseFocus, visibleWindow } from '../shared/photoFocus';
 
 const HTTPS = /^https:\/\/[^\s"'<>]+$/;
 const BUILTIN = `${API_BASE}/api/dfresh/admin/mail-logo/builtin.png`;
@@ -64,7 +65,7 @@ export default function Settings() {
 
   const rows = list.data || [];
   const byKey = new Map(rows.map((r) => [r.setting_key, r]));
-  const listed = new Set(SECTIONS.flatMap(([, keys]) => keys));
+  const listed = new Set([...SECTIONS.flatMap(([, keys]) => keys), ...Object.values(FOCUS_OF)]); // focus rows live in their photo's row
   const sections = [...SECTIONS.map(([title, keys]) => [title, keys.map((k) => byKey.get(k)).filter(Boolean)]),
     ['Other', rows.filter((r) => !listed.has(r.setting_key))]].filter(([, items]) => items.length);
   const valueOf = (key) => (key in pending ? pending[key] : ((byKey.get(key) || {}).setting_value || ''));
@@ -90,6 +91,11 @@ export default function Settings() {
                 <tr className="a-group"><th colSpan={4}>{title}</th></tr>
                 {items.map((s) => (
                   <Row key={s.setting_key} s={s} act={act} cards={cards} onSaved={list.reload}
+                    focus={FOCUS_OF[s.setting_key] && byKey.get(FOCUS_OF[s.setting_key]) ? {
+                      value: valueOf(FOCUS_OF[s.setting_key]), pending: FOCUS_OF[s.setting_key] in pending,
+                      onChange: (v) => setValue(byKey.get(FOCUS_OF[s.setting_key]), v),
+                      onSave: () => save(byKey.get(FOCUS_OF[s.setting_key])), onCancel: () => drop(FOCUS_OF[s.setting_key]),
+                    } : null}
                     value={valueOf(s.setting_key)} pending={s.setting_key in pending}
                     derivedFrom={DERIVED[s.setting_key] ? valueOf(DERIVED[s.setting_key]) : null}
                     onChange={(v) => setValue(s, v)} onSave={() => save(s)} onCancel={() => drop(s.setting_key)} />
@@ -103,13 +109,13 @@ export default function Settings() {
   );
 }
 
-function Row({ s, act, cards, onSaved, value: v, pending, derivedFrom, onChange: setV, onSave, onCancel }) {
+function Row({ s, act, cards, onSaved, value: v, pending, derivedFrom, onChange: setV, onSave, onCancel, focus }) {
   const picture = PICTURES[s.setting_key];
   const derived = DERIVED[s.setting_key];
   const { error } = checkSetting(s.setting_key, v);
   let control;
   if (picture) {
-    control = <Picture s={s} cfg={picture} act={act} onSaved={onSaved} />;
+    control = <Picture s={s} cfg={picture} act={act} onSaved={onSaved} focus={focus} />;
   } else if (derived) {
     // computed from the WhatsApp display number (live while that one is being edited)
     const next = whatsappNumber(derivedFrom);
@@ -153,6 +159,42 @@ function Row({ s, act, cards, onSaved, value: v, pending, derivedFrom, onChange:
         )}
       </td>
     </tr>
+  );
+}
+
+// Photos with a focus point (the setting that holds it).
+const FOCUS_OF = { about_image: 'about_image_focus' };
+
+function FocusPreview({ src, alt, focus, act }) {
+  const f = parseFocus(focus.value) || DEFAULT_FOCUS;
+  const win = visibleWindow(f, ABOUT.imgAspect, ABOUT.boxAspect);
+  const { error } = checkSetting('about_image_focus', focus.value);
+  const pick = (e) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    focus.onChange(formatFocus({ x: ((e.clientX - r.left) / r.width) * 100, y: ((e.clientY - r.top) / r.height) * 100 }));
+  };
+  const nudge = (e) => { // keyboard: arrows move the point by 2 %
+    const d = { ArrowLeft: [-2, 0], ArrowRight: [2, 0], ArrowUp: [0, -2], ArrowDown: [0, 2] }[e.key];
+    if (!d) return;
+    e.preventDefault();
+    focus.onChange(formatFocus({ x: Math.min(100, Math.max(0, f.x + d[0])), y: Math.min(100, Math.max(0, f.y + d[1])) }));
+  };
+  return (
+    <div className="a-focusbox">
+      <div className="a-focus" role="button" tabIndex={0} aria-label={`Focus point ${Math.round(f.x)}% across, ${Math.round(f.y)}% down. Click the photo or use the arrow keys.`}
+        onClick={pick} onKeyDown={nudge}>
+        <img src={src} alt={alt} draggable="false" />
+        <span className="a-focus-win" style={{ left: `${win.left}%`, top: `${win.top}%`, width: `${win.width}%`, height: `${win.height}%` }} aria-hidden="true" />
+        <span className="a-focus-dot" style={{ left: `${f.x}%`, top: `${f.y}%` }} aria-hidden="true" />
+      </div>
+      <small className="a-muted">Focus {Math.round(f.x)}% / {Math.round(f.y)}%: click where the products are. The frame is what the site&apos;s About box shows.</small>
+      {focus.pending && (
+        <span className="a-pending-btns">
+          <button type="button" className="a-btn a-btn-sm" onClick={focus.onSave} disabled={act.busy || Boolean(error)}>Save focus</button>
+          <button type="button" className="a-btn a-btn-sm a-btn-ghost" onClick={focus.onCancel} disabled={act.busy}>Cancel</button>
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -215,8 +257,9 @@ function SheetCheck({ value }) {
   );
 }
 
-// Preview of the saved picture (or what the site shows without one), Upload, Remove.
-function Picture({ s, cfg, act, onSaved }) {
+// Preview of the saved picture (or what the site shows without one), Upload, Remove. With `focus` (about_image): click
+// the preview where the subject is; a dot marks the point and a frame shows the part the site's 5:4 box will show.
+function Picture({ s, cfg, act, onSaved, focus }) {
   const value = s.setting_value || '';
   const src = value ? `/media/${value}` : cfg.empty;
   const upload = (file) => act.run(async () => {
@@ -231,9 +274,10 @@ function Picture({ s, cfg, act, onSaved }) {
   };
   return (
     <div className="a-picture">
-      {src
-        ? <img src={mediaUrl(src)} alt={`${s.setting_key} preview`} width={cfg.width} height={cfg.height} />
-        : <span className="a-picture-none">No photo</span>}
+      {src && focus ? <FocusPreview src={mediaUrl(src)} alt={`${s.setting_key} preview`} focus={focus} act={act} />
+        : src
+          ? <img src={mediaUrl(src)} alt={`${s.setting_key} preview`} width={cfg.width} height={cfg.height} />
+          : <span className="a-picture-none">No photo</span>}
       <small className="a-muted">{value ? <code>{value}</code> : cfg.emptyText}</small>
       <span className="a-row">
         <label className="a-btn a-btn-sm a-btn-ghost a-file">{act.busy ? 'Uploading...' : cfg.button}

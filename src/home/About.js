@@ -3,6 +3,7 @@
 // path under /media), independent of the "about" banner, so the banner can be switched off without losing the photo.
 // Empty = no photo.
 import { useI18n } from '../i18n/useT';
+import { ABOUT, DEFAULT_FOCUS, objectPosition, parseFocus } from '../shared/photoFocus';
 import Kicker from '../components/Kicker';
 import Reveal from '../components/Reveal';
 import { mediaUrl } from '../utils/api';
@@ -26,6 +27,8 @@ const POINTS =[['ab1', '\u{1F33F}'], ['ab2', '\u{1F4E6}'], ['ab3', '✔']]; // d
 export default function About() {
   const { t, data } = useI18n();
   const photo = mediaPath(data.settings.about_image);
+  // Settings about_image_focus: the subject stays in the middle of the cropped 5:4 box (default 70% 50%)
+  const position = objectPosition(parseFocus(data.settings.about_image_focus) || DEFAULT_FOCUS, ABOUT.imgAspect, ABOUT.boxAspect);
 
   return (
     <section className="sec about" id="about" aria-labelledby="about-h">
@@ -39,7 +42,7 @@ export default function About() {
           <Reveal className="pic">
             {photo && (
               <img src={mediaUrl(photo)} srcSet={aboutSrcSet(photo)} sizes="(max-width: 760px) 92vw, 50vw" alt={t('ab_alt')}
-                width="1920" height="800" loading="lazy" decoding="async" draggable="false" />
+                width="1920" height="800" loading="lazy" decoding="async" draggable="false" style={{ objectPosition: position }} />
             )}
           </Reveal>
         </div>

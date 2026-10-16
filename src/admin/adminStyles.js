@@ -364,6 +364,13 @@ td.a-pending { background: #fff8e1; box-shadow: inset 3px 0 0 #e3b44f; }
 .a-howto-toggle summary:focus-visible { outline: 2px solid var(--a-ink); outline-offset: 2px; }
 .a-howto-toggle ol { margin: 6px 0 4px; padding-inline-start: 20px; line-height: 1.5; }
 .a-howto-toggle p { margin: 0; }
+/* Settings: focus point on the About photo preview (dot + the part the site shows) */
+.a-focusbox { display: flex; flex-direction: column; gap: 6px; max-width: 420px; }
+.a-focus { position: relative; display: block; width: 100%; aspect-ratio: 1920 / 800; overflow: hidden; border-radius: 8px; border: 1px solid var(--a-line); cursor: crosshair; }
+.a-focus:focus-visible { outline: 2px solid var(--a-ink); outline-offset: 2px; }
+.a-focus img { display: block; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+.a-focus-win { position: absolute; border: 2px solid #fff; box-shadow: 0 0 0 9999px rgba(18, 18, 20, .45); border-radius: 4px; pointer-events: none; }
+.a-focus-dot { position: absolute; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; background: var(--a-gold, #E5BF24); border: 2px solid #121214; box-shadow: 0 0 0 2px #fff; pointer-events: none; }
 /* Excel import: before / after values wrap (long text, Tamil / Hindi keep their shaping via the cell's lang) */
 .a-difftable td { vertical-align: top; }
 .a-difftable td:nth-child(3), .a-difftable td:nth-child(4) { min-width: 160px; max-width: 440px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }

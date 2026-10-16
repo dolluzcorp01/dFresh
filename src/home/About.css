@@ -1,7 +1,7 @@
 /* About (preview: .about) */
 .about .ab { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: clamp(28px, 4vw, 56px); align-items: center; }
 .about .pic { border-radius: var(--r); overflow: hidden; aspect-ratio: 5 / 4; background: var(--beige); box-shadow: 0 30px 60px -40px rgba(80, 60, 10, .55); }
-.about .pic img { width: 100%; height: 100%; object-fit: cover; object-position: 74% 62%; display: block; transform: scale(1.02); transition: transform 1.4s var(--ease); pointer-events: none; }
+.about .pic img { width: 100%; height: 100%; object-fit: cover; object-position: 92% 50%; /* fallback; About.js sets it from Settings about_image_focus */ display: block; transform: scale(1.02); transition: transform 1.4s var(--ease); pointer-events: none; }
 .about .pic:hover img { transform: scale(1.06); }
 .about .txt h2 { font-size: clamp(32px, 4.2vw, 52px); font-weight: 700; letter-spacing: -.02em; margin-block-start: 14px; }
 :root[data-script="long"] .about .txt h2 { font-size: clamp(26px, 3.2vw, 40px); letter-spacing: 0; line-height: 1.25; }
