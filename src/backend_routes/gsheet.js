@@ -49,6 +49,34 @@ async function spreadsheetId() {
   return ((row && row.setting_value) || '').trim();
 }
 
+/**
+ * Read only: the title and tab names of a spreadsheet (admin "Test connection"). { id, title, tabs, kind, url };
+ * kind TEST when the title says test, else LIVE. A plain InputError when it cannot be read.
+ */
+async function sheetInfo(id) {
+  const { InputError } = require('./admin-entities');
+  let res;
+  try {
+    const api = await sheets();
+    res = await Promise.race([
+      api.spreadsheets.get({ spreadsheetId: id, fields: 'properties.title,sheets.properties.title' }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 12000)),
+    ]);
+  } catch (err) {
+    const code = err && (err.code || (err.response && err.response.status));
+    if (code === 404) throw new InputError('No spreadsheet with this ID (check the link).');
+    if (code === 403) throw new InputError('The sheet is not shared with the service account: share it with that e-mail as Editor.');
+    if (err && /ENOENT|key file|private_key/i.test(String(err.message))) throw new InputError('The Google service-account key file is missing on this server.');
+    if (err && err.message === 'timeout') throw new InputError('Google did not answer in time. Try again.');
+    throw new InputError(`Could not read the sheet: ${String((err && err.message) || err).slice(0, 160)}`);
+  }
+  const title = (res.data.properties && res.data.properties.title) || '';
+  return {
+    id, title, tabs: (res.data.sheets || []).map((s) => s.properties.title),
+    kind: /(^|[^a-z])test([^a-z]|$)/i.test(title) ? 'TEST' : 'LIVE', url: `https://docs.google.com/spreadsheets/d/${id}/edit`,
+  };
+}
+
 /** Whether the worker may sync now. { ok, reason } */
 async function readiness() {
   if (process.env.GSHEET_ENABLED !== 'true') return { ok: false, reason: 'GSHEET_ENABLED is not true' };
@@ -143,4 +171,4 @@ async function appendLead(leadId) {
   return { tab: row.tab, range: (res.data && res.data.updates && res.data.updates.updatedRange) || null };
 }
 
-module.exports = { appendLead, readiness, setSheetsClient, HEADERS, TABS, leadRow, istDateTime };
+module.exports = { appendLead, readiness, sheetInfo, setSheetsClient, HEADERS, TABS, leadRow, istDateTime };

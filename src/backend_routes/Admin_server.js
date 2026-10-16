@@ -24,6 +24,8 @@ const mailer = require('./mailer');
 const logoCheck = require('./mail-logo-check');
 const fontManager = require('./font-manager');
 const outboxWorker = require('./outbox-worker');
+const gsheet = require('./gsheet');
+const settingRules = require('../shared/settingRules');
 const { STAFF_GROUP } = require('./text-groups');
 
 const router = express.Router();
@@ -1031,11 +1033,13 @@ const IMAGE_SETTINGS = { share_image: media.saveShareImage, about_image: media.s
 const PRODUCT_SETTINGS = ['door_home_product', 'door_biz_product'];
 
 route('put', '/settings/:key', 'admin', async (req) => {
-  const value = typeof req.body.value === 'string' ? req.body.value.trim() : '';
-  if (value.length > 20000) throw new InputError('Too long');
-  if (['mail_from', 'lead_email', 'public_email'].includes(req.params.key) && value && !/^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]{2,}$/.test(value)) {
-    throw new InputError('A plain e-mail address, e.g. connect@dolluzcorp.com');
-  }
+  const raw = typeof req.body.value === 'string' ? req.body.value.trim() : '';
+  if (raw.length > 20000) throw new InputError('Too long');
+  // phones, e-mails, GA4 ID, sheet ID: the same rules as the admin page (src/shared/settingRules.js), tidied
+  if (settingRules.DERIVED[req.params.key]) throw new InputError(`${req.params.key} follows ${settingRules.DERIVED[req.params.key]}: change that one instead`);
+  const checked = settingRules.checkSetting(req.params.key, raw);
+  if (checked.error) throw new InputError(checked.error);
+  const value = checked.value;
   if (IMAGE_SETTINGS[req.params.key] && value) throw new InputError('Use Upload to change this picture (or Remove to clear it)');
   if (PRODUCT_SETTINGS.includes(req.params.key)) {
     const [[p]] = await db.query('SELECT product_id FROM products WHERE product_id = ? AND variant_of IS NULL', [value]);
@@ -1052,12 +1056,32 @@ route('put', '/settings/:key', 'admin', async (req) => {
     if (!before) throw new InputError('Unknown setting', 404);
     await q.query('UPDATE site_settings SET setting_value = ?, updated_by = ? WHERE setting_key = ?', [value, by(req), before.setting_key]);
     await audit(q, { empId: by(req), action: 'update', entity: 'setting', entityId: before.setting_key, before: { value: before.setting_value }, after: { value } });
+    // settings computed from this one (the wa.me number from the WhatsApp display number), in the same transaction
+    for (const [derived, source] of Object.entries(settingRules.DERIVED)) {
+      if (source !== before.setting_key) continue;
+      const next = derived === 'whatsapp_number' ? settingRules.whatsappNumber(value) : value;
+      const [[old]] = await q.query('SELECT setting_value FROM site_settings WHERE setting_key = ?', [derived]);
+      if (old && old.setting_value !== next) {
+        await q.query('UPDATE site_settings SET setting_value = ?, updated_by = ? WHERE setting_key = ?', [next, by(req), derived]);
+        await audit(q, { empId: by(req), action: 'update', entity: 'setting', entityId: derived, before: { value: old.setting_value }, after: { value: next } });
+      }
+    }
     return { setting_key: before.setting_key, setting_value: value, before: before.setting_value };
   });
   if (saved.setting_key === 'mail_logo_url') logoCheck.record(value, logo);
   if (IMAGE_SETTINGS[saved.setting_key]) media.removeSettingImage(saved.before);
   return { setting_key: saved.setting_key, setting_value: saved.setting_value };
 }, { content: true });
+
+// Lead sheet: which spreadsheet an ID points to (read only: its title and tab names, nothing is written). For the
+// "Test connection" button; works whether or not the sync is switched on (GSHEET_ENABLED).
+route('get', '/settings/gsheet-check', 'admin', async (req) => {
+  const checked = settingRules.checkSetting('gsheet_spreadsheet_id', String(req.query.id || ''));
+  if (!checked.value) throw new InputError('No sheet ID to test');
+  if (checked.error) throw new InputError(checked.error);
+  const info = await gsheet.sheetInfo(checked.value);
+  return { ...info, syncEnabled: process.env.GSHEET_ENABLED === 'true' };
+});
 
 // Share picture / About photo: upload -> generated files under /media, the setting holds the path.
 route('post', '/settings/:key/image', 'admin', async (req) => {

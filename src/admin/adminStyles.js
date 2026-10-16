@@ -345,6 +345,18 @@ tr.a-group th:has(.a-placeline) { height: 36px; box-sizing: border-box; } /* sam
 tr.a-pending > td { background: #fff8e1; }
 td.a-pending { background: #fff8e1; box-shadow: inset 3px 0 0 #e3b44f; }
 .a-pending-btns { display: inline-flex; gap: 6px; }
+/* Settings: sections, full-width values, visibility badges, the lead-sheet check */
+.a-settings { table-layout: fixed; }
+.a-settings col.a-set-key { width: 32%; }
+.a-settings col.a-set-pub { width: 120px; }
+.a-settings col.a-set-act { width: 150px; }
+.a-set-val > input[type="text"], .a-set-val > textarea, .a-set-val .a-ps { width: 100%; box-sizing: border-box; }
+.a-set-val > small { display: block; margin-top: 4px; }
+.a-status-pub { background: #e6eef8; color: #24496f; }
+.a-status-test { background: #fdf0d2; color: #6b4a00; }
+.a-sheetcheck { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.a-sheetcheck small { overflow-wrap: anywhere; }
+@media (max-width: 900px) { .a-settings { table-layout: auto; } .a-settings col.a-set-key { width: auto; } }
 /* Excel import: before / after values wrap (long text, Tamil / Hindi keep their shaping via the cell's lang) */
 .a-difftable td { vertical-align: top; }
 .a-difftable td:nth-child(3), .a-difftable td:nth-child(4) { min-width: 160px; max-width: 440px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }

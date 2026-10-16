@@ -1,14 +1,17 @@
-// Settings (spec F 10, admin): every site_settings row with its description; the public flag is shown, not
-// editable here (a secret must never become public by a click). share_image / about_image: preview + Upload /
+// Settings (spec F 10, admin): every site_settings row with its description, in sections; the public flag is shown as
+// a badge, not editable here (a secret must never become public by a click). Typed values are pending until Save
+// (Save / Cancel on the row), checked with the API's own rules (shared/settingRules.js); whatsapp_number follows
+// whatsapp_display. The lead sheet ID gets "Open sheet" and a read-only "Test connection". share_image / about_image: preview + Upload /
 // Remove (typed values are refused by the server); door_home_product / door_biz_product: the photo product picker.
 // mail_logo_url also gets a live preview on the e-mail's ink header (the typed URL, or the built-in logo when
 // empty), the server's last check of the saved URL, and "Send test mail" (MAIL_TEST_TO locally, the signed-in
 // admin's own e-mail in production). Saving a URL is refused by the server unless it passes the check.
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from './adminApi';
 import { API_BASE, mediaUrl } from '../utils/api';
 import { InfoCard, Loading, fmtDate, useAction, useConfirm, useLeaveGuard, useLoad } from './ui';
 import { ProductSelect } from './ProductSelect';
+import { DERIVED, checkSetting, whatsappNumber } from '../shared/settingRules';
 
 const HTTPS = /^https:\/\/[^\s"'<>]+$/;
 const BUILTIN = `${API_BASE}/api/dfresh/admin/mail-logo/builtin.png`;
@@ -19,6 +22,16 @@ const PICTURES = {
   about_image: { accept: 'image/jpeg,image/png,image/webp', button: 'Upload JPG / PNG / WebP', width: 240, height: 100, empty: null, emptyText: 'Empty: the About section shows no photo.' },
 };
 const PRODUCT_PICKERS = ['door_home_product', 'door_biz_product'];
+
+// Sections, in this order; a setting not listed here shows under "Other".
+const SECTIONS = [
+  ['Company', ['company_name', 'cin', 'gstin']],
+  ['Contact', ['office_phone', 'public_email', 'whatsapp_display', 'whatsapp_number']],
+  ['Home page', ['about_image', 'door_home_product', 'door_biz_product']],
+  ['Sharing and SEO', ['share_image', 'ga4_measurement_id']],
+  ['E-mail', ['mail_logo_url', 'lead_email', 'mail_from', 'mail_from_name']],
+  ['Integrations', ['gsheet_spreadsheet_id']],
+];
 
 export default function Settings() {
   const list = useLoad('/settings');
@@ -31,15 +44,31 @@ export default function Settings() {
     const el = id && list.data ? document.getElementById(id) : null;
     if (el) { el.scrollIntoView({ block: 'center' }); el.classList.add('a-target'); }
   }, [list.data]);
-  // rows with an unsaved value: leaving the page asks first (Save is per row)
-  const [dirtyKeys, setDirtyKeys] = useState(() => new Set());
-  const markDirty = useCallback((key, on) => setDirtyKeys((d) => {
-    if (d.has(key) === on) return d;
-    const n = new Set(d);
-    if (on) n.add(key); else n.delete(key);
+  // typed values are pending (row highlighted, Save / Cancel on the row) until saved; leaving the page asks first
+  const [pending, setPending] = useState({}); // key -> typed value
+  const setValue = (s, v) => setPending((p) => {
+    const n = { ...p };
+    if (v === (s.setting_value || '')) delete n[s.setting_key]; else n[s.setting_key] = v;
     return n;
-  }), []);
-  useLeaveGuard(dirtyKeys.size > 0);
+  });
+  const drop = (key) => setPending((p) => { const n = { ...p }; delete n[key]; return n; });
+  useLeaveGuard(Object.keys(pending).length > 0);
+  const save = (s) => {
+    const { value } = checkSetting(s.setting_key, pending[s.setting_key]);
+    return act.run(async () => {
+      await api.send('PUT', `/settings/${s.setting_key}`, { value });
+      drop(s.setting_key);
+      list.reload();
+    }, `${s.setting_key} saved`);
+  };
+
+  const rows = list.data || [];
+  const byKey = new Map(rows.map((r) => [r.setting_key, r]));
+  const listed = new Set(SECTIONS.flatMap(([, keys]) => keys));
+  const sections = [...SECTIONS.map(([title, keys]) => [title, keys.map((k) => byKey.get(k)).filter(Boolean)]),
+    ['Other', rows.filter((r) => !listed.has(r.setting_key))]].filter(([, items]) => items.length);
+  const valueOf = (key) => (key in pending ? pending[key] : ((byKey.get(key) || {}).setting_value || ''));
+
   return (
     <section>
       <h1>Settings</h1>
@@ -53,9 +82,20 @@ export default function Settings() {
       {act.note}
       <Loading state={list}>
         <div className="a-scroll">
-          <table className="a-table">
-            <thead><tr><th>Setting</th><th>Value</th><th>Public</th><th /></tr></thead>
-            <tbody>{(list.data || []).map((s) => <Row key={s.setting_key} s={s} act={act} cards={cards} onSaved={list.reload} onDirty={markDirty} />)}</tbody>
+          <table className="a-table a-settings">
+            <colgroup><col className="a-set-key" /><col /><col className="a-set-pub" /><col className="a-set-act" /></colgroup>
+            <thead><tr><th>Setting</th><th>Value</th><th>Visibility</th><th /></tr></thead>
+            {sections.map(([title, items]) => (
+              <tbody key={title}>
+                <tr className="a-group"><th colSpan={4}>{title}</th></tr>
+                {items.map((s) => (
+                  <Row key={s.setting_key} s={s} act={act} cards={cards} onSaved={list.reload}
+                    value={valueOf(s.setting_key)} pending={s.setting_key in pending}
+                    derivedFrom={DERIVED[s.setting_key] ? valueOf(DERIVED[s.setting_key]) : null}
+                    onChange={(v) => setValue(s, v)} onSave={() => save(s)} onCancel={() => drop(s.setting_key)} />
+                ))}
+              </tbody>
+            ))}
           </table>
         </div>
       </Loading>
@@ -63,15 +103,22 @@ export default function Settings() {
   );
 }
 
-function Row({ s, act, cards, onSaved, onDirty }) {
-  const [v, setV] = useState(s.setting_value || '');
-  const dirty = v !== (s.setting_value || '');
-  useEffect(() => { onDirty(s.setting_key, dirty); }, [dirty]); // eslint-disable-line react-hooks/exhaustive-deps
-  const save = () => act.run(async () => { await api.send('PUT', `/settings/${s.setting_key}`, { value: v }); onSaved(); }, `${s.setting_key} saved`);
+function Row({ s, act, cards, onSaved, value: v, pending, derivedFrom, onChange: setV, onSave, onCancel }) {
   const picture = PICTURES[s.setting_key];
+  const derived = DERIVED[s.setting_key];
+  const { error } = checkSetting(s.setting_key, v);
   let control;
   if (picture) {
     control = <Picture s={s} cfg={picture} act={act} onSaved={onSaved} />;
+  } else if (derived) {
+    // computed from the WhatsApp display number (live while that one is being edited)
+    const next = whatsappNumber(derivedFrom);
+    control = (
+      <>
+        <input type="text" value={next || (s.setting_value || '')} readOnly disabled aria-label={s.setting_key} />
+        <small className="a-muted">Follows {derived}: digits only, with 91 (used for the WhatsApp links).</small>
+      </>
+    );
   } else if (PRODUCT_PICKERS.includes(s.setting_key)) {
     control = (
       <>
@@ -81,21 +128,57 @@ function Row({ s, act, cards, onSaved, onDirty }) {
       </>
     );
   } else if (v.length > 60 || v.includes('\n')) {
-    control = <textarea rows={4} value={v} onChange={(e) => setV(e.target.value)} aria-label={s.setting_key} />;
+    control = <textarea rows={3} value={v} onChange={(e) => setV(e.target.value)} aria-label={s.setting_key} aria-invalid={Boolean(error) || undefined} />;
   } else {
-    control = <input type="text" value={v} onChange={(e) => setV(e.target.value)} aria-label={s.setting_key} />;
+    control = <input type="text" value={v} onChange={(e) => setV(e.target.value)} aria-label={s.setting_key} aria-invalid={Boolean(error) || undefined} />;
   }
   return (
-    <tr id={`setting-${s.setting_key}`}>
+    <tr id={`setting-${s.setting_key}`} className={pending ? 'a-pending' : undefined}>
       <td><code>{s.setting_key}</code><br /><small className="a-muted">{s.description}</small></td>
-      <td>
-        <div>{control}</div>
-        {s.updated_by && <small className="a-muted">Changed {fmtDate(s.updated_at)} by {s.updated_by}</small>}
+      <td className="a-set-val">
+        {control}
+        {pending && error && <small className="a-bad" role="alert">{error}</small>}
+        {s.updated_by && !pending && <small className="a-muted">Changed {fmtDate(s.updated_at)} by {s.updated_by}</small>}
         {s.setting_key === 'mail_logo_url' && <MailLogo value={v} act={act} />}
+        {s.setting_key === 'gsheet_spreadsheet_id' && <SheetCheck value={v} />}
       </td>
-      <td>{Number(s.is_public) ? 'Yes (on the site)' : 'No'}</td>
-      <td>{dirty && !picture && <button type="button" className="a-btn a-btn-sm" onClick={save} disabled={act.busy}>Save</button>}</td>
+      <td><span className={`a-status ${Number(s.is_public) ? 'a-status-pub' : 'a-status-off'}`}>{Number(s.is_public) ? 'Public' : 'Server only'}</span></td>
+      <td>
+        {pending && !picture && (
+          <span className="a-pending-btns">
+            <button type="button" className="a-btn a-btn-sm" onClick={onSave} disabled={act.busy || Boolean(error)}>Save</button>
+            <button type="button" className="a-btn a-btn-sm a-btn-ghost" onClick={onCancel} disabled={act.busy}>Cancel</button>
+          </span>
+        )}
+      </td>
     </tr>
+  );
+}
+
+// The lead sheet: an "Open sheet" link and "Test connection", which only reads the sheet's title and tab names.
+function SheetCheck({ value }) {
+  const [state, setState] = useState(null); // { busy } | { info } | { error }
+  const { value: id, error } = checkSetting('gsheet_spreadsheet_id', value);
+  if (!id || error) return null;
+  const test = () => {
+    setState({ busy: true });
+    api.get(`/settings/gsheet-check?id=${encodeURIComponent(id)}`).then((info) => setState({ info }), (err) => setState({ error: err.message }));
+  };
+  const info = state && state.info && state.info.id === id ? state.info : null;
+  return (
+    <div className="a-sheetcheck">
+      <span className="a-row">
+        <a className="a-btn a-btn-sm a-btn-ghost" href={`https://docs.google.com/spreadsheets/d/${id}/edit`} target="_blank" rel="noopener noreferrer">Open sheet</a>
+        <button type="button" className="a-btn a-btn-sm a-btn-ghost" onClick={test} disabled={state && state.busy}>{state && state.busy ? 'Testing...' : 'Test connection'}</button>
+      </span>
+      {info && (
+        <small>
+          <span className={`a-status ${info.kind === 'LIVE' ? 'a-status-on' : 'a-status-test'}`}>{info.kind}</span>{' '}
+          <b>{info.title}</b> · tabs: {info.tabs.join(', ')} · sync {info.syncEnabled ? 'on' : 'off (GSHEET_ENABLED)'}
+        </small>
+      )}
+      {state && state.error && <small className="a-bad" role="alert">{state.error}</small>}
+    </div>
   );
 }
 
