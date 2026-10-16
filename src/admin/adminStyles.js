@@ -357,6 +357,13 @@ td.a-pending { background: #fff8e1; box-shadow: inset 3px 0 0 #e3b44f; }
 .a-sheetcheck { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
 .a-sheetcheck small { overflow-wrap: anywhere; }
 @media (max-width: 900px) { .a-settings { table-layout: auto; } .a-settings col.a-set-key { width: auto; } }
+/* Settings: "To be provided" marker in a hint, the collapsed how-to under mail_logo_url */
+.a-tbp { margin-inline-end: 6px; height: 18px; font-size: 11px; }
+.a-howto-toggle { margin-top: 6px; font-size: 12.5px; color: var(--a-ink2); }
+.a-howto-toggle summary { cursor: pointer; width: max-content; color: var(--a-ink2); text-decoration: underline; text-underline-offset: 2px; }
+.a-howto-toggle summary:focus-visible { outline: 2px solid var(--a-ink); outline-offset: 2px; }
+.a-howto-toggle ol { margin: 6px 0 4px; padding-inline-start: 20px; line-height: 1.5; }
+.a-howto-toggle p { margin: 0; }
 /* Excel import: before / after values wrap (long text, Tamil / Hindi keep their shaping via the cell's lang) */
 .a-difftable td { vertical-align: top; }
 .a-difftable td:nth-child(3), .a-difftable td:nth-child(4) { min-width: 160px; max-width: 440px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }

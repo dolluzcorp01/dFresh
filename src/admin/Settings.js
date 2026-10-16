@@ -134,11 +134,12 @@ function Row({ s, act, cards, onSaved, value: v, pending, derivedFrom, onChange:
   }
   return (
     <tr id={`setting-${s.setting_key}`} className={pending ? 'a-pending' : undefined}>
-      <td><code>{s.setting_key}</code><br /><small className="a-muted">{s.description}</small></td>
+      <td><code>{s.setting_key}</code><br /><Hint text={s.description} empty={!(s.setting_value || '').trim()} /></td>
       <td className="a-set-val">
         {control}
         {pending && error && <small className="a-bad" role="alert">{error}</small>}
         {s.updated_by && !pending && <small className="a-muted">Changed {fmtDate(s.updated_at)} by {s.updated_by}</small>}
+        {s.setting_key === 'mail_logo_url' && <LogoHowTo />}
         {s.setting_key === 'mail_logo_url' && <MailLogo value={v} act={act} />}
         {s.setting_key === 'gsheet_spreadsheet_id' && <SheetCheck value={v} />}
       </td>
@@ -152,6 +153,38 @@ function Row({ s, act, cards, onSaved, value: v, pending, derivedFrom, onChange:
         )}
       </td>
     </tr>
+  );
+}
+
+// A setting's hint. "TO BE PROVIDED" at the start of a description is a marker: shown (as a badge) only while the
+// saved value is empty, otherwise just the hint after it.
+const TO_BE_PROVIDED = /^TO BE PROVIDED\s*[-,:]?\s*/i;
+function Hint({ text, empty }) {
+  const marked = TO_BE_PROVIDED.test(text || '');
+  const hint = marked ? text.replace(TO_BE_PROVIDED, '') : text;
+  return (
+    <small className="a-muted">
+      {marked && empty && <span className="a-status a-status-test a-tbp">To be provided</span>}
+      {hint}
+    </small>
+  );
+}
+
+// mail_logo_url: how to get a hosted logo URL from SendGrid (collapsed until opened). Menu names checked against
+// SendGrid's own help on 16 Oct 2026 ("Design Library > Your Images", "choose images to upload", "copy the image URL").
+function LogoHowTo() {
+  return (
+    <details className="a-howto-toggle">
+      <summary>How to get this URL</summary>
+      <ol>
+        <li>Prepare the logo as a transparent PNG, 124 x 68 px.</li>
+        <li>Sign in to SendGrid (app.sendgrid.com) and open Design Library &gt; Your Images in the left menu.</li>
+        <li>Drop the PNG on the page, or click &quot;choose images to upload&quot; and pick it.</li>
+        <li>Click the uploaded image and choose &quot;copy the image URL&quot; (it starts with https://cdn.mcauto-images-production.sendgrid.net/...).</li>
+        <li>Paste it here, check the preview below, Save, then click &quot;Send test mail&quot;.</li>
+      </ol>
+      <p>The URL must start with https:// and stay public, or the logo will not show in e-mails.</p>
+    </details>
   );
 }
 
