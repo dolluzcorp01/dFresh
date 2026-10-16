@@ -54,7 +54,7 @@ nothing gets indexed (every page `noindex`, `robots.txt` disallows all). Remove 
 | `DB_USER` / `DB_PASSWORD` | the limited `dfresh_app` user | never root (database/README.md) |
 | `JWT_SECRET` | the SAME value dAdmin uses on this server | |
 | `ADMIN_APP_KEY` / `ADMIN_COOKIE_NAME` | `dFresh` / `dfresh_admin_token` | |
-| `SENDGRID_API_KEY` | production key | open item 7 |
+| `SENDGRID_API_KEY` | production key: Mail Send (full) + Sender Authentication (read only). The read access lets admin Settings check `mail_from` against SendGrid before saving; without it every change of the sender asks for a confirm | open item 7 |
 | `MAIL_ENABLED` | `true` once the sender is verified | until then mail waits in the outbox |
 | `MAIL_TEST_TO` | **absent** | must never be on the server |
 | `GSHEET_ENABLED` | `true` once the LIVE sheet is shared | until then rows wait in sync_outbox |
@@ -169,3 +169,19 @@ Update: `git pull`, `npm ci --omit=dev`, apply new `database/migrations/*` in na
 and build-ssr,
 `pm2 reload dfresh`. Rollback: previous commit + previous build folder (keep the last one as `build.prev`),
 `pm2 reload dfresh`. Migrations are additive; restore the DB backup only if one changed data.
+
+### Migration checklist (tick each one once it is applied on the live database)
+
+Apply with `mysql --default-character-set=utf8mb4 dfresh < database/migrations/<file>`, in this order, before
+`pm2 reload dfresh`. Run each file once; skip the ones already ticked.
+
+- [ ] `20261014_no_default_overrides.sql`
+- [ ] `20261014_positions.sql`
+- [ ] `20261015_banner_count.sql`
+- [ ] `20261015_size_picker.sql`
+- [ ] `20261016_about_focus.sql` - adds the `about_image_focus` setting (About photo focus point). Check:
+      `SELECT setting_value FROM site_settings WHERE setting_key = 'about_image_focus';` gives `70% 50%`
+      (or the value set in admin Settings). Without it the About photo uses the default focus and Settings has no
+      focus point to save.
+- [ ] `20261016_lg_en_text.sql`
+- [ ] `20261016_setting_hints.sql`

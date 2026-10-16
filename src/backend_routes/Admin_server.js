@@ -22,6 +22,7 @@ const { audit } = require('./audit');
 const path = require('path');
 const mailer = require('./mailer');
 const logoCheck = require('./mail-logo-check');
+const senderCheck = require('./sendgrid-sender-check');
 const fontManager = require('./font-manager');
 const outboxWorker = require('./outbox-worker');
 const gsheet = require('./gsheet');
@@ -1031,10 +1032,17 @@ route('get', '/settings', 'admin', async () => {
 // Settings holding a picture (uploaded below; typed values are refused) and settings naming a product.
 const IMAGE_SETTINGS = { share_image: media.saveShareImage, about_image: media.saveAboutImage };
 const PRODUCT_SETTINGS = ['door_home_product', 'door_biz_product'];
+// The sender of every mail (lead alerts, sign-in codes): admin only, whatever role the settings route ever gets, and
+// mail_from must be a sender SendGrid accepts (sendgrid-sender-check.js), or every mail would be refused.
+const SENDER_SETTINGS = ['mail_from', 'mail_from_name'];
+const SENDER_WARNING = 'This address is not verified in SendGrid. All e-mails (lead alerts, login codes) would stop. Verify it in SendGrid first.';
 
 route('put', '/settings/:key', 'admin', async (req) => {
   const raw = typeof req.body.value === 'string' ? req.body.value.trim() : '';
   if (raw.length > 20000) throw new InputError('Too long');
+  if (SENDER_SETTINGS.includes(req.params.key) && !(req.admin && req.admin.role === 'admin')) {
+    throw new InputError('Only an admin can change the mail sender', 403);
+  }
   // phones, e-mails, GA4 ID, sheet ID: the same rules as the admin page (src/shared/settingRules.js), tidied
   if (settingRules.DERIVED[req.params.key]) throw new InputError(`${req.params.key} follows ${settingRules.DERIVED[req.params.key]}: change that one instead`);
   const checked = settingRules.checkSetting(req.params.key, raw);
@@ -1051,11 +1059,26 @@ route('put', '/settings/:key', 'admin', async (req) => {
     logo = await logoCheck.check(value);
     if (!logo.ok) throw new InputError(`Logo URL not saved: ${logo.reason}.`);
   }
+  // mail_from: asked to SendGrid BEFORE anything is saved (read only, up to 6 s). Not verified = refused. Check could
+  // not run (no network, key without the scope) = refused with code 'sender_unchecked' until the admin confirms the
+  // same warning in the page (confirmUnverified). The outcome goes into the audit entry.
+  let sendgrid;
+  if (req.params.key === 'mail_from' && value) {
+    const sg = await senderCheck.check(value);
+    if (sg.state === 'not_verified') throw new InputError(SENDER_WARNING);
+    if (sg.state === 'verified') sendgrid = sg.how;
+    else if (req.body.confirmUnverified === true) sendgrid = `not checked (${sg.reason}); saved after the warning was confirmed`;
+    else {
+      const err = new InputError(`SendGrid could not be checked: ${sg.reason}. ${SENDER_WARNING}`, 409);
+      err.code = 'sender_unchecked';
+      throw err;
+    }
+  }
   const saved = await tx(async (q) => {
     const [[before]] = await q.query('SELECT setting_key, setting_value FROM site_settings WHERE setting_key = ?', [req.params.key]);
     if (!before) throw new InputError('Unknown setting', 404);
     await q.query('UPDATE site_settings SET setting_value = ?, updated_by = ? WHERE setting_key = ?', [value, by(req), before.setting_key]);
-    await audit(q, { empId: by(req), action: 'update', entity: 'setting', entityId: before.setting_key, before: { value: before.setting_value }, after: { value } });
+    await audit(q, { empId: by(req), action: 'update', entity: 'setting', entityId: before.setting_key, before: { value: before.setting_value }, after: sendgrid ? { value, sendgrid } : { value } });
     // settings computed from this one (the wa.me number from the WhatsApp display number), in the same transaction
     for (const [derived, source] of Object.entries(settingRules.DERIVED)) {
       if (source !== before.setting_key) continue;
@@ -1260,7 +1283,7 @@ route('get', '/audit', 'admin', async (req) => {
 // Errors from any admin route: input / upload problems and DB constraint errors get a plain message.
 router.use('/admin', (err, req, res, next) => { // eslint-disable-line no-unused-vars
   if (err instanceof InputError || err instanceof media.UploadError) {
-    return res.status(err.status).json({ success: false, message: err.message });
+    return res.status(err.status).json({ success: false, message: err.message, ...(err.code ? { code: err.code } : {}) });
   }
   if (err instanceof multer.MulterError) {
     return res.status(err.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({ success: false, message: err.code === 'LIMIT_FILE_SIZE' ? 'The file is too large' : 'Upload one file in the "file" field' });

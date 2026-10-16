@@ -54,13 +54,24 @@ export default function Settings() {
   });
   const drop = (key) => setPending((p) => { const n = { ...p }; delete n[key]; return n; });
   useLeaveGuard(Object.keys(pending).length > 0);
+  const confirm = useConfirm();
+  // mail_from: the server asks SendGrid first. When SendGrid cannot be reached it answers code 'sender_unchecked'
+  // with the warning; saving then needs a yes in the dialog (sent again with confirmUnverified).
   const save = (s) => {
     const { value } = checkSetting(s.setting_key, pending[s.setting_key]);
     return act.run(async () => {
-      await api.send('PUT', `/settings/${s.setting_key}`, { value });
+      try {
+        await api.send('PUT', `/settings/${s.setting_key}`, { value });
+      } catch (err) {
+        if (!(err.data && err.data.code === 'sender_unchecked')) throw err;
+        const yes = await confirm({ title: 'Save an unchecked sender?', message: err.message, action: 'Save anyway', danger: true });
+        if (!yes) return; // still pending, nothing saved
+        await api.send('PUT', `/settings/${s.setting_key}`, { value, confirmUnverified: true });
+      }
       drop(s.setting_key);
       list.reload();
-    }, `${s.setting_key} saved`);
+      act.setMsg({ kind: 'ok', text: `${s.setting_key} saved` });
+    });
   };
 
   const rows = list.data || [];
