@@ -23,6 +23,7 @@ const path = require('path');
 const mailer = require('./mailer');
 const logoCheck = require('./mail-logo-check');
 const senderCheck = require('./sendgrid-sender-check');
+const loginServer = require('./Admin_login_server');
 const fontManager = require('./font-manager');
 const outboxWorker = require('./outbox-worker');
 const gsheet = require('./gsheet');
@@ -1043,6 +1044,7 @@ route('put', '/settings/:key', 'admin', async (req) => {
   if (SENDER_SETTINGS.includes(req.params.key) && !(req.admin && req.admin.role === 'admin')) {
     throw new InputError('Only an admin can change the mail sender', 403);
   }
+  if (req.params.key === 'two_step_login') throw new InputError('Use the switch: turning two-step sign-in on or off has its own steps');
   // phones, e-mails, GA4 ID, sheet ID: the same rules as the admin page (src/shared/settingRules.js), tidied
   if (settingRules.DERIVED[req.params.key]) throw new InputError(`${req.params.key} follows ${settingRules.DERIVED[req.params.key]}: change that one instead`);
   const checked = settingRules.checkSetting(req.params.key, raw);
@@ -1095,6 +1097,39 @@ route('put', '/settings/:key', 'admin', async (req) => {
   if (IMAGE_SETTINGS[saved.setting_key]) media.removeSettingImage(saved.before);
   return { setting_key: saved.setting_key, setting_value: saved.setting_value };
 }, { content: true });
+
+// Two-step sign-in switch (site_settings two_step_login, read by Admin_login_server.js at every sign-in). Admin only,
+// each change in the audit log. Off: one call (the page asks first). On: /on e-mails a code to the admin making the
+// change; /on/confirm with that code switches it on. Without the code nothing is saved, so nobody is locked out by
+// a mail that never arrives.
+async function setTwoStep(req, value, how) {
+  await tx(async (q) => {
+    const [[before]] = await q.query("SELECT setting_value FROM site_settings WHERE setting_key = 'two_step_login' FOR UPDATE");
+    if (!before) throw new InputError('The two_step_login setting is missing: apply database/migrations/20261017_two_step_login.sql', 404);
+    if (before.setting_value === value) return;
+    await q.query("UPDATE site_settings SET setting_value = ?, updated_by = ? WHERE setting_key = 'two_step_login'", [value, by(req)]);
+    await audit(q, { empId: by(req), action: 'update', entity: 'setting', entityId: 'two_step_login', before: { value: before.setting_value }, after: { value, how } });
+  });
+  return { setting_key: 'two_step_login', setting_value: value };
+}
+
+route('post', '/settings/two-step-login/off', 'admin', async (req) => setTwoStep(req, 'off', 'turned off after the warning was confirmed'));
+
+route('post', '/settings/two-step-login/on', 'admin', async (req) => {
+  const sent = await loginServer.sendSwitchCode(req.admin.emp_id);
+  if (!sent.ok) throw new InputError(sent.message, 503);
+  return { sentTo: sent.sentTo, minutes: sent.minutes };
+});
+
+route('post', '/settings/two-step-login/on/confirm', 'admin', async (req) => {
+  const checked = await loginServer.checkSwitchCode(req.admin.emp_id, typeof req.body.code === 'string' ? req.body.code.trim() : '');
+  if (!checked.ok) {
+    const err = new InputError(checked.message);
+    if (checked.restart) err.code = 'code_restart';
+    throw err;
+  }
+  return setTwoStep(req, 'on', 'turned on with a code e-mailed to this admin');
+});
 
 // Lead sheet: which spreadsheet an ID points to (read only: its title and tab names, nothing is written). For the
 // "Test connection" button; works whether or not the sync is switched on (GSHEET_ENABLED).

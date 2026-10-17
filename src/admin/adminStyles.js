@@ -371,6 +371,18 @@ td.a-pending { background: #fff8e1; box-shadow: inset 3px 0 0 #e3b44f; }
 .a-focus img { display: block; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
 .a-focus-win { position: absolute; border: 2px solid #fff; box-shadow: 0 0 0 9999px rgba(18, 18, 20, .45); border-radius: 4px; pointer-events: none; }
 .a-focus-dot { position: absolute; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; background: var(--a-gold, #E5BF24); border: 2px solid #121214; box-shadow: 0 0 0 2px #fff; pointer-events: none; }
+/* Settings: two-step sign-in switch (gold fill = on; the label next to it says On / Off) and its code step */
+.a-twostep { display: flex; flex-direction: column; gap: 8px; }
+.a-switch-row { display: inline-flex; align-items: center; gap: 10px; }
+.a-switch { position: relative; width: 44px; height: 24px; flex: none; padding: 0; border-radius: 12px; border: 1px solid var(--a-ink2); background: var(--a-line); cursor: pointer; transition: background .15s; }
+.a-switch[aria-checked="true"] { background: #E5BF24; border-color: #121214; }
+.a-switch-knob { position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; border: 1px solid #121214; transition: transform .15s; }
+.a-switch[aria-checked="true"] .a-switch-knob { transform: translateX(20px); }
+.a-switch:focus-visible { outline: 2px solid var(--a-ink); outline-offset: 2px; }
+.a-switch:disabled { opacity: .55; cursor: default; }
+.a-twostep-code { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.a-twostep-code input { width: 9ch; letter-spacing: .2em; font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: reduce) { .a-switch, .a-switch-knob { transition: none; } }
 /* Excel import: before / after values wrap (long text, Tamil / Hindi keep their shaping via the cell's lang) */
 .a-difftable td { vertical-align: top; }
 .a-difftable td:nth-child(3), .a-difftable td:nth-child(4) { min-width: 160px; max-width: 440px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }

@@ -1,4 +1,6 @@
-// Two-step sign-in: dAdmin e-mail + password, then the 6-digit code from the e-mail (spec F).
+// Two-step sign-in: dAdmin e-mail + password, then the 6-digit code from the e-mail (spec F). The server decides
+// whether the code step comes (Settings two_step_login): with it off the password answer says signedIn and the
+// admin opens at once; the code step only ever opens when the server sent code data.
 // Code step: six digit boxes (type, paste or SMS/mail autofill of the whole code; auto-advance, Backspace goes
 // back, it submits itself when the sixth digit is in), "Resend code" after a 30 s countdown. When the server
 // says the code is gone (data.restart: expired, too many tries, timed out) the form goes back to step 1 with the
@@ -131,6 +133,7 @@ export default function Login({ onSignedIn }) {
     setError(null);
     try {
       const data = await api.send('POST', '/login', { email, password });
+      if (data && data.signedIn) { onSignedIn(); return; }
       setSent(data);
       setWait(data.resendAfter || 30);
       setPassword('');

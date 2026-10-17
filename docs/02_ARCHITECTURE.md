@@ -11,7 +11,7 @@ Summary of that pattern: `docs/reference/insideD-patterns.md`.
 | Styling | Plain CSS with design tokens (CSS variables) | port the preview CSS; no Bootstrap/Tailwind on the public site |
 | Backend | Node.js + Express 5 (`server.js` at repo root) | same as Inside D |
 | Database | MySQL 8, database name `dfresh` | `mysql2` pools via `config/db.js` |
-| Auth (admin only) | JWT in httpOnly cookie, identity from `dadmin.employee`, shared `JWT_SECRET` | two-step: password + e-mailed code, like Inside D |
+| Auth (admin only) | JWT in httpOnly cookie, identity from `dadmin.employee`, shared `JWT_SECRET` | two-step: password + e-mailed code, like Inside D (Settings `two_step_login`, on by default; off = password only) |
 | E-mail | SendGrid through `mailer.js` + `mail_outbox` worker | outbox pattern |
 | Lead sheet | Google Sheets API (service account) through `sync_outbox` worker | |
 | Analytics | GA4 (`gtag`) | measurement id from site_settings |

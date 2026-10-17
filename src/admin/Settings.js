@@ -32,6 +32,7 @@ const SECTIONS = [
   ['Sharing and SEO', ['share_image', 'ga4_measurement_id']],
   ['E-mail', ['mail_logo_url', 'lead_email', 'mail_from', 'mail_from_name']],
   ['Integrations', ['gsheet_spreadsheet_id']],
+  ['Security', ['two_step_login']],
 ];
 
 export default function Settings() {
@@ -127,6 +128,8 @@ function Row({ s, act, cards, onSaved, value: v, pending, derivedFrom, onChange:
   let control;
   if (picture) {
     control = <Picture s={s} cfg={picture} act={act} onSaved={onSaved} focus={focus} />;
+  } else if (s.setting_key === 'two_step_login') {
+    control = <TwoStepSwitch s={s} act={act} onSaved={onSaved} />;
   } else if (derived) {
     // computed from the WhatsApp display number (live while that one is being edited)
     const next = whatsappNumber(derivedFrom);
@@ -170,6 +173,75 @@ function Row({ s, act, cards, onSaved, value: v, pending, derivedFrom, onChange:
         )}
       </td>
     </tr>
+  );
+}
+
+// two_step_login: a switch, never a typed value. Off: asks first (danger), then saves. On: the server e-mails a code
+// to the signed-in admin and the setting only changes once that code is typed here (Turn on); Cancel or no code =
+// it stays off. The server reads the setting at the next sign-in; open sessions are not affected.
+function TwoStepSwitch({ s, act, onSaved }) {
+  const confirm = useConfirm();
+  const on = String(s.setting_value || 'on').trim().toLowerCase() !== 'off';
+  const [sent, setSent] = useState(null); // { sentTo, minutes } while a code is waiting
+  const [code, setCode] = useState('');
+  useLeaveGuard(Boolean(sent));
+
+  const turnOff = async () => {
+    const yes = await confirm({
+      title: 'Turn off two-step sign-in?',
+      message: 'Sign in will need only the password. Anyone with a password can get into leads and settings.',
+      action: 'Turn off', cancel: 'Cancel', danger: true,
+    });
+    if (!yes) return;
+    act.run(async () => {
+      await api.send('POST', '/settings/two-step-login/off');
+      onSaved();
+      act.setMsg({ kind: 'ok', text: 'Two-step sign-in is off: the next sign-in needs only the password.' });
+    });
+  };
+  const askCode = () => act.run(async () => {
+    const d = await api.send('POST', '/settings/two-step-login/on');
+    setCode('');
+    setSent(d);
+  });
+  const turnOn = (e) => {
+    e.preventDefault();
+    act.run(async () => {
+      try {
+        await api.send('POST', '/settings/two-step-login/on/confirm', { code });
+      } catch (err) {
+        setCode('');
+        if (err.data && err.data.code === 'code_restart') setSent(null);
+        throw err;
+      }
+      setSent(null);
+      onSaved();
+      act.setMsg({ kind: 'ok', text: 'Two-step sign-in is on: the next sign-in needs the e-mailed code.' });
+    });
+  };
+  const cancel = () => { setSent(null); setCode(''); };
+
+  return (
+    <div className="a-twostep">
+      <span className="a-switch-row">
+        <button type="button" role="switch" aria-checked={on} aria-label="Two-step sign-in" className="a-switch"
+          onClick={on ? turnOff : askCode} disabled={act.busy || Boolean(sent)}>
+          <span className="a-switch-knob" aria-hidden="true" />
+        </button>
+        <strong>{on ? 'On' : 'Off'}</strong>
+      </span>
+      {sent && (
+        <form className="a-twostep-code" onSubmit={turnOn}>
+          <label htmlFor="two-step-code">We e-mailed a code to {sent.sentTo} (valid {sent.minutes} minutes). Type it to turn two-step sign-in on.</label>
+          <span className="a-pending-btns">
+            <input id="two-step-code" type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={6} pattern="\d{6}"
+              value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))} autoFocus />
+            <button type="submit" className="a-btn a-btn-sm" disabled={act.busy || code.length !== 6}>Turn on</button>
+            <button type="button" className="a-btn a-btn-sm a-btn-ghost" onClick={cancel} disabled={act.busy}>Cancel</button>
+          </span>
+        </form>
+      )}
+    </div>
   );
 }
 

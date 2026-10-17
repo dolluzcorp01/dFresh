@@ -59,7 +59,7 @@ The client IP is `req.ip` with `trust proxy = loopback` (nginx on the same host 
 ## Admin (cookie `dfresh_admin_token`, role-checked)
 | Method | Path | Role |
 |---|---|---|
-| POST | `/admin/login` (email, password) -> e-mails a 6-digit code, sets the challenge cookie | - |
+| POST | `/admin/login` (email, password) -> Settings `two_step_login` on (default): e-mails a 6-digit code, sets the challenge cookie; off: `data.signedIn` + the session cookie at once, no code, no mail. 5 wrong passwords for one account in 15 min lock it for 15 min (429, also with the right password), 20 per IP likewise; failed and blocked tries go to audit_log (`entity_type` admin_login) | - |
 | POST | `/admin/login/verify` (code) -> sets the session cookie | - |
 | POST | `/admin/login/resend` (challenge cookie) -> a new code (old one stops working); 30 s apart, max 3 per 15 min; 401 with `data.restart` when the sign-in must start again | - |
 | POST | `/admin/logout` | any |
@@ -80,6 +80,7 @@ The client IP is `req.ip` with `trust proxy = loopback` (nginx on the same host 
 | CRUD | `/admin/languages` (GET includes completeness % per language) | viewer read / admin write |
 | GET/POST/DELETE | `/admin/brochures`, `/admin/brochures/:lang` (multipart pdf), `GET /admin/brochures/:lang/file` | viewer read / editor write |
 | GET / PUT | `/admin/settings`, `/admin/settings/:key` (`{value}`; is_public is not editable; `share_image` / `about_image` accept only `""` = remove; `door_home_product` / `door_biz_product` must name a product card) | admin |
+| POST | `/admin/settings/two-step-login/off` (the page asks first); `/admin/settings/two-step-login/on` e-mails a code to the signed-in admin (503 and still off when the mail fails); `/admin/settings/two-step-login/on/confirm` (`{code}`) switches it on. `PUT /admin/settings/two_step_login` is refused | admin |
 | POST | `/admin/settings/:key/image` (multipart `file`, <= 8 MB): `share_image` = JPG / PNG of 1200x630 or larger in that shape -> `share/share-<hash>.jpg` + `.webp`; `about_image` = JPG / PNG / WebP -> `about/about-<hash>.webp` (1920x800, <= 250 KB) + `about/960/`. The previous generated file is deleted | admin |
 | GET / POST / PUT | `/admin/users`, `/admin/users/:empId` (role, is_active; never your own admin access) | admin |
 | GET | `/admin/audit?entity&emp&id&action&page` | admin |

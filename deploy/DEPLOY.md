@@ -185,3 +185,5 @@ Apply with `mysql --default-character-set=utf8mb4 dfresh < database/migrations/<
       focus point to save.
 - [ ] `20261016_lg_en_text.sql`
 - [ ] `20261016_setting_hints.sql`
+- [ ] `20261017_two_step_login.sql` - adds the `two_step_login` setting (on). Without it sign-in keeps the code step
+      (a missing row means on), but Settings has no switch.
