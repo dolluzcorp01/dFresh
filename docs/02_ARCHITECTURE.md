@@ -143,7 +143,7 @@ are generated from the DB. See `src/backend_routes/seo.js`.
 Step by step, env checklist and every `<DOMAIN>` placeholder: `deploy/DEPLOY.md` (+ `deploy/nginx/dfresh.conf`,
 `deploy/ecosystem.config.js`, `deploy/backup.sh`).
 nginx -> `server.js` (serves API + React build) under pm2 as `dfresh-api` (https://dfresh.us, deploy/DEPLOY.md). React is built on the
-server (swap + NODE_OPTIONS on a small droplet) or on a dev machine if it runs out of memory. `media/` and `private/brochures/` live outside git on the server
+PC (`npm run release:pack`), never on the 1 GB droplet; the server runs node 22 at /opt/node22 (system node v18 stays). `media/` and `private/brochures/` live outside git on the server
 (upload via admin), originals backed up.
 
 Server-only settings (never on a dev machine):

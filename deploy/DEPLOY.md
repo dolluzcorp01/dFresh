@@ -1,116 +1,166 @@
 # dFresh - LIVE deployment runbook (dfresh.us)
 
 Copy-paste steps for the first live deployment, then updates, rollback and backups. Run them in order. Every
-command block says WHERE it runs: **[server]** = an SSH session on the droplet, **[PC]** = Pavithran's Windows PC
-(Git Bash or PowerShell). Lines starting with `#` are notes. `<...>` = fill in by hand, never paste a real secret
-into a chat, ticket or this file.
+command block says WHERE it runs: **[PC]** = Pavithran's Windows PC (PowerShell, in the repo folder), **[server]** =
+an SSH session on the droplet. Lines starting with `#` are notes. `<...>` = fill in by hand; never paste a real
+secret into a chat, ticket or this file. `<user>` = the Linux user that runs pm2 for the other dApps.
 
 | Fact | Value |
 |---|---|
-| Server | DigitalOcean droplet `64.227.135.222` (shared with the other dApps: nginx, pm2, certbot, MySQL) |
+| Server | DigitalOcean droplet `64.227.135.222`: 1 vCPU, 1 GB RAM, ~2.4 GB disk free, 14 other pm2 apps, nginx, certbot, MySQL |
+| Node | system node **v18.19.1 stays** (the other apps); dFresh runs on its own **`/opt/node22/bin/node`** |
 | Domain | `dfresh.us` (main) and `www.dfresh.us` (301 to the main one); DNS A records -> `64.227.135.222` |
-| App folder | `/var/www/dfresh` (NOT `/var/www/dolluzcorp.com`) |
-| Repo / branch | `github.com/dolluzcorp01/dFresh`, `main` |
-| Node process | pm2 `dfresh-api`, `127.0.0.1:4012`, ONE instance |
+| App folder | `/var/www/dfresh` (live) + `/var/www/dfresh.prev` (the release before, for rollback) |
+| Uploads | `/var/www/dfresh-upload/` (release archives from the PC, last 2 kept) |
+| Build | on the PC only (`npm run release:pack`); the server never builds and has no dev dependencies |
+| Node process | pm2 `dfresh-api`, `127.0.0.1:4012`, ONE instance, `--interpreter /opt/node22/bin/node` |
 | Database | MySQL `dfresh`, app user `dfresh_app` (least privilege), backup user `dfresh_backup` |
-| Logs | `/var/log/dfresh/` (pm2 out / error, backup) |
-| Backups | `/var/backups/dfresh/<date>/` (14 days) + a copy off the droplet |
+| Logs / backups | `/var/log/dfresh/` / `/var/backups/dfresh/<date>/` (7 days) + a copy off the droplet |
 
 Request flow: browser -> nginx 443 -> `/static`, `/media` from disk; everything else -> node `127.0.0.1:4012`,
 which answers `/api/dfresh/*`, `/admin`, `/sitemap.xml`, `/robots.txt` and every page with its SEO HTML.
-Site and API are ONE origin (`REACT_APP_API` empty). `private/` (brochures, Google key), `.env`, `build-ssr/` and
-the sources are never served.
+Site and API are ONE origin. `private/` (brochures, Google key), `.env`, `build-ssr/` and the code are never served.
+
+**Node 22 on the server, every time** (never change the system node, never `export PATH` for the whole session):
+```bash
+n22() { PATH=/opt/node22/bin:$PATH "$@"; }      # paste once per SSH session; it changes PATH for ONE command only
+n22 /opt/node22/bin/npm -v                      # npm itself also runs on node 22 (its scripts call `node`)
+```
+`/opt/node22/bin/npm` alone starts with `#!/usr/bin/env node` and would run on the system node v18, so it is
+always called through `n22`. pm2 commands are NOT run through `n22`: the pm2 daemon and the other 14 apps stay
+on the system node; only `dfresh-api` gets node 22, through `--interpreter`.
+
+## Disk use (expected)
+
+| What | Size |
+|---|---|
+| Release archive (upload, gzip) | ~7 MB each (last 2 kept in `/var/www/dfresh-upload`) |
+| Release unpacked (server code, React build, pre-rendered pages, fonts, migrations, media sources) | ~10 MB |
+| `node_modules`, production only (`npm ci --omit=dev`) | ~120-130 MB |
+| = one release folder | ~140 MB |
+| `/var/www/dfresh.prev` (rollback copy) | ~140 MB |
+| `media/` (images, script fonts, admin uploads) | ~8 MB at launch, grows with uploads |
+| `private/` (brochure PDFs, font state) | < 20 MB |
+| MySQL `dfresh` | ~10-20 MB |
+| Backups, 7 days (database + media + brochures) | ~60-100 MB |
+| **Steady total** | **~0.4 GB** (peak ~0.55 GB for a few minutes during an update) |
+
+Kept small on purpose: no dev dependencies (no react-scripts / webpack / babel / eslint / jest), no source maps,
+no npm cache left behind (`--cache` in /tmp, removed), the Sheets API package alone (not all of `googleapis`).
 
 ---
 
 ## 1. Pre-checks (change nothing yet) [server]
 
 ```bash
-ssh <user>@64.227.135.222          # the same Linux user that runs pm2 for the other dApps
+ssh <user>@64.227.135.222
+n22() { PATH=/opt/node22/bin:$PATH "$@"; }
 
-# 1.1 port 4012 must be free (no output = free)
-sudo ss -ltnp | grep -E ':4012\b'
+sudo ss -ltnp | grep -E ':4012\b'            # port 4012 free: no output
+node -v                                      # v18.19.1 (system, stays)
+/opt/node22/bin/node -v                      # v22.x (dFresh)
+n22 /opt/node22/bin/npm -v                   # 10.x
+pm2 -v; pm2 ls | head -20                    # pm2 present, the 14 apps online
+df -h / /var/lib/mysql                       # >= 1 GB free (dFresh needs ~0.55 GB at peak)
+free -m                                      # nothing builds here, so no swap is needed for dFresh
 
-# 1.2 node / npm / pm2 / git. Local dev is node v22.14.0, npm 10.9.2.
-node -v; npm -v; pm2 -v; git --version
-#   node v22.x: fine. v20.9+: works. Older: STOP - do not upgrade the global node (the other apps use it);
-#   see "Node older than 20.9" at the end of this file.
-
-# 1.3 MySQL reachable, its version (local dev: MySQL 8.0.32), and no dfresh database yet
 sudo mysql -e "SELECT VERSION(); SHOW DATABASES LIKE 'dfresh'; SHOW DATABASES LIKE 'dadmin';"
-#   expect: a version, NO dfresh row, a dadmin row
-
-# 1.4 dAdmin has what dFresh needs (sign-in reads dadmin.employee, writes dadmin.login_otp)
+#   a version (local dev: MySQL 8.0.32), NO dfresh row, a dadmin row
 sudo mysql -e "SELECT COUNT(*) AS cols_10 FROM information_schema.columns WHERE table_schema='dadmin' AND table_name='employee'
   AND column_name IN ('emp_id','emp_first_name','emp_last_name','emp_mail_id','emp_profile_img','job_position','emp_department','account_pass','active','deleted_time');"
 sudo mysql -e "SHOW TABLES IN dadmin WHERE Tables_in_dadmin IN ('login_otp','login_session_revoke','job_position_config','department_config');"
-#   expect cols_10 = 10 and 4 tables (the two *_config tables are optional: job title / department in Admin users)
+#   cols_10 = 10; 4 tables (the two *_config tables are optional: job title / department in Admin users)
 sudo mysql -e "SELECT emp_id, active, deleted_time IS NULL AS not_deleted, emp_mail_id <> '' AS has_mail FROM dadmin.employee WHERE emp_id IN ('DZIND002','DZIND148');"
-#   expect both rows: active 1, not_deleted 1, has_mail 1 (the two seeded dFresh admins)
+#   both rows: 1 / 1 / 1 (the two seeded dFresh admins)
 
-# 1.5 disk and memory
-df -h / /var/lib/mysql      # need >= 3 GB free on / (node_modules ~600 MB, build, media ~150 MB)
-free -m; swapon --show      # RAM total and swap (step 6 builds React on this server)
-
-# 1.6 nginx / certbot healthy BEFORE we touch them, nothing for dfresh.us yet, DNS points here
-sudo nginx -t && nginx -v
-ls /etc/nginx/sites-enabled/
+sudo nginx -t && nginx -v                    # healthy before we touch it
+ls /etc/nginx/sites-enabled/                 # nothing for dfresh.us yet
 certbot --version
-dig +short dfresh.us; dig +short www.dfresh.us     # both: 64.227.135.222
+dig +short dfresh.us; dig +short www.dfresh.us     # both 64.227.135.222
 ```
-Write down: node version, MySQL version, free RAM, swap. If anything above is not as expected, stop and ask.
+If anything is not as expected, stop and ask.
 
 ---
 
-## 2. Clone and install [server]
+## 2. Build and pack on the PC [PC, PowerShell]
 
-The repo is private: give the droplet a read-only deploy key (skip if the other dApps already clone this org's
-repos with a key or token that can read `dolluzcorp01/dFresh`; then use that).
-```bash
-ssh-keygen -t ed25519 -C "dfresh deploy 64.227.135.222" -f ~/.ssh/dfresh_deploy -N ""
-cat ~/.ssh/dfresh_deploy.pub
-#   GitHub -> dolluzcorp01/dFresh -> Settings -> Deploy keys -> Add deploy key, paste, "Allow write access" OFF
-cat >> ~/.ssh/config <<'EOF'
-Host github-dfresh
-  HostName github.com
-  User git
-  IdentityFile ~/.ssh/dfresh_deploy
-  IdentitiesOnly yes
-EOF
-chmod 600 ~/.ssh/config
-ssh -T git@github-dfresh            # "Hi dolluzcorp01/dFresh! You've successfully authenticated..."
+The local MySQL must be running (the build reads it: fallback texts, pre-rendered pages; on the server a page whose
+content differs from the local copy is simply rendered again on its first request).
+```powershell
+cd C:\Users\91638\Desktop\Dolluzcorp\dFresh\dfresh
+git switch main; git pull
+git status                      # "nothing to commit, working tree clean" (the packer refuses otherwise)
+npm ci                          # only when package-lock.json changed since the last time
+npm run release:pack
 ```
-Folders, clone, install:
-```bash
-sudo mkdir -p /var/www/dfresh /var/log/dfresh /var/backups/dfresh /var/www/letsencrypt
-sudo chown -R $USER: /var/www/dfresh /var/log/dfresh /var/backups/dfresh
-git clone -b main git@github-dfresh:dolluzcorp01/dFresh.git /var/www/dfresh
-cd /var/www/dfresh
-git log --oneline -1               # the commit going live: note it
-npm ci                             # all packages (the build needs react-scripts); ~3-5 min
-mkdir -p private/brochures private/fonts media
-chmod 700 private
-npm run media:sync                 # product / banner / logo images from assets/ (in git) -> media/, all sizes
+What `release:pack` does (`scripts/release-pack.js`):
+- production build with `REACT_APP_API` empty (same origin) and `GENERATE_SOURCEMAP=false`, then the pre-render;
+- refuses if a source map, a `localhost` URL or the pre-rendered pages are wrong or missing;
+- packs from git (`git archive`: Linux line endings, nothing untracked, never `.env`, `private/`, `media/`,
+  `node_modules`, React sources, docs or tests) + `build/` + `build-ssr/` + `RELEASE.txt` (commit, time);
+- writes `release\dfresh-<date>-<time UTC>-<commit>.tar.gz` and `.sha256`, and prints the size and the scp line.
+
+Expected end of the output:
 ```
-The React build comes in step 6: it reads the database (texts for the error screen, pre-rendered pages).
+release   release\dfresh-YYYYMMDD-HHMM-xxxxxxxx.tar.gz
+sha256    <64 hex>
+size      6.6 MB packed, 9.7 MB unpacked, 238 files, 30 pre-rendered pages
+```
+Contents: `server.js`, `package.json`, `package-lock.json`, `.env.example`, `config/`, `src/backend_routes/`,
+`src/shared/`, `fonts/`, `database/` (schema, seed, migrations), `deploy/`, `maintenance/`, `assets/` (image
+sources for the first install), `scripts/media-*.js`, `build/`, `build-ssr/`, `RELEASE.txt`.
+
+Check the checksum on the PC and upload both files:
+```powershell
+$f = Get-ChildItem release\*.tar.gz | Sort-Object LastWriteTime | Select-Object -Last 1
+(Get-FileHash $f.FullName -Algorithm SHA256).Hash.ToLower(); Get-Content "$($f.FullName).sha256"    # same hash
+scp $f.FullName "$($f.FullName).sha256" <user>@64.227.135.222:/var/www/dfresh-upload/
+```
+(First time only: the folder must exist, step 3.1.)
 
 ---
 
-## 3. MySQL: database, users, migrations [server]
+## 3. First install: unpack and install [server]
+
+3.1 Folders (once):
+```bash
+sudo mkdir -p /var/www/dfresh /var/www/dfresh-upload /var/log/dfresh /var/backups/dfresh /var/www/letsencrypt
+sudo chown -R $USER: /var/www/dfresh /var/www/dfresh-upload /var/log/dfresh /var/backups/dfresh
+```
+Now upload from the PC (end of step 2), then:
+
+3.2 Check, unpack, install production dependencies:
+```bash
+n22() { PATH=/opt/node22/bin:$PATH "$@"; }
+cd /var/www/dfresh-upload
+REL=$(ls -t dfresh-*.tar.gz | head -1); echo "$REL"
+sha256sum -c "$REL.sha256"                                  # "<file>: OK" - stop if not
+tar -xzf "$REL" -C /var/www/dfresh --no-same-owner --no-same-permissions --warning=no-unknown-keyword
+cd /var/www/dfresh && cat RELEASE.txt                       # release, commit, build time, 30 pages
+n22 /opt/node22/bin/npm ci --omit=dev --no-audit --no-fund --cache /tmp/dfresh-npm-cache && rm -rf /tmp/dfresh-npm-cache
+du -sh node_modules                                          # ~120-130 MB
+ls node_modules | grep -cE '^(react-scripts|webpack|eslint|jest|googleapis)$'   # 0
+mkdir -p media private/brochures private/fonts && chmod 700 private private/brochures private/fonts
+```
+`--no-same-permissions` applies the server's umask (files 644, folders 755) whatever Windows wrote in the archive.
+
+---
+
+## 4. MySQL: database, users, migrations [server]
 
 Everything as the MySQL admin (`sudo mysql`; if root has a password: `mysql -u root -p`). Always
 `--default-character-set=utf8mb4`, or Tamil / Hindi turns into `????`. Always name the database (`dfresh`):
 five migration files have no `USE` line.
 
 ```bash
-cd /var/www/dfresh
-# 3.1 schema (creates the dfresh database) and seed (launch content: 3 languages, 25 products + 3 colour versions,
+cd /var/www/dfresh            # database/ (schema, seed, migrations) came with the release
+# 4.1 schema (creates the dfresh database) and seed (launch content: 3 languages, 25 products + 3 colour versions,
 #     categories, banners, kits, towns, form options, texts, settings, the 2 admin users DZIND002 / DZIND148;
 #     NO leads, NO test data)
 sudo mysql --default-character-set=utf8mb4 < database/01_schema.sql
 sudo mysql --default-character-set=utf8mb4 dfresh < database/02_seed.sql
 
-# 3.2 every migration, in name order (stops at the first error)
+# 4.2 every migration, in name order (stops at the first error)
 for f in $(ls database/migrations/*.sql | sort); do
   echo "== $f"; sudo mysql --default-character-set=utf8mb4 dfresh < "$f" || { echo "FAILED: $f"; break; }
 done
@@ -149,10 +199,10 @@ The 28 migrations, in the order they must run (tick each; a later update applies
 This exact sequence (schema, seed, 28 migrations) was run on an empty database on 19 Oct 2026 without an error.
 
 ```bash
-# 3.3 live settings that are not content (the LIVE lead sheet; everything else is edited in the admin)
+# 4.3 live settings that are not content (the LIVE lead sheet; everything else is edited in the admin)
 sudo mysql dfresh -e "UPDATE site_settings SET setting_value = '1iv8X5AOv5VZ3KlZiRwYjX9-oc5LV16GuomGfDRDa1V4' WHERE setting_key = 'gsheet_spreadsheet_id';"
 
-# 3.4 check: no leads, 25 products, 3 languages, the soft-launch switches
+# 4.4 check: no leads, 25 products, 3 languages, the soft-launch switches
 sudo mysql dfresh -e "SELECT (SELECT COUNT(*) FROM leads) leads, (SELECT COUNT(*) FROM products WHERE variant_of IS NULL AND is_active=1) products,
   (SELECT COUNT(*) FROM languages WHERE is_active=1) langs, (SELECT COUNT(*) FROM admin_users) admins;
   SELECT setting_key, setting_value FROM site_settings WHERE setting_key IN
@@ -161,8 +211,8 @@ sudo mysql dfresh -e "SELECT (SELECT COUNT(*) FROM leads) leads, (SELECT COUNT(*
 #   lead_email info@dolluzcorp.com, mail_from connect@dolluzcorp.com
 ```
 
-3.5 The app user (least privilege) and the backup user. Make two strong passwords first and keep them for
-step 4 / step 13 (they are not printed anywhere else):
+4.5 The app user (least privilege) and the backup user. Make two strong passwords first and keep them for
+step 5 / step 13 (they are not printed anywhere else):
 ```bash
 openssl rand -base64 30 | tr -d '/+=' | cut -c1-32     # -> DFRESH_APP_PASSWORD   (fill by hand below)
 openssl rand -base64 30 | tr -d '/+=' | cut -c1-32     # -> DFRESH_BACKUP_PASSWORD
@@ -202,7 +252,7 @@ INSERT INTO dadmin.app_visibility (app_name, mode, updated_by, maintenance) VALU
 
 ---
 
-## 4. Production `.env` [server]
+## 5. Production `.env` [server]
 
 ```bash
 cd /var/www/dfresh
@@ -218,7 +268,7 @@ PUBLIC_API_URL=https://dfresh.us
 # --- database ---
 DB_HOST=localhost
 DB_USER=dfresh_app
-DB_PASSWORD=<fill by hand: DFRESH_APP_PASSWORD from 3.5>
+DB_PASSWORD=<fill by hand: DFRESH_APP_PASSWORD from 4.5>
 DB_NAME=dfresh
 DADMIN_DB_NAME=dadmin
 # --- auth: dFresh's own secret (it never reads a dAdmin token). Make it with: openssl rand -hex 48 ---
@@ -228,20 +278,18 @@ ADMIN_COOKIE_NAME=dfresh_admin_token
 # --- mail: the sender is admin Settings mail_from, not here. NO MAIL_TEST_TO line on the server. ---
 SENDGRID_API_KEY=<fill by hand: production key, Mail Send (full) + Sender Authentication (read)>
 MAIL_ENABLED=true
-# --- LIVE Google Sheet (the id is admin Settings gsheet_spreadsheet_id, set in 3.3) ---
+# --- LIVE Google Sheet (the id is admin Settings gsheet_spreadsheet_id, set in 4.3) ---
 GSHEET_ENABLED=true
 GOOGLE_SERVICE_ACCOUNT_JSON=./private/google-service-account.json
 # --- security ---
 IP_HASH_SALT=<fill by hand: openssl rand -hex 32>
 BROCHURE_TOKEN_TTL_MIN=15
 LEAD_RATE_LIMIT_PER_10MIN=5
-# --- React build: EMPTY = the site's own origin ---
-REACT_APP_API=
 ```
 | Key | Live value | Why |
 |---|---|---|
 | `NODE_ENV` | `production` | Secure + httpOnly + SameSite=Strict admin cookies (auth.js), serves the build, refuses non-https URLs |
-| `PORT` | `4012` | nginx proxies to it (step 1.1: free) |
+| `PORT` | `4012` | nginx proxies to it (step 1: free) |
 | `PUBLIC_SITE_URL` / `PUBLIC_API_URL` | `https://dfresh.us` both | canonical, hreflang, sitemap, CORS, e-mail links; the API will not start with http or localhost |
 | `DB_*` | `dfresh_app` + its password | never root |
 | `JWT_SECRET` | NEW random | signs the admin session; changing it later signs every admin out |
@@ -250,7 +298,7 @@ REACT_APP_API=
 | `MAIL_TEST_TO` | **absent** | would send every mail to one test inbox |
 | `GSHEET_ENABLED` | `true` | leads to the LIVE sheet |
 | `IP_HASH_SALT` | NEW random | not the dev value |
-| `SEO_NOINDEX`, `SERVE_BUILD`, `DB_ADMIN_*`, `APP_DB_*` | **absent** | indexing is the admin switch `site_indexing` (step 11); the rest is local only |
+| `SEO_NOINDEX`, `SERVE_BUILD`, `DB_ADMIN_*`, `APP_DB_*`, `REACT_APP_API` | **absent** | indexing is the admin switch `site_indexing` (step 11); the React build is made on the PC (step 2); the rest is local only |
 
 Check without printing a secret:
 ```bash
@@ -262,55 +310,39 @@ ls -l .env                                                       # -rw------- (6
 
 ---
 
-## 5. Private files and folders
+## 6. Google key, media, permissions
 
-5.1 Google service account key (the same key as local; it is git-ignored). **[PC]**, Git Bash or PowerShell:
-```bash
-scp "C:/Users/91638/Desktop/Dolluzcorp/dFresh/dfresh/private/google-service-account.json" <user>@64.227.135.222:/var/www/dfresh/private/
+6.1 Google service account key (the same key as local; git-ignored, never in a release). **[PC]**:
+```powershell
+scp C:\Users\91638\Desktop\Dolluzcorp\dFresh\dfresh\private\google-service-account.json <user>@64.227.135.222:/var/www/dfresh/private/
 ```
 **[server]**:
 ```bash
 cd /var/www/dfresh
 chmod 600 private/google-service-account.json
-git check-ignore -v private/google-service-account.json   # must print a .gitignore rule (never committed)
 grep -o '"client_email": *"[^"]*"' private/google-service-account.json
 ```
 Share the LIVE sheet (`1iv8X5AOv5VZ3KlZiRwYjX9-oc5LV16GuomGfDRDa1V4`) with that `client_email` as **Editor**.
 Its tabs and row-1 headers must match `src/backend_routes/gsheet.js` (Quote, Sample, Distributor, Contact, Brochure).
 
-5.2 Folders and permissions **[server]**:
+6.2 Public images, once (from `assets/` in the release; needs the database and `.env`) **[server]**:
+```bash
+n22() { PATH=/opt/node22/bin:$PATH "$@"; }
+cd /var/www/dfresh
+n22 /opt/node22/bin/npm run media:sync            # "copied ... files" x4, then the sizes per image
+du -sh media                                       # ~5-8 MB
+```
+6.3 Permissions:
 ```bash
 cd /var/www/dfresh
+chmod 600 .env private/google-service-account.json
 chmod 700 private private/brochures private/fonts    # node only; nginx never serves private/
-chmod 755 media && find media -type d -exec chmod 755 {} + && find media -type f -exec chmod 644 {} +
-ls -ld private private/* media                        # owner = the pm2 user; nginx (www-data) must READ media
+find media maintenance build -type d -exec chmod 755 {} + && find media maintenance build -type f -exec chmod 644 {} +
+ls -ld private media maintenance build               # owner = the pm2 user; nginx (www-data) READS media, maintenance, build
 ```
-- `media/` = the public images (and every admin upload: product photos, banners, share / About picture, script
-  fonts). Built by `npm run media:sync` in step 2; nothing to copy from the PC.
-- `private/brochures/` = brochure PDFs, uploaded in the admin after launch (step 10); nothing to copy.
-- `private/fonts/` = the font manager's state.
-
----
-
-## 6. Build: React + pre-render [server]
-
-The build needs the database (step 3) and `.env` (step 4). On a small droplet the CRA build needs extra memory:
-```bash
-free -m; swapon --show
-# ONLY if total RAM < 2000 MB and there is no swap: a 2 GB swap file (helps the build; the other apps are unaffected)
-sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
-echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
-
-cd /var/www/dfresh
-NODE_OPTIONS=--max-old-space-size=1536 npm run build
-#   prebuild: "i18n:fallback wrote src/i18n/fallbackText.json (en, ta, hi)"
-#   build:    "Compiled successfully" (5-10 min on 1 vCPU)
-#   postbuild: "prerender: 30 page(s) written to build-ssr/pages.json"
-ls build/index.html build-ssr/ssr.js build-ssr/pages.json
-git status --short          # only src/i18n/fallbackText.json may show as changed (see step 12 for updates)
-```
-If the build is killed (`Killed` / out of memory) even with swap: build on the PC instead (same commit,
-`.env` pointing at a copy of the live content) and copy `build/` and `build-ssr/` up with scp.
+- `media/` = public images and every admin upload (product photos, banners, share / About picture, script fonts).
+- `private/brochures/` = brochure PDFs, uploaded in the admin after launch (step 10).
+- `media/` and `private/` are NOT in a release: an update moves them (and `.env`) to the new folder (step 12).
 
 ---
 
@@ -347,20 +379,20 @@ If `nginx -t` warns that `listen ... http2` is deprecated (nginx 1.25.1+): harml
 
 ```bash
 cd /var/www/dfresh
-pm2 start deploy/ecosystem.config.js                 # name dfresh-api, ONE instance (fork mode)
+pm2 start deploy/ecosystem.config.js --interpreter /opt/node22/bin/node    # name dfresh-api, ONE instance
+pm2 describe dfresh-api | grep -iE 'interpreter |status|exec cwd'          # /opt/node22/bin/node, online, /var/www/dfresh
 pm2 logs dfresh-api --lines 60 --nostream
 #   expect: "dFresh API listening on http://localhost:4012", [fonts] lines, outbox worker lines;
 #   no "refuses to start", no "pre-rendering off", no DB / Google errors
 curl -s http://127.0.0.1:4012/api/dfresh/health      # "db":"ok", products 25, variants 3, languages 3
-pm2 save                                             # dfresh-api is now in the saved process list
+node -v                                              # still v18.19.1 (system node untouched)
+pm2 save                                             # dfresh-api (with its interpreter) in the saved list
 
-# survives a reboot? (pm2 startup is normally already set up for the other dApps)
-systemctl list-unit-files | grep -i pm2              # pm2-<user>.service ... enabled
-#   none: run `pm2 startup`, then the sudo line it prints, then `pm2 save` again
+systemctl list-unit-files | grep -i pm2              # pm2-<user>.service ... enabled (set up for the other apps)
+#   none: `pm2 startup`, run the sudo line it prints, `pm2 save` again
 ```
-A real reboot test restarts the other apps too: do it only in a quiet window
-(`sudo reboot`, then `pm2 ls` shows dfresh-api online and `curl -s http://127.0.0.1:4012/api/dfresh/health` works).
-Never start a second copy (`-i 2`, cluster): the outbox worker would send every e-mail twice.
+A real reboot test restarts the other 14 apps too: only in a quiet window (`sudo reboot`, then `pm2 ls` shows
+dfresh-api online and the health line works). Never a second copy (`-i 2`, cluster): every e-mail would go twice.
 
 ---
 
@@ -397,6 +429,7 @@ In a browser (phone and PC):
       shows it; the staff alert reaches `lead_email` (info@dolluzcorp.com); the visitor confirmation reaches you;
       a row appears in the LIVE sheet (Contact tab). Then delete it as in step 11.3.
 - [ ] Brochure button: with no PDF uploaded yet the form says the brochure is being finalised (step 10 uploads it).
+- [ ] `cat /var/www/dfresh/RELEASE.txt` = the release you uploaded (commit, build time).
 - [ ] Maintenance page: `touch /var/www/dfresh/MAINTENANCE` -> `/en` shows the black / gold dFresh page, title
       "dFresh - Back shortly" (`curl -sI https://dfresh.us/en` -> 503 + `retry-after: 300`), `/admin` still opens;
       `rm /var/www/dfresh/MAINTENANCE` -> site back.
@@ -466,93 +499,97 @@ curl -s http://127.0.0.1:4012/en | head -c 200                     # node itself
   (`if (-f /var/www/dfresh/MAINTENANCE) { return 503; }`), and the page shows by itself while node is down
   (502 / 504 are sent as 503, so search engines keep the old pages and do not index this one).
 - `/admin` and `/api/` are not switched off: staff can sign in and check before reopening, leads still save.
-- The file `MAINTENANCE` is git-ignored, so it never blocks a `git pull`.
+- The file `MAINTENANCE` is never part of a release (git-ignored); an update sets and clears it itself.
 - WhatsApp number on the page = a fixed copy of Settings `whatsapp_display` (+91 93302 59330). If that setting
-  changes: edit `maintenance/maintenance.html` (link and text), commit, `git pull` on the server.
+  changes: edit `maintenance/maintenance.html` (link and text), commit, then a new release (step 2 + Update).
 
-Update to a new commit:
+### Update (build on the PC, upload, swap folders, restart)
+
+**[PC]** step 2 again (`npm run release:pack`, check the hash, scp). Then **[server]**:
 ```bash
-cd /var/www/dfresh
-git rev-parse HEAD > ~/dfresh-prev-commit           # for a rollback
-rm -rf build.prev build-ssr.prev && cp -a build build.prev && cp -a build-ssr build-ssr.prev
-touch MAINTENANCE
-git checkout -- src/i18n/fallbackText.json          # the build rewrites it; drop the server's copy before pulling
-git pull --ff-only origin main
-npm ci
-# new migrations only (compare with the ticked list in step 3), each:
-#   sudo mysql --default-character-set=utf8mb4 dfresh < database/migrations/<file>
-NODE_OPTIONS=--max-old-space-size=1536 npm run build
-pm2 reload dfresh-api && pm2 logs dfresh-api --lines 30 --nostream
-curl -s http://127.0.0.1:4012/api/dfresh/health
-rm MAINTENANCE
+n22() { PATH=/opt/node22/bin:$PATH "$@"; }
+cd /var/www/dfresh-upload
+REL=$(ls -t dfresh-*.tar.gz | head -1); echo "$REL"; sha256sum -c "$REL.sha256"    # OK - stop if not
+ls -t dfresh-*.tar.gz | tail -n +3 | xargs -r -I{} rm -f {} {}.sha256              # keep the last 2 archives
+
+# 1. the release before last goes (frees ~140 MB); the live site keeps running all along
+rm -rf /var/www/dfresh.prev
+mkdir /var/www/dfresh.next
+tar -xzf "$REL" -C /var/www/dfresh.next --no-same-owner --no-same-permissions --warning=no-unknown-keyword
+cd /var/www/dfresh.next && cat RELEASE.txt
+n22 /opt/node22/bin/npm ci --omit=dev --no-audit --no-fund --cache /tmp/dfresh-npm-cache && rm -rf /tmp/dfresh-npm-cache
+
+# 2. new migrations: the files the live release does not have (empty output = none)
+comm -13 <(ls /var/www/dfresh/database/migrations) <(ls /var/www/dfresh.next/database/migrations)
+#   each one, in name order:  sudo mysql --default-character-set=utf8mb4 dfresh < database/migrations/<file>
+#   (migrations only add things, so the live release keeps working on the newer database)
+
+# 3. swap (a few seconds; the public pages show the maintenance page meanwhile)
+touch /var/www/dfresh/MAINTENANCE /var/www/dfresh.next/MAINTENANCE
+mv /var/www/dfresh/.env /var/www/dfresh/media /var/www/dfresh/private /var/www/dfresh.next/
+mv /var/www/dfresh /var/www/dfresh.prev && mv /var/www/dfresh.next /var/www/dfresh
+pm2 restart dfresh-api                                # same path, new code (the interpreter is kept)
+sleep 3; curl -s http://127.0.0.1:4012/api/dfresh/health
+pm2 logs dfresh-api --lines 30 --nostream             # no errors
+cat /var/www/dfresh/RELEASE.txt
+rm /var/www/dfresh/MAINTENANCE                        # site back
 ```
-Rollback to the previous commit:
+Then the quick checks of step 9 (home, a product page, admin sign-in).
+
+### Rollback to the previous release
+
 ```bash
-cd /var/www/dfresh
-touch MAINTENANCE
-git checkout -- src/i18n/fallbackText.json
-git checkout $(cat ~/dfresh-prev-commit)            # detached at the old commit
-npm ci
-rm -rf build build-ssr && mv build.prev build && mv build-ssr.prev build-ssr
-pm2 reload dfresh-api && curl -s http://127.0.0.1:4012/api/dfresh/health
-rm MAINTENANCE
-# later, to follow main again: git checkout main && the update steps above
+touch /var/www/dfresh/MAINTENANCE
+mv /var/www/dfresh/.env /var/www/dfresh/media /var/www/dfresh/private /var/www/dfresh.prev/
+mv /var/www/dfresh /var/www/dfresh.bad && mv /var/www/dfresh.prev /var/www/dfresh
+pm2 restart dfresh-api
+sleep 3; curl -s http://127.0.0.1:4012/api/dfresh/health && cat /var/www/dfresh/RELEASE.txt
+rm -f /var/www/dfresh/MAINTENANCE
+# later, once the cause is known: rm -rf /var/www/dfresh.bad (there is no .prev until the next update)
 ```
-Migrations only add things, so the old code runs on the newer database. Restore the database backup (step 13)
-only if a migration changed or removed data, and then take a fresh dump first.
+Restore the database backup (step 13) only if a migration changed or removed data, and take a fresh dump first.
 
 ---
 
 ## 13. Backups [server]
 
-`deploy/backup.sh` dumps the dfresh database and archives `media/` (all uploads) and `private/brochures/` into
-`/var/backups/dfresh/<date>/`, keeping 14 days.
+`deploy/backup.sh` (in every release) dumps the dfresh database and archives `media/` (all uploads) and
+`private/brochures/` into `/var/backups/dfresh/<date>/`, keeping 7 days (~60-100 MB: the disk is small).
 ```bash
 cat > ~/.my.cnf <<'EOF'
 [mysqldump]
 user=dfresh_backup
-password=<fill by hand: DFRESH_BACKUP_PASSWORD from 3.5>
+password=<fill by hand: DFRESH_BACKUP_PASSWORD from 4.5>
 EOF
 chmod 600 ~/.my.cnf
-APP_DIR=/var/www/dfresh /var/www/dfresh/deploy/backup.sh     # first run by hand: "dfresh backup <date>: <size>"
-ls -l /var/backups/dfresh/$(date +%F)/                       # dfresh.sql.gz, media.tar.gz, brochures.tar.gz
+KEEP_DAYS=7 APP_DIR=/var/www/dfresh sh /var/www/dfresh/deploy/backup.sh     # by hand once: "dfresh backup <date>: <size>"
+ls -l /var/backups/dfresh/$(date +%F)/                                      # dfresh.sql.gz, media.tar.gz, brochures.tar.gz
 crontab -e
-#   add: 15 2 * * * APP_DIR=/var/www/dfresh /var/www/dfresh/deploy/backup.sh >> /var/log/dfresh/backup.log 2>&1
+#   add: 15 2 * * * KEEP_DAYS=7 APP_DIR=/var/www/dfresh sh /var/www/dfresh/deploy/backup.sh >> /var/log/dfresh/backup.log 2>&1
 ```
-Off the droplet (a backup on the same disk does not survive the disk), e.g. weekly from the PC **[PC]**:
-```bash
-scp -r <user>@64.227.135.222:/var/backups/dfresh/<date> "D:/dfresh-backups/"
+(`sh ...` so the job never depends on the file's execute bit.) Off the droplet, e.g. weekly **[PC]**:
+```powershell
+scp -r <user>@64.227.135.222:/var/backups/dfresh/<date> D:\dfresh-backups\
 ```
 Restore: `gunzip -c dfresh.sql.gz | sudo mysql --default-character-set=utf8mb4 dfresh`; untar `media.tar.gz` /
-`brochures.tar.gz` in `/var/www/dfresh`; `pm2 reload dfresh-api`.
+`brochures.tar.gz` in `/var/www/dfresh`; `pm2 restart dfresh-api`.
 
 ---
 
-## Node older than 20.9 on the server
-
-Do not change the global node (the other dApps run on it). Give dFresh its own node 22 with nvm, as the pm2 user:
-```bash
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash && . ~/.nvm/nvm.sh
-nvm install 22 && nvm use 22         # this shell only; `node -v` elsewhere stays the old one
-cd /var/www/dfresh && npm ci && NODE_OPTIONS=--max-old-space-size=1536 npm run build
-pm2 start deploy/ecosystem.config.js --interpreter "$(nvm which 22)" && pm2 save
-```
-Every later `npm ci` / `npm run build` for dFresh: `nvm use 22` first.
-
 ## How dFresh differs from the other dApps on this server
 
-- Own domain (`dfresh.us` + `www`), not a `*.dolluzcorp.com` subdomain; its own nginx file `dfresh.us.conf` and
-  certificate. Port 4012, pm2 `dfresh-api`.
+- Own Node 22 (`/opt/node22/bin/node`) through pm2 `--interpreter`; the system node v18 and the other apps are
+  untouched. npm for dFresh always through `n22` (top of this file).
+- Built on the PC, never on the server (1 GB RAM): the server gets a checked archive and installs production
+  dependencies only. No git checkout on the server.
+- Releases are swapped as folders (`dfresh`, `dfresh.prev`); `.env`, `media/`, `private/` move with the live one.
+- Own domain (`dfresh.us` + `www`), its own nginx file `dfresh.us.conf` and certificate. Port 4012, pm2 `dfresh-api`.
 - Node serves the public PAGES too (per-URL SEO HTML, `robots.txt`, `sitemap.xml`), not only an API; nginx serves
-  only `/static` and `/media` from disk. The build also pre-renders pages (`build-ssr/`), and the build reads the
-  database, so it runs after the database is set up.
+  only `/static`, `/media` and the maintenance page from disk.
 - Exactly ONE pm2 instance: the same process runs the e-mail and Google Sheet outbox worker.
 - The server writes to `media/` (admin uploads, script fonts built at run time) and `private/` (brochures, font state).
 - Its own `JWT_SECRET`: dFresh never reads a dAdmin token; changing it signs out dFresh admins only.
-- dAdmin access is column-limited (10 columns of `dadmin.employee`) plus write access to `dadmin.login_otp` only
-  (the e-mailed sign-in code).
+- dAdmin access is column-limited (10 columns of `dadmin.employee`) plus write access to `dadmin.login_otp` only.
 - Search engine indexing is an admin switch (`site_indexing`), not an env variable.
-- The build rewrites the tracked `src/i18n/fallbackText.json`: reset it before every `git pull` (step 12).
-- Maintenance: the same nginx mechanism as dAssist (error_page + switch file `MAINTENANCE`), but dFresh's own
-  page in `/var/www/dfresh/maintenance/`, and the switch closes the public pages only (`/admin`, `/api/` stay up).
-  dAdmin `app_visibility.maintenance` is not read by dFresh.
+- Maintenance: the same nginx mechanism as dAssist (error_page + switch file `MAINTENANCE`), with dFresh's own
+  page in `/var/www/dfresh/maintenance/`; the switch closes the public pages only (`/admin`, `/api/` stay up).
