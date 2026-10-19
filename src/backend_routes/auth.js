@@ -64,12 +64,16 @@ function endSession(res) {
   res.clearCookie(CHALLENGE_COOKIE, { path: COOKIE_PATH });
 }
 
+// dAdmin writes revoked_at with NOW(3) in the server's DEFAULT time zone (its sessions are not UTC) and reads it the
+// same way; our sessions are UTC, so it is converted from @@global.time_zone first. emp_id '*' = the whole app
+// (dAdmin "revoke all"), as dAdmin itself reads it.
 async function isRevoked(empId, issuedAtS) {
   try {
     const [[row]] = await db.query(
-      `SELECT revoked_at FROM \`${DADMIN}\`.login_session_revoke WHERE app_key = ? AND emp_id = ?`, [APP_KEY, empId]
+      `SELECT UNIX_TIMESTAMP(CONVERT_TZ(MAX(revoked_at), @@global.time_zone, '+00:00')) AS sec
+         FROM \`${DADMIN}\`.login_session_revoke WHERE app_key = ? AND emp_id IN (?, '*')`, [APP_KEY, empId]
     );
-    return Boolean(row && new Date(row.revoked_at).getTime() >= issuedAtS * 1000);
+    return Boolean(row && row.sec !== null && Number(row.sec) >= issuedAtS);
   } catch (err) {
     console.error('session revoke check failed (allowing):', err.code || err.message);
     return false;

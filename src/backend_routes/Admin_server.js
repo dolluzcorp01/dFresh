@@ -43,6 +43,10 @@ router.use('/admin', (req, res, next) => {
   next();
 });
 
+// Midnight today in India, as a UTC DATETIME (created_at is UTC): dashboard "today" / "last 7 days". India has no
+// daylight saving, so a fixed +05:30 (no MySQL time zone tables needed).
+const IST_TODAY_UTC = "CONVERT_TZ(DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+05:30')), '+05:30', '+00:00')";
+
 const DB_ERRORS = {
   ER_DUP_ENTRY: [409, 'That already exists'],
   ER_NO_REFERENCED_ROW_2: [400, 'It refers to something that does not exist (check the keys and product IDs)'],
@@ -106,11 +110,11 @@ async function exportedBy(req) {
 // ---------------------------------------------------------------------------------------------
 route('get', '/dashboard', 'viewer', async () => {
   const [[leads]] = await db.query(
-    `SELECT SUM(created_at >= CURDATE()) AS today, SUM(created_at >= CURDATE() - INTERVAL 6 DAY) AS last7,
+    `SELECT SUM(created_at >= ${IST_TODAY_UTC}) AS today, SUM(created_at >= ${IST_TODAY_UTC} - INTERVAL 6 DAY) AS last7,
             SUM(status = 'new') AS open_new, COUNT(*) AS total FROM leads`
   );
   const [byForm] = await db.query(
-    `SELECT form_type, COUNT(*) AS n FROM leads WHERE created_at >= CURDATE() - INTERVAL 6 DAY GROUP BY form_type ORDER BY n DESC`
+    `SELECT form_type, COUNT(*) AS n FROM leads WHERE created_at >= ${IST_TODAY_UTC} - INTERVAL 6 DAY GROUP BY form_type ORDER BY n DESC`
   );
   const [mail] = await db.query('SELECT status, COUNT(*) AS n FROM mail_outbox GROUP BY status');
   const [sync] = await db.query('SELECT status, COUNT(*) AS n FROM sync_outbox GROUP BY status');
@@ -186,8 +190,9 @@ function leadFilters(q) {
   if (q.form) { where.push('l.form_type = ?'); params.push(String(q.form)); }
   if (q.status) { where.push('l.status = ?'); params.push(String(q.status)); }
   if (q.lang) { where.push('l.lang_code = ?'); params.push(String(q.lang)); }
-  if (q.from) { where.push('l.created_at >= ?'); params.push(String(q.from)); }
-  if (q.to) { where.push('l.created_at < ? + INTERVAL 1 DAY'); params.push(String(q.to)); }
+  // from / to are India dates (the admin's date pickers); created_at is UTC
+  if (q.from) { where.push("l.created_at >= CONVERT_TZ(?, '+05:30', '+00:00')"); params.push(String(q.from)); }
+  if (q.to) { where.push("l.created_at < CONVERT_TZ(? + INTERVAL 1 DAY, '+05:30', '+00:00')"); params.push(String(q.to)); }
   if (q.ref) { where.push('l.lead_ref = ?'); params.push(String(q.ref)); }
   if (q.q) {
     const like = `%${String(q.q).trim().slice(0, 100).replace(/[\\%_]/g, (m) => `\\${m}`)}%`;
@@ -227,15 +232,15 @@ function leadFilterText(query) {
 
 route('get', '/leads/export.csv', 'editor', async (req, res) => {
   const rows = await leadsForExport(req.query);
-  const head = ['lead_ref', 'created_at', 'form_type', 'status', 'full_name', 'first_name', 'last_name', 'business_name',
+  const head = ['lead_ref', 'created_at_ist', 'form_type', 'status', 'full_name', 'first_name', 'last_name', 'business_name',
     'business_type', 'town', 'phone', 'email', 'products', 'monthly_quantity', 'message', 'details', 'lang', 'source_page',
     'source_ref', 'assigned_to', 'staff_notes'];
-  const body = csv.stringify([head, ...rows.map((r) => [r.lead_ref, r.created_at && r.created_at.toISOString(), r.form_type,
+  const body = csv.stringify([head, ...rows.map((r) => [r.lead_ref, r.created_at && theme.istStamp(r.created_at), r.form_type,
     r.status, r.full_name, r.first_name, r.last_name, r.business_name, r.business_type, r.town, r.phone, r.email, r.products,
     r.monthly_quantity, r.message, r.details_json ? JSON.stringify(r.details_json) : '', r.lang_code, r.source_page,
     r.source_ref, r.assigned_to, r.staff_notes])]);
   await audit(null, { empId: by(req), action: 'export', entity: 'lead', after: { filters: req.query, rows: rows.length } });
-  res.set({ 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="dfresh-leads-${new Date().toISOString().slice(0, 10)}.csv"`, 'Cache-Control': 'no-store' });
+  res.set({ 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="dfresh-leads-${theme.istStamp(new Date(), false)}.csv"`, 'Cache-Control': 'no-store' });
   res.send(body);
 });
 
@@ -273,7 +278,7 @@ route('get', '/leads/export.xlsx', 'editor', async (req, res) => {
       detail(r, 'monthly_sales'), r.lang_code, r.source_page, r.source_ref, r.assigned_to, r.staff_notes,
     ]),
   });
-  const bytes = await theme.send(res, wb, `dFresh_Leads_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  const bytes = await theme.send(res, wb, `dFresh_Leads_${theme.istStamp(new Date(), false)}.xlsx`);
   await audit(null, { empId: by(req), action: 'export', entity: 'lead', after: { filters: req.query, rows: rows.length, file: 'leads.xlsx', bytes } });
 });
 
@@ -398,7 +403,7 @@ route('get', '/assignees', 'viewer', async () => {
 // ---------------------------------------------------------------------------------------------
 route('get', '/products/export.xlsx', 'editor', async (req, res) => {
   const wb = await excel.buildWorkbook(db, { who: await exportedBy(req) });
-  const bytes = await theme.send(res, wb, `dFresh_Product_List_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  const bytes = await theme.send(res, wb, `dFresh_Product_List_${theme.istStamp(new Date(), false)}.xlsx`);
   await audit(null, { empId: by(req), action: 'export', entity: 'product', after: { file: 'products.xlsx', bytes } });
 });
 
@@ -821,7 +826,7 @@ route('get', '/ui-text/export.xlsx', 'editor', async (req, res) => {
     ],
     rows: rows.map((r) => [r.text_key, r.group_name, r.description, ...langs.codes.map((l) => r.values[l] ?? null)]),
   });
-  const bytes = await theme.send(res, wb, `dFresh_Translations_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  const bytes = await theme.send(res, wb, `dFresh_Translations_${theme.istStamp(new Date(), false)}.xlsx`);
   await audit(null, { empId: by(req), action: 'export', entity: 'ui_text', after: { rows: rows.length, languages: langs.codes, file: 'translations.xlsx', bytes } });
 });
 

@@ -165,7 +165,7 @@ for f in $(ls database/migrations/*.sql | sort); do
   echo "== $f"; sudo mysql --default-character-set=utf8mb4 dfresh < "$f" || { echo "FAILED: $f"; break; }
 done
 ```
-The 28 migrations, in the order they must run (tick each; a later update applies only the new ones):
+The 29 migrations, in the order they must run (tick each; a later update applies only the new ones):
 
 - [ ] `20261009_phase3_home_ui_text.sql`
 - [ ] `20261009_phase4_products_ui_text.sql`
@@ -195,8 +195,11 @@ The 28 migrations, in the order they must run (tick each; a later update applies
 - [ ] `20261017_two_step_login.sql` - setting `two_step_login` = on (password + e-mailed code)
 - [ ] `20261019_brochure_download.sql` - setting `brochure_download_enabled` = on, texts `bro_off`, `ma_bro_off`
 - [ ] `20261019_site_indexing.sql` - setting `site_indexing` = **off** (soft launch: not indexed, see step 11)
+- [ ] `20261019_times_to_utc.sql` - every stored time becomes UTC (shifts the existing rows once by this MySQL's
+      default offset; a marker row makes a second run a no-op). On a NEW install it simply runs in order. On a
+      database that is already LIVE: only with the app stopped, see "One-off: times to UTC" in step 12.
 
-This exact sequence (schema, seed, 28 migrations) was run on an empty database on 19 Oct 2026 without an error.
+This exact sequence (schema, seed, 29 migrations) was run on an empty database on 19 Oct 2026 without an error.
 
 ```bash
 # 4.3 live settings that are not content (the LIVE lead sheet; everything else is edited in the admin)
@@ -520,6 +523,7 @@ cd /var/www/dfresh.next && cat RELEASE.txt
 n22 /opt/node22/bin/npm ci --omit=dev --no-audit --no-fund --cache /tmp/dfresh-npm-cache && rm -rf /tmp/dfresh-npm-cache
 
 # 2. new migrations: the files the live release does not have (empty output = none)
+#    20261019_times_to_utc.sql in the list? Do NOT run it here: follow "One-off: times to UTC" below instead.
 comm -13 <(ls /var/www/dfresh/database/migrations) <(ls /var/www/dfresh.next/database/migrations)
 #   each one, in name order:  sudo mysql --default-character-set=utf8mb4 dfresh < database/migrations/<file>
 #   (migrations only add things, so the live release keeps working on the newer database)
@@ -535,6 +539,34 @@ cat /var/www/dfresh/RELEASE.txt
 rm /var/www/dfresh/MAINTENANCE                        # site back
 ```
 Then the quick checks of step 9 (home, a product page, admin sign-in).
+
+### One-off: times to UTC (the release that brings `20261019_times_to_utc.sql`)
+
+Until this release, times were stored in the live MySQL's default zone (IST) and read as UTC, so the admin added
+5:30 twice (an upload at 17:22 showed 10:52 pm). From this release every time is stored in UTC and shown in India
+time everywhere. The existing rows are shifted once, while the app is STOPPED (rows written by the old release after
+the shift, or by the new one before it, would be 5:30 off).
+```bash
+# 1. read only: the zone the live MySQL writes in (offset_min 330 = IST: the rows will be shifted; 0 = no-op)
+sudo mysql -e "SELECT @@global.time_zone, @@system_time_zone, NOW(), UTC_TIMESTAMP(), TIMESTAMPDIFF(MINUTE, UTC_TIMESTAMP(), NOW()) AS offset_min;"
+# 2. a backup first (step 13)
+KEEP_DAYS=7 APP_DIR=/var/www/dfresh sh /var/www/dfresh/deploy/backup.sh
+# 3. the Update steps up to and including `npm ci` in /var/www/dfresh.next; then, instead of steps 2 and 3:
+touch /var/www/dfresh/MAINTENANCE /var/www/dfresh.next/MAINTENANCE
+pm2 stop dfresh-api                                   # nothing writes to the database now
+sudo mysql --default-character-set=utf8mb4 dfresh < /var/www/dfresh.next/database/migrations/20261019_times_to_utc.sql
+#   prints: session_zone SYSTEM (or +05:30), minutes_shifted_back 330, state shifting
+#   any OTHER new migration from the comm list: now, the same way
+mv /var/www/dfresh/.env /var/www/dfresh/media /var/www/dfresh/private /var/www/dfresh.next/
+mv /var/www/dfresh /var/www/dfresh.prev && mv /var/www/dfresh.next /var/www/dfresh
+pm2 restart dfresh-api                                # starts the new release (UTC sessions)
+sleep 3; curl -s http://127.0.0.1:4012/api/dfresh/health
+rm /var/www/dfresh/MAINTENANCE
+# 4. check: Admin -> Brochures / Audit log / a lead: the times are India time (an upload now shows now)
+sudo mysql dfresh -e "SELECT meta_value FROM dfresh_meta WHERE meta_key = 'times_utc';"   # stored as UTC; ... shifted back 330 minutes
+```
+Rolling back after this needs the database too: the previous release reads UTC as if it were IST again. Restore the
+backup from 2. (or shift forward: `+ INTERVAL 330 MINUTE` on the same columns and delete the `times_utc` marker).
 
 ### Rollback to the previous release
 

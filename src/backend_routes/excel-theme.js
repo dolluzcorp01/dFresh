@@ -33,6 +33,14 @@ function istLabel(date = new Date()) {
   return `${p.day} ${p.month} ${p.year}, ${p.hour}:${p.minute} IST`;
 }
 
+/** "2026-10-19 17:22" (with time) or "2026-10-19" in India time: CSV cells, export file names. */
+function istStamp(date = new Date(), withTime = true) {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(date).map((x) => [x.type, x.value]));
+  return withTime ? `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}` : `${p.year}-${p.month}-${p.day}`;
+}
+
 /**
  * Excel has no time zones: a cell shows the date's UTC fields. Shifting by +5:30 makes it show India time, so a lead
  * received at 15:20 IST reads 15:20 whatever zone the server runs in.
@@ -220,4 +228,4 @@ async function send(res, wb, fileName) {
   return buf.byteLength;
 }
 
-module.exports = { newWorkbook, tableSheet, notesSheet, findHeaderRow, send, istLabel, toIstCell, HEADER_ROW };
+module.exports = { newWorkbook, tableSheet, notesSheet, findHeaderRow, send, istLabel, istStamp, toIstCell, HEADER_ROW };

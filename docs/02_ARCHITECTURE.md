@@ -142,6 +142,8 @@ are generated from the DB. See `src/backend_routes/seo.js`.
 ## Deployment (Phase 8)
 Step by step, env checklist and every `<DOMAIN>` placeholder: `deploy/DEPLOY.md` (+ `deploy/nginx/dfresh.conf`,
 `deploy/ecosystem.config.js`, `deploy/backup.sh`).
+Times: every DATETIME is stored in UTC (each DB connection sets its session to UTC, mysql2 `timezone: 'Z'`, config/db.js)
+and shown in Asia/Kolkata everywhere (admin, e-mails, sheet, Excel, CSV), whatever zone the server or PC is in.
 nginx -> `server.js` (serves API + React build) under pm2 as `dfresh-api` (https://dfresh.us, deploy/DEPLOY.md). React is built on the
 PC (`npm run release:pack`), never on the 1 GB droplet; the server runs node 22 at /opt/node22 (system node v18 stays). `media/` and `private/brochures/` live outside git on the server
 (upload via admin), originals backed up.
