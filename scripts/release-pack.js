@@ -9,7 +9,8 @@
 // 3. Checks the build: no source maps, no localhost URL, pre-rendered pages present.
 // 4. Server files straight from git (`git archive HEAD`: Linux line endings, file modes kept, nothing untracked),
 //    then build/, build-ssr/ and RELEASE.txt appended, gzipped; SHA-256 next to it.
-// Usage: npm run release:pack            (add -- --skip-build to pack an existing build of the same commit)
+// Usage: npm run release:pack   (Git Bash only: `npm run release:pack -- --skip-build` packs the existing build of the
+// same commit; PowerShell's npm drops the `--`, so there it always builds)
 const { execFileSync, spawnSync } = require('child_process');
 const crypto = require('crypto');
 const fs = require('fs');
@@ -101,11 +102,18 @@ function main() {
   fs.writeFileSync(`${gz}.sha256`, `${hash}  ${path.basename(gz)}\n`); // `sha256sum -c` format, LF
 
   const listing = spawnSync('tar', ['-tzf', path.relative(ROOT, gz).split(path.sep).join('/')], { cwd: ROOT, encoding: 'utf8' });
-  const entries = listing.stdout.split('\n').filter((l) => l && !l.endsWith('/'));
+  // Windows tar.exe ends lines with CRLF, GNU tar with LF; directory entries end with '/'
+  const entries = listing.stdout.split(/\r?\n/).filter((l) => l && !l.endsWith('/'));
   // never in a release: top-level secrets / data / dev folders, React sources, source maps (build/static/media is fine)
   const bad = entries.filter((e) => /^(\.env|node_modules|private|media|docs|tests|visual-output)(\/|$)|^src\/(?!backend_routes\/|shared\/)|\.map$/.test(e));
-  if (bad.length) fail(`unexpected files in the archive: ${bad.slice(0, 5).join(', ')}`);
-  if (!entries.includes('server.js') || !entries.includes('build/index.html') || !entries.includes('RELEASE.txt')) fail('server.js, build/index.html or RELEASE.txt missing in the archive');
+  const missing = ['server.js', 'build/index.html', 'build-ssr/ssr.js', 'RELEASE.txt'].filter((f) => !entries.includes(f));
+  if (listing.status !== 0 || bad.length || missing.length) {
+    fs.rmSync(gz, { force: true });
+    fs.rmSync(`${gz}.sha256`, { force: true }); // a refused archive is never left behind to be uploaded by mistake
+    if (listing.status !== 0) fail('tar could not list the archive');
+    if (bad.length) fail(`unexpected files in the archive: ${bad.slice(0, 5).join(', ')}`);
+    fail(`missing in the archive: ${missing.join(', ')}`);
+  }
 
   console.log(`
 release   ${path.relative(ROOT, gz)}
