@@ -37,10 +37,12 @@ function setSheetsClient(c) {
 
 async function sheets() {
   if (client) return client;
-  const { google } = require('googleapis'); // heavy: load only when sync is really enabled
+  // the Sheets API alone (@googleapis/sheets, ~1 MB), not the whole googleapis package (~240 MB on the server);
+  // loaded only when the sheet is really used
+  const { sheets: sheetsApi, auth: googleAuth } = require('@googleapis/sheets');
   const keyFile = path.resolve(process.env.GOOGLE_SERVICE_ACCOUNT_JSON || './private/google-service-account.json');
-  const auth = new google.auth.GoogleAuth({ keyFile, scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
-  client = google.sheets({ version: 'v4', auth });
+  const auth = new googleAuth.GoogleAuth({ keyFile, scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
+  client = sheetsApi({ version: 'v4', auth });
   return client;
 }
 

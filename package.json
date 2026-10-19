@@ -3,11 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "dependencies": {
+    "@googleapis/sheets": "^18.1.1",
     "@sendgrid/mail": "^8.1.6",
-    "@testing-library/dom": "^10.4.2",
-    "@testing-library/jest-dom": "^6.9.1",
-    "@testing-library/react": "^16.3.3",
-    "@testing-library/user-event": "^13.5.0",
     "bcryptjs": "^3.0.3",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
@@ -15,7 +12,6 @@
     "exceljs": "^4.4.0",
     "express": "^5.2.1",
     "fontverter": "^2.0.0",
-    "googleapis": "^185.0.0",
     "harfbuzzjs": "^1.6.3",
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.4.0",
@@ -23,10 +19,8 @@
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "react-router-dom": "^6.30.6",
-    "react-scripts": "5.0.1",
     "sharp": "^0.35.5",
-    "subset-font": "^2.9.0",
-    "web-vitals": "^2.1.4"
+    "subset-font": "^2.9.0"
   },
   "scripts": {
     "dev": "concurrently -k -n api,web -c yellow,cyan \"npm:server\" \"npm:start\"",
@@ -48,7 +42,8 @@
     "cache:bust": "node scripts/cache-bust.js",
     "test:api": "node --test --test-concurrency=1 \"tests/api/*.test.js\"",
     "test:admin-nav": "node scripts/admin-check/admin-nav.js",
-    "test:fonts-e2e": "node scripts/admin-check/fonts-e2e.js"
+    "test:fonts-e2e": "node scripts/admin-check/fonts-e2e.js",
+    "release:pack": "node scripts/release-pack.js"
   },
   "eslintConfig": {
     "extends": [
@@ -69,8 +64,14 @@
     ]
   },
   "devDependencies": {
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^13.5.0",
     "concurrently": "^10.0.6",
-    "nodemon": "^3.1.14"
+    "nodemon": "^3.1.14",
+    "react-scripts": "5.0.1",
+    "web-vitals": "^2.1.4"
   },
   "nodemonConfig": {
     "watch": [
