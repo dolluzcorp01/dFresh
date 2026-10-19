@@ -102,7 +102,8 @@ function main() {
 
   const listing = spawnSync('tar', ['-tzf', path.relative(ROOT, gz).split(path.sep).join('/')], { cwd: ROOT, encoding: 'utf8' });
   const entries = listing.stdout.split('\n').filter((l) => l && !l.endsWith('/'));
-  const bad = entries.filter((e) => /(^|\/)(\.env|node_modules|private|media|src\/(?!backend_routes|shared)|docs|tests)(\/|$)|\.map$/.test(e));
+  // never in a release: top-level secrets / data / dev folders, React sources, source maps (build/static/media is fine)
+  const bad = entries.filter((e) => /^(\.env|node_modules|private|media|docs|tests|visual-output)(\/|$)|^src\/(?!backend_routes\/|shared\/)|\.map$/.test(e));
   if (bad.length) fail(`unexpected files in the archive: ${bad.slice(0, 5).join(', ')}`);
   if (!entries.includes('server.js') || !entries.includes('build/index.html') || !entries.includes('RELEASE.txt')) fail('server.js, build/index.html or RELEASE.txt missing in the archive');
 
