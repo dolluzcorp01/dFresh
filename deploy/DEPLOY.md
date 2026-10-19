@@ -331,13 +331,13 @@ sudo ls /etc/letsencrypt/live/dfresh.us/              # fullchain.pem, privkey.p
 ```
 7.3 The final config (`deploy/nginx/dfresh.conf`): http -> https, www -> dfresh.us, `/static` cached a year,
 `/media` 30 days, `/media/mail` a year, gzip, security headers, 10 MB uploads, everything else (API, `/admin`,
-pages, sitemap, robots) -> node 4012, and the maintenance page (step 12):
+pages, sitemap, robots) -> node 4012, and dFresh's own maintenance page (step 12):
 ```bash
 sudo cp deploy/nginx/dfresh.conf /etc/nginx/sites-available/dfresh.us.conf
 sudo nginx -t && sudo systemctl reload nginx
 sudo certbot renew --dry-run                          # "Congratulations, all simulated renewals succeeded"
 ```
-Until step 8 starts node, every page shows the maintenance page (nginx answers 503 when node is not there).
+Until step 8 starts node, every page shows the maintenance page (node not there = 503 + the page).
 If `nginx -t` warns that `listen ... http2` is deprecated (nginx 1.25.1+): harmless; to silence it, write
 `listen 443 ssl;` + `http2 on;` like the other dApps' configs.
 
@@ -397,7 +397,9 @@ In a browser (phone and PC):
       shows it; the staff alert reaches `lead_email` (info@dolluzcorp.com); the visitor confirmation reaches you;
       a row appears in the LIVE sheet (Contact tab). Then delete it as in step 11.3.
 - [ ] Brochure button: with no PDF uploaded yet the form says the brochure is being finalised (step 10 uploads it).
-- [ ] Maintenance page: `touch /var/www/dfresh/maintenance.on` -> `/en` shows it (503); `rm` it -> site back.
+- [ ] Maintenance page: `touch /var/www/dfresh/MAINTENANCE` -> `/en` shows the black / gold dFresh page, title
+      "dFresh - Back shortly" (`curl -sI https://dfresh.us/en` -> 503 + `retry-after: 300`), `/admin` still opens;
+      `rm /var/www/dfresh/MAINTENANCE` -> site back.
 
 ---
 
@@ -447,19 +449,33 @@ real e-mails to whatever address the tester typed. Testers: name "TEST ...", the
 
 ## 12. Maintenance page, updates, rollback [server]
 
-Maintenance page (`deploy/maintenance/index.html`, EN / TA / HI; no reload needed):
+### Maintenance page: on / off
+
+dFresh's own page, `/var/www/dfresh/maintenance/maintenance.html` (in git, folder `maintenance/` with its logo and
+favicons in `maintenance/assets/`). Black / gold, title "dFresh - Back shortly", EN then Tamil and Hindi, the WhatsApp number
+for urgent orders, reloads itself every 60 s. Self-contained: no API, database or Google Fonts.
+
 ```bash
-touch /var/www/dfresh/maintenance.on     # site + API answer 503 with the page (Retry-After 600)
-rm /var/www/dfresh/maintenance.on        # back
-curl -s http://127.0.0.1:4012/en | head -c 200   # check node directly while the page is up
+touch /var/www/dfresh/MAINTENANCE        # ON: every public page -> 503 + Retry-After: 300 + the page (no reload)
+rm /var/www/dfresh/MAINTENANCE           # OFF: site back at once
+ls -l /var/www/dfresh/MAINTENANCE        # is it on? ("No such file" = off)
+curl -sI https://dfresh.us/en | grep -iE '^(HTTP|retry-after)'     # ON: 503 + retry-after: 300; OFF: 200
+curl -s http://127.0.0.1:4012/en | head -c 200                     # node itself, while the page is up
 ```
+- Same mechanism as dAssist: `error_page 403 404 500 503 /maintenance.html` (internal), the switch file
+  (`if (-f /var/www/dfresh/MAINTENANCE) { return 503; }`), and the page shows by itself while node is down
+  (502 / 504 are sent as 503, so search engines keep the old pages and do not index this one).
+- `/admin` and `/api/` are not switched off: staff can sign in and check before reopening, leads still save.
+- The file `MAINTENANCE` is git-ignored, so it never blocks a `git pull`.
+- WhatsApp number on the page = a fixed copy of Settings `whatsapp_display` (+91 93302 59330). If that setting
+  changes: edit `maintenance/maintenance.html` (link and text), commit, `git pull` on the server.
 
 Update to a new commit:
 ```bash
 cd /var/www/dfresh
 git rev-parse HEAD > ~/dfresh-prev-commit           # for a rollback
 rm -rf build.prev build-ssr.prev && cp -a build build.prev && cp -a build-ssr build-ssr.prev
-touch maintenance.on
+touch MAINTENANCE
 git checkout -- src/i18n/fallbackText.json          # the build rewrites it; drop the server's copy before pulling
 git pull --ff-only origin main
 npm ci
@@ -468,18 +484,18 @@ npm ci
 NODE_OPTIONS=--max-old-space-size=1536 npm run build
 pm2 reload dfresh-api && pm2 logs dfresh-api --lines 30 --nostream
 curl -s http://127.0.0.1:4012/api/dfresh/health
-rm maintenance.on
+rm MAINTENANCE
 ```
 Rollback to the previous commit:
 ```bash
 cd /var/www/dfresh
-touch maintenance.on
+touch MAINTENANCE
 git checkout -- src/i18n/fallbackText.json
 git checkout $(cat ~/dfresh-prev-commit)            # detached at the old commit
 npm ci
 rm -rf build build-ssr && mv build.prev build && mv build-ssr.prev build-ssr
 pm2 reload dfresh-api && curl -s http://127.0.0.1:4012/api/dfresh/health
-rm maintenance.on
+rm MAINTENANCE
 # later, to follow main again: git checkout main && the update steps above
 ```
 Migrations only add things, so the old code runs on the newer database. Restore the database backup (step 13)
@@ -537,6 +553,6 @@ Every later `npm ci` / `npm run build` for dFresh: `nvm use 22` first.
   (the e-mailed sign-in code).
 - Search engine indexing is an admin switch (`site_indexing`), not an env variable.
 - The build rewrites the tracked `src/i18n/fallbackText.json`: reset it before every `git pull` (step 12).
-- Maintenance page by a flag file (`maintenance.on`) in nginx, also shown while node is down. Compare with the
-  other apps' pattern and align if theirs differs (e.g. dAdmin `app_visibility.maintenance`, which dFresh does not
-  read).
+- Maintenance: the same nginx mechanism as dAssist (error_page + switch file `MAINTENANCE`), but dFresh's own
+  page in `/var/www/dfresh/maintenance/`, and the switch closes the public pages only (`/admin`, `/api/` stay up).
+  dAdmin `app_visibility.maintenance` is not read by dFresh.

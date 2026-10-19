@@ -19,6 +19,11 @@
 # served media is rebuilt from assets/ with `npm run media:sync`; production media is uploaded via admin
 /media
 
+# nginx maintenance switch on the server (deploy/DEPLOY.md step 12). The page itself, maintenance/, is in git
+# (the second line keeps it in on case-insensitive Windows, where /MAINTENANCE would match the folder too).
+/MAINTENANCE
+!/maintenance/
+
 # private files (brochures) never go to git
 /private/*
 !/private/.gitkeep
