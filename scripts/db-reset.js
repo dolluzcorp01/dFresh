@@ -12,7 +12,8 @@ const SAFE_IDENT = /^[A-Za-z0-9_]{1,32}$/;
 // The SQL files hard-code `USE dfresh`, so any other DB_NAME would silently reset the wrong database.
 const DB_NAME = 'dfresh';
 const DADMIN_TABLES = [
-  ['employee', 'SELECT'],
+  // only the columns dFresh reads (never bank details, Aadhaar, PAN or the rest of the row)
+  ['employee', 'SELECT (emp_id, emp_first_name, emp_last_name, emp_mail_id, emp_profile_img, job_position, emp_department, account_pass, active, deleted_time)'],
   ['login_session_revoke', 'SELECT'],
   ['login_otp', 'SELECT, INSERT, UPDATE, DELETE'],
   ['job_position_config', 'SELECT'], // Admin users: job title shown with the name

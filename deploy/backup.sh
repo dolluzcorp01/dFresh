@@ -11,7 +11,7 @@ DAY=$(date +%Y-%m-%d)
 OUT="$BACKUP_DIR/$DAY"
 
 mkdir -p "$OUT"
-mysqldump --single-transaction --routines --default-character-set=utf8mb4 dfresh | gzip > "$OUT/dfresh.sql.gz"
+mysqldump --single-transaction --no-tablespaces --default-character-set=utf8mb4 dfresh | gzip > "$OUT/dfresh.sql.gz"
 tar -czf "$OUT/media.tar.gz" -C "$APP_DIR" media
 tar -czf "$OUT/brochures.tar.gz" -C "$APP_DIR" private/brochures
 chmod -R go-rwx "$OUT"

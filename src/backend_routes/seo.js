@@ -3,7 +3,8 @@
 // canonical, hreflang for every active language + x-default, Open Graph, and JSON-LD (Organization +
 // LocalBusiness + ItemList of Products, never a price or offer). /sitemap.xml and /robots.txt are built from
 // the DB here too. All words come from ui_text / translations through the cached bootstrap (pageMeta.js).
-// Base URL = PUBLIC_SITE_URL. SEO_NOINDEX=true (staging) adds noindex everywhere and robots.txt disallows all.
+// Base URL = PUBLIC_SITE_URL. Not indexed (every page noindex, robots.txt disallows all, no sitemap, X-Robots-Tag) while
+// Settings site_indexing is 'off' (soft launch; a missing row = indexed) or SEO_NOINDEX=true (staging env).
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
@@ -16,7 +17,9 @@ const LOGO = '/media/logo/dfresh-logo-on-light.png';
 const SHARE_FALLBACK = '/media/logo/dfresh-logo-tagline-on-light.png';
 // Settings share_image is "share/share-<hash>.jpg" (admin upload); anything else is ignored.
 const shareImage = (v) => (/^share\/share-[0-9a-f]{10}\.jpg$/.test(String(v || '')) ? `/media/${v}` : '');
-const noindex = () => process.env.SEO_NOINDEX === 'true';
+// boot = a bootstrap (its public settings); read per request, so the Settings switch applies at once.
+const noindexFor = (boot) => process.env.SEO_NOINDEX === 'true'
+  || String((boot && boot.settings && boot.settings.site_indexing) || '').trim().toLowerCase() === 'off';
 
 const escHtml = (v) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 // JSON inside <script>: "<" never appears raw, so a text can never close the script tag.
@@ -133,7 +136,7 @@ async function headFor(target, langs) {
   ].map(([p, v]) => `<meta property="${p}" content="${escHtml(v)}">`);
   const tags = [
     `<meta name="description" content="${escHtml(meta.description)}">`,
-    ...(noindex() ? ['<meta name="robots" content="noindex, nofollow">'] : []),
+    ...(noindexFor(boot) ? ['<meta name="robots" content="noindex, nofollow">'] : []),
     ...links,
     ...og,
     `<meta name="twitter:card" content="${share ? 'summary_large_image' : 'summary'}">`,
@@ -286,9 +289,16 @@ async function sitemap() {
   return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">\n${urls.join('\n')}\n</urlset>\n`;
 }
 
-function robots() {
-  if (noindex()) return 'User-agent: *\nDisallow: /\n';
+/** true while the site must not be indexed (Settings site_indexing off, or SEO_NOINDEX=true). */
+async function noindex() {
+  if (process.env.SEO_NOINDEX === 'true') return true;
+  const langs = await languages();
+  return noindexFor((await content.getBootstrap(langs.default)).data);
+}
+
+async function robots() {
+  if (await noindex()) return 'User-agent: *\nDisallow: /\n';
   return `User-agent: *\nDisallow: /admin\nDisallow: /api/\nSitemap: ${siteBase()}/sitemap.xml\n`;
 }
 
-module.exports = { render, adminHtml, sitemap, robots, resolve, dataTag, dataHash, pagePath };
+module.exports = { render, adminHtml, sitemap, robots, noindex, resolve, dataTag, dataHash, pagePath };

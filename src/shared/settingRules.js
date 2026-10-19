@@ -24,6 +24,7 @@ const RULES = {
   lead_email: email,
   mail_from: email,
   brochure_download_enabled: onOff,
+  site_indexing: onOff,
   // GSTIN: 2-digit state, PAN (5 letters, 4 digits, 1 letter), entity number, Z, check character
   gstin: {
     tidy: (v) => { const g = v.replace(/\s/g, '').toUpperCase(); return /^\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/.test(g) ? g : null; },

@@ -29,7 +29,7 @@ const SECTIONS = [
   ['Company', ['company_name', 'cin', 'gstin']],
   ['Contact', ['office_phone', 'public_email', 'whatsapp_display', 'whatsapp_number']],
   ['Home page', ['about_image', 'door_home_product', 'door_biz_product']],
-  ['Sharing and SEO', ['share_image', 'ga4_measurement_id']],
+  ['Sharing and SEO', ['site_indexing', 'share_image', 'ga4_measurement_id']],
   ['E-mail', ['mail_logo_url', 'lead_email', 'mail_from', 'mail_from_name']],
   ['Integrations', ['gsheet_spreadsheet_id']],
   ['Brochure', ['brochure_download_enabled']],
@@ -133,6 +133,8 @@ function Row({ s, act, cards, onSaved, value: v, pending, derivedFrom, onChange:
     control = <TwoStepSwitch s={s} act={act} onSaved={onSaved} />;
   } else if (s.setting_key === 'brochure_download_enabled') {
     control = <OnOffSwitch s={s} act={act} onSaved={onSaved} label="Brochure download" />;
+  } else if (s.setting_key === 'site_indexing') {
+    control = <OnOffSwitch s={s} act={act} onSaved={onSaved} label="Search engine indexing" />;
   } else if (derived) {
     // computed from the WhatsApp display number (live while that one is being edited)
     const next = whatsappNumber(derivedFrom);

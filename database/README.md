@@ -25,7 +25,9 @@ Create an app user. Production MUST use this limited user, never root. Locally,
 ```sql
 CREATE USER 'dfresh_app'@'localhost' IDENTIFIED BY '<strong password>';
 GRANT SELECT, INSERT, UPDATE, DELETE ON dfresh.* TO 'dfresh_app'@'localhost';
-GRANT SELECT ON dadmin.employee TO 'dfresh_app'@'localhost';
+-- dadmin.employee: only the columns dFresh reads (never bank details, Aadhaar, PAN or the rest of the row)
+GRANT SELECT (emp_id, emp_first_name, emp_last_name, emp_mail_id, emp_profile_img, job_position, emp_department,
+              account_pass, active, deleted_time) ON dadmin.employee TO 'dfresh_app'@'localhost';
 GRANT SELECT ON dadmin.login_session_revoke TO 'dfresh_app'@'localhost';
 GRANT SELECT, INSERT, UPDATE, DELETE ON dadmin.login_otp TO 'dfresh_app'@'localhost';
 GRANT SELECT ON dadmin.job_position_config TO 'dfresh_app'@'localhost';  -- Admin users: job title (optional)

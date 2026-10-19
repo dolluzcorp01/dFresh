@@ -4,7 +4,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from './adminApi';
-import { Drawer, Loading, fmtDate, useAction, useAdmin, useCan, useLoad } from './ui';
+import { Drawer, Loading, fmtDate, useAction, useAdmin, useCan, useConfirm, useLoad } from './ui';
 import rules from '../shared/rules.json';
 
 // Lead drawer: every field of the lead's form, in the form's own order (src/shared/rules.json, the same file the site
@@ -209,6 +209,22 @@ function LeadDrawer({ id, onClose, onChanged }) {
     lead.reload();
   }, 'Queued again');
 
+  // Admin only (test leads before launch, junk): asks first; the sheet row, if already written, stays in the sheet.
+  const isAdmin = useCan('admin');
+  const confirm = useConfirm();
+  const remove = async () => {
+    const yes = await confirm({
+      title: `Delete lead ${l.lead_ref}?`,
+      message: `The lead, its e-mail history and its sheet queue row are removed for good.${l.sheet_synced_at ? ` Its row is already in the Google Sheet: delete that row there (Lead Ref ${l.lead_ref}).` : ''}`,
+      action: 'Delete lead', danger: true,
+    });
+    if (!yes) return;
+    act.run(async () => {
+      await api.send('DELETE', `/leads/${id}`);
+      onChanged();
+      onClose();
+    });
+  };
   const details = l && l.details_json ? (typeof l.details_json === 'string' ? JSON.parse(l.details_json) : l.details_json) : {};
   const rows = l ? [
     ['Form', l.form_type], ['Received', fmtDate(l.created_at)],
@@ -221,7 +237,12 @@ function LeadDrawer({ id, onClose, onChanged }) {
   return (
     <Drawer title={l ? `Lead ${l.lead_ref}` : 'Lead'} onClose={onClose}
       dirty={Boolean(form && l && (form.status !== l.status || form.assigned_to !== (l.assigned_to || '') || form.staff_notes !== (l.staff_notes || '')))}
-      footer={canEdit && form ? <button type="button" className="a-btn" onClick={save} disabled={act.busy}>Save</button> : null}>
+      footer={form && (canEdit || isAdmin) ? (
+        <>
+          {canEdit && <button type="button" className="a-btn" onClick={save} disabled={act.busy}>Save</button>}
+          {isAdmin && <button type="button" className="a-btn a-btn-danger" onClick={remove} disabled={act.busy}>Delete lead</button>}
+        </>
+      ) : null}>
       <Loading state={lead}>
         {l && form && (
           <>

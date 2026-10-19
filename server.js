@@ -121,9 +121,16 @@ if (isProd || process.env.SERVE_BUILD === 'true') {
     console.error('build/index.html is missing: run `npm run build` (or copy the build) before starting in production.');
   }
   const text = (type, maxAge) => (res, body) => res.type(type).set('Cache-Control', `public, max-age=${maxAge}`).send(body);
-  app.get('/robots.txt', (req, res) => text('text/plain', 3600)(res, seo.robots()));
+  // Settings site_indexing off (soft launch): robots.txt disallows all, no sitemap, every page noindex. Short cache so
+  // turning it on applies within minutes.
+  app.get('/robots.txt', async (req, res, next) => {
+    try { text('text/plain', 300)(res, await seo.robots()); } catch (err) { next(err); }
+  });
   app.get('/sitemap.xml', async (req, res, next) => {
-    try { text('application/xml', 3600)(res, await seo.sitemap()); } catch (err) { next(err); }
+    try {
+      if (await seo.noindex()) return res.status(404).set('X-Robots-Tag', 'noindex, nofollow').type('text').send('Not found');
+      return text('application/xml', 300)(res, await seo.sitemap());
+    } catch (err) { return next(err); }
   });
   app.use(express.static(BUILD, {
     index: false,
@@ -139,6 +146,7 @@ if (isProd || process.env.SERVE_BUILD === 'true') {
     if (!template) return res.sendStatus(503);
     try {
       const out = await seo.render(template, req.path, req.query);
+      if (await seo.noindex()) res.set('X-Robots-Tag', 'noindex, nofollow');
       if (out.status === 301) return res.redirect(301, out.location);
       if (out.status === 404) return res.status(404).type('text').send('Not found');
       return html(res, 200, out.html);

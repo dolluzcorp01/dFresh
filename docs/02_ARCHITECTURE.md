@@ -11,7 +11,7 @@ Summary of that pattern: `docs/reference/insideD-patterns.md`.
 | Styling | Plain CSS with design tokens (CSS variables) | port the preview CSS; no Bootstrap/Tailwind on the public site |
 | Backend | Node.js + Express 5 (`server.js` at repo root) | same as Inside D |
 | Database | MySQL 8, database name `dfresh` | `mysql2` pools via `config/db.js` |
-| Auth (admin only) | JWT in httpOnly cookie, identity from `dadmin.employee`, shared `JWT_SECRET` | two-step: password + e-mailed code, like Inside D (Settings `two_step_login`, on by default; off = password only) |
+| Auth (admin only) | JWT in httpOnly cookie, identity from `dadmin.employee` (10 columns, column grant), dFresh's own `JWT_SECRET` | two-step: password + e-mailed code, like Inside D (Settings `two_step_login`, on by default; off = password only) |
 | E-mail | SendGrid through `mailer.js` + `mail_outbox` worker | outbox pattern |
 | Lead sheet | Google Sheets API (service account) through `sync_outbox` worker | |
 | Analytics | GA4 (`gtag`) | measurement id from site_settings |
@@ -89,7 +89,7 @@ dfresh/
 
 ## Environment (.env.example)
 See `.env.example` in the repo root. Key groups: server (PORT, NODE_ENV, PUBLIC_SITE_URL), DB (DB_HOST, DB_USER,
-DB_PASSWORD, DB_NAME=dfresh, DADMIN_DB_NAME=dadmin), auth (JWT_SECRET shared with dAdmin, ADMIN_APP_KEY=dFresh),
+DB_PASSWORD, DB_NAME=dfresh, DADMIN_DB_NAME=dadmin), auth (JWT_SECRET: dFresh's own random secret, ADMIN_APP_KEY=dFresh),
 mail (SENDGRID_API_KEY, MAIL_ENABLED), Google (GSHEET_ENABLED, GOOGLE_SERVICE_ACCOUNT_JSON path), security (IP_HASH_SALT,
 BROCHURE_TOKEN_TTL_MIN), SEO (SEO_NOINDEX on staging only), local (SERVE_BUILD), React (REACT_APP_API, empty in production).
 The full server checklist is in `deploy/DEPLOY.md`.
@@ -142,8 +142,8 @@ are generated from the DB. See `src/backend_routes/seo.js`.
 ## Deployment (Phase 8)
 Step by step, env checklist and every `<DOMAIN>` placeholder: `deploy/DEPLOY.md` (+ `deploy/nginx/dfresh.conf`,
 `deploy/ecosystem.config.js`, `deploy/backup.sh`).
-nginx -> `server.js` (serves API + React build) under pm2 as `dfresh`. Build React on a dev machine or CI
-if the droplet runs out of memory. `media/` and `private/brochures/` live outside git on the server
+nginx -> `server.js` (serves API + React build) under pm2 as `dfresh-api` (https://dfresh.us, deploy/DEPLOY.md). React is built on the
+server (swap + NODE_OPTIONS on a small droplet) or on a dev machine if it runs out of memory. `media/` and `private/brochures/` live outside git on the server
 (upload via admin), originals backed up.
 
 Server-only settings (never on a dev machine):

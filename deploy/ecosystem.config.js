@@ -3,7 +3,7 @@
 // copies would send the same e-mail twice. Secrets stay in .env (server.js loads it); nothing secret here.
 module.exports = {
   apps: [{
-    name: 'dfresh',
+    name: 'dfresh-api',
     script: 'server.js',
     cwd: __dirname.replace(/[\\/]deploy$/, ''),
     instances: 1,

@@ -353,6 +353,23 @@ route('patch', '/leads/:id', 'editor', async (req) => {
   return leadDetail(id);
 });
 
+// Delete a lead (admin only: test leads before launch day, junk). Its products, e-mail rows and sheet-queue row go
+// with it (ON DELETE CASCADE). A row the sheet sync already wrote stays in the Google Sheet: delete it there by its
+// Lead Ref (the answer says whether there is one). Audited without the visitor's personal data.
+route('delete', '/leads/:id', 'admin', async (req) => {
+  const id = Number(req.params.id);
+  const before = await leadDetail(id);
+  if (!before) throw new InputError('Lead not found', 404);
+  await tx(async (q) => {
+    await q.query('DELETE FROM leads WHERE lead_id = ?', [id]);
+    await audit(q, {
+      empId: by(req), action: 'delete', entity: 'lead', entityId: before.lead_ref,
+      before: { lead_ref: before.lead_ref, form_type: before.form_type, created_at: before.created_at, sheet_synced_at: before.sheet_synced_at },
+    });
+  });
+  return { lead_ref: before.lead_ref, sheetRow: Boolean(before.sheet_synced_at) };
+});
+
 route('post', '/outbox/:type/:id/retry', 'editor', async (req) => {
   const box = { mail: ['mail_outbox', 'mail_id'], sync: ['sync_outbox', 'sync_id'] }[req.params.type];
   if (!box) throw new InputError('type: mail or sync', 404);

@@ -1,0 +1,33 @@
+<!doctype html>
+<!-- Maintenance page (deploy/nginx/dfresh.conf, `touch /var/www/dfresh/maintenance.on`). Served by nginx from disk while
+     the site is closed or node is down, so it cannot read the database: the one place with fixed words (EN / TA / HI),
+     like the legal body text. Logo from /media (nginx serves it from disk). -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>dFresh</title>
+<style>
+  :root { --ink: #121214; --gold: #E5BF24; --white: #FCFBF6; --beige: #F6F1E4; --line: #E6DFCB; }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 16px; background: var(--beige);
+         color: var(--ink); font: 16px/1.6 "Open Sans", "Noto Sans Tamil", "Noto Sans Devanagari", Arial, sans-serif; }
+  main { width: 100%; max-width: 460px; background: var(--white); border: 1px solid var(--line); border-radius: 20px;
+         padding: 28px; text-align: center; }
+  img { width: 160px; height: auto; margin: 0 auto 18px; display: block; }
+  p { margin: 0 0 12px; }
+  p:last-child { margin-bottom: 0; }
+  .bar { width: 56px; height: 4px; border-radius: 2px; background: var(--gold); margin: 0 auto 18px; }
+</style>
+</head>
+<body>
+<main>
+  <img src="/media/logo/dfresh-logo-on-light.webp" alt="dFresh" width="900" height="498">
+  <div class="bar" aria-hidden="true"></div>
+  <p lang="en">dFresh is getting an update. Please come back in a few minutes.</p>
+  <p lang="ta">dFresh புதுப்பிக்கப்படுகிறது. சில நிமிடங்களில் மீண்டும் வாருங்கள்.</p>
+  <p lang="hi">dFresh अपडेट हो रहा है। कृपया कुछ मिनट बाद फिर से आएँ।</p>
+</main>
+</body>
+</html>

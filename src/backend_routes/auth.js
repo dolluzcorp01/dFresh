@@ -1,7 +1,7 @@
 // Admin sessions (Inside D pattern, docs/reference/insideD-patterns.md).
 // - Identity is dadmin.employee; the role lives in dfresh.admin_users and is read on EVERY request, so a role
 //   change or deactivation applies at once.
-// - Two token kinds, both HS256 with JWT_SECRET (shared with dAdmin) and tagged with app + stage:
+// - Two token kinds, both HS256 with JWT_SECRET (dFresh's own; it never reads a dAdmin token) and tagged with app + stage:
 //   challenge (stage 'otp', 10 min, after the password) and session (stage 'session', 8 h, after the code).
 //   readSession() accepts only stage 'session' for this app, so a challenge token, a dAdmin token or a
 //   brochure token (different key) can never pass as a session.
