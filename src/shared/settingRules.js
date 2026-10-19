@@ -15,6 +15,7 @@ function indianPhone(v) {
 
 const phone = { tidy: indianPhone, message: 'Use +91 and the 10-digit number, e.g. +91 93302 59330.' };
 const email = { tidy: (v) => (EMAIL.test(v) ? v : null), message: 'A plain e-mail address, e.g. info@dolluzcorp.com.' };
+const onOff = { tidy: (v) => (/^(on|off)$/i.test(v) ? v.toLowerCase() : null), message: 'on or off.' };
 
 const RULES = {
   office_phone: phone,
@@ -22,6 +23,17 @@ const RULES = {
   public_email: email,
   lead_email: email,
   mail_from: email,
+  brochure_download_enabled: onOff,
+  // GSTIN: 2-digit state, PAN (5 letters, 4 digits, 1 letter), entity number, Z, check character
+  gstin: {
+    tidy: (v) => { const g = v.replace(/\s/g, '').toUpperCase(); return /^\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/.test(g) ? g : null; },
+    message: 'A GSTIN has 15 characters, like 33ABCDE1234F1Z5, or leave it empty.',
+  },
+  // CIN: L/U, 5-digit industry code, state, year, company type, 6-digit number
+  cin: {
+    tidy: (v) => { const c = v.replace(/\s/g, '').toUpperCase(); return /^[LU]\d{5}[A-Z]{2}\d{4}[A-Z]{3}\d{6}$/.test(c) ? c : null; },
+    message: 'A CIN has 21 characters, like U72501TN2018OPC120419, or leave it empty.',
+  },
   ga4_measurement_id: {
     tidy: (v) => (/^G-[A-Z0-9]{4,15}$/i.test(v) ? v.toUpperCase() : null),
     message: 'Use the GA4 Measurement ID, like G-XXXXXXXXXX, or leave it empty.',

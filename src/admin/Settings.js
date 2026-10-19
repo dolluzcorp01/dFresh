@@ -32,6 +32,7 @@ const SECTIONS = [
   ['Sharing and SEO', ['share_image', 'ga4_measurement_id']],
   ['E-mail', ['mail_logo_url', 'lead_email', 'mail_from', 'mail_from_name']],
   ['Integrations', ['gsheet_spreadsheet_id']],
+  ['Brochure', ['brochure_download_enabled']],
   ['Security', ['two_step_login']],
 ];
 
@@ -130,6 +131,8 @@ function Row({ s, act, cards, onSaved, value: v, pending, derivedFrom, onChange:
     control = <Picture s={s} cfg={picture} act={act} onSaved={onSaved} focus={focus} />;
   } else if (s.setting_key === 'two_step_login') {
     control = <TwoStepSwitch s={s} act={act} onSaved={onSaved} />;
+  } else if (s.setting_key === 'brochure_download_enabled') {
+    control = <OnOffSwitch s={s} act={act} onSaved={onSaved} label="Brochure download" />;
   } else if (derived) {
     // computed from the WhatsApp display number (live while that one is being edited)
     const next = whatsappNumber(derivedFrom);
@@ -173,6 +176,24 @@ function Row({ s, act, cards, onSaved, value: v, pending, derivedFrom, onChange:
         )}
       </td>
     </tr>
+  );
+}
+
+// A plain on / off setting: one click saves (PUT, admin only, audited by the server).
+function OnOffSwitch({ s, act, onSaved, label }) {
+  const on = String(s.setting_value || 'on').trim().toLowerCase() !== 'off';
+  const flip = () => act.run(async () => {
+    await api.send('PUT', `/settings/${s.setting_key}`, { value: on ? 'off' : 'on' });
+    onSaved();
+    act.setMsg({ kind: 'ok', text: `${label} is ${on ? 'off' : 'on'}.` });
+  });
+  return (
+    <span className="a-switch-row">
+      <button type="button" role="switch" aria-checked={on} aria-label={label} className="a-switch" onClick={flip} disabled={act.busy}>
+        <span className="a-switch-knob" aria-hidden="true" />
+      </button>
+      <strong>{on ? 'On' : 'Off'}</strong>
+    </span>
   );
 }
 

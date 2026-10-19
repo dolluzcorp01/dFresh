@@ -38,6 +38,14 @@ function fieldRows(name, l, details) {
   }
 }
 
+// Brochure lead: did the visitor get the PDF? (details_json from Leads_server.js / Brochure_server.js)
+function brochureStatus(d) {
+  if (d.brochure_downloaded_at) return `Downloaded (${String(d.brochure_lang || '').toUpperCase()}), ${fmtDate(d.brochure_downloaded_at)}`;
+  if (d.brochure_delivery === 'off') return 'Not sent, download off - send it to the visitor';
+  if (d.brochure_lang) return `Offered (${String(d.brochure_lang).toUpperCase()}): download started and copy link e-mailed, not opened yet`;
+  return 'Not sent, no brochure uploaded - send it to the visitor';
+}
+
 const FORMS = ['brochure', 'quote', 'sample', 'distributor', 'contact'];
 const STATUS = ['new', 'contacted', 'qualified', 'won', 'lost', 'spam'];
 const FILTERS = ['form', 'status', 'lang', 'from', 'to', 'q', 'ref', 'age', 'outbox', 'page'];
@@ -205,6 +213,7 @@ function LeadDrawer({ id, onClose, onChanged }) {
   const rows = l ? [
     ['Form', l.form_type], ['Received', fmtDate(l.created_at)],
     ...formFields(l.form_type).flatMap((name) => fieldRows(name, l, details)),
+    ...(l.form_type === 'brochure' ? [['Brochure', brochureStatus(details)]] : []),
     ['Language', l.lang_code], ['Page', l.source_page], ['Opened from', l.source_ref], ['Consent', l.consent_given ? `Yes, ${fmtDate(l.consent_at)}: "${l.consent_text}"` : 'No'],
     ['Sheet synced', fmtDate(l.sheet_synced_at)],
   ] : [];

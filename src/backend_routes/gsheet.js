@@ -139,7 +139,7 @@ async function leadRow(leadId) {
     values = [date, lead.lead_ref, s(lead.full_name), lead.phone, lead.email, s(lead.message), ...tail];
   } else {
     values = [date, lead.lead_ref, s(lead.first_name), s(lead.last_name), lead.email, lead.phone,
-      d.brochure_lang || 'none', ...tail];
+      d.brochure_lang || (d.brochure_delivery === 'off' ? 'not sent (download off)' : 'none'), ...tail];
   }
   return { tab: TABS[lead.form_type], values };
 }

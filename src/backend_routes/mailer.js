@@ -217,7 +217,7 @@ const say = (ui, key, vars = {}) => String((ui && ui[key]) || key).replace(/\{(\
 /**
  * Staff lead alert (default language, internal). lead = the saved row values plus:
  * { leadRef, formType, receivedAt, languageName, products: [{id, name}], options: {field: label},
- *   details: {...distributor extras}, brochure: 'sent' | 'pending' | null, companyName, ui: staffText() }
+ *   details: {...distributor extras}, brochure: 'sent' | 'pending' | 'off' | null, companyName, ui: staffText() }
  */
 function renderLeadAlert(lead) {
   const { ui } = lead;
@@ -229,7 +229,8 @@ function renderLeadAlert(lead) {
   const products = (lead.products || []).map((p) => `${p.id} - ${p.name}`).join('\n');
   const adminUrl = `${siteBase()}/admin/leads?ref=${encodeURIComponent(lead.leadRef)}`;
   const brochure = lead.brochure === 'sent' ? say(ui, 'ma_bro_sent', { lang: lead.brochureLang })
-    : lead.brochure === 'pending' ? say(ui, 'ma_bro_pending') : null;
+    : lead.brochure === 'pending' ? say(ui, 'ma_bro_pending')
+      : lead.brochure === 'off' ? say(ui, 'ma_bro_off') : null;
   const rows = [
     [L('ref'), lead.leadRef],
     [L('form'), form],

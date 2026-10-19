@@ -3,8 +3,10 @@
 // Tokens are short JWTs (purpose 'brochure'): 15 min for the in-page download, 7 days for the e-mailed link.
 // They are signed with a key DERIVED from JWT_SECRET, so a brochure token can never pass as an admin or dAdmin
 // session token (those use JWT_SECRET itself).
-// Errors: 400 bad token, 410 expired, 404 nothing uploaded. A browser opening the link (e-mail) gets a small
-// page with the ui_text message in the token's language; API callers get JSON.
+// Errors: 400 bad token, 410 expired, 404 nothing uploaded, 404 download switched off (Settings
+// brochure_download_enabled 'off': every link, also ones e-mailed earlier, before the token is even read). A browser
+// opening the link (e-mail) gets a small page with the ui_text message in the token's language; API callers get JSON.
+// A PDF that starts streaming marks the token's lead: details_json.brochure_downloaded_at (admin lead drawer).
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -34,6 +36,12 @@ function signBrochureToken({ leadId, lang }, ttl) {
 function inPageTtl() {
   const min = Number(process.env.BROCHURE_TOKEN_TTL_MIN) || 15;
   return `${Math.min(Math.max(Math.round(min), 1), 60)}m`;
+}
+
+/** Settings brochure_download_enabled: on unless it says 'off' (a missing row keeps the download). */
+async function downloadEnabled() {
+  const [[row]] = await db.query("SELECT setting_value FROM site_settings WHERE setting_key = 'brochure_download_enabled'");
+  return !(row && String(row.setting_value).trim().toLowerCase() === 'off');
 }
 
 async function languages() {
@@ -94,10 +102,15 @@ const ERRORS = {
   400: ['Invalid brochure link', 'bro_expired'],
   410: ['Brochure link expired', 'bro_expired'],
   404: ['Brochure not available yet', 'bro_pending'],
+  off: ['Brochure download is switched off', 'bro_off'],
 };
 
 async function fail(req, res, status, lang) {
   const [message, key] = ERRORS[status];
+  if (status === 'off') {
+    if (req.accepts(['json', 'html']) === 'html') return sendErrorPage(res, 404, lang, key);
+    return res.status(404).json({ success: false, message });
+  }
   if (req.accepts(['json', 'html']) === 'html') return sendErrorPage(res, status, lang, key);
   return res.status(status).json({ success: false, message });
 }
@@ -108,6 +121,7 @@ router.get('/brochure/download', async (req, res) => {
   const peek = jwt.decode(token);
   const hintLang = peek && typeof peek.lang === 'string' ? peek.lang : '';
   try {
+    if (!(await downloadEnabled())) return await fail(req, res, 'off', hintLang);
     let claims;
     try {
       claims = jwt.verify(token, tokenKey(), { algorithms: ['HS256'] });
@@ -126,6 +140,12 @@ router.get('/brochure/download', async (req, res) => {
       'Cache-Control': 'private, no-store',
       'X-Content-Type-Options': 'nosniff',
     });
+    // the lead whose link this is: first download time (never overwritten)
+    db.query(
+      `UPDATE leads SET details_json = JSON_SET(COALESCE(details_json, JSON_OBJECT()), '$.brochure_downloaded_at', DATE_FORMAT(UTC_TIMESTAMP(), '%Y-%m-%dT%H:%i:%sZ'))
+        WHERE lead_id = ? AND form_type = 'brochure' AND JSON_EXTRACT(details_json, '$.brochure_downloaded_at') IS NULL`,
+      [claims.lid]
+    ).catch((err) => console.error('brochure download mark failed:', err.code || err.message));
     const stream = fs.createReadStream(found.file);
     stream.on('error', (err) => {
       console.error('brochure stream failed:', err.code || err.message);
@@ -140,4 +160,4 @@ router.get('/brochure/download', async (req, res) => {
 });
 
 module.exports = router;
-module.exports.brochure = { signBrochureToken, inPageTtl, findBrochure, BROCHURE_DIR };
+module.exports.brochure = { signBrochureToken, inPageTtl, findBrochure, downloadEnabled, BROCHURE_DIR };

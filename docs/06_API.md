@@ -39,8 +39,8 @@ Product shape (card):
 ## Leads
 | Method | Path | Body | Returns |
 |---|---|---|---|
-| POST | `/leads` | `{ form_type, lang, source_page, source_ref, consent: true, website: '' (honeypot), ...fields }` | 201 `{ lead_ref, brochure_available?, brochure_token? }` (brochure only: `brochure_token` when a PDF exists) |
-| GET | `/brochure/download?token=` | - | PDF stream (`attachment; filename="dFresh_Brochure_<LANG>.pdf"`), 400 bad token, 410 expired, 404 none uploaded. JSON `{message}`; a browser (Accept: text/html) gets a small page with `bro_expired` / `bro_pending` in the token's language |
+| POST | `/leads` | `{ form_type, lang, source_page, source_ref, consent: true, website: '' (honeypot), ...fields }` | 201 `{ lead_ref, brochure_available?, brochure_delivery?, brochure_token? }` (brochure only: `brochure_delivery` 'download' / 'pending' (no PDF) / 'off' (Settings `brochure_download_enabled` off); `brochure_token` only with 'download') |
+| GET | `/brochure/download?token=` | - | PDF stream (`attachment; filename="dFresh_Brochure_<LANG>.pdf"`), 400 bad token, 410 expired, 404 none uploaded, 404 for every link while Settings `brochure_download_enabled` is off (page text `bro_off`). The first download sets the lead's `details_json.brochure_downloaded_at`. JSON `{message}`; a browser (Accept: text/html) gets a small page with `bro_expired` / `bro_pending` in the token's language |
 
 Field names per form_type:
 - brochure: `first_name, last_name, email, phone`

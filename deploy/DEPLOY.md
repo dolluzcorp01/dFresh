@@ -187,3 +187,5 @@ Apply with `mysql --default-character-set=utf8mb4 dfresh < database/migrations/<
 - [ ] `20261016_setting_hints.sql`
 - [ ] `20261017_two_step_login.sql` - adds the `two_step_login` setting (on). Without it sign-in keeps the code step
       (a missing row means on), but Settings has no switch.
+- [ ] `20261019_brochure_download.sql` - adds `brochure_download_enabled` (on) and the texts `bro_off` (EN/TA/HI),
+      `ma_bro_off`. Then `pm2 reload dfresh` so the site picks up the new text.

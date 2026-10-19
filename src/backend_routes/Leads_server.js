@@ -1,8 +1,10 @@
 // POST /api/dfresh/leads (spec D2, docs/06_API.md). Every lead is saved to MySQL first; e-mail and the Google
 // Sheet row are only queued here (mail_outbox / sync_outbox) in the SAME transaction, so a SendGrid or Google
 // outage can never lose a lead or show the visitor an error.
-// Visitor e-mail: brochure -> the copy link (when a PDF exists); every other form -> a confirmation with the
-// lead_ref (lead_ack). Both in the visitor's language, English fallback.
+// Visitor e-mail: brochure -> the copy link (when a PDF exists and Settings brochure_download_enabled is on); every
+// other form -> a confirmation with the lead_ref (lead_ack). Both in the visitor's language, English fallback.
+// Brochure with the download off: the lead, staff alert and sheet row as usual, nothing to the visitor, no token;
+// the answer says brochure_delivery 'off' and the site shows bro_off.
 // Order: form type -> honeypot (fake success, nothing saved) -> validation (rules.json) -> transaction:
 //   bump the year's lead_counters row (row lock: unique lead_ref, and it serialises the rate-limit count)
 //   -> rate limit by ip_hash -> leads + lead_products -> outbox rows -> commit.
@@ -109,13 +111,14 @@ async function mailContext(conn, { lang, def, productIds, optionPairs }) {
 
 // form fields -> leads columns (distributor extras go to details_json; firm name also to business_name for search).
 // Brochure: details_json.brochure_lang = language code of the PDF actually served (after fallback), null when
-// none is uploaded yet (Google Sheet "Brochure Sent", admin lead detail).
-function toColumns(formType, v, brochureLang) {
+// none is served; brochure_delivery = 'download' (PDF + copy link), 'pending' (no PDF uploaded) or 'off' (switched
+// off in Settings). Google Sheet "Brochure Sent", staff alert, admin lead drawer.
+function toColumns(formType, v, brochureLang, delivery) {
   const base = { phone: v.phone, email: v.email };
   if (formType === 'brochure') {
     return {
       ...base, first_name: v.first_name, last_name: v.last_name, full_name: `${v.first_name} ${v.last_name}`,
-      details_json: JSON.stringify({ brochure_lang: brochureLang }),
+      details_json: JSON.stringify({ brochure_lang: brochureLang, brochure_delivery: delivery }),
     };
   }
   if (formType === 'distributor') {
@@ -159,7 +162,9 @@ router.post('/leads', async (req, res) => {
     const lang = langs.rows.some((r) => r.lang_code === body.lang) ? body.lang : langs.def;
     const langRow = langs.rows.find((r) => r.lang_code === lang);
     const productIds = v.products || [];
-    const found = formType === 'brochure' ? await brochure.findBrochure(lang) : null;
+    const downloadOn = formType === 'brochure' ? await brochure.downloadEnabled() : false;
+    const found = downloadOn ? await brochure.findBrochure(lang) : null;
+    const delivery = formType !== 'brochure' ? null : !downloadOn ? 'off' : found ? 'download' : 'pending';
     const { yr, label: receivedAt } = istParts();
 
     conn = await db.getConnection();
@@ -194,7 +199,7 @@ router.post('/leads', async (req, res) => {
     const cols = {
       lead_ref: leadRef,
       form_type: formType,
-      ...toColumns(formType, v, found ? found.lang : null),
+      ...toColumns(formType, v, found ? found.lang : null, delivery),
       lang_code: lang,
       source_page: str(body.source_page, 150),
       source_ref: str(body.source_ref, 60),
@@ -261,7 +266,7 @@ router.post('/leads', async (req, res) => {
         details: formType === 'distributor' ? JSON.parse(cols.details_json) : null,
         products: ctx.products,
         options: ctx.options,
-        brochure: formType !== 'brochure' ? null : found ? 'sent' : 'pending',
+        brochure: formType !== 'brochure' ? null : delivery === 'download' ? 'sent' : delivery,
         brochureLang: found ? found.lang.toUpperCase() : null,
         languageName: `${langRow.name_en} (${lang})`,
         sourcePage: cols.source_page,
@@ -281,6 +286,7 @@ router.post('/leads', async (req, res) => {
     const data = { lead_ref: leadRef };
     if (formType === 'brochure') {
       data.brochure_available = Boolean(found);
+      data.brochure_delivery = delivery;
       if (found) data.brochure_token = brochure.signBrochureToken({ leadId, lang }, brochure.inPageTtl());
     }
     return res.status(201).json({ success: true, data });

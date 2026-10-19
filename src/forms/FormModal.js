@@ -1,7 +1,8 @@
 // One form component, five configs (spec D). Validation on blur and on submit with the shared rules; the
 // first invalid field gets focus. Submit -> POST /api/dfresh/leads. A network / server error or the rate
 // limit keeps everything typed and shows a message above the button, so the visitor can simply retry.
-// Success: tick, "Thank you, <name>!", ok_bro / bro_pending / ok_other, WhatsApp button; a brochure lead
+// Success: tick, "Thank you, <name>!", ok_bro / bro_pending / bro_off (download switched off: the server says
+// brochure_delivery 'off' and sends no token) / ok_other, WhatsApp button; a brochure lead
 // with a PDF starts the download in a hidden frame (an error page there stays invisible).
 // Typed data is never lost by accident: a click on the backdrop does nothing (closeOnScrim false); X or Esc on
 // a form with typed values first asks "Close without sending?" inside the modal (Esc there = keep editing).
@@ -312,7 +313,9 @@ export default function FormModal({ type, prefill: opened, source, onClose }) {
   }, [confirming]);
 
   const firstName = (values.first_name || values.full_name || '').trim().split(/\s+/)[0];
-  const doneMsg = type !== 'brochure' ? 'ok_other' : result && result.brochure_available ? 'ok_bro' : 'bro_pending';
+  const doneMsg = type !== 'brochure' ? 'ok_other'
+    : result && result.brochure_delivery === 'off' ? 'bro_off'
+      : result && result.brochure_available ? 'ok_bro' : 'bro_pending';
   const logo = <img className="mlogo" src={mediaUrl('/media/logo/dfresh-logo-on-light.webp')} alt="dFresh" width="900" height="498" />;
 
   return (

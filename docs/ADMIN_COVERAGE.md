@@ -246,6 +246,7 @@ The free sample form is the quote form in "sample" mode, so it has the quote for
 | "Thank you, {name}!" | Yes | Translations > `thanks_name` |
 | Brochure form: "Your brochure is downloading now..." | Yes | Translations > `ok_bro` |
 | Brochure form when no brochure is uploaded yet | Yes | Translations > `bro_pending` |
+| Brochure form while the download is switched off | Yes | Settings > `brochure_download_enabled`; text Translations > `bro_off` |
 | Quote, sample, distributor, contact: "Our team will contact you on WhatsApp." | Text only | Translations > `ok_other`. One message for all four forms (also in the confirmation e-mail); a message per form: small. |
 | Reference number line | Yes | Translations > `mail_ack_ref`, `mail_ack_keep` (the number itself is automatic) |
 | WhatsApp button | Yes | Translations > `whatsapp_us`, `wa_general`; Settings > `whatsapp_number` |
@@ -304,6 +305,7 @@ to make colours or layout editable).
 | Brochure e-mail (copy link): subject, greeting, button | Yes | Translations > `mail_bro_subject`, `mail_bro_intro` ({name}), `download_brochure` |
 | Footer of visitor e-mails (company name, e-mail) | Yes | Settings > `company_name`, `public_email` |
 | Brochure lead when no brochure is uploaded | Nothing is sent | The visitor sees `bro_pending` on screen; staff see "No brochure uploaded yet" in the lead alert. |
+| Brochure lead while the download is off | Nothing is sent | The visitor sees `bro_off`; staff see `ma_bro_off` in the lead alert and "Not sent, download off" in the lead. |
 
 ### Staff e-mails (English, internal)
 

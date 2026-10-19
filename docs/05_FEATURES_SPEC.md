@@ -239,6 +239,9 @@ Common to all forms:
 - A copy link (7-day token) is e-mailed to the visitor (`mail_bro_subject`, `mail_bro_intro`) via the outbox.
 - If no brochure is uploaded yet: still save the lead, show `bro_pending` instead of downloading. No visitor
   e-mail is queued then (there is nothing to link to); the staff alert says the brochure is still to be sent.
+- Settings `brochure_download_enabled` off (admin switch, server decides): the same form, lead, staff alert and sheet
+  row, but no token, no download, no copy e-mail; the modal shows `bro_off`; `/brochure/download` answers 404 for
+  every link. The lead says "Not sent, download off" in the admin and the alert. The header button stays.
 - GA4 `brochure_download`.
 
 ### D2. What happens to a lead (server)
