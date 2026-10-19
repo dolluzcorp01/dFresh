@@ -4,7 +4,7 @@
 import { useMemo, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { api } from './adminApi';
-import { InfoCard, Loading, Notice, useAction, useAdmin, useCan, useLeaveGuard, useLoad } from './ui';
+import { InfoCard, Loading, Notice, UploadProgress, useAction, useAdmin, useCan, useLeaveGuard, useLoad, useUpload } from './ui';
 import { COUNTS } from '../shared/countText';
 
 export default function Translations() {
@@ -12,6 +12,7 @@ export default function Translations() {
   const { languages, reloadLanguages } = useAdmin();
   const canEdit = useCan('editor');
   const act = useAction();
+  const up = useUpload();
   // ?lang=ta&missing=1 (dashboard "not translated yet" links) opens the grid already filtered
   const { search } = useLocation();
   const [missingOnly, setMissingOnly] = useState(() => new URLSearchParams(search).get('missing') === '1');
@@ -61,7 +62,7 @@ export default function Translations() {
   useLeaveGuard(pendingCount > 0);
 
   const csvRun = (dry) => act.run(async () => {
-    const r = await api.upload(`/ui-text/import?dryRun=${dry ? 1 : 0}`, csvFile);
+    const r = await up.send(dry ? 'check' : 'import', `/ui-text/import?dryRun=${dry ? 1 : 0}`, csvFile);
     setCsvReport(r);
     if (!dry) { grid.reload(); setCsvFile(null); reloadLanguages(); }
   }, dry ? null : 'Imported');
@@ -89,9 +90,9 @@ export default function Translations() {
       </div>
       {canEdit && (
         <div className="a-toolbar">
-          <input type="file" accept=".csv,text/csv" aria-label="Translations CSV file" onChange={(e) => { setCsvFile(e.target.files[0] || null); setCsvReport(null); }} />
-          <button type="button" className="a-btn" disabled={!csvFile || act.busy} onClick={() => csvRun(true)}>Check CSV</button>
-          {csvReport && csvReport.dryRun && !csvReport.errors.length && csvReport.changes > 0 && <button type="button" className="a-btn" disabled={act.busy} onClick={() => csvRun(false)}>Import {csvReport.changes} change(s)</button>}
+          <input type="file" accept=".csv,text/csv" aria-label="Translations CSV file" disabled={act.busy} onChange={(e) => { setCsvFile(e.target.files[0] || null); setCsvReport(null); }} />
+          <button type="button" className="a-btn" disabled={!csvFile || act.busy} onClick={() => csvRun(true)}>{up.is('check') ? <UploadProgress state={up.state} /> : 'Check CSV'}</button>
+          {csvReport && csvReport.dryRun && !csvReport.errors.length && csvReport.changes > 0 && <button type="button" className="a-btn" disabled={act.busy} onClick={() => csvRun(false)}>{up.is('import') ? <UploadProgress state={up.state} /> : `Import ${csvReport.changes} change(s)`}</button>}
         </div>
       )}
       </div>

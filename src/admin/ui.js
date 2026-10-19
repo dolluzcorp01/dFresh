@@ -304,16 +304,94 @@ export function ConfirmDialog({ title, message, action = 'OK', cancel = 'Cancel'
 }
 
 export const DISCARD = { title: 'Discard unsaved changes?', message: 'Your changes have not been saved.', action: 'Discard', cancel: 'Keep editing', danger: true };
+export const UPLOADING = { title: 'Upload in progress. Leave anyway?', message: 'The upload stops and the file is not saved if you leave now.', action: 'Leave', cancel: 'Stay', danger: true };
+
+// ---------------------------------------------------------------------------------------------------------------
+// Uploads (Brochures, product photos, banners, Settings pictures, Excel import, Translations CSV) all go through
+// useUpload(): real progress from the upload, one at a time (no double submit), "Processing..." until the server
+// answers. While any upload runs, leaving the page (admin link, drawer close, tab close) asks UPLOADING first; the
+// app-wide <UploadGuard /> does it once, and the ordinary "unsaved changes" guards stand down meanwhile.
+let activeUploads = 0;
+const uploadListeners = new Set();
+function countUpload(d) {
+  activeUploads += d;
+  uploadListeners.forEach((f) => f(activeUploads));
+}
+/** true while an upload is running anywhere in the admin */
+export function useUploadsActive() {
+  const [n, setN] = useState(activeUploads);
+  useEffect(() => {
+    uploadListeners.add(setN);
+    return () => { uploadListeners.delete(setN); };
+  }, []);
+  return n > 0;
+}
+
+/** Once, in the admin shell: the leave guard for uploads. */
+export function UploadGuard() {
+  useLeaveGuard(useUploadsActive(), UPLOADING);
+  return null;
+}
 
 /**
- * While `dirty`: following an admin link asks "Discard unsaved changes?" first, and closing / reloading the tab gets the
- * browser's own "Leave site?" warning (the only thing a browser allows there). Nothing happens when not dirty.
+ * const up = useUpload(); ... up.send(key, path, file, fields) -> the server's data (throws like api calls).
+ * up.state = { key, name, phase: 'uploading' | 'processing', pct } while it runs; up.is(key); up.busy.
  */
-export function useLeaveGuard(dirty) {
+export function useUpload() {
+  const [state, setState] = useState(null);
+  const running = useRef(false);
+  const send = useCallback(async (key, path, file, fields) => {
+    if (running.current) return undefined; // a second click while one runs does nothing
+    running.current = true;
+    countUpload(1);
+    setState({ key, name: file.name, phase: 'uploading', pct: 0 });
+    try {
+      return await api.upload(path, file, fields, { onProgress: (p) => setState((s) => (s ? { ...s, ...p } : s)) });
+    } finally {
+      running.current = false;
+      countUpload(-1);
+      setState(null);
+    }
+  }, []);
+  return { state, busy: Boolean(state), is: (key) => Boolean(state && state.key === key), send };
+}
+
+/** Spinner + "Uploading... 45%" / "Processing..." + the file name. */
+export function UploadProgress({ state }) {
+  if (!state) return null;
+  return (
+    <span className="a-upload" role="status" aria-live="polite">
+      <span className="a-spin" aria-hidden="true" />
+      <span>{state.phase === 'processing' ? 'Processing...' : `Uploading... ${state.pct}%`}</span>
+      <span className="a-upload-name" title={state.name}>{state.name}</span>
+    </span>
+  );
+}
+
+/** A file-picker button: picks a file -> onFile(file); while ITS upload runs it shows the progress instead. */
+export function UploadButton({ label, accept, onFile, upload, uploadKey, disabled, className = 'a-btn a-btn-sm a-btn-ghost' }) {
+  const active = upload.is(uploadKey);
+  const off = Boolean(disabled || upload.busy);
+  return (
+    <label className={`${className} a-file${active ? ' a-uploading' : ''}${off && !active ? ' a-file-off' : ''}`}>
+      {active ? <UploadProgress state={upload.state} /> : label}
+      <input type="file" accept={accept} disabled={off} onChange={(e) => { const f = e.target.files[0]; e.target.value = ''; if (f) onFile(f); }} />
+    </label>
+  );
+}
+
+/**
+ * While `dirty`: following an admin link asks `dialog` (default "Discard unsaved changes?") first, and closing /
+ * reloading the tab gets the browser's own "Leave site?" warning (the only thing a browser allows there). Nothing
+ * happens when not dirty. While an upload runs, only the upload guard asks (one dialog, not two).
+ */
+export function useLeaveGuard(dirty, dialog = DISCARD) {
   const confirm = useConfirm();
   const navigate = useNavigate();
+  const uploading = useUploadsActive();
+  const on = dialog === UPLOADING ? dirty : dirty && !uploading;
   useEffect(() => {
-    if (!dirty) return undefined;
+    if (!on) return undefined;
     const onUnload = (e) => { e.preventDefault(); e.returnValue = ''; };
     const onClick = (e) => {
       const a = e.target.closest && e.target.closest('a[href]');
@@ -322,7 +400,7 @@ export function useLeaveGuard(dirty) {
       if (url.origin !== window.location.origin || url.pathname + url.search === window.location.pathname + window.location.search) return;
       e.preventDefault();
       e.stopPropagation();
-      confirm(DISCARD).then((ok) => { if (ok) navigate(url.pathname + url.search + url.hash); });
+      confirm(dialog).then((ok) => { if (ok) navigate(url.pathname + url.search + url.hash); });
     };
     window.addEventListener('beforeunload', onUnload);
     document.addEventListener('click', onClick, true);
@@ -330,17 +408,19 @@ export function useLeaveGuard(dirty) {
       window.removeEventListener('beforeunload', onUnload);
       document.removeEventListener('click', onClick, true);
     };
-  }, [dirty, confirm, navigate]);
+  }, [on, dialog, confirm, navigate]);
 }
 
 // dirty: closing (X, Esc, click outside) asks "Discard unsaved changes?" first, and so does leaving the page.
+// An upload running in it: closing asks "Upload in progress. Leave anyway?" instead.
 export function Drawer({ title, onClose, children, footer, dirty = false }) {
   const confirm = useConfirm();
+  const uploading = useUploadsActive();
   useLeaveGuard(dirty);
   const close = useCallback(() => {
-    if (!dirty) { onClose(); return; }
-    confirm(DISCARD).then((ok) => { if (ok) onClose(); });
-  }, [dirty, onClose, confirm]);
+    if (!dirty && !uploading) { onClose(); return; }
+    confirm(uploading ? UPLOADING : DISCARD).then((ok) => { if (ok) onClose(); });
+  }, [dirty, uploading, onClose, confirm]);
   useEffect(() => {
     const onKey = (e) => e.key === 'Escape' && close();
     window.addEventListener('keydown', onKey);
@@ -357,4 +437,5 @@ export function Drawer({ title, onClose, children, footer, dirty = false }) {
   );
 }
 
-export const fmtDate = (v) => (v ? new Date(v).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '');
+// Every time in the admin in India time, whatever zone the viewer's PC is in (the API sends UTC instants).
+export const fmtDate = (v) => (v ? new Date(v).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' }) : '');

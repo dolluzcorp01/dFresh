@@ -1,6 +1,6 @@
 // Admin API calls (cookie session, see backend auth.js). Every call resolves to `data` or throws an Error with
 // the server's message and .status, so screens can show it as-is.
-import { apiFetch } from '../utils/api';
+import { API_BASE, apiFetch } from '../utils/api';
 
 const BASE = '/api/dfresh/admin';
 
@@ -22,12 +22,37 @@ export const api = {
     headers: { 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   }).then(handle),
-  upload: (path, file, fields = {}) => {
+  /**
+   * POST one file (field "file") + fields. XMLHttpRequest, not fetch: only it reports upload progress.
+   * onProgress({ phase: 'uploading', pct }) while the bytes go up, then { phase: 'processing' } until the answer.
+   * Errors as for every call (server message, .status); network / stopped / nginx's 413 page get a plain sentence.
+   */
+  upload: (path, file, fields = {}, { onProgress } = {}) => new Promise((resolve, reject) => {
     const fd = new FormData();
     Object.entries(fields).forEach(([k, v]) => fd.append(k, v));
     fd.append('file', file);
-    return apiFetch(`${BASE}${path}`, { method: 'POST', body: fd }).then(handle);
-  },
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `${API_BASE}${BASE}${path}`);
+    xhr.withCredentials = true;
+    if (onProgress) {
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) onProgress({ phase: 'uploading', pct: Math.min(99, Math.floor((e.loaded / e.total) * 100)) });
+      };
+      xhr.upload.onload = () => onProgress({ phase: 'processing', pct: 100 });
+    }
+    const fail = (message, status, json = null) => reject(Object.assign(new Error(message), { status, data: json }));
+    xhr.onload = () => {
+      let json = null;
+      try { json = JSON.parse(xhr.responseText); } catch { /* not JSON, e.g. nginx's own error page */ }
+      if (xhr.status >= 200 && xhr.status < 300 && json && json.success) { resolve(json.data); return; }
+      const size = `${(file.size / 1024 / 1024).toFixed(1)} MB`;
+      if (xhr.status === 413) { fail(`${(json && json.message) || 'The file is too large'} (${file.name}, ${size}).`, 413, json); return; }
+      fail((json && json.message) || `Upload failed (HTTP ${xhr.status}).`, xhr.status, json);
+    };
+    xhr.onerror = () => fail('Network error: the upload did not reach the server. Check the connection and try again.', 0);
+    xhr.onabort = () => fail('The upload was stopped.', 0);
+    xhr.send(fd);
+  }),
   /** Downloads a file response (CSV, XLSX, PDF) through the browser. */
   download: async (path, fallbackName) => {
     const res = await apiFetch(`${BASE}${path}`);

@@ -8,7 +8,7 @@ import Sidebar, { MenuToggle, saveCollapsed, savedCollapsed, useNarrow } from '.
 import useLeadPulse from './useLeadPulse';
 import { api } from './adminApi';
 import { mediaUrl } from '../utils/api';
-import { AdminContext, ConfirmProvider, Notice } from './ui';
+import { AdminContext, ConfirmProvider, Notice, UploadGuard } from './ui';
 import Login from './Login';
 import Dashboard from './Dashboard';
 import Leads from './Leads';
@@ -110,6 +110,7 @@ export default function AdminApp() {
     <AdminContext.Provider value={ctx}>
       <div className={`adm a-shell${collapsed ? ' collapsed' : ''}`}>
         <ConfirmProvider>
+        <UploadGuard />
         <header className="a-top">
           {/* Under 900px only: the button left of the logo opens / closes the drawer. On desktop the sidebar's pinned
               toggle collapses / expands it. */}

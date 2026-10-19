@@ -4,7 +4,7 @@
 // Choosing another file or "Clear" drops the previous result; after an apply the form resets and says what changed.
 import { useRef, useState } from 'react';
 import { api } from './adminApi';
-import { InfoCard, Notice, useAction, useCan, useConfirm } from './ui';
+import { InfoCard, Notice, UploadProgress, useAction, useCan, useConfirm, useUpload } from './ui';
 
 const show = (v) => (v === null || v === undefined || v === '' ? <em className="a-muted">empty</em> : String(v));
 // a column like Name_TA / Pack_HI: its language, so the browser picks the right font and shaping
@@ -13,6 +13,7 @@ const langOf = (field) => { const m = /_([A-Z]{2,3})$/.exec(field || ''); return
 export default function ImportExport() {
   const isAdmin = useCan('admin');
   const act = useAction();
+  const up = useUpload();
   const inputRef = useRef(null);
   const [file, setFile] = useState(null);
   const [report, setReport] = useState(null); // the dry run of `file`
@@ -32,7 +33,7 @@ export default function ImportExport() {
   };
   const dryRun = () => act.run(async () => {
     const checked = file;
-    const r = await api.upload('/products/import?dryRun=1', checked);
+    const r = await up.send('dry', '/products/import?dryRun=1', checked);
     setReport({ ...r, file: checked });
   });
   const hasChanges = report && report.summary.added + report.summary.changed + report.summary.removed + report.summary.categories > 0;
@@ -43,7 +44,7 @@ export default function ImportExport() {
     const s = report.summary;
     if (!(await confirm({ title: 'Apply these changes to the live site?', message: `${s.added} added, ${s.changed} changed, ${s.removed} switched off, ${s.categories} category change(s). Visitors see them at once.`, action: 'Apply changes', danger: true }))) return;
     act.run(async () => {
-      const r = await api.upload(`/products/import?dryRun=0&hash=${encodeURIComponent(report.fileHash)}`, file);
+      const r = await up.send('apply', `/products/import?dryRun=0&hash=${encodeURIComponent(report.fileHash)}`, file);
       setApplied({ added: r.summary.added, changed: r.summary.changed, removed: r.summary.removed, categories: r.summary.categories });
       reset();
     });
@@ -76,11 +77,11 @@ export default function ImportExport() {
           </Notice>
         )}
         <div className="a-toolbar">
-          <input ref={inputRef} type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" disabled={!isAdmin}
+          <input ref={inputRef} type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" disabled={!isAdmin || act.busy}
             aria-label="Product List file (.xlsx)" onChange={(e) => choose(e.target.files[0])} />
-          <button type="button" className="a-btn" disabled={!file || act.busy || !isAdmin} onClick={dryRun}>Dry run</button>
+          <button type="button" className="a-btn" disabled={!file || act.busy || !isAdmin} onClick={dryRun}>{up.is('dry') ? <UploadProgress state={up.state} /> : 'Dry run'}</button>
           {file && <button type="button" className="a-btn a-btn-ghost" disabled={act.busy} onClick={() => { reset(); act.setMsg(null); }}>Clear</button>}
-          {canApply && <button type="button" className="a-btn a-btn-danger" disabled={act.busy} onClick={apply}>Apply changes</button>}
+          {canApply && <button type="button" className="a-btn a-btn-danger" disabled={act.busy} onClick={apply}>{up.is('apply') ? <UploadProgress state={up.state} /> : 'Apply changes'}</button>}
         </div>
         {report && report.ok && !hasChanges && <p className="a-muted">No differences with the live list: nothing to apply.</p>}
         {report && !report.ok && <p className="a-bad">Fix the {report.summary.errors} error(s) in the file, choose it again and run the dry run: Apply is offered only for a file with 0 errors.</p>}

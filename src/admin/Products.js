@@ -8,7 +8,7 @@
 import { useMemo, useState } from 'react';
 import { api } from './adminApi';
 import { mediaUrl } from '../utils/api';
-import { Drawer, Field, Loading, MissingBadges, Notice, TrEditor, missingTexts, nextOrder, useAction, useAdmin, useCan, useConfirm, useLoad } from './ui';
+import { Drawer, Field, Loading, MissingBadges, Notice, TrEditor, UploadButton, missingTexts, nextOrder, useAction, useAdmin, useCan, useConfirm, useLoad, useUpload } from './ui';
 import { ProductField } from './ProductSelect';
 import useOrderDraft from './useOrderDraft';
 
@@ -305,8 +305,9 @@ function Photos({ product, canEdit, onChanged }) {
   const act = useAction();
   const [position, setPosition] = useState(String(Math.min(images.length + 1, 3)));
   const id = encodeURIComponent(product.product_id);
+  const up = useUpload();
   const upload = (file) => act.run(async () => {
-    const r = await api.upload(`/products/${id}/images`, file, { position });
+    const r = await up.send('photo', `/products/${id}/images`, file, { position });
     onChanged();
     return r;
   }).then((r) => r && act.setMsg({ kind: 'ok', text: `Saved ${r.file_name}: ${Math.round(r.original_bytes / 1024)} KB in -> ${Math.round(r.bytes / 1024)} KB WebP 1200x1200 (+ 400, 800)` }));
@@ -348,12 +349,10 @@ function Photos({ product, canEdit, onChanged }) {
       {canEdit && (
         <div className="a-toolbar">
           <label className="a-inline">Position
-            <select value={position} onChange={(e) => setPosition(e.target.value)}>{[1, 2, 3].map((n) => <option key={n}>{n}</option>)}</select>
+            <select value={position} disabled={act.busy} onChange={(e) => setPosition(e.target.value)}>{[1, 2, 3].map((n) => <option key={n}>{n}</option>)}</select>
           </label>
-          <label className="a-btn a-btn-ghost a-file">
-            {act.busy ? 'Uploading...' : 'Upload photo (JPG / PNG / WebP, max 8 MB)'}
-            <input type="file" accept="image/jpeg,image/png,image/webp" disabled={act.busy} onChange={(e) => { const f = e.target.files[0]; e.target.value = ''; if (f) upload(f); }} />
-          </label>
+          <UploadButton upload={up} uploadKey="photo" label="Upload photo (JPG / PNG / WebP, max 8 MB)" accept="image/jpeg,image/png,image/webp"
+            className="a-btn a-btn-ghost" disabled={act.busy} onFile={upload} />
         </div>
       )}
       <Notice>A photo is fitted on white to 1200x1200 and saved as WebP of at most 150 KB.</Notice>

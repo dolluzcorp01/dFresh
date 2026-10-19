@@ -383,6 +383,15 @@ td.a-pending { background: #fff8e1; box-shadow: inset 3px 0 0 #e3b44f; }
 .a-twostep-code { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
 .a-twostep-code input { width: 9ch; letter-spacing: .2em; font-variant-numeric: tabular-nums; }
 @media (prefers-reduced-motion: reduce) { .a-switch, .a-switch-knob { transition: none; } }
+/* Uploads: the clicked button shows a spinner, "Uploading... 45%" / "Processing..." and the file name */
+.a-upload { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; min-width: 0; }
+.a-upload-name { font-weight: 400; color: var(--a-ink2); max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.a-spin { width: 14px; height: 14px; flex: none; border-radius: 50%; border: 2px solid currentColor; border-right-color: transparent; animation: a-spin .8s linear infinite; }
+@keyframes a-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .a-spin { animation: none; border-right-color: currentColor; opacity: .6; } }
+.a-file.a-uploading { cursor: progress; }
+.a-file.a-file-off { opacity: .5; cursor: not-allowed; }
+.a-btn .a-upload-name { color: inherit; opacity: .8; }
 /* Excel import: before / after values wrap (long text, Tamil / Hindi keep their shaping via the cell's lang) */
 .a-difftable td { vertical-align: top; }
 .a-difftable td:nth-child(3), .a-difftable td:nth-child(4) { min-width: 160px; max-width: 440px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }

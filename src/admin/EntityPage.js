@@ -7,7 +7,7 @@ import { api, rowId } from './adminApi';
 import { mediaUrl } from '../utils/api';
 import { KitProducts, ProductField, RepPreview, Thumb, productName } from './ProductSelect';
 import useOrderDraft from './useOrderDraft';
-import { Drawer, Field, InfoTip, Loading, MissingBadges, TrEditor, missingTexts, nextOrder, useAction, useAdmin, useCan, useConfirm, useLoad } from './ui';
+import { Drawer, Field, InfoTip, Loading, MissingBadges, TrEditor, UploadButton, missingTexts, nextOrder, useAction, useAdmin, useCan, useConfirm, useLoad, useUpload } from './ui';
 import { fontVar, loadFont } from '../i18n/fonts';
 import { LAND, MAP_H, MAP_W } from '../shared/mapShape';
 
@@ -246,6 +246,7 @@ function Editor({ name, cfg, id, lookups, products, rows, listRows, lists, cats,
   const loaded = useLoad(id ? `/${name}/${id}` : null);
   const canEdit = useCan('editor');
   const act = useAction();
+  const up = useUpload();
   const [draft, setDraft] = useState(null);
   const creating = !id;
   const row = draft || (creating ? { tr: {}, ...cfg.defaults } : loaded.data);
@@ -296,7 +297,7 @@ function Editor({ name, cfg, id, lookups, products, rows, listRows, lists, cats,
     });
   };
   const uploadBanner = (kind, file) => act.run(async () => {
-    const r = await api.upload(`/${name}/${id}/image?kind=${kind}`, file);
+    const r = await up.send(kind, `/${name}/${id}/image?kind=${kind}`, file);
     loaded.reload();
     return r;
   }, `${kind} photo saved`);
@@ -445,9 +446,8 @@ function Editor({ name, cfg, id, lookups, products, rows, listRows, lists, cats,
                 {row.photo_check && !row.photo_check[kind].ok && row[`${kind}_file`] && <p className="a-bad">Photo problem: {row.photo_check[kind].problem}</p>}
                 <figcaption>{kind} ({size})
                   {canEdit && (
-                    <label className="a-btn a-btn-sm a-btn-ghost a-file">Upload
-                      <input type="file" accept="image/jpeg,image/png,image/webp" onChange={(e) => { const f = e.target.files[0]; e.target.value = ''; if (f) uploadBanner(kind, f); }} />
-                    </label>
+                    <UploadButton upload={up} uploadKey={kind} label="Upload" accept="image/jpeg,image/png,image/webp"
+                      disabled={act.busy} onFile={(f) => uploadBanner(kind, f)} />
                   )}
                 </figcaption>
               </figure>

@@ -9,7 +9,7 @@
 import { useEffect, useState } from 'react';
 import { api } from './adminApi';
 import { API_BASE, mediaUrl } from '../utils/api';
-import { InfoCard, Loading, fmtDate, useAction, useConfirm, useLeaveGuard, useLoad } from './ui';
+import { InfoCard, Loading, UploadButton, fmtDate, useAction, useConfirm, useLeaveGuard, useLoad, useUpload } from './ui';
 import { ProductSelect } from './ProductSelect';
 import { DERIVED, checkSetting, whatsappNumber } from '../shared/settingRules';
 import { ABOUT, DEFAULT_FOCUS, formatFocus, parseFocus, visibleWindow } from '../shared/photoFocus';
@@ -368,8 +368,9 @@ function SheetCheck({ value }) {
 function Picture({ s, cfg, act, onSaved, focus }) {
   const value = s.setting_value || '';
   const src = value ? `/media/${value}` : cfg.empty;
+  const up = useUpload();
   const upload = (file) => act.run(async () => {
-    const r = await api.upload(`/settings/${s.setting_key}/image`, file);
+    const r = await up.send(s.setting_key, `/settings/${s.setting_key}/image`, file);
     onSaved();
     return r;
   }).then((r) => r && act.setMsg({ kind: 'ok', text: `${s.setting_key} saved: ${Math.round(r.original_bytes / 1024)} KB in -> ${r.width} x ${r.height}, ${Math.round(r.bytes / 1024)} KB` }));
@@ -386,9 +387,7 @@ function Picture({ s, cfg, act, onSaved, focus }) {
           : <span className="a-picture-none">No photo</span>}
       <small className="a-muted">{value ? <code>{value}</code> : cfg.emptyText}</small>
       <span className="a-row">
-        <label className="a-btn a-btn-sm a-btn-ghost a-file">{act.busy ? 'Uploading...' : cfg.button}
-          <input type="file" accept={cfg.accept} disabled={act.busy} onChange={(e) => { const f = e.target.files[0]; e.target.value = ''; if (f) upload(f); }} />
-        </label>
+        <UploadButton upload={up} uploadKey={s.setting_key} label={cfg.button} accept={cfg.accept} disabled={act.busy} onFile={upload} />
         {value && <button type="button" className="a-btn a-btn-sm a-btn-danger" onClick={remove} disabled={act.busy}>Remove</button>}
       </span>
     </div>
