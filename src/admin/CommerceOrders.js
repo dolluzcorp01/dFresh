@@ -2,7 +2,8 @@
 // List with status filters; an order's drawer moves it New > Packed > Dispatched (stock out, asked first) > Delivered
 // and opens the GST invoice (print / save as PDF). New order: customer, SKUs + qty + price (prices only in the admin),
 // coupon, wallet, payment (COD / Razorpay demo / bank transfer). Logic: src/backend_routes/commerce.js.
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { api } from './adminApi';
 import { Drawer, InfoCard, Loading, fmtDate, useAction, useCan, useConfirm, useLoad } from './ui';
 import { ReturnForm, ReturnsTable } from './CommerceReturns';
@@ -57,7 +58,10 @@ ${Number(o.wallet_used) ? `<tr><td>Paid from wallet</td><td class="n">-${Number(
 }
 
 export default function CommerceOrders() {
-  const [status, setStatus] = useState('');
+  const location = useLocation();
+  const urlStatus = new URLSearchParams(location.search).get('status') || '';
+  const [status, setStatus] = useState(FLOW.includes(urlStatus) ? urlStatus : '');
+  useEffect(() => { if (FLOW.includes(urlStatus)) setStatus(urlStatus); }, [urlStatus]);
   const list = useLoad(`/commerce/orders${status ? `?status=${status}` : ''}`);
   const [open, setOpen] = useState(null); // order_no
   const [creating, setCreating] = useState(false);

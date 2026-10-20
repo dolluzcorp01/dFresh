@@ -432,6 +432,10 @@ td.a-pending { background: #fff8e1; box-shadow: inset 3px 0 0 #e3b44f; }
 .a-orderlines small { display: block; }
 .a-price { width: 10ch; }
 .a-ok { color: #1e5e2c; }
+/* Commerce demo: operations cards are links */
+.a-statlink { text-decoration: none; color: var(--a-ink); min-width: 150px; }
+.a-statlink:hover, .a-statlink:focus-visible { border-color: var(--a-ink); outline: none; }
+.a-statlink small { font-size: 12px; color: var(--a-ink2); margin-top: 2px; }
 /* Commerce demo: returns */
 .a-returnform { margin-top: 14px; }
 /* Excel import: before / after values wrap (long text, Tamil / Hindi keep their shaping via the cell's lang) */

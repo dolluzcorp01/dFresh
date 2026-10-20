@@ -3,6 +3,7 @@
 // "DF037-M150 (R)", and Damaged. Below its low level a SKU gets a red "Low" badge. Record a movement (in, out,
 // adjust, return, damaged; the SKU box takes a scanner) - who and when are kept for every one.
 import { useMemo, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { api } from './adminApi';
 import { InfoCard, Loading, fmtDate, useAction, useCan, useLoad } from './ui';
 
@@ -18,7 +19,8 @@ export default function CommerceStock() {
   const canEdit = useCan('editor');
   const act = useAction();
   const [q, setQ] = useState('');
-  const [lowOnly, setLowOnly] = useState(false);
+  const location = useLocation();
+  const [lowOnly, setLowOnly] = useState(() => new URLSearchParams(location.search).get('low') === '1');
   const [form, setForm] = useState({ sku_code: '', move_type: 'in', qty: '', note: '' });
   const [levels, setLevels] = useState({}); // sku -> typed low level (pending)
   const rows = useMemo(() => stock.data || [], [stock.data]);

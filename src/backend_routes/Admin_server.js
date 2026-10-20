@@ -1637,6 +1637,27 @@ route('put', '/commerce/cashback', 'editor', async (req) => {
   return { pct, min_order: minOrder, is_active: req.body.is_active ? 1 : 0 };
 });
 
+// Operations dashboard (commerce): today in India time
+route('get', '/commerce/ops', 'viewer', async () => {
+  const [[today]] = await db.query(`SELECT COUNT(*) AS n, COALESCE(SUM(total), 0) AS value FROM orders WHERE created_at >= ${IST_TODAY_UTC}`);
+  const [[st]] = await db.query("SELECT SUM(status = 'new') AS to_pack, SUM(status = 'packed') AS to_dispatch FROM orders");
+  const [[ret]] = await db.query(`SELECT COUNT(*) AS n FROM returns r LEFT JOIN orders ro ON ro.order_id = r.replacement_order_id
+      WHERE r.outcome = 'replacement' AND (ro.status IS NULL OR ro.status <> 'delivered')`);
+  const [[w]] = await db.query(`SELECT COALESCE(SUM(CASE WHEN amount > 0 THEN amount END), 0) AS total,
+      COALESCE(SUM(CASE WHEN amount > 0 AND reason LIKE 'Cashback%' THEN amount END), 0) AS cashback,
+      COALESCE(SUM(CASE WHEN amount > 0 AND reason LIKE 'Refund%' THEN amount END), 0) AS refunds FROM wallet_entries`);
+  const [low] = await db.query(`SELECT s.sku_code, ${SKU_NAME} AS name, COALESCE(l.low_level, 20) AS low_level,
+      COALESCE((SELECT SUM(m.delta) FROM stock_movements m WHERE m.sku_code = s.sku_code AND m.stock_kind = 'good'), 0) AS good
+      FROM skus s ${SKU_JOIN} LEFT JOIN stock_levels l ON l.sku_code = s.sku_code
+      HAVING good < low_level ORDER BY good`);
+  const [next] = await db.query("SELECT o.order_no, o.created_at, c.name AS customer FROM orders o JOIN customers c ON c.customer_id = o.customer_id WHERE o.status = 'new' ORDER BY o.order_id LIMIT 5");
+  return {
+    today: { n: Number(today.n), value: Number(today.value) }, toPack: Number(st.to_pack) || 0, toDispatch: Number(st.to_dispatch) || 0,
+    openReturns: Number(ret.n), walletGiven: { total: Number(w.total), cashback: Number(w.cashback), refunds: Number(w.refunds) },
+    lowStock: low.map((r) => ({ ...r, good: Number(r.good), low_level: Number(r.low_level) })), nextToPack: next,
+  };
+});
+
 router.use('/admin', (err, req, res, next) => { // eslint-disable-line no-unused-vars
   if (err instanceof InputError || err instanceof media.UploadError) {
     return res.status(err.status).json({ success: false, message: err.message, ...(err.code ? { code: err.code } : {}) });
