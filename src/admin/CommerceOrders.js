@@ -7,6 +7,7 @@ import { useLocation } from 'react-router-dom';
 import { api } from './adminApi';
 import { Drawer, InfoCard, Loading, fmtDate, useAction, useCan, useConfirm, useLoad } from './ui';
 import { ReturnForm, ReturnsTable } from './CommerceReturns';
+import { NewCustomerDrawer } from './CommerceCustomers';
 
 const FLOW = ['new', 'packed', 'dispatched', 'delivered'];
 const LABEL = { new: 'New', packed: 'Packed', dispatched: 'Dispatched', delivered: 'Delivered' };
@@ -198,7 +199,10 @@ function NewOrder({ onClose, onSaved }) {
   const [wallet, setWallet] = useState('');
   const [payment, setPayment] = useState('cod');
   const [note, setNote] = useState('');
+  const [addingCustomer, setAddingCustomer] = useState(false);
   const f = form.data;
+  // a customer added here (or an existing one from the duplicate check) is selected; everything else stays filled in
+  const pickCustomer = (id) => { setAddingCustomer(false); form.reload(); setCustomerId(String(id)); setWallet(''); };
   const skuMap = useMemo(() => new Map(((f && f.skus) || []).map((s) => [s.sku_code, s])), [f]);
   const customer = f && f.customers.find((c) => String(c.customer_id) === String(customerId));
   const items = lines.map((l) => ({ ...l, gst_rate: (skuMap.get(l.sku_code.trim().toUpperCase()) || {}).gst_rate || 18 })).filter((l) => skuMap.has(l.sku_code.trim().toUpperCase()));
@@ -236,12 +240,13 @@ function NewOrder({ onClose, onSaved }) {
         {f && (
           <>
             {act.note}
-            <label className="a-field"><span>Customer</span>
+            <label className="a-field"><span>Customer <button type="button" className="a-link a-newcust" onClick={() => setAddingCustomer(true)}>+ New customer</button></span>
               <select value={customerId} onChange={(e) => { setCustomerId(e.target.value); setWallet(''); }}>
                 <option value="">Choose...</option>
-                {f.customers.map((c) => <option key={c.customer_id} value={c.customer_id}>{c.name} - {c.ctype}, {c.town} ({c.phone})</option>)}
+                {f.customers.map((c) => <option key={c.customer_id} value={c.customer_id}>{c.name} - {c.ctype}{c.town ? `, ${c.town}` : ''} ({c.phone})</option>)}
               </select>
             </label>
+            {addingCustomer && <NewCustomerDrawer onClose={() => setAddingCustomer(false)} onSaved={(c) => pickCustomer(c.customer_id)} onOpenExisting={pickCustomer} />}
             <h3>Items</h3>
             <datalist id="order-skus">{f.skus.map((s) => <option key={s.sku_code} value={s.sku_code}>{s.name} - {s.size_label}</option>)}</datalist>
             <table className="a-table a-orderlines">

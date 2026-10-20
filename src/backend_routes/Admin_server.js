@@ -1518,7 +1518,38 @@ route('get', '/commerce/returns', 'viewer', async (req) => {
 
 // Customers (CRM, tables in commerce_03_orders.sql)
 const CTYPES = ['Home', 'Hotel', 'Hospital', 'Office', 'Distributor'];
-const CUSTOMER_FIELDS = ['name', 'phone', 'email', 'ctype', 'town', 'address', 'gstin', 'notes', 'follow_up'];
+const CUSTOMER_FIELDS = ['name', 'business_name', 'phone', 'email', 'ctype', 'town', 'address', 'gstin', 'source', 'notes', 'follow_up'];
+const customerRules = require('../shared/customerRules');
+
+// New customer typed in the admin (phone / WhatsApp / walk-in). Same rules as the drawer; a phone (last 10 digits)
+// or e-mail that is already a customer answers 409 code 'duplicate' with that customer, nothing saved.
+route('post', '/commerce/customers', 'editor', async (req) => {
+  const { values: v, errors } = customerRules.checkCustomer(req.body || {});
+  if (Object.keys(errors).length) {
+    const err = new InputError(Object.values(errors)[0]);
+    err.code = 'fields';
+    err.fields = errors;
+    throw err;
+  }
+  const [[dup]] = await db.query(
+    `SELECT customer_id, name FROM customers
+      WHERE RIGHT(REGEXP_REPLACE(phone, '[^0-9]', ''), 10) = ? OR (? IS NOT NULL AND LOWER(email) = LOWER(?)) LIMIT 1`,
+    [customerRules.phoneDigits(v.phone), v.email, v.email]
+  );
+  if (dup) {
+    const err = new InputError(`Already a customer: ${dup.name}`, 409);
+    err.code = 'duplicate';
+    err.fields = { customer_id: dup.customer_id, name: dup.name };
+    throw err;
+  }
+  const [ins] = await db.query(
+    `INSERT INTO customers (name, business_name, phone, email, ctype, town, address, gstin, source, notes, follow_up)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [v.name, v.business_name, v.phone, v.email, v.ctype, v.town, v.address, v.gstin, v.source, v.notes, v.follow_up]
+  );
+  await audit(null, { empId: by(req), action: 'create', entity: 'customer', entityId: String(ins.insertId), after: { name: v.name, source: v.source } });
+  return { customer_id: ins.insertId, name: v.name, ctype: v.ctype, phone: v.phone, wallet: 0, town: v.town };
+});
 
 route('get', '/commerce/customers', 'viewer', async () => {
   const [rows] = await db.query(
@@ -1534,7 +1565,7 @@ route('get', '/commerce/customers', 'viewer', async () => {
 });
 
 route('get', '/commerce/customers/:id', 'viewer', async (req) => {
-  const [[c]] = await db.query(`SELECT customer_id, name, phone, email, ctype, town, address, gstin, notes, DATE_FORMAT(follow_up, '%Y-%m-%d') AS follow_up,
+  const [[c]] = await db.query(`SELECT customer_id, name, business_name, phone, email, ctype, town, address, gstin, source, notes, DATE_FORMAT(follow_up, '%Y-%m-%d') AS follow_up,
       lead_id, created_at FROM customers WHERE customer_id = ?`, [Number(req.params.id)]);
   if (!c) throw new InputError('Customer not found', 404);
   const [orders] = await db.query('SELECT order_no, status, total, created_at FROM orders WHERE customer_id = ? ORDER BY order_id DESC', [c.customer_id]);
@@ -1660,7 +1691,7 @@ route('get', '/commerce/ops', 'viewer', async () => {
 
 router.use('/admin', (err, req, res, next) => { // eslint-disable-line no-unused-vars
   if (err instanceof InputError || err instanceof media.UploadError) {
-    return res.status(err.status).json({ success: false, message: err.message, ...(err.code ? { code: err.code } : {}) });
+    return res.status(err.status).json({ success: false, message: err.message, ...(err.code ? { code: err.code } : {}), ...(err.fields ? { fields: err.fields } : {}) });
   }
   if (err instanceof multer.MulterError) {
     return res.status(err.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({ success: false, message: err.code === 'LIMIT_FILE_SIZE' ? 'The file is too large' : 'Upload one file in the "file" field' });

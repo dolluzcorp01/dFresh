@@ -436,6 +436,8 @@ td.a-pending { background: #fff8e1; box-shadow: inset 3px 0 0 #e3b44f; }
 .a-statlink { text-decoration: none; color: var(--a-ink); min-width: 150px; }
 .a-statlink:hover, .a-statlink:focus-visible { border-color: var(--a-ink); outline: none; }
 .a-statlink small { font-size: 12px; color: var(--a-ink2); margin-top: 2px; }
+/* Commerce demo: + New customer in the order form */
+.a-newcust { margin-inline-start: 10px; font-weight: 600; text-transform: none; letter-spacing: 0; }
 /* Commerce demo: returns */
 .a-returnform { margin-top: 14px; }
 /* Excel import: before / after values wrap (long text, Tamil / Hindi keep their shaping via the cell's lang) */

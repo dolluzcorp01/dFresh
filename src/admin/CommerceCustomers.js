@@ -6,6 +6,7 @@ import { useLocation } from 'react-router-dom';
 import { api } from './adminApi';
 import { Drawer, InfoCard, Loading, fmtDate, useAction, useCan, useLoad } from './ui';
 import { rs } from './CommerceReturns';
+import { CTYPES, SOURCES, checkCustomer } from '../shared/customerRules';
 
 const TYPES = ['Home', 'Hotel', 'Hospital', 'Office', 'Distributor'];
 const day = (d) => (d ? new Date(`${String(d).slice(0, 10)}T00:00:00`).toLocaleDateString('en-IN', { dateStyle: 'medium' }) : '');
@@ -20,6 +21,8 @@ export default function CommerceCustomers() {
   const rows = useMemo(() => list.data || [], [list.data]);
   const shown = rows.filter((r) => (!type || r.ctype === type) && (!q.trim() || `${r.name} ${r.phone} ${r.town}`.toLowerCase().includes(q.trim().toLowerCase())));
   const due = rows.filter((r) => r.follow_due).length;
+  const [adding, setAdding] = useState(false);
+  const canEdit = useCan('editor');
   return (
     <section>
       <h1>Customers</h1>
@@ -37,6 +40,7 @@ export default function CommerceCustomers() {
         </div>
         <input type="search" placeholder="Search name, phone, town" aria-label="Search" value={q} onChange={(e) => setQ(e.target.value)} />
         {due > 0 && <span className="a-status a-status-bad">{due} follow-up{due > 1 ? 's' : ''} due</span>}
+        {canEdit && <button type="button" className="a-btn" onClick={() => setAdding(true)}>Add customer</button>}
       </div>
       <Loading state={list}>
         <div className="a-scroll">
@@ -58,6 +62,11 @@ export default function CommerceCustomers() {
         </div>
       </Loading>
       {open && <CustomerDrawer id={open} onClose={() => setOpen(null)} onChanged={list.reload} />}
+      {adding && (
+        <NewCustomerDrawer onClose={() => setAdding(false)}
+          onSaved={(c) => { setAdding(false); list.reload(); setOpen(c.customer_id); }}
+          onOpenExisting={(id) => { setAdding(false); setOpen(id); }} />
+      )}
     </section>
   );
 }
@@ -86,6 +95,8 @@ function CustomerDrawer({ id, onClose, onChanged }) {
           <>
             {act.note}
             {d.lead && <p className="a-muted">From lead <code>{d.lead.lead_ref}</code> ({d.lead.form_type}, {fmtDate(d.lead.created_at)})</p>}
+            {!d.lead && d.source && <p className="a-muted">Source: {d.source} ({fmtDate(d.created_at)})</p>}
+            {d.business_name && <p className="a-muted">Business: {d.business_name}</p>}
             <div className="a-grid2">
               {field('name', 'Name')}{field('phone', 'Phone')}{field('ctype', 'Type')}{field('town', 'Town')}
               {field('email', 'E-mail')}{field('gstin', 'GSTIN')}{field('follow_up', 'Follow-up date', { type: 'date' })}{field('address', 'Address')}
@@ -104,6 +115,68 @@ function CustomerDrawer({ id, onClose, onChanged }) {
           </>
         )}
       </Loading>
+    </Drawer>
+  );
+}
+
+const EMPTY_CUSTOMER = { name: '', phone: '', email: '', ctype: 'Home', business_name: '', gstin: '', address: '', town: '', source: 'Phone', notes: '', follow_up: '' };
+
+/**
+ * Add a customer typed in the admin (phone / WhatsApp / walk-in). Errors in red under each field (shared rules with the
+ * server: src/shared/customerRules.js). A phone or e-mail that is already a customer: "Already a customer: <name>" + Open.
+ * onSaved(customer) after saving; onOpenExisting(id) for the Open button.
+ */
+export function NewCustomerDrawer({ onClose, onSaved, onOpenExisting }) {
+  const act = useAction();
+  const [f, setF] = useState(EMPTY_CUSTOMER);
+  const [errors, setErrors] = useState({});
+  const [dup, setDup] = useState(null); // { customer_id, name }
+  const dirty = Object.keys(EMPTY_CUSTOMER).some((k) => f[k] !== EMPTY_CUSTOMER[k]);
+  const set = (k, v) => { setF({ ...f, [k]: v }); if (errors[k]) setErrors({ ...errors, [k]: undefined }); if (dup && (k === 'phone' || k === 'email')) setDup(null); };
+  const save = () => {
+    const chk = checkCustomer(f);
+    setErrors(chk.errors);
+    if (Object.keys(chk.errors).length) return;
+    act.run(async () => {
+      try {
+        onSaved(await api.send('POST', '/commerce/customers', f));
+      } catch (e) {
+        const body = e.data || {};
+        if (body.code === 'duplicate') { setDup(body.fields); return; }
+        if (body.code === 'fields') { setErrors(body.fields || {}); return; }
+        throw e;
+      }
+    });
+  };
+  const field = (k, label, input) => (
+    <label className="a-field" key={k}><span>{label}</span>{input}
+      {errors[k] && <small className="a-bad" role="alert">{errors[k]}</small>}
+    </label>
+  );
+  const text = (k, props = {}) => <input value={f[k]} aria-invalid={errors[k] ? 'true' : undefined} onChange={(e) => set(k, e.target.value)} {...props} />;
+  return (
+    <Drawer title="New customer" onClose={onClose} dirty={dirty}
+      footer={<button type="button" className="a-btn" disabled={act.busy} onClick={save}>Save customer</button>}>
+      {act.note}
+      {dup && (
+        <div className="a-note a-note-warn" role="alert">
+          Already a customer: <b>{dup.name}</b>{' '}
+          <button type="button" className="a-btn a-btn-sm" onClick={() => onOpenExisting(dup.customer_id)}>Open</button>
+        </div>
+      )}
+      <div className="a-grid2">
+        {field('name', 'Name *', text('name', { maxLength: 120, autoFocus: true }))}
+        {field('phone', 'Phone * (10-digit mobile)', text('phone', { inputMode: 'tel', placeholder: '98765 43210' }))}
+        {field('email', 'E-mail', text('email', { type: 'email' }))}
+        {field('ctype', 'Type', <select value={f.ctype} onChange={(e) => set('ctype', e.target.value)}>{CTYPES.map((t) => <option key={t}>{t}</option>)}</select>)}
+        {field('business_name', 'Business name', text('business_name', { maxLength: 150 }))}
+        {field('gstin', 'GSTIN', text('gstin', { placeholder: '33ABCDE1234F1Z5' }))}
+        {field('town', 'Town', text('town', { maxLength: 80 }))}
+        {field('source', 'Source', <select value={f.source} onChange={(e) => set('source', e.target.value)}>{SOURCES.map((t) => <option key={t}>{t}</option>)}</select>)}
+        {field('address', 'Address', text('address', { maxLength: 255 }))}
+        {field('follow_up', 'Follow-up date', text('follow_up', { type: 'date' }))}
+      </div>
+      {field('notes', 'Notes', <textarea rows={3} value={f.notes} onChange={(e) => set('notes', e.target.value)} />)}
     </Drawer>
   );
 }
