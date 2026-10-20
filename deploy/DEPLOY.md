@@ -463,15 +463,54 @@ link can use the site normally.
 11.2 Test leads are REAL on live: they land in the LIVE Google Sheet, send real staff alerts to `lead_email` and
 real e-mails to whatever address the tester typed. Testers: name "TEST ...", their own e-mail and phone.
 
-11.3 Before launch day, remove every test lead:
-- Admin -> Leads -> open the lead -> **Delete lead** (admins only) -> confirm. The lead, its e-mail history and its
-  sheet-queue row are removed; the audit log keeps "deleted DFL-xxxxxx" (no personal data).
-- The row already written to the LIVE sheet is NOT removed by the admin: in the sheet, open the form's tab, find
-  the Lead Ref (column B), right-click the row number -> Delete row. The admin's confirm dialog names the Lead Ref.
-- Lead numbers are not reused: after deleting tests the first real lead may be e.g. DFL-260007. That is fine.
+11.3 Before launch day, remove every test lead. A few: Admin -> Leads -> open the lead -> **Delete lead** (admins
+only) -> confirm (the lead, its e-mail history and sheet-queue row go; the audit log keeps "deleted DFL-xxxxxx").
+All of them at once: "Clear test data before launch" below.
+- The rows already written to the LIVE sheet stay there either way: in the sheet, open each form's tab, find the
+  Lead Ref (column B), right-click the row number -> Delete row (or delete all rows under the header row 1).
+- Lead numbers are never reused: the first real lead continues the count (e.g. DFL-260019). That is intended.
+
+#### Clear test data before launch (`deploy/clear-test-data.sql`)
+
+Removes ONLY the leads and what belongs to them: `leads`, `lead_products`, the lead e-mails in `mail_outbox`
+(staff alerts, visitor confirmations, brochure copy links), `sync_outbox` (sheet queue), and the lead history in
+`audit_log` (lead changes, deletes, lead exports, outbox retries of lead mails). Everything else stays: products,
+texts, translations, banners, kits, towns, settings, brochures, admin users, other audit history (settings, content,
+logins), sign-in code mails, `media/`, `private/`. `lead_counters` is kept on purpose, so a lead number is never given
+twice; it uses DELETE, not TRUNCATE, so a lead id is never reused either. MySQL 8 (the script reads a MySQL 8 setting
+first; on any error the mysql client stops before deleting anything).
+
+**[PC]** upload the script (it is also in every release from now on, under `deploy/`):
+```powershell
+scp C:\Users\91638\Desktop\Dolluzcorp\dFresh\dfresh\deploy\clear-test-data.sql <user>@64.227.135.222:/var/www/dfresh-upload/
+```
+**[server]**:
+```bash
+# 0. look first (read only): these are the leads that will be deleted - all of them must be tests
+sudo mysql dfresh -e "SELECT lead_ref, form_type, full_name, email, CONVERT_TZ(created_at, '+00:00', '+05:30') AS ist FROM leads ORDER BY lead_id;"
+# 1. backup
+KEEP_DAYS=7 APP_DIR=/var/www/dfresh sh /var/www/dfresh/deploy/backup.sh
+ls -l /var/backups/dfresh/$(date +%F)/dfresh.sql.gz
+# 2. maintenance on, app stopped (no lead can arrive while the script runs)
+touch /var/www/dfresh/MAINTENANCE
+pm2 stop dfresh-api
+# 3. the script, as MySQL root: prints BEFORE, KEPT, AFTER, KEPT, NEXT
+sudo mysql --default-character-set=utf8mb4 --table dfresh < /var/www/dfresh-upload/clear-test-data.sql
+#   AFTER: leads 0, lead_products 0, lead_mails 0, sheet_queue 0, lead_audit 0, outbox_retry_audit 0
+#   KEPT: the same numbers before and after; NEXT: next_lead_ref = the first real lead's number
+# 4. app on, maintenance off
+pm2 restart dfresh-api
+sleep 3; curl -s http://127.0.0.1:4012/api/dfresh/health
+rm /var/www/dfresh/MAINTENANCE
+# 5. optional: the pm2 log still has "[mail] ... to <address>" lines of the test mails
+pm2 flush dfresh-api
+```
+Then: Admin -> Leads is empty, the dashboard shows 0 leads, and the LIVE sheet rows are deleted by hand (above).
+If something looks wrong: maintenance on, `pm2 stop dfresh-api`, restore `dfresh.sql.gz` from step 1 (step 13),
+`pm2 restart dfresh-api`, maintenance off.
 
 11.4 Launch day (in this order):
-- [ ] Test leads deleted (11.3); sheet rows gone.
+- [ ] Test leads deleted (11.3, or "Clear test data before launch"); sheet rows gone.
 - [ ] Admin -> Settings -> Sharing and SEO -> `site_indexing` -> **On** (applies at once).
 - [ ] `curl -s https://dfresh.us/robots.txt` -> `Disallow: /admin`, `Disallow: /api/`, `Sitemap: https://dfresh.us/sitemap.xml`;
       `curl -s -o /dev/null -w '%{http_code}' https://dfresh.us/sitemap.xml` -> 200 (30 URLs);
