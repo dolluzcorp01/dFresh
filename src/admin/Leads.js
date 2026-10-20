@@ -59,7 +59,7 @@ export default function Leads() {
   const params = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const setParams = (next) => navigate({ search: next.toString() ? `?${next}` : '' }, { replace: true });
   const { languages, leadsVersion } = useAdmin();
-  const canEdit = useCan('editor');
+  const canEdit = useCan('leads', 'edit');
   const query = useMemo(() => {
     const q = new URLSearchParams();
     FILTERS.forEach((k) => params.get(k) && q.set(k, params.get(k)));
@@ -193,7 +193,7 @@ export default function Leads() {
 function LeadDrawer({ id, onClose, onChanged }) {
   const lead = useLoad(`/leads/${id}`);
   const people = useLoad('/assignees');
-  const canEdit = useCan('editor');
+  const canEdit = useCan('leads', 'edit');
   const act = useAction();
   const [form, setForm] = useState(null);
   const l = lead.data;
@@ -217,7 +217,10 @@ function LeadDrawer({ id, onClose, onChanged }) {
     setTimeout(() => goTo(`/admin/commerce/customers?open=${r.customer_id}`), 900);
   });
   // Admin only (test leads before launch, junk): asks first; the sheet row, if already written, stays in the sheet.
-  const isAdmin = useCan('admin');
+  const isAdmin = useCan('leads', 'delete');
+  const canCreateCustomer = useCan('customers', 'create');
+  const { me: meNow } = useAdmin();
+  const canConvert = canCreateCustomer && Boolean(meNow && meNow.commerce_enabled);
   const confirm = useConfirm();
   const remove = async () => {
     const yes = await confirm({
@@ -244,10 +247,10 @@ function LeadDrawer({ id, onClose, onChanged }) {
   return (
     <Drawer title={l ? `Lead ${l.lead_ref}` : 'Lead'} onClose={onClose}
       dirty={Boolean(form && l && (form.status !== l.status || form.assigned_to !== (l.assigned_to || '') || form.staff_notes !== (l.staff_notes || '')))}
-      footer={form && (canEdit || isAdmin) ? (
+      footer={form && (canEdit || isAdmin || canConvert) ? (
         <>
           {canEdit && <button type="button" className="a-btn" onClick={save} disabled={act.busy}>Save</button>}
-          {canEdit && <button type="button" className="a-btn a-btn-ghost" onClick={convert} disabled={act.busy}>Convert to customer</button>}
+          {canConvert && <button type="button" className="a-btn a-btn-ghost" onClick={convert} disabled={act.busy}>Convert to customer</button>}
           {isAdmin && <button type="button" className="a-btn a-btn-danger" onClick={remove} disabled={act.busy}>Delete lead</button>}
         </>
       ) : null}>

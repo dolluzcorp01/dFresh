@@ -6,7 +6,8 @@ import { Loading, UploadButton, fmtDate, useAction, useAdmin, useCan, useConfirm
 export default function Brochures() {
   const list = useLoad('/brochures');
   const { languages } = useAdmin();
-  const canEdit = useCan('editor');
+  const canEdit = useCan('content', 'create'); // upload / replace
+  const canDelete = useCan('content', 'delete');
   const act = useAction();
   const byLang = new Map((list.data || []).map((b) => [b.lang_code, b]));
 
@@ -41,7 +42,7 @@ export default function Brochures() {
                         <UploadButton upload={up} uploadKey={l.lang_code} label={`${b ? 'Replace' : 'Upload'} PDF`} accept="application/pdf"
                           className="a-btn a-btn-sm" disabled={act.busy} onFile={(f) => upload(l.lang_code, f)} />
                       )}
-                      {canEdit && b && <button type="button" className="a-btn a-btn-sm a-btn-danger" disabled={act.busy} onClick={() => remove(l.lang_code)}>Delete</button>}
+                      {canDelete && b && <button type="button" className="a-btn a-btn-sm a-btn-danger" disabled={act.busy} onClick={() => remove(l.lang_code)}>Delete</button>}
                     </td>
                   </tr>
                 );

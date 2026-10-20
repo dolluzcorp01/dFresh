@@ -11,7 +11,7 @@ const show = (v) => (v === null || v === undefined || v === '' ? <em className="
 const langOf = (field) => { const m = /_([A-Z]{2,3})$/.exec(field || ''); return m && m[1] !== 'EN' ? m[1].toLowerCase() : undefined; };
 
 export default function ImportExport() {
-  const isAdmin = useCan('admin');
+  const isAdmin = useCan('products', 'edit'); // import
   const act = useAction();
   const up = useUpload();
   const inputRef = useRef(null);
@@ -68,7 +68,7 @@ export default function ImportExport() {
       </div>
       <div className="a-card">
         <h2>Import</h2>
-        {!isAdmin && <Notice>Importing needs the admin role.</Notice>}
+        {!isAdmin && <Notice>Importing needs edit on Products and prices.</Notice>}
         {applied && (
           <Notice kind="ok">
             Applied: {applied.added} added, {applied.changed} changed, {applied.removed} deactivated

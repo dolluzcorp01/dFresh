@@ -10,6 +10,7 @@
 // - Cookies are httpOnly, SameSite=Strict, Secure in production, scoped to /api/dfresh/admin.
 const jwt = require('jsonwebtoken');
 const { getDBConnection } = require('../../config/db');
+const permissions = require('../shared/permissions');
 
 const db = getDBConnection(process.env.DB_NAME || 'dfresh').promise();
 const isProd = process.env.NODE_ENV === 'production';
@@ -21,7 +22,6 @@ const SESSION_TTL_S = 8 * 60 * 60;
 const CHALLENGE_TTL_S = 10 * 60;
 const COOKIE_PATH = '/api/dfresh/admin';
 
-const ROLE_RANK = { viewer: 1, editor: 2, admin: 3 };
 
 function secret() {
   if (!process.env.JWT_SECRET) throw new Error('JWT_SECRET missing');
@@ -80,19 +80,28 @@ async function isRevoked(empId, issuedAtS) {
   }
 }
 
-/** { emp_id, role, name } for a valid, unrevoked session of an active admin user; else null. */
+/**
+ * { emp_id, role_id, role_name, perms } for a valid, unrevoked session of an active admin user; else null.
+ * The role and its permissions are read on EVERY request, so a change applies to the user's next click.
+ * perms = { section: { view, create, edit, approve, delete } } (src/shared/permissions.js; built-in roles from code).
+ */
 async function readSession(req) {
   const claims = verify(req.cookies && req.cookies[SESSION_COOKIE], 'session');
   if (!claims) return null;
   // the employee must still be active in dAdmin too: someone who left the company loses access at once
   const [[user]] = await db.query(
-    `SELECT a.emp_id, a.role FROM admin_users a
+    `SELECT a.emp_id, a.role_id, r.name AS role_name, r.is_builtin FROM admin_users a
        JOIN \`${DADMIN}\`.employee e ON e.emp_id = a.emp_id AND e.deleted_time IS NULL AND e.active = 1
+       JOIN roles r ON r.role_id = a.role_id
       WHERE a.emp_id = ? AND a.is_active = 1`, [claims.sub]
   );
   if (!user) return null;
   if (await isRevoked(user.emp_id, claims.iat)) return null;
-  return { emp_id: user.emp_id, role: user.role };
+  const builtin = Boolean(permissions.BUILTIN[user.role_id]);
+  const [rows] = builtin ? [[]] : await db.query(
+    'SELECT section, can_view, can_create, can_edit, can_approve, can_delete FROM role_permissions WHERE role_id = ?', [user.role_id]
+  );
+  return { emp_id: user.emp_id, role_id: user.role_id, role_name: user.role_name, perms: permissions.permsFor(user.role_id, rows) };
 }
 
 async function requireAuth(req, res, next) {
@@ -106,16 +115,20 @@ async function requireAuth(req, res, next) {
   }
 }
 
-/** Role guard (after requireAuth): the user's role must rank at least `min`. */
-function requireRole(min) {
-  if (!ROLE_RANK[min]) throw new Error(`requireRole: unknown role ${min}`);
+/**
+ * Permission guard (after requireAuth): perm = "section:action" or "any" (signed in is enough; the route itself
+ * limits what it returns). Missing permission -> 403 "This needs <action> on <section>".
+ */
+function requirePerm(perm) {
+  const p = permissions.parsePerm(perm); // throws at start-up on a typo
   return (req, res, next) => {
-    if ((ROLE_RANK[req.admin && req.admin.role] || 0) >= ROLE_RANK[min]) return next();
-    return res.status(403).json({ success: false, message: `This needs the ${min} role` });
+    if (p.any || permissions.can(req.admin && req.admin.perms, p.section, p.action)) return next();
+    const label = (permissions.SECTIONS.find((s) => s.key === p.section) || {}).label || p.section;
+    return res.status(403).json({ success: false, message: `This needs ${p.action} on ${label}`, code: 'forbidden' });
   };
 }
 
 module.exports = {
-  APP_KEY, DADMIN, ROLE_RANK,
-  setChallenge, readChallenge, startSession, endSession, readSession, requireAuth, requireRole,
+  APP_KEY, DADMIN,
+  setChallenge, readChallenge, startSession, endSession, readSession, requireAuth, requirePerm,
 };

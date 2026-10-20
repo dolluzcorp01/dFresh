@@ -1,5 +1,5 @@
 // dFresh Commerce (DEMO, database dfresh_commerce): inventory at one location, the Kanchipuram godown.
-// Stock per SKU = the sum of its movements (commerce_02_inventory.sql): Good, Returned (R) shown as its own line
+// Stock per SKU = the sum of its movements (database/demo/commerce-demo-schema.sql): Good, Returned (R) shown as its own line
 // "DF037-M150 (R)", and Damaged. Below its low level a SKU gets a red "Low" badge. Record a movement (in, out,
 // adjust, return, damaged; the SKU box takes a scanner) - who and when are kept for every one.
 import { useMemo, useState } from 'react';
@@ -16,7 +16,8 @@ const KIND = { good: 'Good', returned: 'Returned (R)', damaged: 'Damaged' };
 export default function CommerceStock() {
   const stock = useLoad('/commerce/stock');
   const moves = useLoad('/commerce/movements');
-  const canEdit = useCan('editor');
+  const canEdit = useCan('inventory', 'edit');
+  const canRecord = useCan('inventory', 'create');
   const act = useAction();
   const [q, setQ] = useState('');
   const location = useLocation();
@@ -69,7 +70,7 @@ export default function CommerceStock() {
         <div className="a-stat"><b>{totals.damaged}</b><span>damaged</span></div>
       </div>
       {act.note}
-      {canEdit && (
+      {canRecord && (
         <form className="a-card a-moveform" onSubmit={record}>
           <h2>Record a movement</h2>
           <div className="a-toolbar">

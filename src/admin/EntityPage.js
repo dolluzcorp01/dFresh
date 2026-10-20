@@ -148,7 +148,9 @@ export default function EntityPage({ name }) {
   const [onlyMissing, setOnlyMissing] = useState(false);
   const missingOf = (r) => (cfg.tr ? missingTexts(r.tr, cfg.tr, languages) : []);
   const options = useLoad(cfg.fields.some((f) => f.lookup === 'businessTypes') ? '/form-options' : null);
-  const canEdit = useCan('editor');
+  const SECTION = ['products', 'categories', 'kits', 'size-picker'].includes(name) ? 'products' : 'content';
+  const canEdit = useCan(SECTION, 'edit');
+  const canCreate = useCan(SECTION, 'create');
   const act = useAction();
   const [open, setOpen] = useState(null);
   const [drag, setDrag] = useState(null);
@@ -187,7 +189,7 @@ export default function EntityPage({ name }) {
       <h1>{cfg.title}</h1>
       {cfg.hint && <p className="a-muted a-pagehint">{cfg.hint}</p>}
       <div className="a-toolbar">
-        {canEdit && <button type="button" className="a-btn" onClick={() => openDrawer({ create: true })}>Add</button>}
+        {canCreate && <button type="button" className="a-btn" onClick={() => openDrawer({ create: true })}>Add</button>}
         {cfg.reorder && canEdit && <span className="a-muted">{onlyMissing ? 'Show all rows to drag them.' : 'Drag rows to change the order, then Save order.'}</span>}
         {cfg.tr && (
           <button type="button" className="a-chip" aria-pressed={onlyMissing} onClick={() => setOnlyMissing((x) => !x)}
@@ -244,11 +246,15 @@ export default function EntityPage({ name }) {
 
 function Editor({ name, cfg, id, lookups, products, rows, listRows, lists, cats, uiText, placesOf, onClose, onSaved }) {
   const loaded = useLoad(id ? `/${name}/${id}` : null);
-  const canEdit = useCan('editor');
+  const SECTION = ['products', 'categories', 'kits', 'size-picker'].includes(name) ? 'products' : 'content';
+  const canDelete = useCan(SECTION, 'delete');
+  const canEditRow = useCan(SECTION, 'edit');
+  const canCreateRow = useCan(SECTION, 'create');
   const act = useAction();
   const up = useUpload();
   const [draft, setDraft] = useState(null);
   const creating = !id;
+  const canEdit = creating ? canCreateRow : canEditRow; // the fields and Save follow create or edit
   const row = draft || (creating ? { tr: {}, ...cfg.defaults } : loaded.data);
   const set = (k, v) => {
     const next = { ...row, [k]: v };
@@ -336,7 +342,7 @@ function Editor({ name, cfg, id, lookups, products, rows, listRows, lists, cats,
       footer={canEdit && (
         <>
           <button type="button" className="a-btn" onClick={save} disabled={act.busy}>{creating ? 'Create' : 'Save'}</button>
-          {!creating && <button type="button" className="a-btn a-btn-danger" onClick={remove} disabled={act.busy}>Delete</button>}
+          {!creating && canDelete && <button type="button" className="a-btn a-btn-danger" onClick={remove} disabled={act.busy}>Delete</button>}
         </>
       )}>
       {act.note}

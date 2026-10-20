@@ -103,7 +103,7 @@ async function createOrder(q, data, empId) {
   return { order_id: ins.insertId, order_no: orderNo, ...t };
 }
 
-/** Delivered: the cashback rule (commerce_05_promotions.sql) credits pct % of (subtotal - discount) to the wallet. */
+/** Delivered: the cashback rule (database/demo/commerce-demo-schema.sql) credits pct % of (subtotal - discount) to the wallet. */
 async function cashback(q, orderId, empId) {
   const [[rule]] = await q.query('SELECT pct, min_order, is_active FROM cashback_rule WHERE rule_id = 1').catch(() => [[null]]);
   if (!rule || !Number(rule.is_active)) return 0;

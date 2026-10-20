@@ -9,49 +9,54 @@
 import { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import Icon from './icons';
+import { can } from '../shared/permissions';
 
-export const RANK = { viewer: 1, editor: 2, admin: 3 };
-export const DASHBOARD = { path: '', label: 'Dashboard', role: 'viewer', icon: 'dashboard' };
-const item = (path, label, role, icon) => ({ path, label, role, icon });
+// Each item names the section whose "view" it needs (src/shared/permissions.js); null = every signed-in user.
+// Commerce items also need Commerce settings commerce_enabled (me.commerce_enabled).
+export const DASHBOARD = { path: '', label: 'Dashboard', section: null, icon: 'dashboard' };
+const item = (path, label, section, icon, extra = {}) => ({ path, label, section, icon, ...extra });
 export const GROUPS = [
-  { key: 'sales', label: 'Sales', icon: 'sales', items: [item('leads', 'Leads', 'viewer', 'leads')] },
+  { key: 'sales', label: 'Sales', icon: 'sales', items: [item('leads', 'Leads', 'leads', 'leads')] },
   {
     key: 'catalogue', label: 'Catalogue', icon: 'catalogue', items: [
-      item('categories', 'Categories', 'viewer', 'categories'), item('products', 'Products', 'viewer', 'products'),
-      item('kits', 'Business kits', 'viewer', 'kits'), item('size-picker', 'Size picker', 'viewer', 'ruler'),
-      item('import-export', 'Excel import / export', 'editor', 'sheet'),
+      item('categories', 'Categories', 'products', 'categories'), item('products', 'Products', 'products', 'products'),
+      item('kits', 'Business kits', 'products', 'kits'), item('size-picker', 'Size picker', 'products', 'ruler'),
+      item('import-export', 'Excel import / export', 'products', 'sheet'),
     ],
   },
   {
-    key: 'commerce', label: 'Commerce', icon: 'sheet', items: [
-      item('commerce/ops', 'Operations', 'viewer', 'dashboard'),
-      item('commerce/orders', 'Orders', 'viewer', 'sales'),
-      item('commerce/returns', 'Returns', 'viewer', 'leads'),
-      item('commerce/customers', 'Customers', 'viewer', 'users'),
-      item('commerce/promotions', 'Promotions', 'viewer', 'options'),
-      item('commerce/skus', 'SKUs and labels', 'viewer', 'ruler'),
-      item('commerce/stock', 'Inventory', 'viewer', 'products'),
+    key: 'commerce', label: 'Commerce', icon: 'sheet', commerce: true, items: [
+      item('commerce/ops', 'Operations', null, 'dashboard'),
+      item('commerce/orders', 'Orders', 'orders', 'sales'),
+      item('commerce/returns', 'Returns', 'returns', 'leads'),
+      item('commerce/customers', 'Customers', 'customers', 'users'),
+      item('commerce/promotions', 'Promotions', 'promotions', 'options'),
+      item('commerce/skus', 'SKUs and labels', 'inventory', 'ruler'),
+      item('commerce/stock', 'Inventory', 'inventory', 'products'),
     ],
   },
   {
     key: 'content', label: 'Website content', icon: 'content', items: [
-      item('banners', 'Banners', 'viewer', 'banners'), item('translations', 'Translations', 'viewer', 'translations'),
-      item('towns', 'Towns', 'viewer', 'towns'), item('form-options', 'Form options', 'viewer', 'options'),
-      item('brochures', 'Brochures', 'viewer', 'brochures'),
+      item('banners', 'Banners', 'content', 'banners'), item('translations', 'Translations', 'content', 'translations'),
+      item('towns', 'Towns', 'content', 'towns'), item('form-options', 'Form options', 'content', 'options'),
+      item('brochures', 'Brochures', 'content', 'brochures'),
     ],
   },
   {
     key: 'setup', label: 'Setup', icon: 'setup', items: [
-      item('languages', 'Languages', 'viewer', 'languages'), item('settings', 'Settings', 'admin', 'settings'),
-      item('users', 'Admin users', 'admin', 'users'), item('audit', 'Audit log', 'admin', 'audit'),
+      item('approvals', 'Approvals', null, 'audit'),
+      item('languages', 'Languages', 'content', 'languages'), item('settings', 'Settings', 'settings', 'settings'),
+      item('commerce-settings', 'Commerce settings', 'settings', 'settings'),
+      item('users', 'Admin users', 'users', 'users'), item('roles', 'Roles', 'users', 'users'), item('audit', 'Audit log', 'audit', 'audit'),
     ],
   },
 ];
 
-/** The groups with only the items this role may open (a group with none left is dropped). */
-export const groupsFor = (role) => GROUPS
-  .map((g) => ({ ...g, items: g.items.filter((i) => RANK[role] >= RANK[i.role]) }))
-  .filter((g) => g.items.length);
+/** The groups with only the items this user may open (a group with none left is dropped). */
+export const groupsFor = (me) => GROUPS
+  .filter((g) => !g.commerce || (me && me.commerce_enabled))
+  .map((g) => ({ ...g, items: g.items.filter((i) => !i.section || can(me && me.perms, i.section, 'view')) }))
+  .filter((g) => g.items.length && (!g.commerce || g.items.some((i) => i.section)));
 
 const GROUPS_KEY = 'dfresh-admin-nav-groups';
 const COLLAPSED_KEY = 'dfresh-admin-nav-collapsed';
@@ -98,11 +103,11 @@ function NavItem({ it, pathname, compact, badge, onNavigate }) {
   );
 }
 
-export default function Sidebar({ role, drawerOpen, onCloseDrawer, collapsed, onToggleCollapsed, newLeads }) {
+export default function Sidebar({ me, drawerOpen, onCloseDrawer, collapsed, onToggleCollapsed, newLeads, approvals }) {
   const { pathname } = useLocation();
   const narrow = useNarrow();
   const compact = collapsed && !narrow;
-  const groups = groupsFor(role);
+  const groups = groupsFor(me);
   const current = groups.find((g) => g.items.some((i) => isActive(pathname, i.path)));
   const [open, setOpen] = useState(() => saved.get(GROUPS_KEY, { sales: true }));
 
@@ -133,7 +138,7 @@ export default function Sidebar({ role, drawerOpen, onCloseDrawer, collapsed, on
   }, [drawerOpen, onCloseDrawer]);
 
   const navigate = () => { if (narrow) onCloseDrawer(false); };
-  const badgeFor = (it) => (it.path === 'leads' ? newLeads : 0);
+  const badgeFor = (it) => (it.path === 'leads' ? newLeads : it.path === 'approvals' ? approvals : 0);
 
   return (
     <>

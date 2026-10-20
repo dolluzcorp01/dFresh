@@ -4,30 +4,30 @@
 // emp_id is a string like DZIND148 (never a number).
 import { useEffect, useRef, useState } from 'react';
 import { api } from './adminApi';
-import { Avatar, InfoCard, Loading, fmtDate, useAction, useAdmin, useConfirm, useLeaveGuard, useLoad } from './ui';
+import { Link } from 'react-router-dom';
+import { Avatar, InfoCard, Loading, fmtDate, useAction, useAdmin, useCan, useConfirm, useLeaveGuard, useLoad } from './ui';
 
-const ROLES = ['viewer', 'editor', 'admin'];
-const ROLE_HELP = {
-  viewer: 'Viewer: sees content and leads.',
-  editor: 'Editor: edits content and leads.',
-  admin: 'Admin: everything (settings, users, languages, Excel import).',
-};
 
 export default function Users() {
   const list = useLoad('/users');
+  const rolesData = useLoad('/roles');
+  const roles = (rolesData.data && rolesData.data.roles) || [];
+  const roleOf = (id) => roles.find((r) => String(r.role_id) === String(id));
   const { me } = useAdmin();
+  const canAdd = useCan('users', 'create');
+  const canEdit = useCan('users', 'edit');
   const act = useAction();
   const [pick, setPick] = useState(null); // the chosen employee
-  const [role, setRole] = useState('viewer');
+  const [role, setRole] = useState('3'); // Viewer (read only) until another is chosen
   const [pickerKey, setPickerKey] = useState(0); // remounts the picker after an Add
 
   const add = (e) => {
     e.preventDefault();
     if (!pick) { act.setMsg({ kind: 'error', text: 'Pick an employee first' }); return; }
     act.run(async () => {
-      await api.send('POST', '/users', { emp_id: pick.emp_id, role });
+      await api.send('POST', '/users', { emp_id: pick.emp_id, role_id: Number(role) });
       setPick(null); setPickerKey((k) => k + 1); list.reload();
-    }, `${pick.name} added as ${role}`);
+    }, `${pick.name} added as ${(roleOf(role) || {}).name || 'the chosen role'}`);
   };
   const confirm = useConfirm();
   const update = (u, body, ok) => act.run(async () => { await api.send('PUT', `/users/${encodeURIComponent(u.emp_id)}`, body); list.reload(); }, ok);
@@ -35,21 +35,21 @@ export default function Users() {
   const [pending, setPending] = useState({}); // emp_id -> role
   const pickRole = (u, next) => setPending((p) => {
     const n = { ...p };
-    if (next === u.role) delete n[u.emp_id]; else n[u.emp_id] = next;
+    if (String(next) === String(u.role_id)) delete n[u.emp_id]; else n[u.emp_id] = next;
     return n;
   });
   const cancelRole = (u) => setPending((p) => { const n = { ...p }; delete n[u.emp_id]; return n; });
   const saveRole = (u) => act.run(async () => {
-    await api.send('PUT', `/users/${encodeURIComponent(u.emp_id)}`, { role: pending[u.emp_id] });
+    await api.send('PUT', `/users/${encodeURIComponent(u.emp_id)}`, { role_id: Number(pending[u.emp_id]) });
     cancelRole(u);
     list.reload();
-  }, `${u.name || u.emp_id} is now ${pending[u.emp_id]}`);
+  }, `${u.name || u.emp_id} is now ${(roleOf(pending[u.emp_id]) || {}).name || 'changed'}`);
   useLeaveGuard(Object.keys(pending).length > 0);
   const toggle = async (u) => {
     const who = u.name || u.emp_id;
     const ok = await confirm(u.is_active
       ? { title: `Deactivate ${who}?`, message: 'They can no longer sign in to dFresh admin.', action: 'Deactivate', danger: true }
-      : { title: `Reactivate ${who}?`, message: `They can sign in to dFresh admin again, as ${u.role}.`, action: 'Reactivate' });
+      : { title: `Reactivate ${who}?`, message: `They can sign in to dFresh admin again, as ${u.role_name}.`, action: 'Reactivate' });
     if (ok) update(u, { is_active: u.is_active ? 0 : 1 }, `${who} ${u.is_active ? 'deactivated' : 'reactivated'}`);
   };
 
@@ -59,21 +59,24 @@ export default function Users() {
       <InfoCard title="Who can use dFresh admin">
         <ul>
           <li>People come from dAdmin: pick an active employee, give a role, Add. They sign in with their dAdmin e-mail and password.</li>
-          <li>{ROLE_HELP.viewer} {ROLE_HELP.editor} {ROLE_HELP.admin}</li>
+          <li>Each person has one role. What a role may see and change is set in <Link to="/admin/roles">Roles</Link>; Admin and Sub-admin are built in.</li>
+          <li>Nobody changes their own role or deactivates themselves, and there is always at least one active Admin.</li>
           <li>Someone who left the company (inactive in dAdmin) cannot sign in, whatever their role here.</li>
         </ul>
       </InfoCard>
+      {canAdd && (
       <form className="a-card a-adduser" onSubmit={add}>
         <h2>Add a person</h2>
         <div className="a-adduser-row">
           <EmployeePicker key={pickerKey} value={pick} onChange={setPick} />
           <label className="a-field a-adduser-role"><span>Role</span>
-            <select value={role} onChange={(e) => setRole(e.target.value)}>{ROLES.map((r) => <option key={r}>{r}</option>)}</select>
-            <small className="a-muted">{ROLE_HELP[role]}</small>
+            <select value={role} onChange={(e) => setRole(e.target.value)}>{roles.map((r) => <option key={r.role_id} value={r.role_id}>{r.name}</option>)}</select>
+            <small className="a-muted">{(roleOf(role) || {}).description}</small>
           </label>
           <button type="submit" className="a-btn a-adduser-btn" disabled={act.busy || !pick}>Add</button>
         </div>
       </form>
+      )}
       {act.note}
       <Loading state={list}>
         <div className="a-scroll">
@@ -99,9 +102,10 @@ export default function Users() {
                     <td><code>{u.emp_id}</code></td>
                     <td>{u.email}</td>
                     <td>
-                      <select aria-label={`Role of ${u.name || u.emp_id}`} value={next || u.role} disabled={self || act.busy} title={self ? 'You cannot change your own role' : undefined}
+                      <select aria-label={`Role of ${u.name || u.emp_id}`} value={next || u.role_id || ''} disabled={self || !canEdit || act.busy} title={self ? 'You cannot change your own role' : undefined}
                         onChange={(e) => pickRole(u, e.target.value)}>
-                        {ROLES.map((r) => <option key={r}>{r}</option>)}
+                        {!u.role_id && <option value="">(no role)</option>}
+                        {roles.map((r) => <option key={r.role_id} value={r.role_id}>{r.name}</option>)}
                       </select>
                     </td>
                     <td><span className={`a-status ${u.is_active ? 'a-status-on' : 'a-status-off'}`}>{u.is_active ? 'Active' : 'Inactive'}</span></td>
@@ -112,7 +116,7 @@ export default function Users() {
                           <button type="button" className="a-btn a-btn-sm" disabled={act.busy} onClick={() => saveRole(u)}>Save</button>
                           <button type="button" className="a-btn a-btn-sm a-btn-ghost" disabled={act.busy} onClick={() => cancelRole(u)}>Cancel</button>
                         </span>
-                      ) : !self && (
+                      ) : !self && canEdit && (
                         <button type="button" className="a-btn a-btn-sm a-btn-ghost" disabled={act.busy} onClick={() => toggle(u)}>
                           {u.is_active ? 'Deactivate' : 'Reactivate'}
                         </button>

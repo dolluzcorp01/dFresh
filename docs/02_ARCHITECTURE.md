@@ -64,7 +64,7 @@ dfresh/
       admin-media.js            # uploads: magic bytes, sharp WebP (products, banners), brochure PDFs
       product-excel.js          # Product List Excel (v0.2 layout) export, dry-run diff, apply
       audit.js  csv.js          # audit_log writer; CSV for exports / translators
-      auth.js                   # sessions, challenge tokens, revoke check, requireAuth / requireRole
+      auth.js                   # sessions, challenge tokens, revoke check, requireAuth / requirePerm (section:action, src/shared/permissions.js)
       mailer.js                 # THE ONLY place that talks to SendGrid
       outbox-worker.js          # mail_outbox + sync_outbox processors (setInterval inside server.js)
       gsheet.js                 # Google Sheets append

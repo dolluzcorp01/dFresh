@@ -10,7 +10,8 @@ const EMPTY = { code: '', kind: 'percent', value: '', min_order: '0', expires_on
 
 export default function CommercePromotions() {
   const data = useLoad('/commerce/promotions');
-  const canEdit = useCan('editor');
+  const canEdit = useCan('promotions', 'edit');
+  const canCreate = useCan('promotions', 'create');
   const act = useAction();
   const [form, setForm] = useState(EMPTY);
   const [cb, setCb] = useState(null);
@@ -71,7 +72,7 @@ export default function CommercePromotions() {
                 </tbody>
               </table>
             </div>
-            {canEdit && (
+            {canCreate && (
               <form className="a-card a-moveform" onSubmit={add}>
                 <h2>Add a coupon</h2>
                 <div className="a-toolbar">

@@ -299,7 +299,13 @@ router.get('/admin/me', auth.requireAuth, async (req, res) => {
       `SELECT emp_first_name, emp_last_name FROM \`${auth.DADMIN}\`.employee WHERE emp_id = ?`, [req.admin.emp_id]
     );
     const name = emp ? [emp.emp_first_name, emp.emp_last_name].filter(Boolean).join(' ') : req.admin.emp_id;
-    res.json({ success: true, data: { ...req.admin, name } });
+    // Commerce settings commerce_enabled: the admin shows the Commerce menus only while it is on
+    let commerceEnabled = false;
+    try {
+      const [[c]] = await db.query("SELECT value FROM commerce_settings WHERE setting_key = 'commerce_enabled'");
+      commerceEnabled = Boolean(c && c.value === '1');
+    } catch { /* table not there yet: off */ }
+    res.json({ success: true, data: { ...req.admin, name, commerce_enabled: commerceEnabled } });
   } catch (err) {
     console.error('admin me failed:', err.code || err.message);
     res.status(500).json({ success: false, message: 'Server error' });
@@ -347,6 +353,18 @@ async function checkSwitchCode(empId, code) {
   switchCodes.delete(empId);
   return { ok: true };
 }
+
+// Start-up check: this router holds only the sign-in routes, which are public by design (Admin_server.js checks that
+// every other /admin route declares its permission).
+(function assertOnlyPublic() {
+  const PUBLIC = new Set(['POST /admin/login', 'POST /admin/login/verify', 'POST /admin/login/resend', 'POST /admin/logout', 'GET /admin/me']);
+  const extra = [];
+  for (const layer of router.stack) {
+    if (!layer.route) continue;
+    for (const m of Object.keys(layer.route.methods)) if (!PUBLIC.has(`${m.toUpperCase()} ${layer.route.path}`)) extra.push(`${m.toUpperCase()} ${layer.route.path}`);
+  }
+  if (extra.length) throw new Error(`sign-in router has routes that are not sign-in routes: ${extra.join(', ')} (put them in Admin_server.js with a permission)`);
+}());
 
 module.exports = router;
 module.exports.issueCode = issueCode; // tests

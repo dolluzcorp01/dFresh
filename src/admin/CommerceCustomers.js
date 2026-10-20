@@ -22,7 +22,7 @@ export default function CommerceCustomers() {
   const shown = rows.filter((r) => (!type || r.ctype === type) && (!q.trim() || `${r.name} ${r.phone} ${r.town}`.toLowerCase().includes(q.trim().toLowerCase())));
   const due = rows.filter((r) => r.follow_due).length;
   const [adding, setAdding] = useState(false);
-  const canEdit = useCan('editor');
+  const canEdit = useCan('customers', 'create');
   return (
     <section>
       <h1>Customers</h1>
@@ -73,7 +73,7 @@ export default function CommerceCustomers() {
 
 function CustomerDrawer({ id, onClose, onChanged }) {
   const c = useLoad(`/commerce/customers/${id}`);
-  const canEdit = useCan('editor');
+  const canEdit = useCan('customers', 'edit');
   const act = useAction();
   const [form, setForm] = useState(null);
   const d = c.data;

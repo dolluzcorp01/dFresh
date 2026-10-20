@@ -1,6 +1,7 @@
 // dFresh Commerce (DEMO, database dfresh_commerce): operations dashboard. Each card opens the matching screen:
 // today's orders, to pack (New), to dispatch (Packed), low stock, open returns (replacement not delivered yet),
-// wallet credit given (cashback + refunds). Plus the next orders to pack and the SKUs to reorder.
+// wallet credit given (cashback + refunds). Plus the next orders to pack and the SKUs to reorder. A card or table is
+// only there when the role can view its section (the API sends null for the others).
 import { Link } from 'react-router-dom';
 import { InfoCard, Loading, fmtDate, useLoad } from './ui';
 import { rs } from './CommerceReturns';
@@ -29,14 +30,15 @@ export default function CommerceOps() {
         {d && (
           <>
             <div className="a-stats">
-              <Card to="/admin/commerce/orders" value={d.today.n} label="orders today" sub={rs(d.today.value)} />
-              <Card to="/admin/commerce/orders?status=new" value={d.toPack} label="to pack" bad={d.toPack > 0} />
-              <Card to="/admin/commerce/orders?status=packed" value={d.toDispatch} label="to dispatch" bad={d.toDispatch > 0} />
-              <Card to="/admin/commerce/stock?low=1" value={d.lowStock.length} label="low stock SKUs" bad={d.lowStock.length > 0} />
-              <Card to="/admin/commerce/returns" value={d.openReturns} label="open returns" sub="replacement not delivered" />
-              <Card to="/admin/commerce/customers" value={rs(d.walletGiven.total)} label="wallet credit given" sub={`cashback ${rs(d.walletGiven.cashback)}, refunds ${rs(d.walletGiven.refunds)}`} />
+              {d.today && <Card to="/admin/commerce/orders" value={d.today.n} label="orders today" sub={rs(d.today.value)} />}
+              {d.toPack !== null && <Card to="/admin/commerce/orders?status=new" value={d.toPack} label="to pack" bad={d.toPack > 0} />}
+              {d.toDispatch !== null && <Card to="/admin/commerce/orders?status=packed" value={d.toDispatch} label="to dispatch" bad={d.toDispatch > 0} />}
+              {d.lowStock && <Card to="/admin/commerce/stock?low=1" value={d.lowStock.length} label="low stock SKUs" bad={d.lowStock.length > 0} />}
+              {d.openReturns !== null && <Card to="/admin/commerce/returns" value={d.openReturns} label="open returns" sub="replacement not delivered" />}
+              {d.walletGiven && <Card to="/admin/commerce/customers" value={rs(d.walletGiven.total)} label="wallet credit given" sub={`cashback ${rs(d.walletGiven.cashback)}, refunds ${rs(d.walletGiven.refunds)}`} />}
             </div>
             <div className="a-grid2">
+              {d.nextToPack && (
               <div className="a-card">
                 <h2>Next to pack</h2>
                 {d.nextToPack.length ? (
@@ -44,6 +46,8 @@ export default function CommerceOps() {
                     <tbody>{d.nextToPack.map((o) => <tr key={o.order_no}><td><code>{o.order_no}</code></td><td>{o.customer}</td><td>{fmtDate(o.created_at)}</td></tr>)}</tbody></table>
                 ) : <p className="a-muted">Nothing to pack.</p>}
               </div>
+              )}
+              {d.lowStock && (
               <div className="a-card">
                 <h2>Reorder (low stock)</h2>
                 {d.lowStock.length ? (
@@ -51,6 +55,7 @@ export default function CommerceOps() {
                     <tbody>{d.lowStock.map((s) => <tr key={s.sku_code}><td><code>{s.sku_code}</code></td><td>{s.name}</td><td className="a-num a-bad">{s.good}</td><td className="a-num">{s.low_level}</td></tr>)}</tbody></table>
                 ) : <p className="a-muted">All SKUs above their level.</p>}
               </div>
+              )}
             </div>
           </>
         )}

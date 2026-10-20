@@ -432,6 +432,30 @@ td.a-pending { background: #fff8e1; box-shadow: inset 3px 0 0 #e3b44f; }
 .a-orderlines small { display: block; }
 .a-price { width: 10ch; }
 .a-ok { color: #1e5e2c; }
+/* Roles, approvals, commerce settings, No access */
+.a-plainset { border: 0; margin: 0; padding: 0; min-width: 0; }
+.a-plainset:disabled .a-switch, .a-plainset:disabled input, .a-plainset:disabled select { cursor: not-allowed; }
+.a-builtin { margin-inline-start: 8px; }
+.a-center { text-align: center; }
+.a-permgrid th[scope="row"] { font-weight: 600; min-width: 220px; }
+.a-permgrid td input[type="checkbox"] { width: 18px; height: 18px; }
+.a-approvals { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.a-approval { margin: 0; }
+.a-approval-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.a-approval-amt { font-weight: 700; }
+.a-approval p { margin: 6px 0; }
+.a-approval-decide { max-width: 520px; }
+.a-ap-pending { background: #fff3cd; color: #6b4e00; }
+.a-ap-approved { background: #e3f4e6; color: #1e5e2c; }
+.a-ap-rejected { background: #fbeceb; color: #7a1a14; }
+.a-ap-expired, .a-ap-withdrawn { background: #eee; color: var(--a-ink2); }
+.a-rolepick { display: flex; flex-wrap: wrap; gap: 6px 14px; }
+.a-csettings .a-cs-label { width: 42%; }
+.a-csettings input.a-wide { width: 100%; max-width: 460px; }
+.a-listed { margin: 10px 0 18px; }
+.a-listed-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.a-listed-head h3 { margin: 0; }
+.a-noaccess { max-width: 640px; }
 /* Commerce demo: operations cards are links */
 .a-statlink { text-decoration: none; color: var(--a-ink); min-width: 150px; }
 .a-statlink:hover, .a-statlink:focus-visible { border-color: var(--a-ink); outline: none; }

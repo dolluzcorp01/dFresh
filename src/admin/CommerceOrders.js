@@ -27,6 +27,7 @@ function printInvoice(o) {
       <td class="n">${(taxable + 2 * half).toFixed(2)}</td></tr>`;
   }).join('');
   const s = o.seller || {};
+  const demo = o.invoice_demo !== false; // the seller GSTIN is still a placeholder (Commerce settings > Invoice)
   const w = window.open('', '_blank');
   if (!w) return false;
   w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Invoice ${esc(o.order_no)}</title><style>
@@ -37,10 +38,13 @@ function printInvoice(o) {
   th { background: #f6f3ea; } .n { text-align: right; white-space: nowrap; } small { color: #555; }
   .tot { width: 320px; margin-left: auto; margin-top: 10px; } .tot td { border: none; padding: 3px 6px; } .grand td { font-weight: 700; font-size: 14px; border-top: 2px solid #121214; }
   .bar { padding: 8px 0; } @media print { .bar { display: none; } }
+  .wm { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; z-index: 0; }
+  .wm span { transform: rotate(-30deg); font-size: 56px; font-weight: 800; color: rgba(155, 28, 28, .13); white-space: nowrap; }
+  body > *:not(.wm) { position: relative; z-index: 1; }
 </style></head><body><div class="bar">Print, or choose "Save as PDF".</div>
-<div class="demo">DEMO - not a valid tax invoice</div>
-<div class="row"><div><h1>Tax invoice</h1><b>${esc(s.company_name)}</b><br>Marketed by dFresh, Kanchipuram<br>
-GSTIN: ${esc(s.gstin || 'to be confirmed')} &middot; CIN: ${esc(s.cin)}<br>${esc(s.office_phone)} &middot; ${esc(s.public_email)}</div>
+${demo ? '<div class="wm"><span>DEMO - not a tax invoice</span></div><div class="demo">DEMO - not a tax invoice (the seller GSTIN is still to be confirmed)</div>' : ''}
+<div class="row"><div><h1>Tax invoice</h1><b>${esc(s.name)}</b><br>${esc(s.address)}<br>
+GSTIN: ${esc(demo ? 'to be confirmed' : s.gstin)} &middot; CIN: ${esc(s.cin)}<br>${esc(s.phone)} &middot; ${esc(s.email)}${s.bank ? `<br>Bank: ${esc(s.bank)}` : ''}</div>
 <div><b>Invoice ${esc(o.order_no)}</b><br>Date: ${esc(new Date(o.created_at).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' }))}<br>
 Payment: ${esc(o.payment_label)}<br>Place of supply: Tamil Nadu (33)</div></div>
 <div class="row"><div><b>Bill to</b><br>${esc(o.customer)}<br>${esc(o.address || '')}${o.town ? `, ${esc(o.town)}` : ''}<br>Phone ${esc(o.phone)}${o.customer_gstin ? `<br>GSTIN ${esc(o.customer_gstin)}` : ''}</div></div>
@@ -66,7 +70,8 @@ export default function CommerceOrders() {
   const list = useLoad(`/commerce/orders${status ? `?status=${status}` : ''}`);
   const [open, setOpen] = useState(null); // order_no
   const [creating, setCreating] = useState(false);
-  const canEdit = useCan('editor');
+  const canEdit = useCan('orders', 'edit');
+  const canCreate = useCan('orders', 'create');
   const counts = (list.data && list.data.counts) || {};
   const all = Object.values(counts).reduce((a, b) => a + b, 0);
 
@@ -85,7 +90,7 @@ export default function CommerceOrders() {
           <button type="button" className={`a-chip${status === '' ? ' on' : ''}`} onClick={() => setStatus('')}>All {all}</button>
           {FLOW.map((s) => <button key={s} type="button" className={`a-chip${status === s ? ' on' : ''}`} onClick={() => setStatus(s)}>{LABEL[s]} {counts[s] || 0}</button>)}
         </div>
-        {canEdit && <button type="button" className="a-btn" onClick={() => setCreating(true)}>New order</button>}
+        {canCreate && <button type="button" className="a-btn" onClick={() => setCreating(true)}>New order</button>}
       </div>
       <Loading state={list}>
         <div className="a-scroll">
@@ -115,6 +120,7 @@ export default function CommerceOrders() {
 
 function OrderDrawer({ no, canEdit, onClose, onChanged }) {
   const o = useLoad(`/commerce/orders/${no}`);
+  const canReturn = useCan('returns', 'create');
   const rets = useLoad(`/commerce/returns?order=${no}`);
   const [returning, setReturning] = useState(false);
   const act = useAction();
@@ -134,7 +140,7 @@ function OrderDrawer({ no, canEdit, onClose, onChanged }) {
         <>
           <button type="button" className="a-btn a-btn-ghost" onClick={() => { if (!printInvoice(d)) act.setMsg({ kind: 'error', text: 'Allow pop-ups to open the invoice.' }); }}>GST invoice</button>
           {canEdit && next && <button type="button" className="a-btn" disabled={act.busy} onClick={advance}>{NEXT_BTN[d.status]}</button>}
-          {canEdit && d.status === 'delivered' && !returning && <button type="button" className="a-btn" onClick={() => setReturning(true)}>Return items</button>}
+          {canReturn && d.status === 'delivered' && !returning && <button type="button" className="a-btn" onClick={() => setReturning(true)}>Return items</button>}
         </>
       ) : null}>
       <Loading state={o}>

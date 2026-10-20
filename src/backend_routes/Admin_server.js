@@ -33,6 +33,9 @@ const { STAFF_GROUP, RETIRED_KEYS } = require('./text-groups');
 const router = express.Router();
 const db = getDBConnection(process.env.DB_NAME || 'dfresh').promise();
 const { InputError } = entities;
+const permissions = require('../shared/permissions');
+const approvals = require('./approvals');
+const commerceSettings = require('./commerce-settings');
 const MB = 1024 * 1024;
 const upload = (maxMb) => multer({ storage: multer.memoryStorage(), limits: { fileSize: maxMb * MB, files: 1 } }).single('file');
 
@@ -56,8 +59,37 @@ const DB_ERRORS = {
   ER_WARN_DATA_OUT_OF_RANGE: [400, 'A number is out of range'],
 };
 
-function route(method, path, role, handler, opts = {}) {
-  router[method](`/admin${path}`, auth.requireRole(role), ...(opts.before || []), async (req, res, next) => {
+// Every admin route declares its permission (src/shared/permissions.js): "section:action", or "any" for a signed-in
+// user (the route then limits what it returns). Commerce sections also need Commerce settings commerce_enabled (404
+// while off). The start-up check at the end of this file refuses to start when an /admin route has no declaration.
+const DECLARED = new Map(); // "GET /admin/x" -> perm
+const COMMERCE_SECTIONS = new Set(permissions.SECTIONS.filter((x) => x.commerce).map((x) => x.key));
+async function commerceOn() {
+  try {
+    const [[r]] = await db.query("SELECT value FROM commerce_settings WHERE setting_key = 'commerce_enabled'");
+    return Boolean(r && r.value === '1');
+  } catch {
+    return false;
+  }
+}
+async function commerceGate(req, res, next) {
+  if (await commerceOn()) return next();
+  return res.status(404).json({ success: false, message: 'Commerce is switched off (Settings > Commerce settings)' });
+}
+/** The guards for one declared route (also used by the few routes that send a file instead of JSON). */
+function declare(method, path, perm) {
+  const p = permissions.parsePerm(perm);
+  const key = `${method.toUpperCase()} /admin${path}`;
+  if (DECLARED.has(key)) throw new Error(`route declared twice: ${key}`);
+  DECLARED.set(key, perm);
+  return p.section && COMMERCE_SECTIONS.has(p.section) ? [commerceGate, auth.requirePerm(perm)] : [auth.requirePerm(perm)];
+}
+const PRODUCT_ENTITIES = ['products', 'categories', 'kits', 'size-picker'];
+const entityPerm = (name, action) => `${PRODUCT_ENTITIES.includes(name) ? 'products' : 'content'}:${action}`;
+const canDo = (req, section, action = 'view') => permissions.can(req.admin && req.admin.perms, section, action);
+
+function route(method, path, perm, handler, opts = {}) {
+  router[method](`/admin${path}`, ...declare(method, path, perm), ...(opts.before || []), async (req, res, next) => {
     try {
       const data = await handler(req, res);
       if (res.headersSent) return undefined;
@@ -108,7 +140,7 @@ async function exportedBy(req) {
 // ---------------------------------------------------------------------------------------------
 // Dashboard
 // ---------------------------------------------------------------------------------------------
-route('get', '/dashboard', 'viewer', async () => {
+route('get', '/dashboard', 'any', async (req) => {
   const [[leads]] = await db.query(
     `SELECT SUM(created_at >= ${IST_TODAY_UTC}) AS today, SUM(created_at >= ${IST_TODAY_UTC} - INTERVAL 6 DAY) AS last7,
             SUM(status = 'new') AS open_new, COUNT(*) AS total FROM leads`
@@ -129,14 +161,26 @@ route('get', '/dashboard', 'viewer', async () => {
       WHERE t.text_key IS NULL GROUP BY l.lang_code`
   );
   const legalMissing = Object.fromEntries(legal.map((r) => [r.lang_code, Number(r.n)]));
+  const att = await attention(langs);
+  const leadsOk = canDo(req, 'leads');
+  const contentOk = canDo(req, 'content');
+  const settingsOk = canDo(req, 'settings');
+  // figures only for the sections this role can view (the dashboard is open to every signed-in user)
   return {
-    leads: { today: Number(leads.today) || 0, last7: Number(leads.last7) || 0, open_new: Number(leads.open_new) || 0, total: Number(leads.total) },
-    byForm: byForm.map((r) => ({ form_type: r.form_type, n: Number(r.n) })),
-    outbox: { mail: counts(mail), sync: counts(sync) },
-    languages: langs.map((l) => ({ ...l, missing: done[l.lang_code].total - done[l.lang_code].have, pct: done[l.lang_code].pct, legalMissing: legalMissing[l.lang_code] || 0 })),
-    mailLogo: logoCheck.status(), // state 'failing' = red notice: mails use the built-in logo
-    fonts: fontManager.status(), // status 'full' = red notice: a subset could not be rebuilt, the full font is served
-    attention: await attention(langs),
+    can: { leads: leadsOk, content: contentOk, settings: settingsOk },
+    leads: leadsOk ? { today: Number(leads.today) || 0, last7: Number(leads.last7) || 0, open_new: Number(leads.open_new) || 0, total: Number(leads.total) } : null,
+    byForm: leadsOk ? byForm.map((r) => ({ form_type: r.form_type, n: Number(r.n) })) : [],
+    outbox: leadsOk ? { mail: counts(mail), sync: counts(sync) } : { mail: {}, sync: {} },
+    languages: contentOk ? langs.map((l) => ({ ...l, missing: done[l.lang_code].total - done[l.lang_code].have, pct: done[l.lang_code].pct, legalMissing: legalMissing[l.lang_code] || 0 })) : [],
+    mailLogo: settingsOk ? logoCheck.status() : null, // state 'failing' = red notice: mails use the built-in logo
+    fonts: contentOk ? fontManager.status() : [], // status 'full' = red notice: a subset could not be rebuilt, the full font is served
+    attention: {
+      ...att,
+      staleNew: leadsOk ? att.staleNew : 0,
+      failed: leadsOk ? att.failed : { leads: 0, mail: 0, sync: 0 },
+      emptySettings: settingsOk ? att.emptySettings : [],
+      noBrochure: contentOk ? att.noBrochure : [],
+    },
   };
 });
 
@@ -166,9 +210,9 @@ async function attention(langs) {
 }
 
 // Sidebar badge (every page change): New leads.
-route('get', '/nav-counts', 'viewer', async () => {
+route('get', '/nav-counts', 'any', async (req) => {
   const [[r]] = await db.query("SELECT COUNT(*) AS n FROM leads WHERE status = 'new'");
-  return { newLeads: Number(r.n) };
+  return { newLeads: canDo(req, 'leads') ? Number(r.n) : 0, approvals: await approvals.countDecidable(req.admin) };
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -230,7 +274,7 @@ function leadFilterText(query) {
   return parts.length ? parts.join(', ') : null;
 }
 
-route('get', '/leads/export.csv', 'editor', async (req, res) => {
+route('get', '/leads/export.csv', 'leads:edit', async (req, res) => {
   const rows = await leadsForExport(req.query);
   const head = ['lead_ref', 'created_at_ist', 'form_type', 'status', 'full_name', 'first_name', 'last_name', 'business_name',
     'business_type', 'town', 'phone', 'email', 'products', 'monthly_quantity', 'message', 'details', 'lang', 'source_page',
@@ -246,7 +290,7 @@ route('get', '/leads/export.csv', 'editor', async (req, res) => {
 
 // Same leads and filters as the CSV, as a branded Excel file: phones and GST as text, received as a real date,
 // the distributor details in their own columns.
-route('get', '/leads/export.xlsx', 'editor', async (req, res) => {
+route('get', '/leads/export.xlsx', 'leads:edit', async (req, res) => {
   const rows = await leadsForExport(req.query);
   const detail = (r, k) => {
     const d = r.details_json ? (typeof r.details_json === 'string' ? JSON.parse(r.details_json) : r.details_json) : {};
@@ -284,7 +328,7 @@ route('get', '/leads/export.xlsx', 'editor', async (req, res) => {
 
 // Live admin (polled every 15 s while the tab is visible): leads newer than ?since=<lead_id>. Light: two counts and
 // the newest id. No since = just the newest id (the starting point). { lastId, added, newLeads }
-route('get', '/leads/changes', 'viewer', async (req) => {
+route('get', '/leads/changes', 'leads:view', async (req) => {
   const since = /^\d{1,15}$/.test(String(req.query.since || '')) ? Number(req.query.since) : null;
   const [[r]] = await db.query(
     `SELECT COALESCE(MAX(lead_id), 0) AS last_id, SUM(status = 'new') AS new_leads,
@@ -294,7 +338,7 @@ route('get', '/leads/changes', 'viewer', async (req) => {
   return { lastId: Number(r.last_id), added: Number(r.added) || 0, newLeads: Number(r.new_leads) || 0 };
 });
 
-route('get', '/leads', 'viewer', async (req) => {
+route('get', '/leads', 'leads:view', async (req) => {
   const f = leadFilters(req.query);
   const pg = page(req);
   const [rows] = await db.query(`SELECT ${LEAD_LIST_COLS} FROM leads l ${f.sql} ORDER BY l.lead_id DESC LIMIT ? OFFSET ?`, [...f.params, pg.limit, pg.offset]);
@@ -322,13 +366,13 @@ async function leadDetail(id) {
   return { ...lead, products, outbox: { mail, sync } };
 }
 
-route('get', '/leads/:id', 'viewer', async (req) => {
+route('get', '/leads/:id', 'leads:view', async (req) => {
   const lead = await leadDetail(Number(req.params.id));
   if (!lead) throw new InputError('Lead not found', 404);
   return lead;
 });
 
-route('patch', '/leads/:id', 'editor', async (req) => {
+route('patch', '/leads/:id', 'leads:edit', async (req) => {
   const id = Number(req.params.id);
   const before = await leadDetail(id);
   if (!before) throw new InputError('Lead not found', 404);
@@ -361,7 +405,7 @@ route('patch', '/leads/:id', 'editor', async (req) => {
 // Delete a lead (admin only: test leads before launch day, junk). Its products, e-mail rows and sheet-queue row go
 // with it (ON DELETE CASCADE). A row the sheet sync already wrote stays in the Google Sheet: delete it there by its
 // Lead Ref (the answer says whether there is one). Audited without the visitor's personal data.
-route('delete', '/leads/:id', 'admin', async (req) => {
+route('delete', '/leads/:id', 'leads:delete', async (req) => {
   const id = Number(req.params.id);
   const before = await leadDetail(id);
   if (!before) throw new InputError('Lead not found', 404);
@@ -375,7 +419,7 @@ route('delete', '/leads/:id', 'admin', async (req) => {
   return { lead_ref: before.lead_ref, sheetRow: Boolean(before.sheet_synced_at) };
 });
 
-route('post', '/outbox/:type/:id/retry', 'editor', async (req) => {
+route('post', '/outbox/:type/:id/retry', 'leads:edit', async (req) => {
   const box = { mail: ['mail_outbox', 'mail_id'], sync: ['sync_outbox', 'sync_id'] }[req.params.type];
   if (!box) throw new InputError('type: mail or sync', 404);
   const id = Number(req.params.id);
@@ -389,9 +433,9 @@ route('post', '/outbox/:type/:id/retry', 'editor', async (req) => {
   });
 });
 
-route('get', '/assignees', 'viewer', async () => {
+route('get', '/assignees', 'leads:view', async () => {
   const [rows] = await db.query(
-    `SELECT a.emp_id, a.role, TRIM(CONCAT(COALESCE(e.emp_first_name, ''), ' ', COALESCE(e.emp_last_name, ''))) AS name
+    `SELECT a.emp_id, (SELECT r.name FROM roles r WHERE r.role_id = a.role_id) AS role, TRIM(CONCAT(COALESCE(e.emp_first_name, ''), ' ', COALESCE(e.emp_last_name, ''))) AS name
        FROM admin_users a LEFT JOIN \`${auth.DADMIN}\`.employee e ON e.emp_id = a.emp_id
       WHERE a.is_active = 1 ORDER BY name`
   );
@@ -401,13 +445,13 @@ route('get', '/assignees', 'viewer', async () => {
 // ---------------------------------------------------------------------------------------------
 // Products: Excel and images (registered before the generic /products/:id routes)
 // ---------------------------------------------------------------------------------------------
-route('get', '/products/export.xlsx', 'editor', async (req, res) => {
+route('get', '/products/export.xlsx', 'products:edit', async (req, res) => {
   const wb = await excel.buildWorkbook(db, { who: await exportedBy(req) });
   const bytes = await theme.send(res, wb, `dFresh_Product_List_${theme.istStamp(new Date(), false)}.xlsx`);
   await audit(null, { empId: by(req), action: 'export', entity: 'product', after: { file: 'products.xlsx', bytes } });
 });
 
-route('post', '/products/import', 'admin', async (req) => {
+route('post', '/products/import', 'products:edit', async (req) => {
   if (!req.file) throw new InputError('Choose the .xlsx file');
   const dryRun = req.query.dryRun !== '0';
   // The dry run hands back the file's fingerprint; Apply must send it and the same file: a changed file needs a new
@@ -429,7 +473,7 @@ route('post', '/products/import', 'admin', async (req) => {
   return { dryRun: false, applied: changes.length, fileHash, ...report };
 }, { before: [upload(5)] });
 
-route('post', '/products/:id/images', 'editor', async (req) => {
+route('post', '/products/:id/images', 'products:edit', async (req) => {
   const [id] = entities.parseId(entities.ENTITIES.products, req.params.id);
   const position = Number(req.body.position);
   if (![1, 2, 3].includes(position)) throw new InputError('position: 1, 2 or 3');
@@ -455,7 +499,7 @@ route('post', '/products/:id/images', 'editor', async (req) => {
   return { ...saved, original_bytes: req.file.size };
 }, { content: true, before: [upload(8)] });
 
-route('delete', '/products/:id/images/:position', 'editor', async (req) => {
+route('delete', '/products/:id/images/:position', 'products:edit', async (req) => {
   const [id] = entities.parseId(entities.ENTITIES.products, req.params.id);
   const position = Number(req.params.position);
   const [[img]] = await db.query('SELECT position, file_name FROM product_images WHERE product_id = ? AND position = ?', [id, position]);
@@ -467,7 +511,7 @@ route('delete', '/products/:id/images/:position', 'editor', async (req) => {
   media.removeProductImage(img.file_name);
 }, { content: true });
 
-route('put', '/products/:id/images/order', 'editor', async (req) => {
+route('put', '/products/:id/images/order', 'products:edit', async (req) => {
   const [id] = entities.parseId(entities.ENTITIES.products, req.params.id);
   const order = Array.isArray(req.body.order) ? req.body.order.map(Number) : [];
   return tx(async (q) => {
@@ -486,7 +530,7 @@ route('put', '/products/:id/images/order', 'editor', async (req) => {
 }, { content: true });
 
 // Banner photos (desktop 1920x800, mobile 1080x1350)
-route('post', '/banners/:id/image', 'editor', async (req) => {
+route('post', '/banners/:id/image', 'content:edit', async (req) => {
   const [key] = entities.parseId(entities.ENTITIES.banners, req.params.id);
   const kind = req.query.kind;
   if (!['desktop', 'mobile'].includes(kind)) throw new InputError('kind: desktop or mobile');
@@ -674,7 +718,7 @@ async function oneSelectedFirst(q, row) {
 }
 
 // Featured on Home: the featured products in their new order (drag and drop), 1..n.
-route('post', '/products/featured-order', 'editor', async (req) => tx(async (q) => {
+route('post', '/products/featured-order', 'products:edit', async (req) => tx(async (q) => {
   const [before] = await q.query('SELECT product_id, featured_order FROM products WHERE is_featured = 1 ORDER BY featured_order');
   await positions.reorderFeatured(q, req.body.order);
   await audit(q, { empId: by(req), action: 'reorder', entity: 'featured', before, after: { order: req.body.order } });
@@ -685,14 +729,14 @@ for (const name of Object.keys(entities.ENTITIES)) {
   const label = AUDIT_LABEL[name];
 
   // banners also get photo_check: each photo's real size (missing / wrong size shows a warning in the admin)
-  route('get', `/${name}`, 'viewer', async () => {
+  route('get', `/${name}`, entityPerm(name, 'view'), async () => {
     const rows = await entities.load(name);
     if (name === 'banners') for (const r of rows) r.photo_check = await media.bannerPhotoCheck(r);
     if (name === 'form-options') for (const r of rows) r.used = await optionUse(db, r.list_key, r.option_value);
     return rows;
   });
 
-  route('get', `/${name}/:id`, 'viewer', async (req) => {
+  route('get', `/${name}/:id`, entityPerm(name, 'view'), async (req) => {
     const row = await entities.load(name, entities.parseId(e, req.params.id));
     if (!row) throw new InputError('Not found', 404);
     if (name === 'banners') row.photo_check = await media.bannerPhotoCheck(row);
@@ -702,7 +746,7 @@ for (const name of Object.keys(entities.ENTITIES)) {
 
   // Drag and drop. Products: one category's main products or one main product's colour versions at a time
   // ({ category } or { parent }); categories, kits, banners: the whole list (positions.js: exactly every row, 1..n).
-  route('post', `/${name}/reorder`, 'editor', async (req) => tx(async (q) => {
+  route('post', `/${name}/reorder`, entityPerm(name, 'edit'), async (req) => tx(async (q) => {
     const before = (await entities.load(name, null, q)).map((r) => ({ id: entities.idOf(e, r), sort_order: r.sort_order }));
     if (name === 'form-options') {
       if (!req.body.list) throw new InputError('Say which list is reordered');
@@ -717,7 +761,7 @@ for (const name of Object.keys(entities.ENTITIES)) {
     await audit(q, { empId: by(req), action: 'reorder', entity: label, before, after: { order: req.body.order, ...(name === 'products' ? { category: req.body.category, parent: req.body.parent } : {}) } });
   }), { content: true });
 
-  route('post', `/${name}`, 'editor', async (req) => tx(async (q) => {
+  route('post', `/${name}`, entityPerm(name, 'create'), async (req) => tx(async (q) => {
     if (name === 'banners') await bannerGuard(q, req.body, null);
     if (name === 'towns') { req.body.town_key = await townKeyCheck(q, req.body.town_key, null); townGeoCheck(req.body); }
     if (name === 'form-options') {
@@ -736,7 +780,7 @@ for (const name of Object.keys(entities.ENTITIES)) {
     return after;
   }), { content: true, status: 201 });
 
-  route('put', `/${name}/:id`, 'editor', async (req) => tx(async (q) => {
+  route('put', `/${name}/:id`, entityPerm(name, 'edit'), async (req) => tx(async (q) => {
     let keyValues = entities.parseId(e, req.params.id);
     const before = await entities.load(name, keyValues, q);
     if (!before) throw new InputError('Not found', 404);
@@ -763,7 +807,7 @@ for (const name of Object.keys(entities.ENTITIES)) {
     return after;
   }), { content: true });
 
-  route('delete', `/${name}/:id`, 'editor', async (req) => {
+  route('delete', `/${name}/:id`, entityPerm(name, 'delete'), async (req) => {
     const keyValues = entities.parseId(e, req.params.id);
     const before = await tx(async (q) => {
       const row = await entities.load(name, keyValues, q);
@@ -795,12 +839,12 @@ async function uiTextGrid() {
   return [...map.values()];
 }
 
-route('get', '/ui-text', 'viewer', async () => {
+route('get', '/ui-text', 'content:view', async () => {
   const langs = await entities.languages();
   return { languages: langs.codes, default: langs.def, keys: await uiTextGrid() };
 });
 
-route('get', '/ui-text/export.csv', 'editor', async (req, res) => {
+route('get', '/ui-text/export.csv', 'content:edit', async (req, res) => {
   const langs = await entities.languages();
   const rows = await uiTextGrid();
   const body = csv.stringify([['key', 'group', 'description', ...langs.codes],
@@ -811,7 +855,7 @@ route('get', '/ui-text/export.csv', 'editor', async (req, res) => {
 });
 
 // The same grid as a branded Excel file, for reading and review (the import stays CSV).
-route('get', '/ui-text/export.xlsx', 'editor', async (req, res) => {
+route('get', '/ui-text/export.xlsx', 'content:edit', async (req, res) => {
   const langs = await entities.languages();
   const [langRows] = await db.query('SELECT lang_code, name_en FROM languages');
   const nameOf = Object.fromEntries(langRows.map((l) => [l.lang_code, l.name_en]));
@@ -853,7 +897,7 @@ async function setUiText(q, key, lang, value, empId, langs) {
   return true;
 }
 
-route('put', '/ui-text/:key/:lang', 'editor', async (req) => {
+route('put', '/ui-text/:key/:lang', 'content:edit', async (req) => {
   const langs = await entities.languages();
   if (!langs.codes.includes(req.params.lang)) throw new InputError('Unknown language', 404);
   const [[k]] = await db.query('SELECT text_key FROM ui_text_keys WHERE text_key = ?', [req.params.key]);
@@ -862,7 +906,7 @@ route('put', '/ui-text/:key/:lang', 'editor', async (req) => {
   return { changed };
 }, { content: true });
 
-route('post', '/ui-text/import', 'editor', async (req) => {
+route('post', '/ui-text/import', 'content:edit', async (req) => {
   if (!req.file) throw new InputError('Choose the CSV file');
   const dryRun = req.query.dryRun !== '0';
   let rows;
@@ -937,9 +981,9 @@ function langValues(body, creating) {
 
 const LANG_SELECT = 'SELECT lang_code, name_en, native_name, switch_label, html_lang, dir, font_family, is_default, is_active, sort_order FROM languages';
 
-route('get', '/fonts', 'viewer', async () => ({ scripts: fontManager.CATALOG, fonts: fontManager.status() }));
+route('get', '/fonts', 'content:view', async () => ({ scripts: fontManager.CATALOG, fonts: fontManager.status() }));
 
-route('get', '/languages', 'viewer', async () => {
+route('get', '/languages', 'any', async () => {
   const [rows] = await db.query(`${LANG_SELECT} ORDER BY sort_order, lang_code`);
   const done = await entities.completeness();
   const [bros] = await db.query('SELECT lang_code FROM brochures');
@@ -953,7 +997,7 @@ route('get', '/languages', 'viewer', async () => {
   }));
 });
 
-route('post', '/languages', 'admin', async (req) => tx(async (q) => {
+route('post', '/languages', 'content:create', async (req) => tx(async (q) => {
   const code = String(req.body.lang_code || '').trim();
   if (!/^[a-z]{2,3}$/.test(code)) throw new InputError('lang_code: 2-3 lower-case letters (the URL prefix, e.g. te)');
   const vals = { lang_code: code, ...langValues(req.body, true), is_default: 0 };
@@ -967,7 +1011,7 @@ route('post', '/languages', 'admin', async (req) => tx(async (q) => {
   return after;
 }), { content: true, status: 201 });
 
-route('put', '/languages/:code', 'admin', async (req) => tx(async (q) => {
+route('put', '/languages/:code', 'content:edit', async (req) => tx(async (q) => {
   const [[before]] = await q.query(`${LANG_SELECT} WHERE lang_code = ?`, [req.params.code]);
   if (!before) throw new InputError('Language not found', 404);
   const vals = langValues(req.body, false);
@@ -979,7 +1023,7 @@ route('put', '/languages/:code', 'admin', async (req) => tx(async (q) => {
   return after;
 }), { content: true });
 
-route('delete', '/languages/:code', 'admin', async (req) => tx(async (q) => {
+route('delete', '/languages/:code', 'content:delete', async (req) => tx(async (q) => {
   const [[before]] = await q.query(`${LANG_SELECT} WHERE lang_code = ?`, [req.params.code]);
   if (!before) throw new InputError('Language not found', 404);
   if (Number(before.is_default) === 1) throw new InputError('The default language cannot be deleted');
@@ -999,12 +1043,12 @@ route('delete', '/languages/:code', 'admin', async (req) => tx(async (q) => {
 // ---------------------------------------------------------------------------------------------
 // Brochures (PDF per language, private/brochures/<lang>/)
 // ---------------------------------------------------------------------------------------------
-route('get', '/brochures', 'viewer', async () => {
+route('get', '/brochures', 'content:view', async () => {
   const [rows] = await db.query('SELECT lang_code, file_name, file_size_kb, is_active, uploaded_by, uploaded_at FROM brochures ORDER BY lang_code');
   return rows.map((r) => ({ ...r, on_disk: Boolean(media.brochurePath(r.lang_code, r.file_name) && fs.existsSync(media.brochurePath(r.lang_code, r.file_name))) }));
 });
 
-route('get', '/brochures/:lang/file', 'viewer', async (req, res) => {
+route('get', '/brochures/:lang/file', 'content:view', async (req, res) => {
   const [[row]] = await db.query('SELECT lang_code, file_name FROM brochures WHERE lang_code = ?', [req.params.lang]);
   const file = row && media.brochurePath(row.lang_code, row.file_name);
   if (!file || !fs.existsSync(file)) throw new InputError('No brochure file for this language', 404);
@@ -1012,7 +1056,7 @@ route('get', '/brochures/:lang/file', 'viewer', async (req, res) => {
   res.send(fs.readFileSync(file));
 });
 
-route('post', '/brochures/:lang', 'editor', async (req) => {
+route('post', '/brochures/:lang', 'content:create', async (req) => {
   const langs = await entities.languages();
   const lang = req.params.lang;
   if (!langs.codes.includes(lang)) throw new InputError('Unknown language', 404);
@@ -1037,7 +1081,7 @@ route('post', '/brochures/:lang', 'editor', async (req) => {
   return saved;
 }, { before: [upload(5)] });
 
-route('delete', '/brochures/:lang', 'editor', async (req) => {
+route('delete', '/brochures/:lang', 'content:delete', async (req) => {
   const [[old]] = await db.query('SELECT lang_code, file_name, file_size_kb FROM brochures WHERE lang_code = ?', [req.params.lang]);
   if (!old) throw new InputError('No brochure for this language', 404);
   await tx(async (q) => {
@@ -1050,7 +1094,7 @@ route('delete', '/brochures/:lang', 'editor', async (req) => {
 // ---------------------------------------------------------------------------------------------
 // Settings, admin users, audit log (admin only)
 // ---------------------------------------------------------------------------------------------
-route('get', '/settings', 'admin', async () => {
+route('get', '/settings', 'settings:view', async () => {
   const [rows] = await db.query('SELECT setting_key, setting_value, is_public, description, updated_by, updated_at FROM site_settings ORDER BY setting_key');
   return rows;
 });
@@ -1063,10 +1107,10 @@ const PRODUCT_SETTINGS = ['door_home_product', 'door_biz_product'];
 const SENDER_SETTINGS = ['mail_from', 'mail_from_name'];
 const SENDER_WARNING = 'This address is not verified in SendGrid. All e-mails (lead alerts, login codes) would stop. Verify it in SendGrid first.';
 
-route('put', '/settings/:key', 'admin', async (req) => {
+route('put', '/settings/:key', 'settings:edit', async (req) => {
   const raw = typeof req.body.value === 'string' ? req.body.value.trim() : '';
   if (raw.length > 20000) throw new InputError('Too long');
-  if (SENDER_SETTINGS.includes(req.params.key) && !(req.admin && req.admin.role === 'admin')) {
+  if (SENDER_SETTINGS.includes(req.params.key) && !canDo(req, 'settings', 'edit')) {
     throw new InputError('Only an admin can change the mail sender', 403);
   }
   if (req.params.key === 'two_step_login') throw new InputError('Use the switch: turning two-step sign-in on or off has its own steps');
@@ -1138,15 +1182,15 @@ async function setTwoStep(req, value, how) {
   return { setting_key: 'two_step_login', setting_value: value };
 }
 
-route('post', '/settings/two-step-login/off', 'admin', async (req) => setTwoStep(req, 'off', 'turned off after the warning was confirmed'));
+route('post', '/settings/two-step-login/off', 'settings:edit', async (req) => setTwoStep(req, 'off', 'turned off after the warning was confirmed'));
 
-route('post', '/settings/two-step-login/on', 'admin', async (req) => {
+route('post', '/settings/two-step-login/on', 'settings:edit', async (req) => {
   const sent = await loginServer.sendSwitchCode(req.admin.emp_id);
   if (!sent.ok) throw new InputError(sent.message, 503);
   return { sentTo: sent.sentTo, minutes: sent.minutes };
 });
 
-route('post', '/settings/two-step-login/on/confirm', 'admin', async (req) => {
+route('post', '/settings/two-step-login/on/confirm', 'settings:edit', async (req) => {
   const checked = await loginServer.checkSwitchCode(req.admin.emp_id, typeof req.body.code === 'string' ? req.body.code.trim() : '');
   if (!checked.ok) {
     const err = new InputError(checked.message);
@@ -1158,7 +1202,7 @@ route('post', '/settings/two-step-login/on/confirm', 'admin', async (req) => {
 
 // Lead sheet: which spreadsheet an ID points to (read only: its title and tab names, nothing is written). For the
 // "Test connection" button; works whether or not the sync is switched on (GSHEET_ENABLED).
-route('get', '/settings/gsheet-check', 'admin', async (req) => {
+route('get', '/settings/gsheet-check', 'settings:view', async (req) => {
   const checked = settingRules.checkSetting('gsheet_spreadsheet_id', String(req.query.id || ''));
   if (!checked.value) throw new InputError('No sheet ID to test');
   if (checked.error) throw new InputError(checked.error);
@@ -1167,7 +1211,7 @@ route('get', '/settings/gsheet-check', 'admin', async (req) => {
 });
 
 // Share picture / About photo: upload -> generated files under /media, the setting holds the path.
-route('post', '/settings/:key/image', 'admin', async (req) => {
+route('post', '/settings/:key/image', 'settings:edit', async (req) => {
   const save = IMAGE_SETTINGS[req.params.key];
   if (!save) throw new InputError('This setting takes no picture', 404);
   if (!req.file) throw new InputError('Choose a picture');
@@ -1185,13 +1229,13 @@ route('post', '/settings/:key/image', 'admin', async (req) => {
 
 // Mail logo in admin Settings: the built-in logo (preview when mail_logo_url is empty), the check state, and a
 // test mail through the outbox (MAIL_TEST_TO outside production, the signed-in admin's own e-mail in production).
-router.get('/admin/mail-logo/builtin.png', auth.requireRole('admin'), (req, res) => {
+router.get('/admin/mail-logo/builtin.png', ...declare('get', '/mail-logo/builtin.png', 'settings:view'), (req, res) => {
   res.type('png').set('Cache-Control', 'private, max-age=300').sendFile(path.join(__dirname, 'mail-logo.png'));
 });
 
-route('get', '/mail-logo', 'admin', async () => logoCheck.status());
+route('get', '/mail-logo', 'settings:view', async () => logoCheck.status());
 
-route('post', '/mail-logo/test-mail', 'admin', async (req) => {
+route('post', '/mail-logo/test-mail', 'settings:edit', async (req) => {
   let to;
   if (process.env.NODE_ENV === 'production') {
     const [[emp]] = await db.query(`SELECT emp_mail_id FROM \`${auth.DADMIN}\`.employee WHERE emp_id = ?`, [req.admin.emp_id]);
@@ -1223,13 +1267,16 @@ route('post', '/mail-logo/test-mail', 'admin', async (req) => {
 
 // dAdmin employee (read only; named columns only, never the rest of that table): name, e-mail, active, photo, and
 // job_position / emp_department, which are ids into dadmin.job_position_config / department_config.
-const USER_SELECT = `SELECT a.emp_id, a.role, a.is_active, a.created_by, a.created_at,
+const USER_SELECT = `SELECT a.emp_id, a.role_id, r.name AS role_name, r.is_builtin, a.is_active, a.created_by, a.created_at,
   TRIM(CONCAT(COALESCE(e.emp_first_name, ''), ' ', COALESCE(e.emp_last_name, ''))) AS name, e.emp_mail_id AS email,
   e.job_position, e.emp_department, e.emp_profile_img AS photo,
   (e.emp_id IS NOT NULL AND (e.deleted_time IS NOT NULL OR e.active <> 1)) AS left_company,
   e.emp_id IS NULL AS not_in_dadmin
-  FROM admin_users a LEFT JOIN \`${auth.DADMIN}\`.employee e ON e.emp_id = a.emp_id`;
-const ROLES = Object.keys(auth.ROLE_RANK);
+  FROM admin_users a LEFT JOIN roles r ON r.role_id = a.role_id LEFT JOIN \`${auth.DADMIN}\`.employee e ON e.emp_id = a.emp_id`;
+async function roleExists(q, roleId) {
+  const [[r]] = await q.query('SELECT role_id, name FROM roles WHERE role_id = ?', [Number(roleId)]);
+  return r || null;
+}
 
 // Job title and department names. Production needs SELECT on these two dadmin tables (database/README.md); without it
 // the names are simply left out.
@@ -1253,17 +1300,17 @@ function withNames(rows, names) {
     left_company: Number(r.left_company) === 1, not_in_dadmin: Number(r.not_in_dadmin) === 1,
   }));
 }
-// Active admins whose dAdmin account is still active (the ones who can actually sign in).
+// Active users with the Admin role whose dAdmin account is still active (the ones who can actually sign in).
 async function activeAdmins(q, exceptEmpId) {
   const [[r]] = await q.query(
     `SELECT COUNT(*) AS n FROM admin_users a JOIN \`${auth.DADMIN}\`.employee e ON e.emp_id = a.emp_id AND e.deleted_time IS NULL AND e.active = 1
-      WHERE a.is_active = 1 AND a.role = 'admin' AND a.emp_id <> ?`, [exceptEmpId || '']
+      WHERE a.is_active = 1 AND a.role_id = ? AND a.emp_id <> ?`, [permissions.ADMIN_ROLE_ID, exceptEmpId || '']
   );
   return Number(r.n);
 }
 
 // The Add picker: active dAdmin employees who are not dFresh admin users yet, by name or emp_id.
-route('get', '/users/employees', 'admin', async (req) => {
+route('get', '/users/employees', 'users:create', async (req) => {
   const term = String(req.query.q || '').trim().slice(0, 60);
   const like = `%${term.replace(/[%_\\]/g, (c) => `\\${c}`)}%`;
   const [rows] = await db.query(
@@ -1279,51 +1326,55 @@ route('get', '/users/employees', 'admin', async (req) => {
   return withNames(rows, await dadminNames(db)).map(({ left_company: _l, not_in_dadmin: _n, ...r }) => r); // eslint-disable-line no-unused-vars
 });
 
-route('get', '/users', 'admin', async () => {
+route('get', '/users', 'users:view', async () => {
   const [rows] = await db.query(`${USER_SELECT} ORDER BY a.is_active DESC, name, a.emp_id`);
   return withNames(rows, await dadminNames(db));
 });
 
-route('post', '/users', 'admin', async (req) => tx(async (q) => {
+route('post', '/users', 'users:create', async (req) => tx(async (q) => {
   const empId = str(req.body.emp_id, 20);
   if (!empId || !/^[A-Za-z0-9_-]{1,20}$/.test(empId)) throw new InputError('emp_id like DZIND148');
-  if (!ROLES.includes(req.body.role)) throw new InputError(`role: ${ROLES.join(', ')}`);
+  const role = await roleExists(q, req.body.role_id);
+  if (!role) throw new InputError('Choose a role');
   const [[emp]] = await q.query(`SELECT emp_id FROM \`${auth.DADMIN}\`.employee WHERE emp_id = ? AND deleted_time IS NULL AND active = 1`, [empId]);
   if (!emp) throw new InputError('No active dAdmin employee with that emp_id');
   const [[already]] = await q.query('SELECT emp_id FROM admin_users WHERE emp_id = ?', [emp.emp_id]);
   if (already) throw new InputError(`${emp.emp_id} is already a dFresh admin user`);
-  await q.query('INSERT INTO admin_users (emp_id, role, is_active, created_by) VALUES (?, ?, 1, ?)', [emp.emp_id, req.body.role, by(req)]);
+  await q.query("INSERT INTO admin_users (emp_id, role, role_id, is_active, created_by) VALUES (?, 'viewer', ?, 1, ?)", [emp.emp_id, role.role_id, by(req)]);
   const [[after]] = await q.query(`${USER_SELECT} WHERE a.emp_id = ?`, [emp.emp_id]);
-  await audit(q, { empId: by(req), action: 'create', entity: 'admin_user', entityId: emp.emp_id, after: { role: after.role, is_active: after.is_active } });
+  await audit(q, { empId: by(req), action: 'create', entity: 'admin_user', entityId: emp.emp_id, after: { role: after.role_name, is_active: after.is_active } });
   return withNames([after], await dadminNames(q))[0];
 }), { status: 201 });
 
-route('put', '/users/:empId', 'admin', async (req) => tx(async (q) => {
+route('put', '/users/:empId', 'users:edit', async (req) => tx(async (q) => {
   const [[before]] = await q.query(`${USER_SELECT} WHERE a.emp_id = ?`, [req.params.empId]);
   if (!before) throw new InputError('Not a dFresh admin user', 404);
   const set = {};
-  if ('role' in req.body) {
-    if (!ROLES.includes(req.body.role)) throw new InputError(`role: ${ROLES.join(', ')}`);
-    set.role = req.body.role;
+  if ('role_id' in req.body) {
+    const role = await roleExists(q, req.body.role_id);
+    if (!role) throw new InputError('Choose a role');
+    set.role_id = role.role_id;
   }
   if ('is_active' in req.body) set.is_active = entities.coerce('is_active', { type: 'bool' }, req.body.is_active);
   if (!Object.keys(set).length) throw new InputError('Nothing to change');
-  if (before.emp_id === by(req) && (set.is_active === 0 || (set.role && set.role !== 'admin'))) {
-    throw new InputError('You cannot deactivate yourself or remove your own admin role (ask another admin)');
+  // nobody changes their own role or switches themselves off (ask another Admin)
+  if (before.emp_id === by(req) && (set.is_active === 0 || (set.role_id && set.role_id !== before.role_id))) {
+    throw new InputError('You cannot change your own role or deactivate yourself (ask another Admin)', 403);
   }
-  // there must always be at least one active admin who can sign in
-  const losesAdmin = before.role === 'admin' && Number(before.is_active) === 1 && (set.is_active === 0 || (set.role && set.role !== 'admin'));
+  // there must always be at least one active Admin who can sign in
+  const losesAdmin = before.role_id === permissions.ADMIN_ROLE_ID && Number(before.is_active) === 1
+    && (set.is_active === 0 || (set.role_id && set.role_id !== permissions.ADMIN_ROLE_ID));
   if (losesAdmin && (await activeAdmins(q, before.emp_id)) === 0) {
-    throw new InputError('There must always be at least one active admin. Make someone else admin first.');
+    throw new InputError('There must always be at least one active Admin. Make someone else Admin first.', 409);
   }
   await q.query(`UPDATE admin_users SET ${Object.keys(set).map((c) => `${c} = ?`).join(', ')} WHERE emp_id = ?`, [...Object.values(set), before.emp_id]);
   const [[after]] = await q.query(`${USER_SELECT} WHERE a.emp_id = ?`, [before.emp_id]);
-  const action = set.role && set.role !== before.role ? 'role_change' : set.is_active === 0 ? 'deactivate' : set.is_active === 1 ? 'reactivate' : 'update';
-  await audit(q, { empId: by(req), action, entity: 'admin_user', entityId: before.emp_id, before: { role: before.role, is_active: before.is_active }, after: { role: after.role, is_active: after.is_active } });
+  const action = set.role_id && set.role_id !== before.role_id ? 'role_change' : set.is_active === 0 ? 'deactivate' : set.is_active === 1 ? 'reactivate' : 'update';
+  await audit(q, { empId: by(req), action, entity: 'admin_user', entityId: before.emp_id, before: { role: before.role_name, is_active: before.is_active }, after: { role: after.role_name, is_active: after.is_active } });
   return withNames([after], await dadminNames(q))[0];
 }));
 
-route('get', '/audit', 'admin', async (req) => {
+route('get', '/audit', 'audit:view', async (req) => {
   const pg = page(req);
   const where = [];
   const params = [];
@@ -1342,9 +1393,9 @@ route('get', '/audit', 'admin', async (req) => {
 
 // Errors from any admin route: input / upload problems and DB constraint errors get a plain message.
 // ---------------------------------------------------------------------------------------------
-// Commerce DEMO (branch `commerce`, database dfresh_commerce only): SKUs (commerce_01_sku.sql)
+// Commerce DEMO (branch `commerce`, database dfresh_commerce only): SKUs (database/demo/commerce-demo-schema.sql)
 // ---------------------------------------------------------------------------------------------
-route('get', '/commerce/skus', 'viewer', async () => {
+route('get', '/commerce/skus', 'inventory:view', async () => {
   const [rows] = await db.query(
     `SELECT s.sku_code, s.product_id, s.size_label, s.is_active,
             COALESCE(t.name, pt.name, s.product_id) AS name
@@ -1357,14 +1408,14 @@ route('get', '/commerce/skus', 'viewer', async () => {
   return rows;
 });
 
-// Inventory (commerce_02_inventory.sql): stock = sum of movements per SKU and kind; one location.
+// Inventory (database/demo/commerce-demo-schema.sql): stock = sum of movements per SKU and kind; one location.
 const SKU_NAME = `COALESCE(t.name, pt.name, s.product_id)`;
 const SKU_JOIN = `JOIN products p ON p.product_id = s.product_id
        LEFT JOIN product_translations t ON t.product_id = s.product_id AND t.lang_code = 'en'
        LEFT JOIN product_translations pt ON pt.product_id = p.variant_of AND pt.lang_code = 'en'`;
 const MOVE_TYPES = ['in', 'out', 'adjust', 'return', 'damaged'];
 
-route('get', '/commerce/stock', 'viewer', async () => {
+route('get', '/commerce/stock', 'inventory:view', async () => {
   const [rows] = await db.query(
     `SELECT s.sku_code, s.product_id, s.size_label, ${SKU_NAME} AS name, COALESCE(l.low_level, 20) AS low_level,
             COALESCE(SUM(CASE WHEN m.stock_kind = 'good' THEN m.delta END), 0) AS good,
@@ -1380,7 +1431,7 @@ route('get', '/commerce/stock', 'viewer', async () => {
   return rows.map((r) => ({ ...r, good: Number(r.good), returned: Number(r.returned), damaged: Number(r.damaged), low_level: Number(r.low_level) }));
 });
 
-route('get', '/commerce/movements', 'viewer', async (req) => {
+route('get', '/commerce/movements', 'inventory:view', async (req) => {
   const sku = typeof req.query.sku === 'string' && req.query.sku ? req.query.sku : null;
   const [rows] = await db.query(
     `SELECT m.move_id, m.sku_code, m.move_type, m.stock_kind, m.delta, m.note, m.emp_id, m.created_at,
@@ -1392,7 +1443,7 @@ route('get', '/commerce/movements', 'viewer', async (req) => {
 });
 
 // in / out / adjust / return / damaged. Good stock never goes below 0 (out, damaged, a negative adjust).
-route('post', '/commerce/movements', 'editor', async (req) => {
+route('post', '/commerce/movements', 'inventory:create', async (req) => {
   const sku = String(req.body.sku_code || '').trim().toUpperCase();
   const type = String(req.body.move_type || '');
   const qty = Number(req.body.qty);
@@ -1416,7 +1467,7 @@ route('post', '/commerce/movements', 'editor', async (req) => {
   });
 });
 
-route('put', '/commerce/stock/:sku/low', 'editor', async (req) => {
+route('put', '/commerce/stock/:sku/low', 'inventory:edit', async (req) => {
   const level = Number(req.body.low_level);
   if (!Number.isInteger(level) || level < 0 || level > 100000) throw new InputError('Low level: a whole number, 0 or more');
   const [r] = await db.query('UPDATE stock_levels SET low_level = ? WHERE sku_code = ?', [level, req.params.sku]);
@@ -1425,11 +1476,11 @@ route('put', '/commerce/stock/:sku/low', 'editor', async (req) => {
   return { sku_code: req.params.sku, low_level: level };
 });
 
-// Orders (commerce_03_orders.sql, logic in commerce.js): entered in the admin; prices only here.
+// Orders (database/demo/commerce-demo-schema.sql, logic in commerce.js): entered in the admin; prices only here.
 const commerce = require('./commerce');
 const asInput = (e) => (e instanceof commerce.CommerceError ? new InputError(e.message, e.status) : e);
 
-route('get', '/commerce/order-form', 'viewer', async () => {
+route('get', '/commerce/order-form', 'orders:create', async () => {
   const [customers] = await db.query(
     `SELECT c.customer_id, c.name, c.phone, c.ctype, c.town, COALESCE(SUM(w.amount), 0) AS wallet
        FROM customers c LEFT JOIN wallet_entries w ON w.customer_id = c.customer_id GROUP BY c.customer_id ORDER BY c.name`
@@ -1440,14 +1491,14 @@ route('get', '/commerce/order-form', 'viewer', async () => {
   return { customers: customers.map((c) => ({ ...c, wallet: Number(c.wallet) })), skus, coupons, payments: commerce.PAYMENTS };
 });
 
-route('post', '/commerce/coupon-check', 'viewer', async (req) => {
+route('post', '/commerce/coupon-check', 'orders:create', async (req) => {
   try {
     const discount = await commerce.couponDiscount(db, String(req.body.code || '').trim().toUpperCase(), Number(req.body.subtotal) || 0);
     return { discount };
   } catch (e) { throw asInput(e); }
 });
 
-route('get', '/commerce/orders', 'viewer', async (req) => {
+route('get', '/commerce/orders', 'orders:view', async (req) => {
   const status = commerce.ORDER_FLOW.includes(req.query.status) ? req.query.status : null;
   const [rows] = await db.query(
     `SELECT o.order_no, o.status, o.payment, o.coupon_code, o.total, o.created_at, o.dispatched_at, o.delivered_at,
@@ -1459,7 +1510,7 @@ route('get', '/commerce/orders', 'viewer', async (req) => {
   return { rows, counts: Object.fromEntries(counts.map((c) => [c.status, Number(c.n)])) };
 });
 
-route('get', '/commerce/orders/:no', 'viewer', async (req) => {
+route('get', '/commerce/orders/:no', 'orders:view', async (req) => {
   const [[o]] = await db.query(
     `SELECT o.*, c.name AS customer, c.phone, c.email, c.ctype, c.town, c.address, c.gstin AS customer_gstin
        FROM orders o JOIN customers c ON c.customer_id = o.customer_id WHERE o.order_no = ?`, [req.params.no]
@@ -1467,11 +1518,15 @@ route('get', '/commerce/orders/:no', 'viewer', async (req) => {
   if (!o) throw new InputError('Order not found', 404);
   const [items] = await db.query(`SELECT i.sku_code, i.qty, i.price, i.gst_rate, ${SKU_NAME} AS name, s.size_label
        FROM order_items i JOIN skus s ON s.sku_code = i.sku_code ${SKU_JOIN} WHERE i.order_id = ? ORDER BY i.sku_code`, [o.order_id]);
-  const [settings] = await db.query("SELECT setting_key, setting_value FROM site_settings WHERE setting_key IN ('company_name', 'cin', 'gstin', 'office_phone', 'public_email')");
-  return { ...o, items, seller: Object.fromEntries(settings.map((x) => [x.setting_key, x.setting_value])), payment_label: commerce.PAYMENTS[o.payment] };
+  const cs = await commerceSettings.read(db);
+  const [site] = await db.query("SELECT setting_key, setting_value FROM site_settings WHERE setting_key IN ('cin', 'office_phone', 'public_email')");
+  const siteMap = Object.fromEntries(site.map((x) => [x.setting_key, x.setting_value]));
+  const seller = { name: cs.invoice_seller_name, gstin: cs.invoice_seller_gstin, address: cs.invoice_seller_address, state_code: cs.invoice_seller_state_code,
+    bank: cs.invoice_bank_details, cin: siteMap.cin, phone: siteMap.office_phone, email: siteMap.public_email };
+  return { ...o, items, seller, invoice_demo: commerceSettings.invoiceIsDemo(cs), payment_label: commerce.PAYMENTS[o.payment] };
 });
 
-route('post', '/commerce/orders', 'editor', async (req) => {
+route('post', '/commerce/orders', 'orders:create', async (req) => {
   try {
     return await tx(async (q) => {
       const o = await commerce.createOrder(q, req.body, by(req));
@@ -1481,7 +1536,7 @@ route('post', '/commerce/orders', 'editor', async (req) => {
   } catch (e) { throw asInput(e); }
 });
 
-route('post', '/commerce/orders/:no/status', 'editor', async (req) => {
+route('post', '/commerce/orders/:no/status', 'orders:edit', async (req) => {
   try {
     return await tx(async (q) => {
       const to = await commerce.advanceOrder(q, req.params.no, String(req.body.to || ''), by(req));
@@ -1491,8 +1546,8 @@ route('post', '/commerce/orders/:no/status', 'editor', async (req) => {
   } catch (e) { throw asInput(e); }
 });
 
-// Returns (commerce_04_returns.sql)
-route('post', '/commerce/orders/:no/returns', 'editor', async (req) => {
+// Returns (database/demo/commerce-demo-schema.sql)
+route('post', '/commerce/orders/:no/returns', 'returns:create', async (req) => {
   try {
     return await tx(async (q) => {
       const r = await commerce.createReturn(q, req.params.no, req.body, by(req));
@@ -1502,7 +1557,7 @@ route('post', '/commerce/orders/:no/returns', 'editor', async (req) => {
   } catch (e) { throw asInput(e); }
 });
 
-route('get', '/commerce/returns', 'viewer', async (req) => {
+route('get', '/commerce/returns', 'returns:view', async (req) => {
   const order = typeof req.query.order === 'string' && req.query.order ? req.query.order : null;
   const [rows] = await db.query(
     `SELECT r.return_no, r.reason, r.outcome, r.amount, r.created_at, r.emp_id, o.order_no, c.name AS customer, ro.order_no AS replacement_no,
@@ -1516,14 +1571,14 @@ route('get', '/commerce/returns', 'viewer', async (req) => {
   return rows.map((r) => ({ ...r, outcome_label: commerce.OUTCOMES[r.outcome] }));
 });
 
-// Customers (CRM, tables in commerce_03_orders.sql)
+// Customers (CRM, tables in database/demo/commerce-demo-schema.sql)
 const CTYPES = ['Home', 'Hotel', 'Hospital', 'Office', 'Distributor'];
 const CUSTOMER_FIELDS = ['name', 'business_name', 'phone', 'email', 'ctype', 'town', 'address', 'gstin', 'source', 'notes', 'follow_up'];
 const customerRules = require('../shared/customerRules');
 
 // New customer typed in the admin (phone / WhatsApp / walk-in). Same rules as the drawer; a phone (last 10 digits)
 // or e-mail that is already a customer answers 409 code 'duplicate' with that customer, nothing saved.
-route('post', '/commerce/customers', 'editor', async (req) => {
+route('post', '/commerce/customers', 'customers:create', async (req) => {
   const { values: v, errors } = customerRules.checkCustomer(req.body || {});
   if (Object.keys(errors).length) {
     const err = new InputError(Object.values(errors)[0]);
@@ -1551,7 +1606,7 @@ route('post', '/commerce/customers', 'editor', async (req) => {
   return { customer_id: ins.insertId, name: v.name, ctype: v.ctype, phone: v.phone, wallet: 0, town: v.town };
 });
 
-route('get', '/commerce/customers', 'viewer', async () => {
+route('get', '/commerce/customers', 'customers:view', async () => {
   const [rows] = await db.query(
     `SELECT c.customer_id, c.name, c.phone, c.ctype, c.town, c.follow_up, c.lead_id,
             (SELECT COUNT(*) FROM orders o WHERE o.customer_id = c.customer_id) AS orders,
@@ -1564,7 +1619,7 @@ route('get', '/commerce/customers', 'viewer', async () => {
   return rows.map((r) => ({ ...r, orders: Number(r.orders), spent: Number(r.spent), wallet: Number(r.wallet), follow_due: Number(r.follow_due) === 1 }));
 });
 
-route('get', '/commerce/customers/:id', 'viewer', async (req) => {
+route('get', '/commerce/customers/:id', 'customers:view', async (req) => {
   const [[c]] = await db.query(`SELECT customer_id, name, business_name, phone, email, ctype, town, address, gstin, source, notes, DATE_FORMAT(follow_up, '%Y-%m-%d') AS follow_up,
       lead_id, created_at FROM customers WHERE customer_id = ?`, [Number(req.params.id)]);
   if (!c) throw new InputError('Customer not found', 404);
@@ -1590,7 +1645,7 @@ function customerValues(body) {
   return v;
 }
 
-route('put', '/commerce/customers/:id', 'editor', async (req) => {
+route('put', '/commerce/customers/:id', 'customers:edit', async (req) => {
   const v = customerValues(req.body);
   if (!Object.keys(v).length) throw new InputError('Nothing to change');
   const [r] = await db.query(`UPDATE customers SET ${Object.keys(v).map((k) => `${k} = ?`).join(', ')} WHERE customer_id = ?`, [...Object.values(v), Number(req.params.id)]);
@@ -1600,7 +1655,7 @@ route('put', '/commerce/customers/:id', 'editor', async (req) => {
 });
 
 // A lead becomes a customer (once): name, phone, e-mail, town; type from the form and business type.
-route('post', '/commerce/customers/from-lead/:leadId', 'editor', async (req) => {
+route('post', '/commerce/customers/from-lead/:leadId', 'customers:create', async (req) => {
   const [[l]] = await db.query('SELECT lead_id, lead_ref, form_type, full_name, business_name, business_type, town, phone, email FROM leads WHERE lead_id = ?', [Number(req.params.leadId)]);
   if (!l) throw new InputError('Lead not found', 404);
   const [[had]] = await db.query('SELECT customer_id, name FROM customers WHERE lead_id = ?', [l.lead_id]);
@@ -1617,8 +1672,8 @@ route('post', '/commerce/customers/from-lead/:leadId', 'editor', async (req) => 
   return { customer_id: ins.insertId, name, ctype, existed: false };
 });
 
-// Promotions (coupons: commerce_03_orders.sql, cashback rule: commerce_05_promotions.sql)
-route('get', '/commerce/promotions', 'viewer', async () => {
+// Promotions (coupons: database/demo/commerce-demo-schema.sql, cashback rule: database/demo/commerce-demo-schema.sql)
+route('get', '/commerce/promotions', 'promotions:view', async () => {
   const [coupons] = await db.query(`SELECT code, kind, value, min_order, DATE_FORMAT(expires_on, '%Y-%m-%d') AS expires_on, usage_limit, used, is_active,
       expires_on IS NOT NULL AND expires_on < DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+05:30')) AS expired FROM coupons ORDER BY code`);
   const [[rule]] = await db.query('SELECT pct, min_order, is_active FROM cashback_rule WHERE rule_id = 1');
@@ -1640,7 +1695,7 @@ function couponValues(b) {
   return { code, kind: b.kind, value, min_order: minOrder, expires_on: exp, usage_limit: limit, is_active: b.is_active === false || b.is_active === 0 ? 0 : 1 };
 }
 
-route('post', '/commerce/coupons', 'editor', async (req) => {
+route('post', '/commerce/coupons', 'promotions:create', async (req) => {
   const v = couponValues(req.body);
   const [[had]] = await db.query('SELECT code FROM coupons WHERE code = ?', [v.code]);
   if (had) throw new InputError(`Coupon ${v.code} exists already`, 409);
@@ -1650,7 +1705,7 @@ route('post', '/commerce/coupons', 'editor', async (req) => {
   return v;
 });
 
-route('put', '/commerce/coupons/:code', 'editor', async (req) => {
+route('put', '/commerce/coupons/:code', 'promotions:edit', async (req) => {
   const v = couponValues({ ...req.body, code: req.params.code });
   const [r] = await db.query('UPDATE coupons SET kind = ?, value = ?, min_order = ?, expires_on = ?, usage_limit = ?, is_active = ? WHERE code = ?',
     [v.kind, v.value, v.min_order, v.expires_on, v.usage_limit, v.is_active, v.code]);
@@ -1659,7 +1714,7 @@ route('put', '/commerce/coupons/:code', 'editor', async (req) => {
   return v;
 });
 
-route('put', '/commerce/cashback', 'editor', async (req) => {
+route('put', '/commerce/cashback', 'promotions:edit', async (req) => {
   const pct = Number(req.body.pct);
   const minOrder = Number(req.body.min_order) || 0;
   if (!(pct >= 0 && pct <= 50)) throw new InputError('Cashback: 0 to 50 %');
@@ -1669,7 +1724,10 @@ route('put', '/commerce/cashback', 'editor', async (req) => {
 });
 
 // Operations dashboard (commerce): today in India time
-route('get', '/commerce/ops', 'viewer', async () => {
+// Open to every commerce user; each figure only for a role that can view its section (null otherwise).
+route('get', '/commerce/ops', 'any', async (req) => {
+  const can = { orders: canDo(req, 'orders'), pack: canDo(req, 'orders') || canDo(req, 'packing'), dispatch: canDo(req, 'orders') || canDo(req, 'delivery'),
+    stock: canDo(req, 'inventory'), returns: canDo(req, 'returns'), wallet: canDo(req, 'customers') };
   const [[today]] = await db.query(`SELECT COUNT(*) AS n, COALESCE(SUM(total), 0) AS value FROM orders WHERE created_at >= ${IST_TODAY_UTC}`);
   const [[st]] = await db.query("SELECT SUM(status = 'new') AS to_pack, SUM(status = 'packed') AS to_dispatch FROM orders");
   const [[ret]] = await db.query(`SELECT COUNT(*) AS n FROM returns r LEFT JOIN orders ro ON ro.order_id = r.replacement_order_id
@@ -1683,11 +1741,206 @@ route('get', '/commerce/ops', 'viewer', async () => {
       HAVING good < low_level ORDER BY good`);
   const [next] = await db.query("SELECT o.order_no, o.created_at, c.name AS customer FROM orders o JOIN customers c ON c.customer_id = o.customer_id WHERE o.status = 'new' ORDER BY o.order_id LIMIT 5");
   return {
-    today: { n: Number(today.n), value: Number(today.value) }, toPack: Number(st.to_pack) || 0, toDispatch: Number(st.to_dispatch) || 0,
-    openReturns: Number(ret.n), walletGiven: { total: Number(w.total), cashback: Number(w.cashback), refunds: Number(w.refunds) },
-    lowStock: low.map((r) => ({ ...r, good: Number(r.good), low_level: Number(r.low_level) })), nextToPack: next,
+    today: can.orders ? { n: Number(today.n), value: Number(today.value) } : null,
+    toPack: can.pack ? Number(st.to_pack) || 0 : null, toDispatch: can.dispatch ? Number(st.to_dispatch) || 0 : null,
+    openReturns: can.returns ? Number(ret.n) : null,
+    walletGiven: can.wallet ? { total: Number(w.total), cashback: Number(w.cashback), refunds: Number(w.refunds) } : null,
+    lowStock: can.stock ? low.map((r) => ({ ...r, good: Number(r.good), low_level: Number(r.low_level) })) : null,
+    nextToPack: can.pack ? next : null,
   };
 });
+
+// ---------------------------------------------------------------------------------------------
+// Roles and permissions (docs/COMMERCE-SPEC.md 1; migration 20261020_commerce_access.sql)
+// ---------------------------------------------------------------------------------------------
+/** a permission grid from the admin -> clean { section: { action: bool } } (create / edit / approve / delete imply view) */
+function cleanGrid(raw) {
+  const out = {};
+  for (const sec of permissions.SECTION_KEYS) {
+    const r = (raw && raw[sec]) || {};
+    const row = Object.fromEntries(permissions.ACTIONS.map((a) => [a, Boolean(r[a]) && (!permissions.VIEW_ONLY.includes(sec) || a === 'view')]));
+    if (permissions.ACTIONS.slice(1).some((a) => row[a])) row.view = true;
+    out[sec] = row;
+  }
+  return out;
+}
+async function roleGrid(q, role) {
+  if (permissions.BUILTIN[role.role_id]) return permissions.permsFor(role.role_id);
+  const [rows] = await q.query('SELECT section, can_view, can_create, can_edit, can_approve, can_delete FROM role_permissions WHERE role_id = ?', [role.role_id]);
+  return permissions.permsFor(role.role_id, rows);
+}
+async function saveGrid(q, roleId, grid) {
+  await q.query('DELETE FROM role_permissions WHERE role_id = ?', [roleId]);
+  for (const [sec, g] of Object.entries(grid)) {
+    if (!permissions.ACTIONS.some((a) => g[a])) continue;
+    await q.query('INSERT INTO role_permissions (role_id, section, can_view, can_create, can_edit, can_approve, can_delete) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [roleId, sec, ...permissions.ACTIONS.map((a) => (g[a] ? 1 : 0))]);
+  }
+}
+const roleName = (v) => {
+  const n = String(v || '').trim();
+  if (n.length < 2 || n.length > 60) throw new InputError('Name: 2 to 60 characters');
+  return n;
+};
+
+route('get', '/roles', 'users:view', async () => {
+  const [roles] = await db.query(`SELECT r.role_id, r.name, r.description, r.is_builtin, r.updated_by, r.updated_at,
+      (SELECT COUNT(*) FROM admin_users a WHERE a.role_id = r.role_id AND a.is_active = 1) AS users
+      FROM roles r ORDER BY r.is_builtin DESC, r.role_id`);
+  const out = [];
+  for (const r of roles) out.push({ ...r, is_builtin: Number(r.is_builtin) === 1, users: Number(r.users), perms: await roleGrid(db, r) });
+  return { roles: out, sections: permissions.SECTIONS, actions: permissions.ACTIONS, viewOnly: permissions.VIEW_ONLY };
+});
+
+route('post', '/roles', 'users:create', async (req) => tx(async (q) => {
+  const name = roleName(req.body.name);
+  const [[dup]] = await q.query('SELECT role_id FROM roles WHERE name = ?', [name]);
+  if (dup) throw new InputError(`A role called ${name} exists already`, 409);
+  const grid = cleanGrid(req.body.perms);
+  const [ins] = await q.query('INSERT INTO roles (name, description, is_builtin, created_by) VALUES (?, ?, 0, ?)', [name, String(req.body.description || '').trim().slice(0, 255) || null, by(req)]);
+  await saveGrid(q, ins.insertId, grid);
+  await audit(q, { empId: by(req), action: 'create', entity: 'role', entityId: String(ins.insertId), after: { name, perms: grid } });
+  return { role_id: ins.insertId, name };
+}), { status: 201 });
+
+route('put', '/roles/:id', 'users:edit', async (req) => tx(async (q) => {
+  const [[role]] = await q.query('SELECT role_id, name, description, is_builtin FROM roles WHERE role_id = ? FOR UPDATE', [Number(req.params.id)]);
+  if (!role) throw new InputError('No such role', 404);
+  if (Number(role.is_builtin)) throw new InputError(`${role.name} is built in and cannot be changed`, 409);
+  const name = 'name' in req.body ? roleName(req.body.name) : role.name;
+  const [[dup]] = await q.query('SELECT role_id FROM roles WHERE name = ? AND role_id <> ?', [name, role.role_id]);
+  if (dup) throw new InputError(`A role called ${name} exists already`, 409);
+  const beforeGrid = await roleGrid(q, role);
+  const grid = 'perms' in req.body ? cleanGrid(req.body.perms) : beforeGrid;
+  const description = 'description' in req.body ? String(req.body.description || '').trim().slice(0, 255) || null : role.description;
+  await q.query('UPDATE roles SET name = ?, description = ?, updated_by = ?, updated_at = UTC_TIMESTAMP() WHERE role_id = ?', [name, description, by(req), role.role_id]);
+  await saveGrid(q, role.role_id, grid);
+  await audit(q, { empId: by(req), action: 'update', entity: 'role', entityId: String(role.role_id), before: { name: role.name, description: role.description, perms: beforeGrid }, after: { name, description, perms: grid } });
+  return { role_id: role.role_id, name };
+}));
+
+route('delete', '/roles/:id', 'users:delete', async (req) => tx(async (q) => {
+  const [[role]] = await q.query('SELECT role_id, name, is_builtin FROM roles WHERE role_id = ? FOR UPDATE', [Number(req.params.id)]);
+  if (!role) throw new InputError('No such role', 404);
+  if (Number(role.is_builtin)) throw new InputError(`${role.name} is built in and cannot be deleted`, 409);
+  const [[used]] = await q.query('SELECT COUNT(*) AS n FROM admin_users WHERE role_id = ?', [role.role_id]);
+  if (Number(used.n)) throw new InputError(`${used.n} admin user(s) have ${role.name}: give them another role first`, 409);
+  const grid = await roleGrid(q, role);
+  await q.query('DELETE FROM roles WHERE role_id = ?', [role.role_id]);
+  await audit(q, { empId: by(req), action: 'delete', entity: 'role', entityId: String(role.role_id), before: { name: role.name, perms: grid } });
+  return null;
+}));
+
+// ---------------------------------------------------------------------------------------------
+// Approvals (docs/COMMERCE-SPEC.md 2; logic in approvals.js). Open to every signed-in user: the queue only lists what
+// the user may see, and approvals.decide checks approver role, "approve" on the section and "not your own request".
+// ---------------------------------------------------------------------------------------------
+const asApproval = (e) => (e instanceof approvals.ApprovalError ? new InputError(e.message, e.status) : e);
+route('get', '/approvals', 'any', async (req) => {
+  const status = ['pending', 'decided', 'mine'].includes(req.query.status) ? req.query.status : 'pending';
+  return { rows: await approvals.list(req.admin, status), kinds: approvals.KINDS };
+});
+route('post', '/approvals/:id/decide', 'any', async (req) => {
+  try { return await tx((q) => approvals.decide(q, Number(req.params.id), req.body.decision, req.body.note, req.admin)); } catch (e) { throw asApproval(e); }
+});
+route('post', '/approvals/:id/withdraw', 'any', async (req) => {
+  try { return await tx((q) => approvals.withdraw(q, Number(req.params.id), req.admin)); } catch (e) { throw asApproval(e); }
+});
+
+// ---------------------------------------------------------------------------------------------
+// Commerce settings (docs/COMMERCE-SPEC.md 3; commerce-settings.js). Settings section, not behind commerce_enabled
+// (the on / off switch lives here).
+// ---------------------------------------------------------------------------------------------
+function financialYear(d = new Date()) {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', year: 'numeric', month: 'numeric' }).formatToParts(d).map((x) => [x.type, x.value]));
+  const y = Number(p.year);
+  const start = Number(p.month) >= 4 ? y : y - 1;
+  return `${String(start).slice(2)}-${String(start + 1).slice(2)}`;
+}
+route('get', '/commerce-settings', 'settings:view', async () => {
+  const [rows] = await db.query('SELECT setting_key, grp, label, help, value, value_type, options, tbc, sort_order, updated_by, updated_at FROM commerce_settings ORDER BY sort_order, setting_key');
+  const lists = {};
+  for (const [key, l] of Object.entries(commerceSettings.LISTS)) {
+    const [r] = await db.query(`SELECT ${[l.pk, ...Object.keys(l.cols).filter((c) => c !== l.pk)].join(', ')} FROM ${l.table} ORDER BY sort_order, ${l.pk}`);
+    lists[key] = { label: l.label, pk: l.pk, auto: l.auto, cols: l.cols, rows: r };
+  }
+  const [roles] = await db.query('SELECT role_id, name FROM roles ORDER BY role_id');
+  const cs = await commerceSettings.read(db);
+  const fy = financialYear();
+  const yy = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', year: '2-digit' }).format(new Date());
+  return {
+    settings: rows.map((r) => ({ ...r, tbc: Number(r.tbc) === 1, options: r.options ? JSON.parse(r.options) : null })),
+    lists, roles, invoiceDemo: commerceSettings.invoiceIsDemo(cs),
+    numbers: { invoice: `${cs.invoice_prefix}/${fy}/${String(cs.invoice_start_no || 1).padStart(4, '0')}`, creditNote: `${cs.credit_note_prefix}/${fy}/0001`, order: `${cs.order_prefix}-${yy}nnnn`, ret: `${cs.return_prefix}-${yy}nnnn`, fy },
+  };
+});
+
+route('put', '/commerce-settings/:key', 'settings:edit', async (req) => tx(async (q) => {
+  const [[row]] = await q.query('SELECT setting_key, value, value_type, options FROM commerce_settings WHERE setting_key = ? FOR UPDATE', [req.params.key]);
+  if (!row) throw new InputError('Unknown setting', 404);
+  const [roles] = await q.query('SELECT role_id FROM roles');
+  const checked = commerceSettings.check(row, req.body.value, roles.map((r) => r.role_id));
+  if (checked.error) throw new InputError(checked.error);
+  if (checked.value === row.value) return { setting_key: row.setting_key, value: row.value };
+  await q.query('UPDATE commerce_settings SET value = ?, updated_by = ?, updated_at = UTC_TIMESTAMP() WHERE setting_key = ?', [checked.value, by(req), row.setting_key]);
+  await audit(q, { empId: by(req), action: 'update', entity: 'commerce_setting', entityId: row.setting_key, before: { value: row.value }, after: { value: checked.value } });
+  return { setting_key: row.setting_key, value: checked.value };
+}));
+
+const listOf = (key) => {
+  const l = commerceSettings.LISTS[key];
+  if (!l) throw new InputError('Unknown list', 404);
+  return l;
+};
+function listInput(l, body, creating) {
+  const { values, errors } = commerceSettings.checkListRow(l, body || {}, { creating });
+  if (Object.keys(errors).length) {
+    const err = new InputError(Object.values(errors)[0]);
+    err.code = 'fields';
+    err.fields = errors;
+    throw err;
+  }
+  return values;
+}
+route('post', '/commerce-settings/lists/:list', 'settings:create', async (req) => tx(async (q) => {
+  const l = listOf(req.params.list);
+  const v = listInput(l, req.body, true);
+  if (!l.auto) {
+    const [[dup]] = await q.query(`SELECT ${l.pk} FROM ${l.table} WHERE ${l.pk} = ?`, [v[l.pk]]);
+    if (dup) throw new InputError(`${v[l.pk]} exists already`, 409);
+  }
+  const cols = Object.keys(v);
+  const [ins] = await q.query(`INSERT INTO ${l.table} (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`, cols.map((c) => v[c]));
+  const id = l.auto ? ins.insertId : v[l.pk];
+  await audit(q, { empId: by(req), action: 'create', entity: `list_${req.params.list}`, entityId: String(id), after: v });
+  return { id };
+}), { status: 201 });
+
+route('put', '/commerce-settings/lists/:list/:id', 'settings:edit', async (req) => tx(async (q) => {
+  const l = listOf(req.params.list);
+  const v = listInput(l, req.body, false);
+  const [[before]] = await q.query(`SELECT * FROM ${l.table} WHERE ${l.pk} = ? FOR UPDATE`, [req.params.id]);
+  if (!before) throw new InputError('Not found', 404);
+  if (req.params.list === 'locations' && !v.is_active) {
+    const [[c]] = await q.query('SELECT COUNT(*) AS n FROM locations WHERE is_active = 1 AND location_id <> ?', [req.params.id]);
+    if (!Number(c.n)) throw new InputError('At least one stock location must stay on', 409);
+  }
+  const cols = Object.keys(v);
+  await q.query(`UPDATE ${l.table} SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE ${l.pk} = ?`, [...cols.map((c) => v[c]), req.params.id]);
+  await audit(q, { empId: by(req), action: 'update', entity: `list_${req.params.list}`, entityId: String(req.params.id), before, after: v });
+  return { id: req.params.id };
+}));
+
+route('delete', '/commerce-settings/lists/:list/:id', 'settings:delete', async (req) => tx(async (q) => {
+  const l = listOf(req.params.list);
+  const [[before]] = await q.query(`SELECT * FROM ${l.table} WHERE ${l.pk} = ? FOR UPDATE`, [req.params.id]);
+  if (!before) throw new InputError('Not found', 404);
+  const [[left]] = await q.query(`SELECT COUNT(*) AS n FROM ${l.table} WHERE ${l.pk} <> ?`, [req.params.id]);
+  if (!Number(left.n)) throw new InputError('The last row of a list cannot be deleted (switch it off instead)', 409);
+  await q.query(`DELETE FROM ${l.table} WHERE ${l.pk} = ?`, [req.params.id]);
+  await audit(q, { empId: by(req), action: 'delete', entity: `list_${req.params.list}`, entityId: String(req.params.id), before });
+  return null;
+}));
 
 router.use('/admin', (err, req, res, next) => { // eslint-disable-line no-unused-vars
   if (err instanceof InputError || err instanceof media.UploadError) {
@@ -1704,4 +1957,17 @@ router.use('/admin', (err, req, res, next) => { // eslint-disable-line no-unused
   return res.status(500).json({ success: false, message: 'Server error' });
 });
 
+// Start-up check: every /admin route must have declared its permission (route() / declare()). An undeclared one would
+// be open to every signed-in user, so the API refuses to start instead.
+(function assertAllDeclared() {
+  const missing = [];
+  for (const layer of router.stack) {
+    const r = layer.route;
+    if (!r || typeof r.path !== 'string' || !r.path.startsWith('/admin')) continue;
+    for (const m of Object.keys(r.methods)) if (!DECLARED.has(`${m.toUpperCase()} ${r.path}`)) missing.push(`${m.toUpperCase()} ${r.path}`);
+  }
+  if (missing.length) throw new Error(`admin routes without a permission declaration: ${missing.join(', ')}`);
+}());
+
 module.exports = router;
+module.exports.DECLARED = DECLARED; // tests: every route and its permission

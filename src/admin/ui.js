@@ -2,15 +2,16 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from './adminApi';
+import { SECTIONS, can as canPerm } from '../shared/permissions';
 
 export const AdminContext = createContext(null);
 export const useAdmin = () => useContext(AdminContext);
 
-const RANK = { viewer: 1, editor: 2, admin: 3 };
-/** true when the signed-in user has at least `role` (the API enforces it too; this only hides buttons). */
-export function useCan(role) {
+/** Can the signed-in user do `action` (view / create / edit / approve / delete) in `section`? (src/shared/permissions.js;
+ * the API enforces the same rule on every route, this only hides or disables what would be refused.) */
+export function useCan(section, action = 'view') {
   const { me } = useAdmin();
-  return (RANK[me && me.role] || 0) >= RANK[role];
+  return canPerm(me && me.perms, section, action);
 }
 
 /** Loads `path` (GET) and gives { data, error, loading, reload, setData }. */
@@ -439,3 +440,26 @@ export function Drawer({ title, onClose, children, footer, dirty = false }) {
 
 // Every time in the admin in India time, whatever zone the viewer's PC is in (the API sends UTC instants).
 export const fmtDate = (v) => (v ? new Date(v).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' }) : '');
+
+/** A page the role cannot open: said in the app (the API answers 403 anyway). */
+export function NoAccess({ section }) {
+  const { me } = useAdmin();
+  const label = (SECTIONS.find((x) => x.key === section) || {}).label || section;
+  return (
+    <section className="a-noaccess">
+      <h1>No access</h1>
+      <Notice kind="warn">Your role, {me && me.role_name}, cannot open {label}. Ask an Admin if you need it (Setup &gt; Roles).</Notice>
+      <p><a href="/admin">Back to the dashboard</a></p>
+    </section>
+  );
+}
+
+/** Route guard: the page only for a role with "view" on `section`; commerce pages also need Commerce switched on. */
+export function Need({ section, commerce = false, children }) {
+  const { me } = useAdmin();
+  if (section && !canPerm(me && me.perms, section, 'view')) return <NoAccess section={section} />;
+  if (commerce && !(me && me.commerce_enabled)) {
+    return <section><h1>Commerce is switched off</h1><Notice kind="info">Turn it on in Setup &gt; Commerce settings (General).</Notice></section>;
+  }
+  return children;
+}

@@ -8,7 +8,11 @@ import Sidebar, { MenuToggle, saveCollapsed, savedCollapsed, useNarrow } from '.
 import useLeadPulse from './useLeadPulse';
 import { api } from './adminApi';
 import { mediaUrl } from '../utils/api';
-import { AdminContext, ConfirmProvider, Notice, UploadGuard } from './ui';
+import { AdminContext, ConfirmProvider, Need, Notice, UploadGuard } from './ui';
+import { can } from '../shared/permissions';
+import Roles from './Roles';
+import Approvals from './Approvals';
+import CommerceSettings from './CommerceSettings';
 import Login from './Login';
 import Dashboard from './Dashboard';
 import Leads from './Leads';
@@ -50,6 +54,9 @@ export default function AdminApp() {
   const [menuOpen, setMenuOpen] = useState(false); // the drawer on narrow screens
   const [collapsed, setCollapsed] = useState(savedCollapsed);
   const [newLeads, setNewLeads] = useState(0);
+  const [approvalCount, setApprovalCount] = useState(0);
+  // the approvals badge after deciding a request (the counts otherwise refresh on every page change)
+  const refreshCounts = useCallback(() => { api.get('/nav-counts').then((d) => { setNewLeads(d.newLeads || 0); setApprovalCount(d.approvals || 0); }, () => {}); }, []);
   const burgerRef = useRef(null);
   const styleRef = useRef(null); // the admin <style> tag
   const narrow = useNarrow();
@@ -89,11 +96,11 @@ export default function AdminApp() {
   // Leads badge: New leads, refreshed on every page change (cheap: one COUNT).
   useEffect(() => {
     if (!me) return;
-    api.get('/nav-counts').then((d) => setNewLeads(d.newLeads || 0), () => {});
+    api.get('/nav-counts').then((d) => { setNewLeads(d.newLeads || 0); setApprovalCount(d.approvals || 0); }, () => {});
   }, [me, pathname]);
 
   // Live: new leads every 15 s (badge, toast, quiet refresh of the Leads list and the Dashboard via leadsVersion)
-  const pulse = useLeadPulse(Boolean(me));
+  const pulse = useLeadPulse(Boolean(me) && can(me.perms, 'leads', 'view')); // only for roles that see Leads
   useEffect(() => { if (pulse.newLeads !== null) setNewLeads(pulse.newLeads); }, [pulse.newLeads]);
 
   const toggleCollapsed = () => setCollapsed((c) => { saveCollapsed(!c); return !c; });
@@ -129,37 +136,40 @@ export default function AdminApp() {
             <img src={mediaUrl(LOGO_ON_DARK)} alt="" width="900" height="498" />
             <span className="a-brand-tag" aria-hidden="true">Admin</span>
           </Link>
-          <span className="a-who">{me.name} <code>{me.emp_id}</code> · {me.role}</span>
+          <span className="a-who">{me.name} <code>{me.emp_id}</code> · {me.role_name}</span>
           <button type="button" className="a-btn a-btn-ghost" onClick={logout}>Sign out</button>
         </header>
-        <Sidebar role={me.role} drawerOpen={menuOpen} onCloseDrawer={closeDrawer} collapsed={collapsed}
-          onToggleCollapsed={toggleCollapsed} newLeads={newLeads} />
+        <Sidebar me={me} drawerOpen={menuOpen} onCloseDrawer={closeDrawer} collapsed={collapsed}
+          onToggleCollapsed={toggleCollapsed} newLeads={newLeads} approvals={approvalCount} />
         <main className="a-main">
           <ScreenBoundary key={pathname}>
           <Routes>
             <Route index element={<Dashboard />} />
-            <Route path="leads" element={<Leads />} />
-            <Route path="products" element={<Products />} />
-            <Route path="import-export" element={<ImportExport />} />
-            <Route path="translations" element={<Translations />} />
-            <Route path="banners" element={<EntityPage key="banners" name="banners" />} />
-            <Route path="kits" element={<EntityPage key="kits" name="kits" />} />
-            <Route path="towns" element={<EntityPage key="towns" name="towns" />} />
-            <Route path="categories" element={<EntityPage key="categories" name="categories" />} />
-            <Route path="size-picker" element={<EntityPage key="size-picker" name="size-picker" />} />
-            <Route path="form-options" element={<EntityPage key="form-options" name="form-options" />} />
-            <Route path="languages" element={<Languages />} />
-            <Route path="brochures" element={<Brochures />} />
-            <Route path="commerce/skus" element={<CommerceSkus />} />
-            <Route path="commerce/stock" element={<CommerceStock />} />
-            <Route path="commerce/orders" element={<CommerceOrders />} />
-            <Route path="commerce/returns" element={<CommerceReturns />} />
-            <Route path="commerce/customers" element={<CommerceCustomers />} />
-            <Route path="commerce/promotions" element={<CommercePromotions />} />
-            <Route path="commerce/ops" element={<CommerceOps />} />
-            <Route path="settings" element={<Settings />} />
-            <Route path="users" element={<Users />} />
-            <Route path="audit" element={<AuditLog />} />
+            <Route path="leads" element={<Need section="leads"><Leads /></Need>} />
+            <Route path="products" element={<Need section="products"><Products /></Need>} />
+            <Route path="import-export" element={<Need section="products"><ImportExport /></Need>} />
+            <Route path="translations" element={<Need section="content"><Translations /></Need>} />
+            <Route path="banners" element={<Need section="content"><EntityPage key="banners" name="banners" /></Need>} />
+            <Route path="kits" element={<Need section="products"><EntityPage key="kits" name="kits" /></Need>} />
+            <Route path="towns" element={<Need section="content"><EntityPage key="towns" name="towns" /></Need>} />
+            <Route path="categories" element={<Need section="products"><EntityPage key="categories" name="categories" /></Need>} />
+            <Route path="size-picker" element={<Need section="products"><EntityPage key="size-picker" name="size-picker" /></Need>} />
+            <Route path="form-options" element={<Need section="content"><EntityPage key="form-options" name="form-options" /></Need>} />
+            <Route path="languages" element={<Need section="content"><Languages /></Need>} />
+            <Route path="brochures" element={<Need section="content"><Brochures /></Need>} />
+            <Route path="commerce/skus" element={<Need section="inventory" commerce><CommerceSkus /></Need>} />
+            <Route path="commerce/stock" element={<Need section="inventory" commerce><CommerceStock /></Need>} />
+            <Route path="commerce/orders" element={<Need section="orders" commerce><CommerceOrders /></Need>} />
+            <Route path="commerce/returns" element={<Need section="returns" commerce><CommerceReturns /></Need>} />
+            <Route path="commerce/customers" element={<Need section="customers" commerce><CommerceCustomers /></Need>} />
+            <Route path="commerce/promotions" element={<Need section="promotions" commerce><CommercePromotions /></Need>} />
+            <Route path="commerce/ops" element={<Need commerce><CommerceOps /></Need>} />
+            <Route path="settings" element={<Need section="settings"><Settings /></Need>} />
+            <Route path="commerce-settings" element={<Need section="settings"><CommerceSettings /></Need>} />
+            <Route path="users" element={<Need section="users"><Users /></Need>} />
+            <Route path="roles" element={<Need section="users"><Roles /></Need>} />
+            <Route path="approvals" element={<Approvals onChanged={refreshCounts} />} />
+            <Route path="audit" element={<Need section="audit"><AuditLog /></Need>} />
             <Route path="*" element={<Navigate to="/admin" replace />} />
           </Routes>
           </ScreenBoundary>

@@ -62,7 +62,7 @@ export default function Dashboard() {
     api.get('/dashboard').then((d) => { if (alive) s.setData(d); }, () => {});
     return () => { alive = false; };
   }, [leadsVersion]); // eslint-disable-line react-hooks/exhaustive-deps
-  const isAdmin = useCan('admin');
+  const isAdmin = useCan('settings', 'view'); // the settings lines (mail logo, GSTIN, GA4)
   const d = s.data;
   const lines = d ? attentionLines(d, isAdmin) : [];
   return (
@@ -83,6 +83,7 @@ export default function Dashboard() {
                 </ul>
               ) : <p>Nothing needs attention: leads are handled, e-mails and sheet rows are sent, texts are translated and the setup is complete.</p>}
             </div>
+            {d.leads && (
             <div className="a-tiles">
               <Tile label="Leads today" value={d.leads.today} to="/admin/leads" />
               <Tile label="Leads last 7 days" value={d.leads.last7} to="/admin/leads" />
@@ -90,13 +91,17 @@ export default function Dashboard() {
               <Tile label="Mail pending / failed" value={`${d.outbox.mail.pending || 0} / ${d.outbox.mail.failed || 0}`} warn={d.outbox.mail.failed > 0} />
               <Tile label="Sheet pending / failed" value={`${d.outbox.sync.pending || 0} / ${d.outbox.sync.failed || 0}`} warn={d.outbox.sync.failed > 0} />
             </div>
+            )}
             <div className="a-cols">
+              {d.leads && (
               <div className="a-card">
                 <h2>Leads by form (7 days)</h2>
                 {d.byForm.length ? (
                   <table className="a-table"><tbody>{d.byForm.map((r) => <tr key={r.form_type}><td>{r.form_type}</td><td className="a-num">{r.n}</td></tr>)}</tbody></table>
                 ) : <p className="a-muted">No leads in the last 7 days.</p>}
               </div>
+              )}
+              {d.can && d.can.content && (
               <div className="a-card">
                 <h2>Translations</h2>
                 <table className="a-table">
@@ -111,10 +116,11 @@ export default function Dashboard() {
                 </table>
                 <p><Link to="/admin/translations">Open translations</Link></p>
               </div>
+              )}
             </div>
             <h2 className="a-jump-h">Go to</h2>
             <div className="a-jump">
-              {groupsFor(me.role).map((g) => (
+              {groupsFor(me).map((g) => (
                 <div className="a-jump-tile" key={g.key}>
                   <Link className="a-jump-title" to={`/admin/${g.items[0].path}`}><Icon name={g.icon} />{g.label}</Link>
                   <ul>{g.items.map((it) => <li key={it.path}><Link to={`/admin/${it.path}`}>{it.label}</Link></li>)}</ul>

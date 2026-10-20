@@ -73,7 +73,8 @@ export default function Products() {
   const cats = useLoad('/categories');
   const ui = useLoad('/ui-text');
   const home = useMemo(() => homeFeatured(ui.data), [ui.data]);
-  const canEdit = useCan('editor');
+  const canEdit = useCan('products', 'edit');
+  const canCreate = useCan('products', 'create');
   const act = useAction();
   const [opened, setOpen] = useState(null); // { id } | { create: {...} }
   const [filter, setFilter] = useState('');
@@ -138,7 +139,7 @@ export default function Products() {
       <h1>Products</h1>
       <div className="a-toolbar">
         <input type="search" placeholder="Filter by ID or name" aria-label="Filter" value={filter} onChange={(e) => setFilter(e.target.value)} />
-        {canEdit && <button type="button" className="a-btn" onClick={() => open({ create: { is_active: 1 } })}>Add product</button>}
+        {canCreate && <button type="button" className="a-btn" onClick={() => open({ create: { is_active: 1 } })}>Add product</button>}
         <button type="button" className="a-chip" aria-pressed={onlyMissing} onClick={() => setOnlyMissing((x) => !x)}
           title="Only products where an active language has an empty required text">
           Missing translations <b>{(list.data || []).filter((p) => missingOf(p).length).length}</b>
@@ -207,10 +208,12 @@ export default function Products() {
 
 function ProductEditor({ id, initial, cats, all, listRows, home, onClose, onSaved, onAddVariant }) {
   const loaded = useLoad(id ? `/products/${encodeURIComponent(id)}` : null);
-  const canEdit = useCan('editor');
+  const canEditRow = useCan('products', 'edit');
+  const canCreateRow = useCan('products', 'create');
   const act = useAction();
   const [draft, setDraft] = useState(null);
   const creating = !id;
+  const canEdit = creating ? canCreateRow : canEditRow; // fields and Save follow create or edit
   // Add: the category the dropdown shows first is really chosen (it used to be only displayed, so the position was
   // counted for "no category" until the category was changed)
   const p = draft || (creating ? { tr: {}, category_key: cats[0] ? cats[0].category_key : undefined, ...initial } : loaded.data);

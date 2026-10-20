@@ -165,7 +165,7 @@ for f in $(ls database/migrations/*.sql | sort); do
   echo "== $f"; sudo mysql --default-character-set=utf8mb4 dfresh < "$f" || { echo "FAILED: $f"; break; }
 done
 ```
-The 29 migrations, in the order they must run (tick each; a later update applies only the new ones):
+The 32 migrations, in the order they must run (tick each; a later update applies only the new ones):
 
 - [ ] `20261009_phase3_home_ui_text.sql`
 - [ ] `20261009_phase4_products_ui_text.sql`
@@ -198,8 +198,14 @@ The 29 migrations, in the order they must run (tick each; a later update applies
 - [ ] `20261019_times_to_utc.sql` - every stored time becomes UTC (shifts the existing rows once by this MySQL's
       default offset; a marker row makes a second run a no-op). On a NEW install it simply runs in order. On a
       database that is already LIVE: only with the app stopped, see "One-off: times to UTC" in step 12.
+- [ ] `20261020_commerce_access.sql` - roles and their permissions (Admin, Sub-admin built in; Viewer, Operations,
+      Warehouse, Sales); every admin user gets a role (admin -> Admin, editor -> Sub-admin, viewer -> Viewer)
+- [ ] `20261020_commerce_approvals.sql` - the approvals table (empty)
+- [ ] `20261020_commerce_settings.sql` - Commerce settings with their defaults and lists; `commerce_enabled` = **off**
+      (the commerce screens stay hidden until it is switched on)
 
-This exact sequence (schema, seed, 29 migrations) was run on an empty database on 19 Oct 2026 without an error.
+This exact sequence (schema, seed, 32 migrations) was run on an empty database on 20 Oct 2026 without an error.
+`database/demo/` is never applied here: it is demo data for the `dfresh_commerce` copy only.
 
 ```bash
 # 4.3 live settings that are not content (the LIVE lead sheet; everything else is edited in the admin)

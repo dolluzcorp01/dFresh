@@ -10,7 +10,7 @@ import { COUNTS } from '../shared/countText';
 export default function Translations() {
   const grid = useLoad('/ui-text');
   const { languages, reloadLanguages } = useAdmin();
-  const canEdit = useCan('editor');
+  const canEdit = useCan('content', 'edit');
   const act = useAction();
   const up = useUpload();
   // ?lang=ta&missing=1 (dashboard "not translated yet" links) opens the grid already filtered

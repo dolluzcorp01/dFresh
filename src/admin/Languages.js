@@ -33,7 +33,9 @@ export default function Languages() {
   const list = useLoad('/languages');
   const fonts = useLoad('/fonts');
   const { reloadLanguages } = useAdmin();
-  const isAdmin = useCan('admin');
+  const isAdmin = useCan('content', 'edit');
+  const canCreate = useCan('content', 'create');
+  const canDelete = useCan('content', 'delete');
   const act = useAction();
   const [open, setOpen] = useState(null);
 
@@ -67,7 +69,7 @@ export default function Languages() {
         </ol>
         <p>Anything not translated shows in English. Fonts are prepared automatically, no developer needed.</p>
       </InfoCard>
-      {isAdmin && <div className="a-toolbar"><button type="button" className="a-btn" onClick={() => setOpen({ create: true })}>Add language</button></div>}
+      {canCreate && <div className="a-toolbar"><button type="button" className="a-btn" onClick={() => setOpen({ create: true })}>Add language</button></div>}
       {act.note}
       <Loading state={list}>
         <div className="a-scroll">
@@ -88,7 +90,7 @@ export default function Languages() {
                   <td>{l.is_active ? 'On' : 'Off'}</td>
                   <td className="a-row">
                     {isAdmin && Number(l.is_default) !== 1 && <button type="button" className="a-btn a-btn-sm a-btn-ghost" onClick={(e) => { e.stopPropagation(); toggle(l); }} disabled={act.busy}>{l.is_active ? 'Switch off' : 'Switch on'}</button>}
-                    {isAdmin && Number(l.is_default) !== 1 && !l.is_active && <button type="button" className="a-btn a-btn-sm a-btn-danger" onClick={(e) => { e.stopPropagation(); remove(l); }} disabled={act.busy}>Delete</button>}
+                    {canDelete && Number(l.is_default) !== 1 && !l.is_active && <button type="button" className="a-btn a-btn-sm a-btn-danger" onClick={(e) => { e.stopPropagation(); remove(l); }} disabled={act.busy}>Delete</button>}
                   </td>
                 </tr>
               ))}
