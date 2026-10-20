@@ -60,6 +60,7 @@ export default function CommerceStock() {
           <li>Stock is the sum of movements, never typed in: every change shows who did it and when (below).</li>
           <li>Returned goods in good condition are kept apart as <code>SKU (R)</code>; damaged goods are counted separately.</li>
           <li>A red <span className="a-status a-status-bad">Low</span> badge: good stock is below the SKU&apos;s low level.</li>
+          <li>Reserved = held by confirmed orders not yet dispatched; Available = good - reserved (what a new order can take).</li>
         </ul>
       </InfoCard>
       <div className="a-stats">
@@ -102,13 +103,15 @@ export default function CommerceStock() {
         </div>
         <div className="a-scroll">
           <table className="a-table a-stock">
-            <thead><tr><th>SKU</th><th>Product</th><th className="a-num">Good</th><th className="a-num">Damaged</th><th>Low level</th><th>Last movement</th></tr></thead>
+            <thead><tr><th>SKU</th><th>Product</th><th className="a-num">Good</th><th className="a-num" title="Held by confirmed orders">Reserved</th><th className="a-num" title="Good - reserved">Available</th><th className="a-num">Damaged</th><th>Low level</th><th>Last movement</th></tr></thead>
             <tbody>
               {shown.flatMap((r) => [
                 <tr key={r.sku_code} className={isLow(r) ? 'a-lowrow' : undefined}>
                   <td><code>{r.sku_code}</code></td>
                   <td>{r.name} <small className="a-muted">{r.size_label}</small></td>
                   <td className="a-num"><b>{r.good}</b> {isLow(r) && <span className="a-status a-status-bad">Low</span>}</td>
+                  <td className="a-num">{r.reserved || ''}</td>
+                  <td className={`a-num${r.available < 0 ? ' a-bad' : ''}`}>{r.available}</td>
                   <td className="a-num">{r.damaged || ''}</td>
                   <td>
                     {canEdit ? (
@@ -128,7 +131,7 @@ export default function CommerceStock() {
                     <td><code>{r.sku_code} (R)</code></td>
                     <td className="a-muted">Returned stock, good condition</td>
                     <td className="a-num"><b>{r.returned}</b></td>
-                    <td colSpan={3} />
+                    <td colSpan={5} />
                   </tr>
                 ),
               ].filter(Boolean))}

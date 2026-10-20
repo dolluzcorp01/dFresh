@@ -230,6 +230,17 @@ column is ever typed in; a nightly check compares sums and logs a warning if a n
 Every change writes `order_status_history` and the audit log; edits use the `version` column so two people cannot
 overwrite each other (the second gets "This order changed, reload").
 
+Built in phase 3 (migration `20261020_commerce_sales.sql`, `src/backend_routes/commerce.js`, `invoices.js`,
+`numbering.js`), with these statuses: `approval` (waiting for one or more approvals: price below the list, more than
+the available stock, over the credit limit or with overdue invoices; any rejected / withdrawn / expired cancels the
+order) -> `new` (= confirmed; no separate draft) -> `packed` -> `dispatched` -> `delivered`, `cancelled`. Edit: approval
+/ new freely (not the customer), packed with a reason (stock re-reserved; a new approval blocks dispatch), never after
+dispatch. Payment terms on the order: pay on delivery, paid in advance, on credit (customer's credit days). Payments
+and refunds are recorded rows (Cash, UPI, Bank transfer, Cheque, Razorpay manual; a reference is required except for
+cash); wallet credit used counts as paid. An invoice is due on its issue day + the credit days (pay on delivery: once
+delivered); unpaid after that it is Overdue. Customers (still the demo table until phase 8) carry state, PIN, credit
+days and limit; a higher limit waits for approval.
+
 ### 5.2 Payment
 `unpaid` -> `partly_paid` -> `paid`; `credit` (paid later, due on `credit_due_on`, shown overdue after it);
 `refunded` / `partly_refunded`. Payments are recorded rows (cash, UPI, bank, cheque, credit, wallet, Razorpay link).

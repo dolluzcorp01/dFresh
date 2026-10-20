@@ -2,6 +2,7 @@
 // (CommerceCustomers.js), so both show the same message under the same field. CommonJS (the server requires it).
 // checkCustomer(raw) -> { values, errors: { field: message } }; phone saved as "+91 98765 43210".
 const { checkSetting } = require('./settingRules');
+const { isStateCode } = require('./gstStates');
 
 const CTYPES = ['Home', 'Hotel', 'Hospital', 'Office', 'Distributor'];
 const SOURCES = ['Phone', 'WhatsApp', 'Walk-in', 'Referral', 'Other'];
@@ -22,7 +23,7 @@ function checkCustomer(raw) {
   const errors = {};
   const values = {
     name: t('name'), phone: t('phone'), email: t('email') || null, ctype: t('ctype') || 'Home', business_name: t('business_name') || null,
-    gstin: t('gstin') || null, address: t('address') || null, town: t('town') || null, source: t('source') || 'Phone',
+    gstin: t('gstin') || null, address: t('address') || null, town: t('town') || null, state_code: t('state_code') || '33', pincode: t('pincode') || null, source: t('source') || 'Phone',
     notes: t('notes') || null, follow_up: t('follow_up') || null,
   };
   if (!values.name) errors.name = 'Name is required.';
@@ -39,6 +40,9 @@ function checkCustomer(raw) {
     if (g.error) errors.gstin = g.error; else values.gstin = g.value;
   }
   if (values.follow_up && !/^\d{4}-\d{2}-\d{2}$/.test(values.follow_up)) errors.follow_up = 'A date.';
+  if (!isStateCode(values.state_code)) errors.state_code = 'Choose the state (it decides CGST + SGST or IGST).';
+  if (values.pincode && !/^[1-9]\d{5}$/.test(values.pincode)) errors.pincode = 'PIN code: 6 digits.';
+  if (values.gstin && !errors.gstin && values.gstin.slice(0, 2) !== values.state_code) errors.gstin = 'This GSTIN is registered in another state than the one chosen.';
   for (const [k, max] of [['business_name', 150], ['address', 255], ['town', 80]]) if (values[k] && values[k].length > max) errors[k] = `At most ${max} characters.`;
   return { values, errors };
 }

@@ -20,6 +20,8 @@ const KINDS = {
   goodwill_credit: { label: 'Goodwill wallet credit', section: 'promotions' },
   credit_raise: { label: 'Credit limit raise', section: 'customers' },
   price_below_list: { label: 'Price below the list', section: 'products' },
+  over_available: { label: 'Order above the available stock', section: 'orders' },
+  credit_order: { label: 'Order over the credit limit or with overdue invoices', section: 'customers' },
 };
 const handlers = {};
 const closers = {};
@@ -48,6 +50,8 @@ async function needed(q, kind, facts = {}) {
     case 'goodwill_credit': return s.approve_goodwill_credit;
     case 'credit_raise': return s.approve_credit_raise;
     case 'price_below_list': return s.approve_price_below_on && (facts.pct || 0) > s.approve_price_below_pct;
+    case 'over_available': return s.approve_over_available !== false;
+    case 'credit_order': return s.approve_credit_order !== false;
     default: throw new Error(`unknown approval kind ${kind}`);
   }
 }

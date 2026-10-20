@@ -6,8 +6,10 @@
 //    of stock, coupons, cashback rule
 // 3. DEMO prices on all 6 lists (Default + 5 customer types) for every SKU, through src/backend_routes/pricing.js:
 //    effective 30 days ago, a +5 % change on the toilet rolls 5 days ago and one scheduled for the 1st of next month
-// 4. 15 demo customers and 25 orders across all statuses, through src/backend_routes/commerce.js (list prices of the
-//    customer's type, coupons, wallet, stock out on dispatch, cashback on delivery), 2 returns, notes and follow-ups
+// 4. 15 demo customers (addresses with state and PIN, credit terms by type; one in Karnataka for IGST) and 25 orders
+//    across all statuses, through src/backend_routes/commerce.js (list prices of the customer's type, coupons, stock
+//    reserved, stock out and invoice at dispatch, cashback on delivery); then the dates are moved back to the demo
+//    days, payments recorded (paid, part paid, one overdue invoice), 2 returns, notes and follow-ups
 // 5. demo approval requests (pending and decided) and Commerce switched ON
 // Migrations never contain any of this (docs/COMMERCE-SPEC.md 9). Running it twice does nothing the second time.
 require('dotenv').config({ quiet: true });
@@ -25,22 +27,23 @@ const pricing = require('../src/backend_routes/pricing');
 const db = getDBConnection(DB).promise();
 const ROOT = path.join(__dirname, '..');
 
+// [name, phone, type, town, address, GSTIN, state, PIN, credit days, credit limit]
 const CUSTOMERS = [
-  ['Demo Hotel Sangam', '9800000001', 'Hotel', 'Kanchipuram', 'Gandhi Road, Kanchipuram', '33AAACD0001A1Z5'],
-  ['Demo Cafe Thendral', '9800000002', 'Hotel', 'Chennai', 'Anna Nagar, Chennai', null],
-  ['Demo City Hospital', '9800000003', 'Hospital', 'Chengalpattu', 'GST Road, Chengalpattu', '33AAACD0003A1Z1'],
-  ['Demo Care Clinic', '9800000004', 'Hospital', 'Kanchipuram', 'Railway Road, Kanchipuram', null],
-  ['Demo Tech Park Office', '9800000005', 'Office', 'Chennai', 'OMR, Padur', '33AAACD0005A1Z7'],
-  ['Demo Bank Branch', '9800000006', 'Office', 'Sriperumbudur', 'Main Road, Sriperumbudur', null],
-  ['Demo Distributor Vellore', '9800000007', 'Distributor', 'Vellore', 'Katpadi Road, Vellore', '33AAACD0007A1Z3'],
-  ['Demo Distributor Arakkonam', '9800000008', 'Distributor', 'Arakkonam', 'Bazaar Street, Arakkonam', '33AAACD0008A1Z1'],
-  ['Demo Home Priya', '9800000009', 'Home', 'Kanchipuram', 'Vaikunta Perumal Koil St', null],
-  ['Demo Home Arun', '9800000010', 'Home', 'Chennai', 'Tambaram West', null],
-  ['Demo Home Lakshmi', '9800000011', 'Home', 'Chengalpattu', 'Collectorate Road', null],
-  ['Demo Restaurant Anjappar', '9800000012', 'Hotel', 'Chennai', 'Velachery Main Road', null],
-  ['Demo School Canteen', '9800000013', 'Office', 'Kanchipuram', 'Collector Office Road', null],
-  ['Demo Lodge Kamakshi', '9800000014', 'Hotel', 'Kanchipuram', 'East Raja Street', null],
-  ['Demo Home Karthik', '9800000015', 'Home', 'Sriperumbudur', 'SIPCOT Colony', null],
+  ['Demo Hotel Sangam', '9800000001', 'Hotel', 'Kanchipuram', 'Gandhi Road', '33AAACD0001A1Z5', '33', '631501', 7, 25000],
+  ['Demo Cafe Thendral', '9800000002', 'Hotel', 'Chennai', 'Anna Nagar', null, '33', '600040', 0, 0],
+  ['Demo City Hospital', '9800000003', 'Hospital', 'Chengalpattu', 'GST Road', '33AAACD0003A1Z1', '33', '603001', 30, 60000],
+  ['Demo Care Clinic', '9800000004', 'Hospital', 'Kanchipuram', 'Railway Road', null, '33', '631502', 15, 15000],
+  ['Demo Tech Park Office', '9800000005', 'Office', 'Chennai', 'OMR, Padur', '33AAACD0005A1Z7', '33', '603103', 15, 20000],
+  ['Demo Bank Branch', '9800000006', 'Office', 'Sriperumbudur', 'Main Road', null, '33', '602105', 15, 10000],
+  ['Demo Distributor Vellore', '9800000007', 'Distributor', 'Vellore', 'Katpadi Road', '33AAACD0007A1Z3', '33', '632007', 30, 150000],
+  ['Demo Distributor Bengaluru', '9800000008', 'Distributor', 'Bengaluru', 'Peenya Industrial Area', '29AAACD0008A1Z1', '29', '560058', 30, 150000],
+  ['Demo Home Priya', '9800000009', 'Home', 'Kanchipuram', 'Vaikunta Perumal Koil St', null, '33', '631502', 0, 0],
+  ['Demo Home Arun', '9800000010', 'Home', 'Chennai', 'Tambaram West', null, '33', '600045', 0, 0],
+  ['Demo Home Lakshmi', '9800000011', 'Home', 'Chengalpattu', 'Collectorate Road', null, '33', '603001', 0, 0],
+  ['Demo Restaurant Anjappar', '9800000012', 'Hotel', 'Chennai', 'Velachery Main Road', null, '33', '600042', 0, 0],
+  ['Demo School Canteen', '9800000013', 'Office', 'Kanchipuram', 'Collector Office Road', null, '33', '631501', 0, 0],
+  ['Demo Lodge Kamakshi', '9800000014', 'Hotel', 'Kanchipuram', 'East Raja Street', null, '33', '631501', 0, 0],
+  ['Demo Home Karthik', '9800000015', 'Home', 'Sriperumbudur', 'SIPCOT Colony', null, '33', '602105', 0, 0],
 ];
 // DEMO Default price per pack (Rs, before GST) by product; the customer types' lists are derived from it (LIST_FACTOR)
 const DEMO_PRICE = {
@@ -53,34 +56,38 @@ const DEMO_PRICE = {
   'DZIND-DF044': 180,
 };
 const LIST_FACTOR = { default: 1, home: 1, hotel: 0.92, hospital: 0.9, office: 0.94, distributor: 0.8 };
-// [customer #, status, payment, coupon, days ago, [[sku, qty], ...]] - quantities respect the demo carton rules
+// [customer #, status, terms (cod | advance | credit), coupon, days ago, [[sku, qty], ...]] - quantities respect the demo carton
+// rules; what was paid is set after the loop (PAID)
 const ORDERS = [
-  [1, 'delivered', 'bank', 'HOTEL500', 9, [['DF001-M100', 20], ['DF007-M100', 10], ['DF040-M100', 6], ['DF013-M50', 24]]],
-  [3, 'delivered', 'bank', null, 8, [['DF044-M100', 10], ['DF036-M250', 8]]],
-  [7, 'delivered', 'bank', null, 8, [['DF002-M100', 30], ['DF013-M50', 12], ['DF030-M200', 10]]],
+  [1, 'delivered', 'credit', 'HOTEL500', 9, [['DF001-M100', 20], ['DF007-M100', 10], ['DF040-M100', 6], ['DF013-M50', 24]]],
+  [3, 'delivered', 'credit', null, 8, [['DF044-M100', 10], ['DF036-M250', 8]]],
+  [7, 'delivered', 'credit', null, 8, [['DF002-M100', 30], ['DF013-M50', 12], ['DF030-M200', 10]]],
   [9, 'delivered', 'cod', 'WELCOME10', 7, [['DF018-R6', 5]]],
-  [2, 'delivered', 'razorpay', 'FRESH5', 7, [['DF001-M100', 8], ['DF008-M50', 6]]],
-  [5, 'delivered', 'bank', null, 6, [['DF040-M100', 10], ['DF031-M200', 6]]],
-  [12, 'delivered', 'razorpay', null, 6, [['DF002-M100', 12], ['DF014-M100', 6]]],
+  [2, 'delivered', 'advance', 'FRESH5', 7, [['DF001-M100', 8], ['DF008-M50', 6]]],
+  [5, 'delivered', 'credit', null, 6, [['DF040-M100', 10], ['DF031-M200', 6]]],
+  [12, 'delivered', 'advance', null, 6, [['DF002-M100', 12], ['DF014-M100', 6]]],
   [10, 'delivered', 'cod', 'WELCOME10', 5, [['DF017-R4', 6], ['DF023-R1', 6]]],
-  [4, 'dispatched', 'bank', null, 4, [['DF044-M100', 6], ['DF036-M250', 4]]],
-  [8, 'dispatched', 'bank', null, 3, [['DF002-M100', 20], ['DF007-M100', 12]]],
+  [4, 'dispatched', 'credit', null, 4, [['DF044-M100', 6], ['DF036-M250', 4]]],
+  [8, 'dispatched', 'credit', null, 3, [['DF002-M100', 20], ['DF007-M100', 12]]],
   [14, 'dispatched', 'cod', null, 3, [['DF001-M100', 10], ['DF024-R1', 6]]],
-  [11, 'dispatched', 'razorpay', 'FRESH5', 2, [['DF018-R6', 2], ['DF030-M200', 2]]],
-  [6, 'dispatched', 'bank', null, 2, [['DF040-M100', 8]]],
-  [13, 'packed', 'bank', null, 2, [['DF008BLK-M100', 6], ['DF002-M100', 10]]],
-  [1, 'packed', 'bank', null, 1, [['DF007-M100', 15], ['DF013-M50', 6]]],
+  [11, 'dispatched', 'advance', 'FRESH5', 2, [['DF018-R6', 2], ['DF030-M200', 2]]],
+  [6, 'dispatched', 'credit', null, 2, [['DF040-M100', 8]]],
+  [13, 'packed', 'cod', null, 2, [['DF008BLK-M100', 6], ['DF002-M100', 10]]],
+  [1, 'packed', 'credit', null, 1, [['DF007-M100', 15], ['DF013-M50', 6]]],
   [15, 'packed', 'cod', 'FRESH5', 1, [['DF019-R10', 1], ['DF025-R1', 4]]],
-  [3, 'packed', 'bank', null, 1, [['DF044-M100', 8]]],
-  [2, 'packed', 'razorpay', null, 1, [['DF001-M100', 6], ['DF008LAV-M50', 4]]],
-  [7, 'new', 'bank', 'HOTEL500', 0, [['DF002-M100', 40], ['DF014-M100', 20], ['DF030-M200', 12], ['DF036-M250', 24], ['DF044-M100', 12]]],
+  [3, 'packed', 'credit', null, 1, [['DF044-M100', 8]]],
+  [2, 'packed', 'advance', null, 1, [['DF001-M100', 6], ['DF008LAV-M50', 4]]],
+  [7, 'new', 'credit', 'HOTEL500', 0, [['DF002-M100', 40], ['DF014-M100', 20], ['DF030-M200', 12], ['DF036-M250', 24], ['DF044-M100', 12]]],
   [12, 'new', 'cod', null, 0, [['DF001-M100', 10], ['DF008BUR-M50', 6]]],
-  [9, 'new', 'razorpay', 'FRESH5', 0, [['DF017-R4', 2], ['DF026-R2', 2]]],
-  [5, 'new', 'bank', null, 0, [['DF040-M100', 12], ['DF031-M200', 8]]],
+  [9, 'new', 'advance', 'FRESH5', 0, [['DF017-R4', 2], ['DF026-R2', 2]]],
+  [5, 'new', 'credit', null, 0, [['DF040-M100', 12], ['DF031-M200', 8]]],
   [10, 'new', 'cod', null, 0, [['DF023-R1', 6], ['DF035-M10', 2]]],
-  [4, 'new', 'bank', null, 0, [['DF044-M100', 4], ['DF038-M150', 6]]],
+  [4, 'new', 'credit', null, 0, [['DF044-M100', 4], ['DF038-M150', 6]]],
   [14, 'new', 'cod', null, 0, [['DF006-PKT', 10], ['DF001-M100', 6]]],
 ];
+// what each demo order has paid after the loop: order index (1-based) -> 'full' | fraction | 0 (credit orders
+// not listed stay unpaid; 'advance' orders are paid in full by Razorpay at the order day, 'cod' ones when delivered)
+const PAID = { 2: 'full', 3: 0.5, 6: 'full', 9: 0.4 };
 const NOTES = [
   ['Demo Hotel Sangam', 'DEMO - orders every Monday, wants the invoice with GSTIN', 0],
   ['Demo City Hospital', 'DEMO - asked for a bulk price on hand towels', -1],
@@ -109,7 +116,7 @@ async function inTx(fn) {
 
   const raw = await mysql.createConnection({ host: process.env.DB_HOST, port: process.env.DB_PORT, user: process.env.DB_USER, password: process.env.DB_PASSWORD, database: DB, multipleStatements: true, timezone: 'Z' });
   await raw.query("SET time_zone = '+00:00'");
-  const [[{ has }]] = await raw.query("SELECT COUNT(*) AS has FROM information_schema.tables WHERE table_schema = ? AND table_name = 'orders'", [DB]);
+  const [[{ has }]] = await raw.query("SELECT COUNT(*) AS has FROM information_schema.tables WHERE table_schema = ? AND table_name = 'coupons'", [DB]);
   if (!Number(has)) {
     await raw.query(fs.readFileSync(path.join(ROOT, 'database/demo/commerce-demo-schema.sql'), 'utf8'));
     await raw.query(fs.readFileSync(path.join(ROOT, 'database/demo/commerce-demo-data.sql'), 'utf8'));
@@ -145,27 +152,54 @@ async function inTx(fn) {
   const [[{ n }]] = await db.query('SELECT COUNT(*) AS n FROM orders');
   if (Number(n) > 0) { console.log(`${n} orders exist already: customers, orders, returns and approvals skipped`); process.exit(0); }
 
-  for (const [nm, phone, ctype, town, address, gstin] of CUSTOMERS) {
-    await db.query("INSERT INTO customers (name, phone, ctype, town, address, gstin, source, created_at) VALUES (?, ?, ?, ?, ?, ?, 'Phone', UTC_TIMESTAMP() - INTERVAL 12 DAY)",
-      [nm, `+91 ${phone.slice(0, 5)} ${phone.slice(5)}`, ctype, town, address, gstin]);
+  for (const [nm, phone, ctype, town, address, gstin, state, pin, days, limit] of CUSTOMERS) {
+    await db.query(`INSERT INTO customers (name, phone, ctype, town, state_code, pincode, address, gstin, credit_days, credit_limit, source, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Phone', UTC_TIMESTAMP() - INTERVAL 12 DAY)`,
+    [nm, `+91 ${phone.slice(0, 5)} ${phone.slice(5)}`, ctype, town, state, pin, address, gstin, days, limit]);
   }
   const [custRows] = await db.query('SELECT customer_id FROM customers ORDER BY customer_id LIMIT 15');
   let made = 0;
-  for (const [ci, status, payment, coupon, daysAgo, lines] of ORDERS) {
+  const placed = []; // [order_no, terms, status, daysAgo]
+  for (const [ci, status, terms, coupon, daysAgo, lines] of ORDERS) {
     await inTx(async (conn) => {
       const items = lines.map(([sku, qty]) => ({ sku_code: sku, qty, price: null })); // the list price of the customer's type
       const priceDate = new Date(Date.now() + 5.5 * 3600e3 - (daysAgo * 24 + 6) * 3600e3).toISOString().slice(0, 10);
-      const o = await commerce.createOrder(conn, { customer_id: custRows[ci - 1].customer_id, items, coupon_code: coupon, payment, note: 'DEMO order' }, ci % 2 ? 'DZIND148' : 'DZIND002', { priceDate });
-      for (const s of commerce.ORDER_FLOW.slice(1, commerce.ORDER_FLOW.indexOf(status) + 1)) await commerce.advanceOrder(conn, o.order_no, s, 'DZIND002');
-      await conn.query(`UPDATE orders SET created_at = UTC_TIMESTAMP() - INTERVAL ? HOUR,
-          packed_at = IF(packed_at IS NULL, NULL, UTC_TIMESTAMP() - INTERVAL ? HOUR),
-          dispatched_at = IF(dispatched_at IS NULL, NULL, UTC_TIMESTAMP() - INTERVAL ? HOUR),
-          delivered_at = IF(delivered_at IS NULL, NULL, UTC_TIMESTAMP() - INTERVAL ? HOUR) WHERE order_id = ?`,
-      [daysAgo * 24 + 6, daysAgo * 24 + 4, daysAgo * 24 + 2, Math.max(daysAgo * 24 - 20, 1), o.order_id]);
-      await conn.query('UPDATE stock_movements SET created_at = UTC_TIMESTAMP() - INTERVAL ? HOUR WHERE note = ?', [daysAgo * 24 + 2, `Dispatched ${o.order_no}`]);
-      await conn.query("UPDATE wallet_entries SET created_at = UTC_TIMESTAMP() - INTERVAL ? HOUR WHERE order_id = ? AND reason LIKE 'Cashback%'", [Math.max(daysAgo * 24 - 20, 1), o.order_id]);
+      const o = await commerce.createOrder(conn, { customer_id: custRows[ci - 1].customer_id, items, coupon_code: coupon, payment_terms: terms, note: 'DEMO order' }, ci % 2 ? 'DZIND148' : 'DZIND002', { priceDate });
+      if (o.status !== 'new') throw new Error(`${o.order_no} is ${o.status}, expected new`);
+      for (const st of commerce.ORDER_FLOW.slice(1, commerce.ORDER_FLOW.indexOf(status) + 1)) await commerce.advanceOrder(conn, o.order_no, st, 'DZIND002');
+      placed.push([o.order_no, terms, status, daysAgo]);
     });
     made += 1;
+  }
+  // the demo days: orders, history, stock movements, invoices (issued at dispatch, due after the credit days), cashback
+  for (const [no, , , daysAgo] of placed) {
+    const h = (x) => Math.max(daysAgo * 24 - x, 1);
+    await db.query(`UPDATE orders SET created_at = UTC_TIMESTAMP() - INTERVAL ? HOUR, confirmed_at = UTC_TIMESTAMP() - INTERVAL ? HOUR,
+        packed_at = IF(packed_at IS NULL, NULL, UTC_TIMESTAMP() - INTERVAL ? HOUR),
+        dispatched_at = IF(dispatched_at IS NULL, NULL, UTC_TIMESTAMP() - INTERVAL ? HOUR),
+        delivered_at = IF(delivered_at IS NULL, NULL, UTC_TIMESTAMP() - INTERVAL ? HOUR) WHERE order_no = ?`,
+    [daysAgo * 24 + 6, daysAgo * 24 + 6, daysAgo * 24 + 4, daysAgo * 24 + 2, h(20), no]);
+    await db.query(`UPDATE order_status_history hs JOIN orders o ON o.order_id = hs.order_id
+        SET hs.created_at = CASE hs.to_status WHEN 'packed' THEN o.packed_at WHEN 'dispatched' THEN o.dispatched_at WHEN 'delivered' THEN o.delivered_at ELSE o.created_at END
+      WHERE o.order_no = ?`, [no]);
+    await db.query('UPDATE stock_movements SET created_at = UTC_TIMESTAMP() - INTERVAL ? HOUR WHERE note = ?', [daysAgo * 24 + 2, `Dispatched ${no}`]);
+    await db.query(`UPDATE invoices i JOIN orders o ON o.order_id = i.order_id
+        SET i.issued_at = o.dispatched_at, i.due_on = DATE(CONVERT_TZ(o.dispatched_at, '+00:00', '+05:30')) + INTERVAL IF(o.payment_terms = 'credit', o.credit_days, 0) DAY
+      WHERE o.order_no = ?`, [no]);
+    await db.query("UPDATE wallet_entries w JOIN orders o ON o.order_id = w.order_id SET w.created_at = o.delivered_at WHERE o.order_no = ? AND w.reason LIKE 'Cashback%'", [no]);
+  }
+  // payments: advance = Razorpay on the order day; cod = cash when delivered; credit = as PAID says
+  for (let i = 0; i < placed.length; i += 1) {
+    const [no, terms, status] = placed[i];
+    const [[o]] = await db.query("SELECT amount_due, DATE_FORMAT(CONVERT_TZ(created_at, '+00:00', '+05:30'), '%Y-%m-%d') AS made, DATE_FORMAT(CONVERT_TZ(delivered_at, '+00:00', '+05:30'), '%Y-%m-%d') AS got FROM orders WHERE order_no = ?", [no]);
+    let amount = 0; let mode = 'cash'; let day = o.got; let ref = null;
+    if (terms === 'advance') { amount = Number(o.amount_due); mode = 'razorpay'; day = o.made; ref = `pay_DEMO${String(i + 1).padStart(4, '0')}`; }
+    else if (terms === 'cod' && status === 'delivered') amount = Number(o.amount_due);
+    else if (terms === 'credit' && PAID[i + 1] !== undefined) {
+      amount = PAID[i + 1] === 'full' ? Number(o.amount_due) : Math.round(Number(o.amount_due) * PAID[i + 1]);
+      mode = 'bank'; day = o.got || o.made; ref = `UTR DEMO${String(i + 1).padStart(6, '0')}`;
+    }
+    if (amount > 0) await inTx((q) => commerce.recordPayment(q, no, { amount: String(amount), mode, received_on: day, reference: ref, note: 'DEMO payment' }, 'DZIND002'));
   }
 
   const [del] = await db.query("SELECT o.order_no, (SELECT sku_code FROM order_items i WHERE i.order_id = o.order_id ORDER BY qty DESC LIMIT 1) AS sku FROM orders o WHERE status = 'delivered' ORDER BY order_id LIMIT 2");

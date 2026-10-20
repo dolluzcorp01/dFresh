@@ -4,7 +4,7 @@
 |---|---|
 | `01_schema.sql` | Creates database `dfresh` and all tables (fresh install only) |
 | `02_seed.sql` | All launch content: 3 languages, 154 UI texts, 6 categories, 25 products + 3 colour variants, 84 images, 11 banners, 4 kits, 6 towns, form options, settings, 2 admin users |
-| `migrations/` | Every later change, named `YYYYMMDD_short_name.sql`, applied in name order. `20261009_shell_ui_text.sql`: 9 UI keys for the site frame (EN + TA/HI drafts). `20261020_commerce_*`: roles and permissions, approvals, pricing (SKUs, price lists with effective dates, price history, product HSN / GST), Commerce settings (structure and defaults only, commerce off) |
+| `migrations/` | Every later change, named `YYYYMMDD_short_name.sql`, applied in name order. `20261009_shell_ui_text.sql`: 9 UI keys for the site frame (EN + TA/HI drafts). `20261020_commerce_*`: roles and permissions, approvals, pricing (SKUs, price lists with effective dates, price history, product HSN / GST), sales (orders, payments, invoices, credit notes, stock reservations), Commerce settings (structure and defaults only, commerce off) |
 | `demo/` | Commerce DEMO only: interim tables and sample data, applied by `node scripts/commerce-demo-seed.js`, which refuses any database except `dfresh_commerce`. Never on live |
 
 Both files were executed and verified on MariaDB 10.11 (MySQL 8 compatible) before handover.

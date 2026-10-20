@@ -50,7 +50,7 @@ INSERT IGNORE INTO commerce_settings (setting_key, grp, label, help, value, valu
   ('einvoice_mode', 'GST and compliance', 'E-invoicing (IRN / QR on B2B invoices)', 'Off = invoices are made here without an IRN. To be confirmed by sir (turnover limit).', 'off', 'select', '[["off","Off - manual"],["on","On - generate IRN"]]', 1, 10),
   ('ewaybill_mode', 'GST and compliance', 'E-way bills', 'Off = made by hand on the portal. To be confirmed by sir.', 'off', 'select', '[["off","Off - manual"],["on","On - generate from the admin"]]', 1, 20),
   ('cashback_gst_treatment', 'GST and compliance', 'Cashback under GST', 'Changes the taxable value of the next invoice. To be confirmed by sir with the accountant.', 'discount', 'select', '[["discount","Discount on the next invoice"],["payment","Payment method"]]', 1, 30),
-  ('payment_methods', 'Payments', 'Payment methods offered', 'Comma separated.', 'Cash, UPI, Bank transfer, Cheque, Credit', 'text', NULL, 0, 10),
+  ('payment_methods', 'Payments', 'Payment modes offered when recording a payment', 'Comma separated, from: Cash, UPI, Bank transfer, Cheque, Razorpay (manual). Credit is a payment term on the order, not a mode.', 'Cash, UPI, Bank transfer, Cheque, Razorpay (manual)', 'text', NULL, 0, 10),
   ('razorpay_payment_links', 'Payments', 'Razorpay payment links', 'Off = payments are entered by hand. To be confirmed by sir (needs a Razorpay account).', '0', 'bool', NULL, 1, 20),
   ('notify_email', 'Notifications', 'E-mail customers (order confirmed, dispatched, delivered)', 'Through the mail outbox, in the customer''s language.', '1', 'bool', NULL, 0, 10),
   ('notify_whatsapp', 'Notifications', 'WhatsApp messages', 'For later: needs a provider. To be confirmed by sir.', '0', 'bool', NULL, 1, 20),
@@ -69,7 +69,9 @@ INSERT IGNORE INTO commerce_settings (setting_key, grp, label, help, value, valu
   ('approve_goodwill_credit', 'Approvals', 'Manual (goodwill) wallet credit needs approval', NULL, '1', 'bool', NULL, 0, 70),
   ('approve_credit_raise', 'Approvals', 'Raising a customer''s credit limit needs approval', NULL, '1', 'bool', NULL, 0, 80),
   ('approve_price_below_on', 'Approvals', 'A price below the price list needs approval', NULL, '1', 'bool', NULL, 0, 90),
-  ('approve_price_below_pct', 'Approvals', 'Below the list by more than (%)', NULL, '5', 'decimal', NULL, 0, 91);
+  ('approve_price_below_pct', 'Approvals', 'Below the list by more than (%)', NULL, '5', 'decimal', NULL, 0, 91),
+  ('approve_over_available', 'Approvals', 'Ordering more than the available stock (override) needs approval', 'Only a role with "approve" on Orders can ask for the override; off = the override is saved at once.', '1', 'bool', NULL, 0, 100),
+  ('approve_credit_order', 'Approvals', 'A new order for a customer over the credit limit or with overdue invoices needs approval', NULL, '1', 'bool', NULL, 0, 110);
 
 CREATE TABLE IF NOT EXISTS customer_types (
   type_key              VARCHAR(20)   NOT NULL,

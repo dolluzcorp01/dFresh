@@ -432,6 +432,25 @@ td.a-pending { background: #fff8e1; box-shadow: inset 3px 0 0 #e3b44f; }
 .a-orderlines small { display: block; }
 .a-price { width: 10ch; }
 .a-ok { color: #1e5e2c; }
+/* Orders: overdue badge, addresses, payments, history */
+.a-overdue { display: inline-block; margin-inline-start: 6px; padding: 1px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 700; background: #b3261e; color: #fff; }
+.a-ostatus-approval { background: #fff3cd; color: #6b4e00; }
+.a-ostatus-cancelled { background: #eee; color: #5b5850; text-decoration: line-through; }
+.a-pay { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+.a-pay-unpaid { background: #fbeceb; color: #7a1a14; }
+.a-pay-partly_paid { background: #fff3cd; color: #6b4e00; }
+.a-pay-paid { background: #e3f4e6; color: #1e5e2c; }
+.a-pay-refunded { background: #eee; color: #5b5850; }
+.a-addr { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin: 10px 0; }
+.a-addr .a-card { margin: 0; padding: 12px; }
+.a-addr h4 { margin: 0 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--a-ink2); }
+.a-gst { margin: 6px 0 12px; font-weight: 600; }
+.a-filters { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin-bottom: 12px; }
+.a-filters label { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; }
+.a-hist { list-style: none; padding: 0; margin: 0; }
+.a-hist li { padding: 4px 0; border-bottom: 1px dashed var(--a-line); font-size: 13px; }
+.a-avail { display: block; font-size: 12px; }
+.a-avail.a-bad { font-weight: 700; }
 /* Products and prices: grid, missing badge, save bar */
 .a-pricegrid td, .a-pricegrid th { vertical-align: top; }
 .a-pricegrid .a-pricecell { min-width: 96px; }
