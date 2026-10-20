@@ -21,6 +21,7 @@ import Brochures from './Brochures';
 import CommerceSkus from './CommerceSkus';
 import CommerceStock from './CommerceStock';
 import CommerceOrders from './CommerceOrders';
+import CommerceReturns from './CommerceReturns';
 import Settings from './Settings';
 import Users from './Users';
 import AuditLog from './AuditLog';
@@ -149,6 +150,7 @@ export default function AdminApp() {
             <Route path="commerce/skus" element={<CommerceSkus />} />
             <Route path="commerce/stock" element={<CommerceStock />} />
             <Route path="commerce/orders" element={<CommerceOrders />} />
+            <Route path="commerce/returns" element={<CommerceReturns />} />
             <Route path="settings" element={<Settings />} />
             <Route path="users" element={<Users />} />
             <Route path="audit" element={<AuditLog />} />

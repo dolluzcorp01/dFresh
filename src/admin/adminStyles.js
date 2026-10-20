@@ -432,6 +432,8 @@ td.a-pending { background: #fff8e1; box-shadow: inset 3px 0 0 #e3b44f; }
 .a-orderlines small { display: block; }
 .a-price { width: 10ch; }
 .a-ok { color: #1e5e2c; }
+/* Commerce demo: returns */
+.a-returnform { margin-top: 14px; }
 /* Excel import: before / after values wrap (long text, Tamil / Hindi keep their shaping via the cell's lang) */
 .a-difftable td { vertical-align: top; }
 .a-difftable td:nth-child(3), .a-difftable td:nth-child(4) { min-width: 160px; max-width: 440px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }

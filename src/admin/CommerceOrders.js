@@ -5,6 +5,7 @@
 import { useMemo, useState } from 'react';
 import { api } from './adminApi';
 import { Drawer, InfoCard, Loading, fmtDate, useAction, useCan, useConfirm, useLoad } from './ui';
+import { ReturnForm, ReturnsTable } from './CommerceReturns';
 
 const FLOW = ['new', 'packed', 'dispatched', 'delivered'];
 const LABEL = { new: 'New', packed: 'Packed', dispatched: 'Dispatched', delivered: 'Delivered' };
@@ -109,6 +110,8 @@ export default function CommerceOrders() {
 
 function OrderDrawer({ no, canEdit, onClose, onChanged }) {
   const o = useLoad(`/commerce/orders/${no}`);
+  const rets = useLoad(`/commerce/returns?order=${no}`);
+  const [returning, setReturning] = useState(false);
   const act = useAction();
   const confirm = useConfirm();
   const d = o.data;
@@ -126,6 +129,7 @@ function OrderDrawer({ no, canEdit, onClose, onChanged }) {
         <>
           <button type="button" className="a-btn a-btn-ghost" onClick={() => { if (!printInvoice(d)) act.setMsg({ kind: 'error', text: 'Allow pop-ups to open the invoice.' }); }}>GST invoice</button>
           {canEdit && next && <button type="button" className="a-btn" disabled={act.busy} onClick={advance}>{NEXT_BTN[d.status]}</button>}
+          {canEdit && d.status === 'delivered' && !returning && <button type="button" className="a-btn" onClick={() => setReturning(true)}>Return items</button>}
         </>
       ) : null}>
       <Loading state={o}>
@@ -146,6 +150,11 @@ function OrderDrawer({ no, canEdit, onClose, onChanged }) {
               <tbody>{d.items.map((i) => <tr key={i.sku_code}><td><code>{i.sku_code}</code></td><td>{i.name}</td><td className="a-num">{i.qty}</td><td className="a-num">{rs(i.price)}</td><td className="a-num">{rs(i.qty * i.price)}</td></tr>)}</tbody>
             </table>
             <Totals t={{ subtotal: d.subtotal, discount: d.discount, coupon: d.coupon_code, gst: d.gst, walletUsed: d.wallet_used, total: d.total }} />
+            {returning && (
+              <ReturnForm order={d} onCancel={() => setReturning(false)}
+                onDone={(r) => { setReturning(false); rets.reload(); onChanged(); act.setMsg({ kind: 'ok', text: `${r.return_no} saved: ${r.outcome === 'wallet' ? `Rs ${r.amount} to the wallet` : r.outcome === 'replacement' ? `replacement order ${r.replacement_no}` : `refund Rs ${r.amount} (demo)`}` }); }} />
+            )}
+            {rets.data && rets.data.length > 0 && <><h3>Returns</h3><ReturnsTable rows={rets.data} compact /></>}
           </>
         )}
       </Loading>

@@ -1491,6 +1491,31 @@ route('post', '/commerce/orders/:no/status', 'editor', async (req) => {
   } catch (e) { throw asInput(e); }
 });
 
+// Returns (commerce_04_returns.sql)
+route('post', '/commerce/orders/:no/returns', 'editor', async (req) => {
+  try {
+    return await tx(async (q) => {
+      const r = await commerce.createReturn(q, req.params.no, req.body, by(req));
+      await audit(q, { empId: by(req), action: 'create', entity: 'return', entityId: r.return_no, after: { order: req.params.no, amount: r.amount, outcome: r.outcome } });
+      return r;
+    });
+  } catch (e) { throw asInput(e); }
+});
+
+route('get', '/commerce/returns', 'viewer', async (req) => {
+  const order = typeof req.query.order === 'string' && req.query.order ? req.query.order : null;
+  const [rows] = await db.query(
+    `SELECT r.return_no, r.reason, r.outcome, r.amount, r.created_at, r.emp_id, o.order_no, c.name AS customer, ro.order_no AS replacement_no,
+            GROUP_CONCAT(CONCAT(ri.qty, ' x ', ri.sku_code, IF(ri.item_check = 'ok', ' (R)', ' damaged')) ORDER BY ri.sku_code SEPARATOR ', ') AS items
+       FROM returns r JOIN orders o ON o.order_id = r.order_id JOIN customers c ON c.customer_id = o.customer_id
+       LEFT JOIN orders ro ON ro.order_id = r.replacement_order_id
+       LEFT JOIN return_items ri ON ri.return_id = r.return_id
+      ${order ? 'WHERE o.order_no = ?' : ''}
+      GROUP BY r.return_id ORDER BY r.return_id DESC`, order ? [order] : []
+  );
+  return rows.map((r) => ({ ...r, outcome_label: commerce.OUTCOMES[r.outcome] }));
+});
+
 router.use('/admin', (err, req, res, next) => { // eslint-disable-line no-unused-vars
   if (err instanceof InputError || err instanceof media.UploadError) {
     return res.status(err.status).json({ success: false, message: err.message, ...(err.code ? { code: err.code } : {}) });

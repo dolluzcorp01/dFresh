@@ -125,4 +125,61 @@ async function advanceOrder(q, orderNo, to, empId) {
   return next;
 }
 
-module.exports = { ORDER_FLOW, PAYMENTS, CommerceError, createOrder, advanceOrder, couponDiscount, walletBalance, totals, istYear };
+const OUTCOMES = { wallet: 'Refund to wallet', refund: 'Refund to payment (demo)', replacement: 'Replacement' };
+
+/**
+ * Return on a DELIVERED order. data = { items: [{ sku_code, qty, item_check: 'ok' | 'damaged' }], reason, outcome }.
+ * Stock: ok -> Returned (R), damaged -> Damaged. Amount = the paid value of those packs (after discount, with GST).
+ */
+async function createReturn(q, orderNo, data, empId) {
+  const [[o]] = await q.query('SELECT order_id, order_no, customer_id, status, subtotal, discount FROM orders WHERE order_no = ? FOR UPDATE', [orderNo]);
+  if (!o) throw new CommerceError(`No order ${orderNo}`, 404);
+  if (o.status !== 'delivered') throw new CommerceError(`${orderNo} is ${o.status}: only a delivered order can be returned`, 409);
+  if (!OUTCOMES[data.outcome]) throw new CommerceError('Choose the outcome: refund to wallet, refund (demo) or replacement');
+  const reason = String(data.reason || '').trim().slice(0, 255);
+  if (!reason) throw new CommerceError('Give the reason for the return');
+  const [ordered] = await q.query('SELECT sku_code, qty, price, gst_rate FROM order_items WHERE order_id = ?', [o.order_id]);
+  const [already] = await q.query('SELECT ri.sku_code, SUM(ri.qty) AS qty FROM return_items ri JOIN returns r ON r.return_id = ri.return_id WHERE r.order_id = ? GROUP BY ri.sku_code', [o.order_id]);
+  const back = new Map(already.map((a) => [a.sku_code, Number(a.qty)]));
+  const lines = (Array.isArray(data.items) ? data.items : [])
+    .map((i) => ({ sku_code: String(i.sku_code || ''), qty: Number(i.qty), item_check: i.item_check === 'damaged' ? 'damaged' : 'ok' }))
+    .filter((i) => i.qty > 0);
+  if (!lines.length) throw new CommerceError('Choose at least one pack to return');
+  const share = Number(o.subtotal) ? (Number(o.subtotal) - Number(o.discount)) / Number(o.subtotal) : 0;
+  let amount = 0;
+  const per = new Map();
+  for (const l of lines) {
+    const it = ordered.find((x) => x.sku_code === l.sku_code);
+    if (!it || !Number.isInteger(l.qty)) throw new CommerceError(`${l.sku_code} is not in ${orderNo}`);
+    per.set(l.sku_code, (per.get(l.sku_code) || 0) + l.qty);
+    if (per.get(l.sku_code) + (back.get(l.sku_code) || 0) > it.qty) {
+      throw new CommerceError(`${l.sku_code}: ${it.qty} ordered, ${back.get(l.sku_code) || 0} already returned`);
+    }
+    amount += l.qty * Number(it.price) * share * (1 + Number(it.gst_rate) / 100);
+  }
+  amount = round2(amount);
+  const yr = istYear();
+  await q.query('INSERT INTO return_counters (yr, last_no) VALUES (?, 1) ON DUPLICATE KEY UPDATE last_no = last_no + 1', [yr]);
+  const [[ctr]] = await q.query('SELECT last_no FROM return_counters WHERE yr = ?', [yr]);
+  const returnNo = `DFR-${String(yr).padStart(2, '0')}${String(ctr.last_no).padStart(4, '0')}`;
+  const [ins] = await q.query('INSERT INTO returns (return_no, order_id, reason, outcome, amount, emp_id) VALUES (?, ?, ?, ?, ?, ?)',
+    [returnNo, o.order_id, reason, data.outcome, amount, empId]);
+  for (const l of lines) {
+    await q.query('INSERT INTO return_items (return_id, sku_code, qty, item_check) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE qty = qty + VALUES(qty)',
+      [ins.insertId, l.sku_code, l.qty, l.item_check]);
+    await q.query("INSERT INTO stock_movements (sku_code, move_type, stock_kind, delta, note, emp_id) VALUES (?, 'return', ?, ?, ?, ?)",
+      [l.sku_code, l.item_check === 'ok' ? 'returned' : 'damaged', l.qty, `${returnNo} on ${orderNo}: ${reason}`.slice(0, 255), empId]);
+  }
+  let replacement = null;
+  if (data.outcome === 'wallet') {
+    await q.query('INSERT INTO wallet_entries (customer_id, amount, reason, order_id, emp_id) VALUES (?, ?, ?, ?, ?)',
+      [o.customer_id, amount, `Refund ${returnNo} (${orderNo})`, o.order_id, empId]);
+  } else if (data.outcome === 'replacement') {
+    const items = [...per.entries()].map(([sku, qty]) => ({ sku_code: sku, qty, price: 0 }));
+    replacement = await createOrder(q, { customer_id: o.customer_id, items, payment: 'cod', note: `Replacement for ${returnNo} (${orderNo})` }, empId);
+    await q.query('UPDATE returns SET replacement_order_id = ? WHERE return_id = ?', [replacement.order_id, ins.insertId]);
+  }
+  return { return_no: returnNo, amount, outcome: data.outcome, replacement_no: replacement ? replacement.order_no : null };
+}
+
+module.exports = { ORDER_FLOW, PAYMENTS, OUTCOMES, CommerceError, createOrder, advanceOrder, createReturn, couponDiscount, walletBalance, totals, istYear };
