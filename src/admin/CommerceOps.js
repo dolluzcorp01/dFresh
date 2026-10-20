@@ -23,7 +23,7 @@ export default function CommerceOps() {
       <InfoCard title="Commerce demo - today at a glance">
         <ul>
           <li>Click a card to open the list behind it.</li>
-          <li>To pack = New orders; to dispatch = Packed orders (dispatching takes the stock out).</li>
+          <li>To pick = New orders; to pack = Packing; then trips, couriers and pickups (the goods leave the godown with the invoice).</li>
         </ul>
       </InfoCard>
       <Loading state={ops}>
@@ -37,8 +37,12 @@ export default function CommerceOps() {
             )}
             <div className="a-stats">
               {d.today && <Card to="/admin/commerce/orders" value={d.today.n} label="orders today" sub={rs(d.today.value)} />}
-              {d.toPack !== null && <Card to="/admin/commerce/orders?status=new" value={d.toPack} label="to pack" bad={d.toPack > 0} />}
-              {d.toDispatch !== null && <Card to="/admin/commerce/orders?status=packed" value={d.toDispatch} label="to dispatch" bad={d.toDispatch > 0} />}
+              {d.packing && <Card to="/admin/commerce/packing" value={d.packing.toPick} label="to pick" bad={d.packing.toPick > 0} />}
+              {d.packing && <Card to="/admin/commerce/packing" value={d.packing.toPack} label="to pack (packing)" bad={d.packing.toPack > 0} />}
+              {d.delivery && <Card to="/admin/commerce/delivery" value={d.delivery.waitingTrip} label="packed, waiting for a trip" sub={d.delivery.waitingOther ? `+ ${d.delivery.waitingOther} for courier / pickup` : null} />}
+              {d.delivery && <Card to="/admin/commerce/orders?status=out_for_delivery" value={d.delivery.outNow} label="out for delivery" sub={d.delivery.withCourier ? `+ ${d.delivery.withCourier} with couriers` : null} />}
+              {d.delivery && <Card to="/admin/commerce/delivery" value={d.delivery.failed} label="failed deliveries" bad={d.delivery.failed > 0} />}
+              {d.delivery && <Card to="/admin/commerce/delivery" value={rs(d.delivery.codDue)} label="COD cash to collect" sub={d.delivery.cashOnTrips ? `${rs(d.delivery.cashOnTrips)} collected on trips out now` : null} />}
               {d.lowStock && <Card to="/admin/commerce/stock?tab=reorder" value={d.lowStock.length} label="below reorder level" bad={d.lowStock.length > 0} />}
               {d.openReturns !== null && <Card to="/admin/commerce/returns" value={d.openReturns} label="open returns" sub="replacement not delivered" />}
               {d.walletGiven && <Card to="/admin/commerce/customers" value={rs(d.walletGiven.total)} label="wallet credit given" sub={`cashback ${rs(d.walletGiven.cashback)}, refunds ${rs(d.walletGiven.refunds)}`} />}

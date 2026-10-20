@@ -153,11 +153,37 @@ async function stockIn(q, data, empId, opts = {}) {
 }
 
 // ---------------------------------------------------------------- dispatch (FEFO) and goods back
-/** take an order's packs out of good stock: batch-tracked SKUs earliest expiry first, never expired -> [{ sku_code, batch_no, expiry_date, qty }] */
+/**
+ * take an order's packs out of good stock -> [{ sku_code, batch_no, expiry_date, qty }]. The batches picked at packing
+ * (order_picks) when there are any and they are still there and not expired; else earliest expiry first, never expired.
+ */
 async function dispatchOut(q, orderId, orderNo, empId) {
   const [items] = await q.query('SELECT sku_code, qty FROM order_items WHERE order_id = ? ORDER BY sku_code', [orderId]);
   const tr = await tracked(q, items.map((i) => i.sku_code));
+  const [picked] = await q.query('SELECT sku_code, batch_id, qty FROM order_picks WHERE order_id = ? ORDER BY pick_id', [orderId]);
   const plan = [];
+  if (picked.length) {
+    let ok = true;
+    for (const pk of picked.filter((x) => x.batch_id)) {
+      const b = (await batchStock(q, pk.sku_code)).find((x) => x.batch_id === pk.batch_id);
+      if (!b || b.expired || b.qty < pk.qty) ok = false;
+    }
+    const sums = new Map();
+    picked.forEach((pk) => sums.set(pk.sku_code, (sums.get(pk.sku_code) || 0) + pk.qty));
+    if (ok && items.every((i) => sums.get(i.sku_code) === i.qty)) {
+      for (const pk of picked) {
+        await q.query('SELECT sku_code FROM skus WHERE sku_code = ? FOR UPDATE', [pk.sku_code]);
+        if (!pk.batch_id) {
+          const [[st]] = await q.query("SELECT COALESCE(SUM(delta), 0) AS n FROM stock_movements WHERE sku_code = ? AND stock_kind = 'good'", [pk.sku_code]);
+          if (Number(st.n) < pk.qty) throw new StockError(`Not enough ${pk.sku_code} in the godown: ${Number(st.n)} good, ${pk.qty} needed`, 409);
+        }
+        const [[b]] = pk.batch_id ? await q.query("SELECT batch_no, DATE_FORMAT(expiry_date, '%Y-%m-%d') AS expiry_date FROM batches WHERE batch_id = ?", [pk.batch_id]) : [[{}]];
+        plan.push({ sku_code: pk.sku_code, batch_id: pk.batch_id, batch_no: b.batch_no, expiry_date: b.expiry_date, qty: pk.qty });
+      }
+      for (const p of plan) await move(q, { sku: p.sku_code, type: 'out', delta: -p.qty, batchId: p.batch_id, refType: 'order', refId: orderNo, note: `Dispatched ${orderNo}` }, empId);
+      return plan.map((p) => ({ sku_code: p.sku_code, batch_no: p.batch_no || null, expiry_date: p.expiry_date || null, qty: p.qty }));
+    }
+  }
   for (const i of items) {
     await q.query('SELECT sku_code FROM skus WHERE sku_code = ? FOR UPDATE', [i.sku_code]);
     if (!tr.has(i.sku_code)) {

@@ -3,9 +3,14 @@
 // 20261020_commerce_sales.sql (orders, lines, history, reservations, payments, invoices); customers, coupons, wallet,
 // stock movements and returns are still the demo tables (database/demo) until their phases.
 //
-// Status: approval (waiting for one or more approvals) -> new (confirmed) -> packed -> dispatched -> delivered;
-// cancelled from any status before delivered (after dispatch only through an approval, Commerce setting).
-// Edit: approval / new = everything except the customer; packed = with a reason; dispatched and later = never.
+// Status: approval (waiting for one or more approvals) -> new (confirmed) -> packing -> packed, then by the delivery
+// method: own vehicle -> out_for_delivery (trip) -> delivered | failed; courier -> with_courier -> delivered; customer
+// pickup -> delivered (phase 5, delivery.js). The goods leave the godown once (leaveGodown: stock out by the picked
+// batches, tax invoice, dispatched_at). Cancelled from any status before delivered (after the goods left only through
+// an approval, Commerce setting). Edit: approval / new = everything except the customer; packing / packed = with a
+// reason; once the goods left = never.
+// Delivery charge: the delivery area of the shipping address (PIN code or town, Commerce settings > Delivery areas),
+// free above the area's amount, nothing for customer pickup; taxed at the Commerce setting rate, on the invoice.
 // Every edit sends the version it read: another change in between answers "This order changed, reload".
 //
 // Money (per line): taxable = qty x price less its share of the coupon; CGST + SGST (half the rate each) when the
@@ -34,14 +39,17 @@ const { audit } = require('./audit');
 const { checkSetting } = require('../shared/settingRules');
 const { isStateCode, stateName } = require('../shared/gstStates');
 
-const ORDER_FLOW = ['new', 'packed', 'dispatched', 'delivered'];
-const STATUS_LABEL = { approval: 'Waiting for approval', new: 'New', packed: 'Packed', dispatched: 'Dispatched', delivered: 'Delivered', cancelled: 'Cancelled' };
+const STATUS_LABEL = {
+  approval: 'Waiting for approval', new: 'New', packing: 'Packing', packed: 'Packed', out_for_delivery: 'Out for delivery', with_courier: 'Handed to courier',
+  failed: 'Delivery failed', delivered: 'Delivered', cancelled: 'Cancelled',
+};
+const GONE = ['out_for_delivery', 'with_courier', 'failed']; // the goods have left the godown
 const HELD = { approval: 'is waiting for approval', cancelled: 'is cancelled' };
 const TERMS = { cod: 'Pay on delivery', advance: 'Paid in advance', credit: 'On credit' };
 const MODES = { cash: 'Cash', upi: 'UPI', bank: 'Bank transfer', cheque: 'Cheque', razorpay: 'Razorpay (manual)' };
 const PAYMENT_STATUS = { unpaid: 'Unpaid', partly_paid: 'Part paid', paid: 'Paid', refunded: 'Refunded' };
 const HOLD_KINDS = ['price_below_list', 'over_available', 'credit_order'];
-const EDITABLE = { approval: 'free', new: 'free', packed: 'reason' };
+const EDITABLE = { approval: 'free', new: 'free', packing: 'reason', packed: 'reason' };
 const round2 = (n) => Math.round(n * 100) / 100;
 // An invoice is overdue when its order still owes money after the due date (issue day + the credit days); a pay-on-
 // delivery order only once it is delivered. SQL with i = invoices, o = orders.
@@ -82,7 +90,7 @@ async function couponDiscount(q, code, subtotal, { lock = false, ownUse = false 
  * Line tax and order totals. lines: [{ qty, price, gst_rate }] (price before GST). gstType 'intra' | 'inter'.
  * -> { lines (with taxable, cgst, sgst, igst, line_total), subtotal, discount, taxable, cgst, sgst, igst, gst, round_off, total }
  */
-function taxTotals(lines, discount, gstType, roundOff) {
+function taxTotals(lines, discount, gstType, roundOff, delivery = { charge: 0, rate: 18 }) {
   const subtotal = round2(lines.reduce((a, i) => a + i.qty * i.price, 0));
   const disc = round2(Math.min(discount || 0, subtotal));
   const share = subtotal ? (subtotal - disc) / subtotal : 0;
@@ -93,12 +101,35 @@ function taxTotals(lines, discount, gstType, roundOff) {
     return { ...i, taxable, cgst: half, sgst: half, igst, line_total: round2(taxable + 2 * half + igst) };
   });
   const sum = (k) => round2(out.reduce((a, i) => a + i[k], 0));
-  const taxable = sum('taxable');
-  const [cgst, sgst, igst] = [sum('cgst'), sum('sgst'), sum('igst')];
+  const dc = round2(Number(delivery.charge) || 0);
+  const dHalf = gstType === 'intra' ? round2((dc * delivery.rate) / 200) : 0;
+  const dIgst = gstType === 'inter' ? round2((dc * delivery.rate) / 100) : 0;
+  const taxable = round2(sum('taxable') + dc);
+  const [cgst, sgst, igst] = [round2(sum('cgst') + dHalf), round2(sum('sgst') + dHalf), round2(sum('igst') + dIgst)];
   const gst = round2(cgst + sgst + igst);
   const before = round2(taxable + gst);
   const ro = roundOff ? round2(Math.round(before) - before) : 0;
-  return { lines: out, subtotal, discount: disc, taxable, cgst, sgst, igst, gst, round_off: ro, total: round2(before + ro) };
+  return { lines: out, subtotal, discount: disc, delivery_charge: dc, delivery_gst: round2(2 * dHalf + dIgst), taxable, cgst, sgst, igst, gst, round_off: ro, total: round2(before + ro) };
+}
+
+/** an active delivery method (the first own-vehicle one when id is null) */
+async function deliveryMethod(q, id) {
+  const [rows] = await q.query('SELECT method_id, label, kind FROM delivery_methods WHERE is_active = 1 ORDER BY sort_order, method_id');
+  if (id === null || id === undefined) return rows.find((m) => m.kind === 'own') || rows[0] || null;
+  return rows.find((m) => m.method_id === Number(id)) || null;
+}
+
+/** the delivery area of an address (PIN code first, then town; or the one chosen) and its charge for this goods value */
+async function deliveryCharge(q, ship, goodsValue, areaId = null) {
+  const [areas] = await q.query('SELECT area_id, label, towns, charge, free_above FROM delivery_areas WHERE is_active = 1 ORDER BY sort_order, area_id');
+  const words = (a) => String(a.towns || '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+  let area = null;
+  if (areaId) area = areas.find((a) => a.area_id === areaId) || null;
+  if (!area && ship.pincode) area = areas.find((a) => words(a).includes(String(ship.pincode))) || null;
+  if (!area && ship.town) area = areas.find((a) => words(a).includes(String(ship.town).trim().toLowerCase())) || null;
+  if (!area) return { area: null, charge: 0 };
+  const free = area.free_above !== null && goodsValue >= Number(area.free_above);
+  return { area: { area_id: area.area_id, label: area.label, charge: Number(area.charge), free_above: area.free_above === null ? null : Number(area.free_above), free }, charge: free ? 0 : Number(area.charge) };
 }
 
 /** an address from the admin (or the customer) -> { values, error } */
@@ -221,7 +252,15 @@ async function prepare(q, data, opts = {}) {
   const sub = round2(lines.reduce((a, i) => a + i.qty * i.price, 0));
   const ownCoupon = Boolean(editing && coupon && editing.coupon_code === coupon);
   const discount = coupon ? await couponDiscount(q, coupon, sub, { lock: true, ownUse: ownCoupon }) : 0;
-  const t = taxTotals(lines, discount, gstType, settings.invoice_round_off);
+
+  // delivery method, area and charge
+  const methodId = data.delivery_method_id !== undefined && data.delivery_method_id !== '' ? Number(data.delivery_method_id) : editing ? editing.delivery_method_id : null;
+  const method = await deliveryMethod(q, methodId);
+  if (!method) throw new CommerceError('Choose the delivery method');
+  const areaWanted = data.delivery_area_id !== undefined ? data.delivery_area_id : editing ? editing.delivery_area_id : '';
+  const delivery = method.kind === 'pickup' ? { area: null, charge: 0 } : await deliveryCharge(q, ship.values, round2(sub - discount), areaWanted === '' || areaWanted === null ? null : Number(areaWanted));
+  if (opts.replacement) delivery.charge = 0;
+  const t = taxTotals(lines, discount, gstType, settings.invoice_round_off, { charge: delivery.charge, rate: Number(settings.delivery_charge_gst_rate) || 0 });
   const wantWallet = round2(Math.max(0, Number(data.wallet_use) || 0));
   if (wantWallet > 0) {
     const bal = (await walletBalance(q, customerId)) + (editing ? Number(editing.wallet_used) : 0);
@@ -254,7 +293,7 @@ async function prepare(q, data, opts = {}) {
       if (reasons.length && await approvals.needed(q, 'credit_order')) holds.push({ kind: 'credit_order', amount: round2(outstanding + thisDue), what: reasons.join('; ') });
     }
   }
-  return { cust, list, terms, creditDays: Number(cust.credit_days) || 0, lines: t.lines, totals: t, coupon, walletUsed, bill: bill.values, ship: ship.values, pos, gstType, holds, settings };
+  return { cust, list, terms, creditDays: Number(cust.credit_days) || 0, lines: t.lines, totals: t, coupon, walletUsed, bill: bill.values, ship: ship.values, pos, gstType, holds, settings, method, area: delivery.area };
 }
 
 async function history(q, orderId, from, to, note, empId) {
@@ -270,7 +309,33 @@ async function reserve(q, orderId) {
   const [items] = await q.query('SELECT sku_code, qty FROM order_items WHERE order_id = ? ORDER BY sku_code', [orderId]);
   for (const i of items) await q.query('INSERT INTO stock_reservations (order_id, sku_code, qty) VALUES (?, ?, ?)', [orderId, i.sku_code, i.qty]);
 }
-const reservesNow = (status, settings) => (status === 'new' && settings.stock_reserve_at !== 'packing') || status === 'packed';
+const reservesNow = (status, settings) => (status === 'new' && settings.stock_reserve_at !== 'packing') || status === 'packing' || status === 'packed';
+
+/** pick an order's SKUs: batch-tracked ones by batch, earliest expiry first, leaving out what other open orders picked */
+async function pickFor(q, orderId) {
+  await q.query('DELETE FROM order_picks WHERE order_id = ?', [orderId]);
+  const [items] = await q.query('SELECT sku_code, qty FROM order_items WHERE order_id = ? ORDER BY sku_code', [orderId]);
+  const tr = await stock.tracked(q, items.map((i) => i.sku_code));
+  const picks = [];
+  for (const i of items) {
+    if (!tr.has(i.sku_code)) { picks.push({ sku_code: i.sku_code, batch_id: null, qty: i.qty }); continue; }
+    const [taken] = await q.query(
+      `SELECT pk.batch_id, SUM(pk.qty) AS qty FROM order_picks pk JOIN orders o ON o.order_id = pk.order_id
+        WHERE pk.sku_code = ? AND o.status IN ('packing', 'packed') AND o.dispatched_at IS NULL AND o.order_id <> ? GROUP BY pk.batch_id`, [i.sku_code, orderId]);
+    const used = new Map(taken.map((t) => [t.batch_id, Number(t.qty)]));
+    let left = i.qty;
+    for (const b of (await stock.batchStock(q, i.sku_code)).filter((x) => x.qty > 0 && !x.expired)) {
+      const free = b.qty - (used.get(b.batch_id) || 0);
+      if (free <= 0 || !left) continue;
+      const take = Math.min(free, left);
+      picks.push({ sku_code: i.sku_code, batch_id: b.batch_id, qty: take });
+      left -= take;
+    }
+    if (left) throw new CommerceError(`Not enough ${i.sku_code} in batches that have not expired to pick ${i.qty} (${left} short)`, 409);
+  }
+  for (const pk of picks) await q.query('INSERT INTO order_picks (order_id, sku_code, batch_id, qty) VALUES (?, ?, ?, ?)', [orderId, pk.sku_code, pk.batch_id, pk.qty]);
+  return picks;
+}
 
 /** recompute amount_paid, amount_due and payment_status of an order */
 async function refreshPayment(q, orderId) {
@@ -339,13 +404,13 @@ async function createOrder(q, data, empId, opts = {}) {
   const orderNo = `${p.settings.order_prefix}-${yy}${numbering.pad(await numbering.next(q, `${p.settings.order_prefix}-${yy}`, 1))}`;
   const status = p.holds.length ? 'approval' : 'new';
   const [ins] = await q.query(
-    `INSERT INTO orders (order_no, customer_id, price_list, status, payment_terms, credit_days,
+    `INSERT INTO orders (order_no, customer_id, price_list, status, payment_terms, credit_days, delivery_method_id, delivery_kind, delivery_area_id,
        bill_name, bill_gstin, bill_address, bill_town, bill_state_code, bill_pincode, bill_phone,
        ship_name, ship_address, ship_town, ship_state_code, ship_pincode, ship_phone, place_of_supply, gst_type,
-       coupon_code, subtotal, discount, taxable, cgst, sgst, igst, gst, round_off, total, wallet_used, amount_due, note, emp_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [orderNo, p.cust.customer_id, p.list.key, status, p.terms, p.creditDays, ...addrCols(p), p.pos, p.gstType,
-      p.coupon, t.subtotal, t.discount, t.taxable, t.cgst, t.sgst, t.igst, t.gst, t.round_off, t.total, p.walletUsed, round2(t.total - p.walletUsed),
+       coupon_code, subtotal, discount, delivery_charge, delivery_gst, taxable, cgst, sgst, igst, gst, round_off, total, wallet_used, amount_due, note, emp_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [orderNo, p.cust.customer_id, p.list.key, status, p.terms, p.creditDays, p.method.method_id, p.method.kind, p.area ? p.area.area_id : null, ...addrCols(p), p.pos, p.gstType,
+      p.coupon, t.subtotal, t.discount, t.delivery_charge, t.delivery_gst, t.taxable, t.cgst, t.sgst, t.igst, t.gst, t.round_off, t.total, p.walletUsed, round2(t.total - p.walletUsed),
       data.note ? String(data.note).slice(0, 255) : null, empId]
   );
   const orderId = ins.insertId;
@@ -359,11 +424,11 @@ async function createOrder(q, data, empId, opts = {}) {
   if (status === 'new') await confirmed(q, orderId, empId, p.settings);
   await refreshPayment(q, orderId);
   await audit(q, { empId, action: 'create', entity: 'order', entityId: orderNo,
-    after: { customer: p.cust.name, status, total: t.total, price_list: p.list.key, gst_type: p.gstType, terms: p.terms, lines: p.lines.map((i) => `${i.qty} x ${i.sku_code} @ ${i.price}`), holds: p.holds.map((h) => h.kind) } });
+    after: { customer: p.cust.name, status, total: t.total, price_list: p.list.key, gst_type: p.gstType, terms: p.terms, delivery: p.method.label, delivery_charge: t.delivery_charge, lines: p.lines.map((i) => `${i.qty} x ${i.sku_code} @ ${i.price}`), holds: p.holds.map((h) => h.kind) } });
   return { order_id: orderId, order_no: orderNo, status, held: status === 'approval', approvals: ids, price_list: p.list.label, gst_type: p.gstType, ...t, walletUsed: p.walletUsed };
 }
 
-const ORDER_COLS = `order_id, order_no, customer_id, status, payment_terms, credit_days, coupon_code, wallet_used, version, total,
+const ORDER_COLS = `order_id, order_no, customer_id, status, payment_terms, credit_days, delivery_method_id, delivery_area_id, coupon_code, wallet_used, version, total,
   bill_name, bill_gstin, bill_address, bill_town, bill_state_code, bill_pincode, bill_phone,
   ship_name, ship_address, ship_town, ship_state_code, ship_pincode, ship_phone`;
 
@@ -398,20 +463,23 @@ async function updateOrder(q, orderNo, data, empId, opts = {}) {
   // approvals: the old requests are withdrawn, the edit asks again for what it still needs
   await withdrawHolds(q, orderNo, 'Order edited: asked again if still needed');
   let status = o.status;
-  if (o.status !== 'packed') status = p.holds.length ? 'approval' : 'new';
+  if (!['packing', 'packed'].includes(o.status)) status = p.holds.length ? 'approval' : 'new';
+  if (o.status === 'packed') status = 'packing'; // the packer checks it again
   await q.query(
-    `UPDATE orders SET status = ?, payment_terms = ?,
+    `UPDATE orders SET status = ?, payment_terms = ?, delivery_method_id = ?, delivery_kind = ?, delivery_area_id = ?,
        bill_name = ?, bill_gstin = ?, bill_address = ?, bill_town = ?, bill_state_code = ?, bill_pincode = ?, bill_phone = ?,
        ship_name = ?, ship_address = ?, ship_town = ?, ship_state_code = ?, ship_pincode = ?, ship_phone = ?, place_of_supply = ?, gst_type = ?,
-       coupon_code = ?, subtotal = ?, discount = ?, taxable = ?, cgst = ?, sgst = ?, igst = ?, gst = ?, round_off = ?, total = ?, wallet_used = ?,
+       coupon_code = ?, subtotal = ?, discount = ?, delivery_charge = ?, delivery_gst = ?, taxable = ?, cgst = ?, sgst = ?, igst = ?, gst = ?, round_off = ?, total = ?, wallet_used = ?,
        note = ?, version = version + 1, updated_by = ?, updated_at = UTC_TIMESTAMP() WHERE order_id = ?`,
-    [status, p.terms, ...addrCols(p), p.pos, p.gstType, p.coupon, t.subtotal, t.discount, t.taxable, t.cgst, t.sgst, t.igst, t.gst, t.round_off, t.total, p.walletUsed,
+    [status, p.terms, p.method.method_id, p.method.kind, p.area ? p.area.area_id : null, ...addrCols(p), p.pos, p.gstType, p.coupon, t.subtotal, t.discount, t.delivery_charge, t.delivery_gst,
+      t.taxable, t.cgst, t.sgst, t.igst, t.gst, t.round_off, t.total, p.walletUsed,
       String(data.note || '').trim().slice(0, 255) || null, empId, o.order_id]
   );
   await requestHolds(q, orderNo, p.cust.name, p.holds, empId);
   if (status === 'approval') await release(q, o.order_id);
   else if (o.status === 'approval' && status === 'new') await confirmed(q, o.order_id, empId, p.settings);
   else if (reservesNow(status, p.settings)) await reserve(q, o.order_id);
+  if (status === 'packing') { await q.query('DELETE FROM pack_scans WHERE order_id = ?', [o.order_id]); await pickFor(q, o.order_id); } // picked and checked again
   // an invoice issued at confirm follows the edit: cancelled with a credit note, issued again
   const [[live]] = await q.query('SELECT invoice_no FROM invoices WHERE live_order_id = ?', [o.order_id]);
   if (live) { await invoices.cancelForOrder(q, o.order_id, `Order ${orderNo} edited`, empId); if (status !== 'approval') await invoices.issue(q, o.order_id, empId); }
@@ -431,7 +499,8 @@ async function doCancel(q, orderId, reason, empId) {
   await q.query("UPDATE orders SET status = 'cancelled', cancelled_at = UTC_TIMESTAMP(), cancel_reason = ?, version = version + 1, updated_by = ?, updated_at = UTC_TIMESTAMP() WHERE order_id = ?",
     [String(reason).slice(0, 255), empId, orderId]);
   await release(q, orderId);
-  if (o.status === 'dispatched') await stock.goodsBack(q, o.order_no, empId);
+  const [[gone]] = await q.query('SELECT dispatched_at FROM orders WHERE order_id = ?', [orderId]);
+  if (gone.dispatched_at) await stock.goodsBack(q, o.order_no, empId);
   const inv = await invoices.cancelForOrder(q, orderId, `Order ${o.order_no} cancelled: ${reason}`, empId);
   if (o.coupon_code) await q.query('UPDATE coupons SET used = GREATEST(used - 1, 0) WHERE code = ?', [o.coupon_code]);
   if (Number(o.wallet_used) > 0) {
@@ -445,7 +514,7 @@ async function doCancel(q, orderId, reason, empId) {
   return true;
 }
 
-/** Cancel (reason required). After dispatch: an approval request (Commerce setting) -> { pending, approval_id } */
+/** Cancel (reason required). Once the goods left the godown: an approval request (Commerce setting) -> { pending, approval_id } */
 async function cancelOrder(q, orderNo, reason, empId) {
   const why = String(reason || '').trim().slice(0, 255);
   if (!why) throw new CommerceError('Say why the order is cancelled');
@@ -453,7 +522,7 @@ async function cancelOrder(q, orderNo, reason, empId) {
   if (!o) throw new CommerceError(`No order ${orderNo}`, 404);
   if (o.status === 'cancelled') throw new CommerceError(`${orderNo} is already cancelled`, 409);
   if (o.status === 'delivered') throw new CommerceError(`${orderNo} is delivered: use Returns`, 409);
-  if (o.status === 'dispatched' && await approvals.needed(q, 'cancel_after_dispatch')) {
+  if (GONE.includes(o.status) && await approvals.needed(q, 'cancel_after_dispatch')) {
     const [[had]] = await q.query("SELECT approval_id FROM approvals WHERE kind = 'cancel_after_dispatch' AND ref_type = 'order' AND ref_id = ? AND status = 'pending'", [orderNo]);
     if (had) throw new CommerceError(`Cancelling ${orderNo} already waits for approval (request #${had.approval_id})`, 409);
     const [[c]] = await q.query('SELECT name FROM customers WHERE customer_id = ?', [o.customer_id]);
@@ -478,30 +547,30 @@ async function cashback(q, orderId, empId) {
   return amount;
 }
 
-/** One step on: new -> packed -> dispatched (stock out, invoice) -> delivered. -> { status, invoice_no } */
-async function advanceOrder(q, orderNo, to, empId, { at = null } = {}) {
-  const [[o]] = await q.query('SELECT order_id, order_no, status, version FROM orders WHERE order_no = ? FOR UPDATE', [orderNo]);
-  if (!o) throw new CommerceError(`No order ${orderNo}`, 404);
-  if (HELD[o.status]) throw new CommerceError(`${orderNo} ${HELD[o.status]}`, 409);
-  const next = ORDER_FLOW[ORDER_FLOW.indexOf(o.status) + 1];
-  if (!next || to !== next) throw new CommerceError(`${orderNo} is ${o.status}: the next step is ${next || 'none (delivered)'}`, 409);
-  const waiting = await pendingHolds(q, orderNo);
-  if (waiting.length) throw new CommerceError(`${orderNo} waits for approval (${waiting.map((w) => approvals.KINDS[w.kind].label).join(', ')})`, 409);
-  const settings = await commerceSettings.read(q);
-  let invoiceNo = null;
-  if (next === 'packed' && settings.stock_reserve_at === 'packing') await reserve(q, o.order_id);
-  let batchesOut = [];
-  if (next === 'dispatched') {
-    try { batchesOut = await stock.dispatchOut(q, o.order_id, orderNo, empId); } catch (e) { if (e instanceof stock.StockError) throw new CommerceError(e.message, e.status); throw e; }
-    await q.query("UPDATE stock_reservations SET status = 'consumed', closed_at = UTC_TIMESTAMP() WHERE order_id = ? AND status = 'active'", [o.order_id]);
-    invoiceNo = (await invoices.issue(q, o.order_id, empId, { at })).invoice_no;
-  }
-  await q.query(`UPDATE orders SET status = ?, ${next}_at = UTC_TIMESTAMP(), version = version + 1, updated_by = ?, updated_at = UTC_TIMESTAMP() WHERE order_id = ?`, [next, empId, o.order_id]);
-  const fromBatches = batchesOut.filter((b) => b.batch_no).map((b) => `${b.qty} x ${b.sku_code} batch ${b.batch_no}`).join(', ');
-  await history(q, o.order_id, o.status, next, [invoiceNo ? `Invoice ${invoiceNo}` : null, fromBatches ? `from ${fromBatches}` : null].filter(Boolean).join('; ') || null, empId);
-  if (next === 'delivered') await cashback(q, o.order_id, empId);
-  await audit(q, { empId, action: 'status', entity: 'order', entityId: orderNo, before: { status: o.status }, after: { status: next, invoice: invoiceNo } });
-  return { status: next, invoice_no: invoiceNo, batches: batchesOut.filter((b) => b.batch_no) };
+/**
+ * The goods leave the godown (trip started, courier hand-over, customer pickup): stock out by the picked batches,
+ * reservations consumed, tax invoice issued, dispatched_at set. Only once per order. -> { invoice_no, batches }
+ */
+async function leaveGodown(q, orderId, empId, { at = null } = {}) {
+  const [[o]] = await q.query('SELECT order_id, order_no, dispatched_at FROM orders WHERE order_id = ? FOR UPDATE', [orderId]);
+  if (o.dispatched_at) return { invoice_no: null, batches: [], already: true };
+  let batches;
+  try { batches = await stock.dispatchOut(q, o.order_id, o.order_no, empId); } catch (e) { if (e instanceof stock.StockError) throw new CommerceError(e.message, e.status); throw e; }
+  await q.query("UPDATE stock_reservations SET status = 'consumed', closed_at = UTC_TIMESTAMP() WHERE order_id = ? AND status = 'active'", [o.order_id]);
+  const inv = await invoices.issue(q, o.order_id, empId, { at });
+  await q.query('UPDATE orders SET dispatched_at = COALESCE(?, UTC_TIMESTAMP()) WHERE order_id = ?', [at, o.order_id]);
+  return { invoice_no: inv.invoice_no, batches: batches.filter((x) => x.batch_no) };
+}
+
+/** move an order to a status (the delivery steps in delivery.js) with its time stamp, history and audit */
+async function setStatus(q, o, to, empId, note = null, extra = {}) {
+  const stamp = { packing: 'packing_at', packed: 'packed_at', out_for_delivery: 'out_at', with_courier: 'courier_at', failed: 'failed_at', delivered: 'delivered_at' }[to];
+  const cols = Object.keys(extra);
+  await q.query(`UPDATE orders SET status = ?, ${stamp ? `${stamp} = UTC_TIMESTAMP(), ` : ''}${cols.map((c) => `${c} = ?, `).join('')}version = version + 1, updated_by = ?, updated_at = UTC_TIMESTAMP() WHERE order_id = ?`,
+    [to, ...Object.values(extra), empId, o.order_id]);
+  await history(q, o.order_id, o.status, to, note, empId);
+  await audit(q, { empId, action: 'status', entity: 'order', entityId: o.order_no, before: { status: o.status }, after: { status: to, note, ...extra } });
+  if (to === 'delivered') await cashback(q, o.order_id, empId);
 }
 
 /** payment modes offered (Commerce setting payment_methods, names from MODES) -> { key: label } */
@@ -548,7 +617,7 @@ async function holdApproved(q, p, empId) {
 }
 async function holdClosed(q, p, status, empId) {
   const [[o]] = await q.query('SELECT order_id, status FROM orders WHERE order_no = ?', [p.order_no]);
-  if (!o || ['cancelled', 'dispatched', 'delivered'].includes(o.status)) return;
+  if (!o || ['cancelled', 'delivered', ...GONE].includes(o.status)) return;
   await doCancel(q, o.order_id, `Approval ${status}`, empId);
 }
 for (const k of HOLD_KINDS) { approvals.onApproved(k, holdApproved); approvals.onClosed(k, holdClosed); }
@@ -616,7 +685,7 @@ async function createReturn(q, orderNo, data, empId) {
 }
 
 module.exports = {
-  ORDER_FLOW, STATUS_LABEL, HELD, TERMS, MODES, PAYMENT_STATUS, EDITABLE, OUTCOMES, CommerceError,
-  createOrder, updateOrder, cancelOrder, advanceOrder, recordPayment, createReturn, couponDiscount, walletBalance, availability,
+  STATUS_LABEL, GONE, HELD, TERMS, MODES, PAYMENT_STATUS, EDITABLE, OUTCOMES, CommerceError, deliveryCharge, deliveryMethod,
+  createOrder, updateOrder, cancelOrder, doCancel, leaveGodown, setStatus, pickFor, reserve, pendingHolds, recordPayment, createReturn, couponDiscount, walletBalance, availability,
   overdueOf, outstandingOf, modesOffered, OVERDUE_SQL, taxTotals, istYear, refreshPayment,
 };

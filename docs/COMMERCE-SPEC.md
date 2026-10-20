@@ -256,6 +256,18 @@ days and limit; a higher limit waits for approval.
 `refunded` / `partly_refunded`. Payments are recorded rows (cash, UPI, bank, cheque, credit, wallet, Razorpay link).
 A credit order is refused when it would take the customer above the credit limit (or needs approval, section 2).
 
+### 5.2b Built in phase 5 (packing and delivery)
+Statuses after confirm: `packing` (picked: batches fixed earliest expiry first in `order_picks`) -> `packed` (every pack
+or carton scanned: SKU, SKU/BATCH, SKU#C; wrong SKU / batch / too many refused; override with a reason for a role with
+"approve" on Packing; cartons and weight) -> by the delivery method kind: own vehicle `out_for_delivery` (trip started)
+-> `delivered` or `failed` (re-attempt = packed again; return to the godown = cancelled with goods back, invoice
+cancelled, credit note); courier `with_courier` (AWB, e-way bill no. above the setting amount) -> `delivered`; pickup
+`delivered` when collected. The goods leave the godown (stock out by the picked batches, tax invoice) once, at that
+moment (`orders.dispatched_at`). Delivery areas set the charge (free above an amount), taxed at the setting rate and on
+the invoice. Trips: vehicle, driver, stops in route order, trip sheet, start, per stop delivered (receiver, photo, OTP
+setting) / failed (reason) / cash collected (a cash payment), end with cash handed over vs collected. Drivers linked to
+an admin user see only their trips (My trips); the example role Delivery has delivery view + edit.
+
 ### 5.3 Packing
 `to_pack` (confirmed orders) -> `picking` (pick list printed, by SKU and location) -> `packed` (every line scanned or
 ticked, cartons and weight entered). A scan of a wrong SKU or too many packs is refused on screen.

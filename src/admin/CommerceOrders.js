@@ -1,4 +1,6 @@
 // Commerce > Orders (docs/COMMERCE-SPEC.md 5.1, 5.2, 6; API /commerce/orders, logic in src/backend_routes/commerce.js).
+// Phase 5: packing (Commerce > Packing) and delivery (Commerce > Delivery, My trips) move the order on; the drawer shows
+// the delivery method, area and charge, courier AWB with its tracking link, cartons, trips and proof of delivery.
 // List: status chips (with Overdue), payment status, customer type, date range, search by DFO / invoice / customer /
 // phone, Excel export (edit on Orders). Order drawer: status steps, addresses with the GST type (CGST + SGST in the
 // seller's state, IGST elsewhere), lines with their tax, totals, payments (record a payment or a refund, receipts
@@ -8,7 +10,7 @@
 // New / Edit order: customer (price list, credit, overdue), payment terms, billing and shipping address, lines with
 // the available stock per SKU (an override above it waits for approval), prices from the list, coupon, wallet.
 import { useEffect, useMemo, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { api } from './adminApi';
 import { Drawer, InfoCard, Loading, Notice, fmtDate, useAction, useCan, useConfirm, useLoad } from './ui';
 import { ReturnForm, ReturnsTable } from './CommerceReturns';
@@ -16,11 +18,15 @@ import { NewCustomerDrawer } from './CommerceCustomers';
 import { PriceBasis } from './Prices';
 import { GST_STATES, stateName } from '../shared/gstStates';
 
-const FLOW = ['new', 'packed', 'dispatched', 'delivered'];
-const STATUSES = ['approval', ...FLOW, 'cancelled'];
-const LABEL = { approval: 'Waiting for approval', new: 'New', packed: 'Packed', dispatched: 'Dispatched', delivered: 'Delivered', cancelled: 'Cancelled' };
+const FLOWS = {
+  own: ['new', 'packing', 'packed', 'out_for_delivery', 'delivered'], courier: ['new', 'packing', 'packed', 'with_courier', 'delivered'], pickup: ['new', 'packing', 'packed', 'delivered'],
+};
+const STATUSES = ['approval', 'new', 'packing', 'packed', 'out_for_delivery', 'with_courier', 'failed', 'delivered', 'cancelled'];
+const MAIN = ['new', 'packing', 'packed', 'out_for_delivery', 'delivered'];
+const GONE = ['out_for_delivery', 'with_courier', 'failed'];
+const LABEL = { approval: 'Waiting for approval', new: 'New', packing: 'Packing', packed: 'Packed', out_for_delivery: 'Out for delivery', with_courier: 'Handed to courier', failed: 'Delivery failed', delivered: 'Delivered', cancelled: 'Cancelled' };
+const STAMP = { new: 'confirmed_at', packing: 'packing_at', packed: 'packed_at', out_for_delivery: 'out_at', with_courier: 'courier_at', delivered: 'delivered_at' };
 const PAY = { unpaid: 'Unpaid', partly_paid: 'Part paid', paid: 'Paid', refunded: 'Refunded' };
-const NEXT_BTN = { new: 'Mark packed', packed: 'Dispatch (stock out, invoice)', dispatched: 'Mark delivered' };
 const rs = (n) => `Rs ${Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const esc = (v) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const day = (d) => (d ? new Date(`${String(d).slice(0, 10)}T00:00:00Z`).toLocaleDateString('en-IN', { timeZone: 'UTC', day: 'numeric', month: 'short', year: 'numeric' }) : '');
@@ -68,10 +74,13 @@ function invoiceHtml(inv) {
     <div class="row"><div><b>Bill to</b><br>${addrLines(b, `${inv.bill_state} (${b.state_code})`).map(esc).join('<br>')}</div>
     <div><b>Ship to</b><br>${addrLines(s, `${inv.ship_state} (${s.state_code})`).map(esc).join('<br>')}</div></div>
     <table><thead><tr><th>#</th><th>Item</th><th>HSN</th><th class="n">Qty</th><th class="n">Rate</th><th class="n">Taxable</th>${intra ? '<th class="n">CGST</th><th class="n">SGST</th>' : '<th class="n">IGST</th>'}<th class="n">Amount</th></tr></thead>
-    <tbody>${lines}</tbody></table>
+    <tbody>${lines}${Number(inv.delivery_charge) > 0 ? `<tr><td></td><td>Delivery charge</td><td>SAC 9965</td><td class="n"></td><td class="n"></td><td class="n">${Number(inv.delivery_charge).toFixed(2)}</td>
+      ${intra ? `<td class="n">${(Number(inv.delivery_gst) / 2).toFixed(2)}</td><td class="n">${(Number(inv.delivery_gst) / 2).toFixed(2)}</td>` : `<td class="n">${Number(inv.delivery_gst).toFixed(2)}</td>`}
+      <td class="n">${(Number(inv.delivery_charge) + Number(inv.delivery_gst)).toFixed(2)}</td></tr>` : ''}</tbody></table>
     <table class="tot"><tbody>
     <tr><td>Subtotal</td><td class="n">${Number(inv.subtotal).toFixed(2)}</td></tr>
     ${Number(inv.discount) > 0 ? `<tr><td>Discount${inv.coupon_code ? ` (${esc(inv.coupon_code)})` : ''}</td><td class="n">- ${Number(inv.discount).toFixed(2)}</td></tr>` : ''}
+    ${Number(inv.delivery_charge) > 0 ? `<tr><td>Delivery charge</td><td class="n">${Number(inv.delivery_charge).toFixed(2)}</td></tr>` : ''}
     <tr><td>Taxable value</td><td class="n">${Number(inv.taxable).toFixed(2)}</td></tr>
     ${intra ? `<tr><td>CGST</td><td class="n">${Number(inv.cgst).toFixed(2)}</td></tr><tr><td>SGST</td><td class="n">${Number(inv.sgst).toFixed(2)}</td></tr>` : `<tr><td>IGST</td><td class="n">${Number(inv.igst).toFixed(2)}</td></tr>`}
     ${Number(inv.round_off) ? `<tr><td>Round off</td><td class="n">${Number(inv.round_off).toFixed(2)}</td></tr>` : ''}
@@ -120,8 +129,8 @@ export default function CommerceOrders() {
       <h1>Orders</h1>
       <InfoCard title="Orders entered in the admin">
         <ul>
-          <li>Phone, WhatsApp and B2B orders. New &gt; Packed &gt; Dispatched (stock out, tax invoice) &gt; Delivered. Prices only in the admin.</li>
-          <li>Edit a New order freely, a Packed one with a reason; never after dispatch. Cancel asks for a reason; after dispatch it needs approval.</li>
+          <li>Phone, WhatsApp and B2B orders. New &gt; Packing &gt; Packed (Packing) &gt; Out for delivery, Handed to courier or collected (Delivery) &gt; Delivered. The goods leave the godown with the tax invoice.</li>
+          <li>Edit a New order freely, a Packing or Packed one with a reason (it is checked again); never once the goods left. Cancel asks for a reason; after the goods left it needs approval.</li>
           <li>Payments are recorded by hand on the order; an unpaid invoice after its due date is <span className="a-overdue">Overdue</span>.</li>
         </ul>
       </InfoCard>
@@ -129,7 +138,7 @@ export default function CommerceOrders() {
       <div className="a-toolbar">
         <div className="a-chips" role="group" aria-label="Status">
           <button type="button" className={`a-chip${!f.status && !f.overdue ? ' on' : ''}`} onClick={() => set({ status: '', overdue: '' })}>All {all}</button>
-          {STATUSES.filter((s) => FLOW.includes(s) || counts[s]).map((s) => <button key={s} type="button" className={`a-chip${f.status === s ? ' on' : ''}`} onClick={() => set({ status: s, overdue: '' })}>{LABEL[s]} {counts[s] || 0}</button>)}
+          {STATUSES.filter((s) => MAIN.includes(s) || counts[s]).map((s) => <button key={s} type="button" className={`a-chip${f.status === s ? ' on' : ''}`} onClick={() => set({ status: s, overdue: '' })}>{LABEL[s]} {counts[s] || 0}</button>)}
           <button type="button" className={`a-chip${f.overdue ? ' on' : ''}`} onClick={() => set({ overdue: f.overdue ? '' : '1', status: '' })}>Overdue {(d && d.overdue) || 0}</button>
         </div>
         {canCreate && <button type="button" className="a-btn" onClick={() => setCreating(true)}>New order</button>}
@@ -179,19 +188,13 @@ function OrderDrawer({ no, canEdit, onClose, onChanged }) {
   const act = useAction();
   const confirm = useConfirm();
   const d = o.data;
-  const next = d && FLOW.includes(d.status) ? FLOW[FLOW.indexOf(d.status) + 1] : null;
+  const canPack = useCan('packing', 'edit');
   const reload = () => { o.reload(); onChanged(); };
-  const advance = async () => {
-    if (next === 'dispatched' && !(await confirm({
-      title: `Dispatch ${no}?`, message: `Takes ${d.items.reduce((a, i) => a + i.qty, 0)} packs out of the Kanchipuram godown (${d.items.map((i) => `${i.qty} x ${i.sku_code}`).join(', ')}) and issues the tax invoice.`,
-      action: 'Dispatch',
-    }))) return;
-    act.run(async () => {
-      const r = await api.send('POST', `/commerce/orders/${no}/status`, { to: next });
-      reload();
-      act.setMsg({ kind: 'ok', text: `${no} is now ${LABEL[r.status]}${r.invoice_no ? `: invoice ${r.invoice_no} issued` : ''}${r.batches && r.batches.length ? `; from batch ${r.batches.map((b) => `${b.batch_no} (${b.qty} x ${b.sku_code}, exp. ${day(b.expiry_date)})`).join(', ')}` : ''}.` });
-    });
+  const startPacking = async () => {
+    if (!(await confirm({ title: `Start packing ${no}?`, message: 'The SKUs are picked now (batches earliest expiry first); then scan it in Packing.', action: 'Start packing' }))) return;
+    act.run(async () => { await api.send('POST', '/commerce/packing/start', { order_nos: [no] }); reload(); }, `${no} is Packing: scan it in Commerce > Packing`);
   };
+  const flow = d ? FLOWS[d.delivery_kind] || FLOWS.own : [];
   const printInvoice = (id, cn) => act.run(async () => {
     const inv = await api.get(`/commerce/invoices/${id}`);
     const ok = cn ? printDoc(`Credit note ${cn}`, creditNoteHtml(inv, inv.credit_notes.find((c) => c.credit_note_no === cn)), inv.is_demo)
@@ -206,7 +209,8 @@ function OrderDrawer({ no, canEdit, onClose, onChanged }) {
       footer={d ? (
         <>
           {canEdit && d.editable && <button type="button" className="a-btn a-btn-ghost" onClick={() => setPanel('edit')}>Edit{d.editable === 'reason' ? ' (with reason)' : ''}</button>}
-          {canEdit && next && <button type="button" className="a-btn" disabled={act.busy} onClick={advance}>{NEXT_BTN[d.status]}</button>}
+          {canPack && d.status === 'new' && <button type="button" className="a-btn" disabled={act.busy} onClick={startPacking}>Start packing</button>}
+          {d.status === 'packing' && <Link className="a-btn" to="/admin/commerce/packing">Scan in Packing</Link>}
           {live && <button type="button" className="a-btn a-btn-ghost" onClick={() => printInvoice(live.invoice_id)}>Invoice {live.invoice_no}</button>}
           {canReturn && d.status === 'delivered' && <button type="button" className="a-btn a-btn-ghost" onClick={() => setPanel('return')}>Return items</button>}
           {canEdit && !['cancelled', 'delivered'].includes(d.status) && !pendingCancel && <button type="button" className="a-btn a-btn-danger" onClick={() => setPanel('cancel')}>Cancel order</button>}
@@ -223,9 +227,10 @@ function OrderDrawer({ no, canEdit, onClose, onChanged }) {
             {panel === 'cancel' && <CancelPanel order={d} onDone={(r) => { setPanel(null); reload(); act.setMsg({ kind: r.pending ? 'info' : 'ok', text: r.pending ? `Cancelling ${no} after dispatch waits for approval (request #${r.approval_id}).` : `${no} cancelled.` }); }} onCancel={() => setPanel(null)} />}
             {d.status !== 'cancelled' && d.status !== 'approval' && (
               <ol className="a-steps">
-                {FLOW.map((s) => <li key={s} className={FLOW.indexOf(s) <= FLOW.indexOf(d.status) ? 'done' : ''}>{LABEL[s]}<small>{fmtDate(d[s === 'new' ? 'confirmed_at' : `${s}_at`])}</small></li>)}
+                {flow.map((s) => <li key={s} className={flow.indexOf(s) <= flow.indexOf(d.status === 'failed' ? 'packed' : d.status) ? 'done' : ''}>{LABEL[s]}<small>{fmtDate(d[STAMP[s]])}</small></li>)}
               </ol>
             )}
+            {d.status === 'failed' && <Notice kind="error">Delivery failed: {d.failed_reason}. Re-attempt or return it to the godown in Commerce &gt; Delivery &gt; Failed.</Notice>}
             <dl className="a-dl">
               <div><dt>Customer</dt><dd>{d.customer} ({d.ctype}) - {d.phone}</dd></div>
               <div><dt>Terms</dt><dd>{d.terms_label}{d.payment_terms === 'credit' ? `, ${d.credit_days} days` : ''}</dd></div>
@@ -237,6 +242,14 @@ function OrderDrawer({ no, canEdit, onClose, onChanged }) {
               <div className="a-card"><h4>Ship to</h4>{addrLines({ name: d.ship_name, address: d.ship_address, town: d.ship_town, pincode: d.ship_pincode, phone: d.ship_phone }, `${d.ship_state} (${d.ship_state_code})`).map((l) => <div key={l}>{l}</div>)}</div>
             </div>
             <p className="a-gst">GST: {d.gst_label}</p>
+            <div className="a-card a-deliv">
+              <h4>Delivery</h4>
+              <div>{d.delivery_method}{d.delivery_area ? ` · ${d.delivery_area}` : ''}{Number(d.delivery_charge) > 0 ? ` · charge ${rs(d.delivery_charge)} + GST ${rs(d.delivery_gst)}` : ' · no delivery charge'}</div>
+              {d.cartons && <div>{d.cartons} carton(s), {Number(d.weight_kg)} kg{d.pack_override ? ` · packed with override: ${d.pack_override}` : ''}</div>}
+              {d.awb_no && <div>{d.courier} AWB <b>{d.awb_no}</b>{d.tracking_link && <> · <a href={d.tracking_link} target="_blank" rel="noreferrer">Track the parcel</a></>}{d.eway_bill_no ? ` · e-way bill ${d.eway_bill_no}` : ''}</div>}
+              {d.trips.map((t) => <div key={t.stop_id}>Trip T-{t.trip_id} ({t.vehicle}, {t.driver}): {t.status}{t.receiver_name ? `, received by ${t.receiver_name}` : ''}{t.failed_reason ? ` - ${t.failed_reason}` : ''}{t.cash_collected > 0 ? `, cash ${rs(t.cash_collected)}` : ''}{t.done_at ? ` · ${fmtDate(t.done_at)}` : ''}</div>)}
+              {d.received_by && !d.trips.some((t) => t.receiver_name) && <div>Received by {d.received_by}</div>}
+            </div>
             <div className="a-scroll">
               <table className="a-table">
                 <thead><tr><th>SKU</th><th>Item</th><th className="a-num">Qty</th><th className="a-num">Price</th><th className="a-num">Taxable</th>
@@ -293,12 +306,12 @@ function OrderDrawer({ no, canEdit, onClose, onChanged }) {
 function CancelPanel({ order, onDone, onCancel }) {
   const act = useAction();
   const [reason, setReason] = useState('');
-  const after = order.status === 'dispatched';
+  const after = GONE.includes(order.status);
   const go = () => act.run(async () => onDone(await api.send('POST', `/commerce/orders/${order.order_no}/cancel`, { reason })));
   return (
     <div className="a-card">
       <h3>Cancel {order.order_no}</h3>
-      <p className="a-muted">{after ? (order.cancelNeedsApproval ? 'It is dispatched: cancelling waits for approval. When approved the goods come back to stock and the invoice is cancelled with a credit note.' : 'It is dispatched: the goods come back to stock and the invoice is cancelled with a credit note.')
+      <p className="a-muted">{after ? (order.cancelNeedsApproval ? 'The goods have left the godown: cancelling waits for approval. When approved the goods come back to stock and the invoice is cancelled with a credit note.' : 'The goods have left: they come back to stock and the invoice is cancelled with a credit note.')
         : 'Reserved stock is released; coupon use and wallet credit are given back.'}{Number(order.amount_paid) > 0 ? ` ${rs(order.amount_paid)} was paid: record the refund on the order afterwards.` : ''}</p>
       {act.note}
       <label className="a-field"><span>Why is it cancelled? (required)</span><textarea rows={2} maxLength={255} value={reason} autoFocus onChange={(e) => setReason(e.target.value)} /></label>
@@ -364,6 +377,7 @@ function Totals({ t, paid = null, due = null, cancelled = false }) {
     <dl className="a-dl a-totals">
       <div><dt>Subtotal</dt><dd>{rs(t.subtotal)}</dd></div>
       {Number(t.discount) > 0 && <div><dt>Discount{t.coupon ? ` (${t.coupon})` : ''}</dt><dd>- {rs(t.discount)}</dd></div>}
+      {Number(t.delivery_charge) > 0 && <div><dt>Delivery charge</dt><dd>{rs(t.delivery_charge)}</dd></div>}
       <div><dt>Taxable</dt><dd>{rs(t.taxable)}</dd></div>
       {intra ? <><div><dt>CGST</dt><dd>{rs(t.cgst)}</dd></div><div><dt>SGST</dt><dd>{rs(t.sgst)}</dd></div></> : <div><dt>IGST</dt><dd>{rs(t.igst)}</dd></div>}
       {Number(t.round_off) !== 0 && <div><dt>Round off</dt><dd>{rs(t.round_off)}</dd></div>}
@@ -394,19 +408,19 @@ function qtyProblem(sku, packs) {
 const unitsOf = (sku) => (!sku ? ['pack'] : sku.sell_unit === 'carton' ? ['carton'] : sku.sell_unit === 'both' && Number(sku.packs_per_carton) > 1 ? ['pack', 'carton'] : ['pack']);
 const blankLine = () => ({ sku_code: '', qty: 1, unit: 'pack', price: '', auto: true });
 // the same tax rules as commerce.js taxTotals(), for the live preview (the server recomputes on save)
-function previewTax(items, discount, gstType, roundOff) {
+function previewTax(items, discount, gstType, roundOff, delivery = { charge: 0, rate: 0 }) {
   const subtotal = round2(items.reduce((a, i) => a + i.qty * i.price, 0));
   const disc = Math.min(discount, subtotal);
   const share = subtotal ? (subtotal - disc) / subtotal : 0;
   let taxable = 0; let cgst = 0; let igst = 0;
-  for (const i of items) {
-    const tx = round2(i.qty * i.price * share);
+  for (const i of [...items, ...(delivery.charge ? [{ qty: 1, price: delivery.charge, gst_rate: delivery.rate, delivery: true }] : [])]) {
+    const tx = i.delivery ? i.price : round2(i.qty * i.price * share);
     taxable += tx;
     if (gstType === 'intra') cgst += round2((tx * i.gst_rate) / 200); else igst += round2((tx * i.gst_rate) / 100);
   }
   const before = round2(taxable + 2 * cgst + igst);
   const ro = roundOff ? round2(Math.round(before) - before) : 0;
-  return { subtotal, discount: disc, taxable: round2(taxable), cgst: round2(cgst), sgst: round2(cgst), igst: round2(igst), round_off: ro, total: round2(before + ro), gst_type: gstType };
+  return { subtotal, discount: disc, delivery_charge: delivery.charge, taxable: round2(taxable), cgst: round2(cgst), sgst: round2(cgst), igst: round2(igst), round_off: ro, total: round2(before + ro), gst_type: gstType };
 }
 const fromOrder = (o, which) => (which === 'bill'
   ? { name: o.bill_name, gstin: o.bill_gstin || '', address: o.bill_address || '', town: o.bill_town || '', state_code: o.bill_state_code, pincode: o.bill_pincode || '', phone: o.bill_phone || '' }
@@ -430,6 +444,8 @@ function OrderForm({ order = null, onClose, onSaved }) {
   const [note, setNote] = useState(editing ? order.note || '' : '');
   const [reason, setReason] = useState('');
   const [override, setOverride] = useState(false);
+  const [methodId, setMethodId] = useState(editing && order.delivery_method_id ? String(order.delivery_method_id) : '');
+  const [areaId, setAreaId] = useState(editing && order.delivery_area_id ? String(order.delivery_area_id) : ''); // '' = from the address
   const [addingCustomer, setAddingCustomer] = useState(false);
   const f = form.data;
   const pickCustomer = (id) => { setAddingCustomer(false); form.reload(); setCustomerId(String(id)); setWallet(''); };
@@ -457,7 +473,15 @@ function OrderForm({ order = null, onClose, onSaved }) {
   const anyShort = rows.some((r) => r.short);
   const blocked = rows.some((r) => r.problem || (r.sku && r.price === null)) || (anyShort && !override) || !bill || !bill.name || (editing && order.editable === 'reason' && !reason.trim());
   const discount = couponState && couponState.discount ? couponState.discount : 0;
-  const t = previewTax(items, discount, gstType, Boolean(f && f.roundOff));
+  // delivery: the method (own vehicle by default), the area from the shipping PIN code or town (or chosen), its charge
+  const method = f ? (f.methods.find((m) => String(m.method_id) === methodId) || f.methods.find((m) => m.kind === 'own') || f.methods[0]) : null;
+  const words = (a) => String(a.towns || '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+  const autoArea = f && shipTo ? (f.areas.find((a) => shipTo.pincode && words(a).includes(String(shipTo.pincode))) || f.areas.find((a) => shipTo.town && words(a).includes(String(shipTo.town).trim().toLowerCase())) || null) : null;
+  const area = f && method && method.kind !== 'pickup' ? (areaId ? f.areas.find((a) => String(a.area_id) === areaId) : autoArea) : null;
+  const goods = round2(items.reduce((a, i) => a + i.qty * i.price, 0) - discount);
+  const freeDelivery = Boolean(area && area.free_above !== null && goods >= area.free_above);
+  const charge = area && !freeDelivery ? area.charge : 0;
+  const t = previewTax(items, discount, gstType, Boolean(f && f.roundOff), { charge, rate: f ? f.deliveryGstRate : 0 });
   const maxWallet = customer ? customer.wallet + (editing ? Number(order.wallet_used) : 0) : 0;
   const walletUse = Math.min(Number(wallet) || 0, maxWallet, t.total);
   const thisDue = round2(t.total - walletUse);
@@ -491,7 +515,7 @@ function OrderForm({ order = null, onClose, onSaved }) {
     const body = {
       payment_terms: terms, note, coupon_code: couponState && couponState.discount ? coupon.trim().toUpperCase() : null, wallet_use: walletUse,
       items: rows.filter((r) => r.l.sku_code).map((r) => ({ sku_code: r.l.sku_code.trim().toUpperCase(), qty: r.packs, price: r.l.auto ? '' : r.l.price })),
-      bill, ship: sameShip ? { ...bill } : ship, override_stock: override,
+      bill, ship: sameShip ? { ...bill } : ship, override_stock: override, delivery_method_id: method ? method.method_id : '', delivery_area_id: areaId,
     };
     const r = editing
       ? await api.send('PUT', `/commerce/orders/${order.order_no}`, { ...body, version: order.version, reason })
@@ -553,6 +577,18 @@ function OrderForm({ order = null, onClose, onSaved }) {
                 <div className="a-addr">{addr(bill, setBill, 'bill')}{!sameShip && addr(ship, setShip, 'ship')}</div>
                 <label className="a-inline"><input type="checkbox" checked={sameShip} onChange={(e) => { setSameShip(e.target.checked); if (!e.target.checked) setShip({ ...bill }); }} /> Ship to the billing address</label>
                 <p className="a-gst">GST: {gstType === 'intra' ? `CGST + SGST (${stateName(shipTo.state_code)}, the seller's state)` : `IGST (${stateName(shipTo.state_code)} is another state)`}</p>
+                <div className="a-grid2">
+                  <label className="a-field"><span>Delivery</span>
+                    <select value={method ? String(method.method_id) : ''} aria-label="Delivery method" onChange={(e) => setMethodId(e.target.value)}>{f.methods.map((m) => <option key={m.method_id} value={m.method_id}>{m.label}</option>)}</select></label>
+                  {method && method.kind !== 'pickup' && (
+                    <label className="a-field"><span>Delivery area</span>
+                      <select value={areaId} aria-label="Delivery area" onChange={(e) => setAreaId(e.target.value)}>
+                        <option value="">From the address{autoArea ? `: ${autoArea.label}` : ': none matches (no charge)'}</option>
+                        {f.areas.map((a) => <option key={a.area_id} value={a.area_id}>{a.label}</option>)}</select></label>
+                  )}
+                </div>
+                <p className="a-muted a-delivline">{method && method.kind === 'pickup' ? 'Customer pickup at the godown: no delivery charge.'
+                  : area ? `${area.label}: Rs ${area.charge}${area.free_above !== null ? `, free above Rs ${area.free_above}` : ''}${freeDelivery ? ' - free for this order' : charge ? ` + GST ${f.deliveryGstRate}%` : ''}` : 'No delivery area matches this address: no delivery charge.'}</p>
               </>
             )}
             <h3>Items</h3>

@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS orders (
   order_no          VARCHAR(20)   NOT NULL,
   customer_id       INT           NOT NULL,
   price_list        VARCHAR(20)   NULL,
-  status            VARCHAR(12)   NOT NULL DEFAULT 'new',
+  status            VARCHAR(20)   NOT NULL DEFAULT 'new',
   payment_terms     VARCHAR(10)   NOT NULL DEFAULT 'cod',     -- cod | advance | credit
   credit_days       INT           NOT NULL DEFAULT 0,         -- the customer's credit days on the order day
   payment_status    VARCHAR(12)   NOT NULL DEFAULT 'unpaid',  -- unpaid | partly_paid | paid | refunded
@@ -94,8 +94,8 @@ CREATE TABLE IF NOT EXISTS order_items (
 CREATE TABLE IF NOT EXISTS order_status_history (
   id           BIGINT       NOT NULL AUTO_INCREMENT,
   order_id     BIGINT       NOT NULL,
-  from_status  VARCHAR(12)  NULL,
-  to_status    VARCHAR(12)  NOT NULL,                         -- a status, or 'edited'
+  from_status  VARCHAR(20)  NULL,
+  to_status    VARCHAR(20)  NOT NULL,                         -- a status, or 'edited'
   note         VARCHAR(255) NULL,
   emp_id       VARCHAR(20)  NOT NULL,
   created_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,

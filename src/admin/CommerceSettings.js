@@ -9,7 +9,7 @@ import { Drawer, InfoCard, Loading, Notice, fmtDate, useAction, useCan, useConfi
 
 // groups in this order; a list is shown after the group named next to it
 const ORDER = ['General', 'Orders and pricing', 'Inventory', 'Returns', 'Delivery', 'Invoice', 'Numbering', 'GST and compliance', 'Payments', 'Notifications', 'Accounting', 'Approvals'];
-const LISTS_AFTER = { 'Orders and pricing': ['customer_types'], Inventory: ['locations'], Returns: ['return_reasons'], Delivery: ['delivery_methods', 'delivery_areas'] };
+const LISTS_AFTER = { 'Orders and pricing': ['customer_types'], Inventory: ['locations'], Returns: ['return_reasons'], Delivery: ['delivery_methods', 'delivery_areas', 'vehicles', 'drivers', 'couriers'] };
 
 export default function CommerceSettings() {
   const data = useLoad('/commerce-settings');
@@ -122,7 +122,8 @@ function ListEditor({ listKey, list, onChanged, canEdit }) {
   const [open, setOpen] = useState(null); // row | 'new'
   const canCreate = useCan('settings', 'create');
   const cols = Object.entries(list.cols);
-  const show = (row, col, def) => (def.type === 'bool' ? (Number(row[col]) ? 'Yes' : 'No') : row[col] === null || row[col] === undefined || row[col] === '' ? '-' : String(row[col]));
+  const show = (row, col, def) => (def.type === 'bool' ? (Number(row[col]) ? 'Yes' : 'No') : row[col] === null || row[col] === undefined || row[col] === '' ? '-'
+    : def.type === 'select' ? ((def.options.find(([v]) => v === row[col]) || [])[1] || String(row[col])) : String(row[col]));
   return (
     <div className="a-card a-listed">
       <div className="a-listed-head"><h3>{list.label}</h3>{canCreate && <button type="button" className="a-btn a-btn-sm" onClick={() => setOpen('new')}>Add</button>}</div>
@@ -182,6 +183,7 @@ function ListRowDrawer({ listKey, list, row, canEdit, onClose, onSaved }) {
           <label className="a-field" key={c}><span>{def.label}{def.req ? ' *' : ''}</span>
             {def.type === 'bool'
               ? <select value={String(Number(f[c]) ? 1 : 0)} disabled={!may} onChange={(e) => setF({ ...f, [c]: Number(e.target.value) })}><option value="1">Yes</option><option value="0">No</option></select>
+              : def.type === 'select' ? <select value={f[c] || ''} disabled={!may} onChange={(e) => setF({ ...f, [c]: e.target.value })}><option value="">Choose...</option>{def.options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
               : <input value={f[c]} disabled={!may} inputMode={def.type === 'text' || def.type === 'key' ? undefined : 'decimal'} onChange={(e) => { setF({ ...f, [c]: e.target.value }); setErrors({ ...errors, [c]: undefined }); }} />}
             {errors[c] && <small className="a-bad" role="alert">{errors[c]}</small>}
           </label>

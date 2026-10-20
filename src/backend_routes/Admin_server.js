@@ -1427,7 +1427,7 @@ const asStock = (e) => (e instanceof stock.StockError ? new InputError(e.message
 route('get', '/commerce/stock', 'inventory:view', async (req) => {
   const cs = await commerceSettings.read(db);
   const [rows] = await db.query(
-    `SELECT s.sku_code, s.product_id, s.size_label, s.packs_per_carton, s.avg_cost, p.category_key, p.track_batches, ${SKU_NAME} AS name,
+    `SELECT s.sku_code, s.product_id, s.size_label, s.packs_per_carton, s.avg_cost, s.bin_location, p.category_key, p.track_batches, ${SKU_NAME} AS name,
             COALESCE(l.reorder_level, ?) AS reorder_level, COALESCE(l.reorder_qty, ?) AS reorder_qty,
             COALESCE(SUM(CASE WHEN m.stock_kind = 'returned' THEN m.delta END), 0) AS returned,
             COALESCE(SUM(CASE WHEN m.stock_kind = 'damaged' THEN m.delta END), 0) AS damaged,
@@ -1436,7 +1436,7 @@ route('get', '/commerce/stock', 'inventory:view', async (req) => {
        FROM skus s ${SKU_JOIN}
        LEFT JOIN stock_levels l ON l.sku_code = s.sku_code AND l.location_id = 1
        LEFT JOIN stock_movements m ON m.sku_code = s.sku_code
-      GROUP BY s.sku_code, s.product_id, s.size_label, s.packs_per_carton, s.avg_cost, p.category_key, p.track_batches, t.name, pt.name, l.reorder_level, l.reorder_qty
+      GROUP BY s.sku_code, s.product_id, s.size_label, s.packs_per_carton, s.avg_cost, s.bin_location, p.category_key, p.track_batches, t.name, pt.name, l.reorder_level, l.reorder_qty
       ORDER BY s.sku_code`, [Number(cs.low_level_default) || 20, Number(cs.reorder_qty_default) || 0]
   );
   const av = await stock.availability(db, rows.map((r) => r.sku_code));
@@ -1457,10 +1457,15 @@ route('put', '/commerce/stock/:sku/levels', 'inventory:edit', async (req) => {
   if (!Number.isInteger(qty) || qty < 0 || qty > 1000000) throw new InputError('Reorder quantity: a whole number, 0 or more (0 = suggest)');
   const [[s]] = await db.query('SELECT sku_code FROM skus WHERE sku_code = ?', [req.params.sku]);
   if (!s) throw new InputError('No SKU', 404);
+  const bin = req.body.bin_location === undefined ? undefined : String(req.body.bin_location || '').trim().toUpperCase().slice(0, 30) || null;
+  if (bin !== undefined) {
+    if (bin && !/^[A-Z0-9 /-]{1,30}$/.test(bin)) throw new InputError('Bin: letters, digits, space, - or /, e.g. R2-S3');
+    await db.query('UPDATE skus SET bin_location = ? WHERE sku_code = ?', [bin, s.sku_code]);
+  }
   const [[before]] = await db.query('SELECT reorder_level, reorder_qty FROM stock_levels WHERE sku_code = ? AND location_id = 1', [s.sku_code]);
   await db.query(`INSERT INTO stock_levels (sku_code, location_id, reorder_level, reorder_qty, updated_by, updated_at) VALUES (?, 1, ?, ?, ?, UTC_TIMESTAMP())
      ON DUPLICATE KEY UPDATE reorder_level = VALUES(reorder_level), reorder_qty = VALUES(reorder_qty), updated_by = VALUES(updated_by), updated_at = VALUES(updated_at)`, [s.sku_code, level, qty, by(req)]);
-  await audit(null, { empId: by(req), action: 'update', entity: 'stock_level', entityId: s.sku_code, before: before || null, after: { reorder_level: level, reorder_qty: qty } });
+  await audit(null, { empId: by(req), action: 'update', entity: 'stock_level', entityId: s.sku_code, before: before || null, after: { reorder_level: level, reorder_qty: qty, ...(bin !== undefined ? { bin_location: bin } : {}) } });
   return { sku_code: s.sku_code, reorder_level: level, reorder_qty: qty };
 });
 
@@ -1658,6 +1663,10 @@ route('get', '/commerce/order-form', 'orders:view', async (req) => {
     customers: customers.map((c) => ({ ...c, wallet: Number(c.wallet), outstanding: Number(c.outstanding), overdue: Number(c.overdue), credit_limit: Number(c.credit_limit) })),
     skus, coupons, terms: commerce.TERMS, lists: await pricing.lists(db), basis: await pricing.basis(db), today, states: GST_STATES,
     sellerState: cs.invoice_seller_state_code, roundOff: Boolean(cs.invoice_round_off), canOverride: canDo(req, 'orders', 'approve'),
+    methods: (await db.query('SELECT method_id, label, kind FROM delivery_methods WHERE is_active = 1 ORDER BY sort_order, method_id'))[0],
+    areas: (await db.query('SELECT area_id, label, towns, charge, free_above FROM delivery_areas WHERE is_active = 1 ORDER BY sort_order, area_id'))[0]
+      .map((a) => ({ ...a, charge: Number(a.charge), free_above: a.free_above === null ? null : Number(a.free_above) })),
+    deliveryGstRate: Number(cs.delivery_charge_gst_rate) || 0,
     approval: { on: Boolean(cs.approve_price_below_on), pct: Number(cs.approve_price_below_pct) || 0, credit: cs.approve_credit_order !== false, stock: cs.approve_over_available !== false },
   };
 });
@@ -1745,6 +1754,10 @@ route('get', '/commerce/orders/:no', 'orders:view', async (req) => {
   const [appr] = await db.query("SELECT approval_id, kind, status, summary, requested_by, decided_by, note FROM approvals WHERE ref_type = 'order' AND ref_id = ? ORDER BY approval_id", [o.order_no]);
   const [res] = await db.query("SELECT sku_code, qty, status FROM stock_reservations WHERE order_id = ? AND status = 'active'", [o.order_id]);
   const batchesOut = await stock.batchesOfOrder(db, o.order_no);
+  const [[dl]] = await db.query(`SELECT dm.label AS method, a.label AS area, cr.name AS courier, cr.tracking_url FROM orders o LEFT JOIN delivery_methods dm ON dm.method_id = o.delivery_method_id
+      LEFT JOIN delivery_areas a ON a.area_id = o.delivery_area_id LEFT JOIN couriers cr ON cr.courier_id = o.courier_id WHERE o.order_id = ?`, [o.order_id]);
+  const [trips] = await db.query(`SELECT s.stop_id, s.trip_id, s.status, s.receiver_name, s.failed_reason, s.cash_collected, s.photo IS NOT NULL AS has_photo, s.done_at, t.status AS trip_status, d.name AS driver, v.number AS vehicle
+      FROM trip_stops s JOIN delivery_trips t ON t.trip_id = s.trip_id JOIN drivers d ON d.driver_id = t.driver_id JOIN vehicles v ON v.vehicle_id = t.vehicle_id WHERE s.order_id = ? ORDER BY s.stop_id`, [o.order_id]);
   const listLabel = (await pricing.lists(db)).find((l) => l.key === o.price_list);
   const cs = await commerceSettings.read(db);
   const live = invs.find((i) => i.status === 'issued');
@@ -1757,7 +1770,9 @@ route('get', '/commerce/orders/:no', 'orders:view', async (req) => {
     gst_label: o.gst_type === 'intra' ? `CGST + SGST (${stateName(o.place_of_supply)}, same state as the seller)` : `IGST (${stateName(o.place_of_supply)}, another state)`,
     bill_state: stateName(o.bill_state_code), ship_state: stateName(o.ship_state_code),
     price_list_label: listLabel ? listLabel.label : o.price_list, prices_basis: (await pricing.basis(db)).short,
-    modes: commerce.modesOffered(cs), modeLabels: commerce.MODES, cancelNeedsApproval: o.status === 'dispatched' && Boolean(cs.approve_cancel_after_dispatch),
+    modes: commerce.modesOffered(cs), modeLabels: commerce.MODES, cancelNeedsApproval: commerce.GONE.includes(o.status) && Boolean(cs.approve_cancel_after_dispatch),
+    delivery_method: dl.method, delivery_area: dl.area, courier: dl.courier, tracking_link: dl.tracking_url && o.awb_no ? dl.tracking_url.replace('{awb}', encodeURIComponent(o.awb_no)) : null,
+    trips: trips.map((x) => ({ ...x, has_photo: Number(x.has_photo) === 1, cash_collected: Number(x.cash_collected) })), gone: Boolean(o.dispatched_at),
   };
 });
 
@@ -1773,12 +1788,6 @@ route('put', '/commerce/orders/:no', 'orders:edit', async (req) => {
   } catch (e) { throw asInput(e); }
 });
 
-route('post', '/commerce/orders/:no/status', 'orders:edit', async (req) => {
-  try {
-    return await tx(async (q) => ({ order_no: req.params.no, ...(await commerce.advanceOrder(q, req.params.no, String(req.body.to || ''), by(req))) }));
-  } catch (e) { throw asInput(e); }
-});
-
 route('post', '/commerce/orders/:no/cancel', 'orders:edit', async (req) => {
   try {
     return await tx((q) => commerce.cancelOrder(q, req.params.no, req.body.reason, by(req)));
@@ -1791,10 +1800,166 @@ route('post', '/commerce/orders/:no/payments', 'orders:edit', async (req) => {
   } catch (e) { throw asInput(e); }
 });
 
+// ---------------------------------------------------------------------------------------------
+// Packing and delivery (docs/COMMERCE-SPEC.md 5.3, 5.4; logic in delivery.js). Section "packing": view = queues, pick
+// list, pack check, slips; edit = start packing, scan, mark packed; approve = pack without a full scan (with a reason).
+// Section "delivery": create = plan trips, the Delivery screen (all trips); edit = start / mark stops / cash / end
+// trips, courier hand-over, pickup, re-attempt, return to the godown; view = My trips. A driver (delivery edit without
+// create) acts only on trips whose driver is linked to them (Commerce settings > Drivers).
+// ---------------------------------------------------------------------------------------------
+const delivery = require('./delivery');
+const asDelivery = (e) => (e instanceof delivery.DeliveryError || e instanceof commerce.CommerceError ? new InputError(e.message, e.status) : e);
+const office = (req) => canDo(req, 'delivery', 'create');
+const ORDER_LIST = `SELECT o.order_no, o.status, o.delivery_kind, o.payment_terms, o.amount_due, o.total, o.cartons, o.weight_kg, o.created_at, o.packed_at, o.packing_at,
+       o.ship_name, o.ship_address, o.ship_town, o.ship_pincode, o.ship_phone, o.delivery_area_id, o.awb_no, o.courier_id, o.failed_reason, o.failed_at, o.courier_at,
+       c.name AS customer, a.label AS area, dm.label AS method, cr.name AS courier, cr.tracking_url,
+       (SELECT SUM(qty) FROM order_items i WHERE i.order_id = o.order_id) AS units
+  FROM orders o JOIN customers c ON c.customer_id = o.customer_id
+  LEFT JOIN delivery_areas a ON a.area_id = o.delivery_area_id LEFT JOIN delivery_methods dm ON dm.method_id = o.delivery_method_id
+  LEFT JOIN couriers cr ON cr.courier_id = o.courier_id`;
+const trackLink = (r) => (r.tracking_url && r.awb_no ? r.tracking_url.replace('{awb}', encodeURIComponent(r.awb_no)) : null);
+const orderOut = (r) => ({ ...r, amount_due: Number(r.amount_due), total: Number(r.total), units: Number(r.units), tracking_link: trackLink(r) });
+
+route('get', '/commerce/packing', 'packing:view', async () => {
+  const [rows] = await db.query(`${ORDER_LIST}
+      WHERE o.status IN ('new', 'packing') OR (o.status = 'packed' AND o.packed_at > UTC_TIMESTAMP() - INTERVAL 3 DAY) ORDER BY o.order_id`);
+  const [held] = await db.query("SELECT DISTINCT ref_id FROM approvals WHERE ref_type = 'order' AND status = 'pending' AND kind IN ('price_below_list', 'over_available', 'credit_order')");
+  const waiting = new Set(held.map((h) => h.ref_id));
+  return { rows: rows.map((r) => ({ ...orderOut(r), waiting: waiting.has(r.order_no) })) };
+});
+route('post', '/commerce/packing/picklist', 'packing:view', async (req) => {
+  try { return await delivery.pickList(db, (req.body.order_nos || []).map(String)); } catch (e) { throw asDelivery(e); }
+});
+route('post', '/commerce/packing/start', 'packing:edit', async (req) => {
+  try { return await tx((q) => delivery.startPacking(q, (req.body.order_nos || []).map(String), by(req))); } catch (e) { throw asDelivery(e); }
+});
+route('get', '/commerce/packing/:no', 'packing:view', async (req) => {
+  const [[o]] = await db.query(`${ORDER_LIST} WHERE o.order_no = ?`, [req.params.no]);
+  if (!o) throw new InputError('Order not found', 404);
+  const [[id]] = await db.query('SELECT order_id FROM orders WHERE order_no = ?', [req.params.no]);
+  const [scans] = await db.query('SELECT scan_id, code, qty, result, message, emp_id, created_at FROM pack_scans WHERE order_id = ? ORDER BY scan_id DESC LIMIT 40', [id.order_id]);
+  return { order: orderOut(o), ...(await delivery.packState(db, id.order_id)), scans, canOverride: canDo(req, 'packing', 'approve') };
+});
+route('post', '/commerce/packing/:no/scan', 'packing:edit', async (req) => {
+  try { return await tx((q) => delivery.packScan(q, req.params.no, req.body.code, by(req))); } catch (e) { throw asDelivery(e); }
+});
+route('post', '/commerce/packing/:no/reset', 'packing:edit', async (req) => {
+  try { return await tx((q) => delivery.resetScans(q, req.params.no, by(req))); } catch (e) { throw asDelivery(e); }
+});
+route('post', '/commerce/packing/:no/packed', 'packing:edit', async (req) => {
+  try { return await tx((q) => delivery.markPacked(q, req.params.no, req.body || {}, by(req), canDo(req, 'packing', 'approve'))); } catch (e) { throw asDelivery(e); }
+});
+// packing slip and carton labels: the order, its addresses, lines (with the picked batches), cartons
+route('get', '/commerce/packing/:no/slip', 'packing:view', async (req) => {
+  const [[o]] = await db.query(`SELECT o.order_id, o.order_no, o.status, o.cartons, o.weight_kg, o.delivery_kind, o.payment_terms, o.amount_due, o.note, o.awb_no, o.created_at,
+      o.ship_name, o.ship_address, o.ship_town, o.ship_state_code, o.ship_pincode, o.ship_phone, c.name AS customer, dm.label AS method, cr.name AS courier
+      FROM orders o JOIN customers c ON c.customer_id = o.customer_id LEFT JOIN delivery_methods dm ON dm.method_id = o.delivery_method_id LEFT JOIN couriers cr ON cr.courier_id = o.courier_id
+      WHERE o.order_no = ?`, [req.params.no]);
+  if (!o) throw new InputError('Order not found', 404);
+  const st = await delivery.packState(db, o.order_id);
+  const [site] = await db.query("SELECT setting_key, setting_value FROM site_settings WHERE setting_key IN ('office_phone')");
+  return { ...o, amount_due: Number(o.amount_due), ship_state: stateName(o.ship_state_code), lines: st.lines, phone: (site[0] || {}).setting_value || '' };
+});
+
+// the Delivery screen (office): packed orders by kind, failed ones, couriers on the way, trips, setup lists
+route('get', '/commerce/delivery', 'delivery:create', async () => {
+  const [rows] = await db.query(`${ORDER_LIST} WHERE o.status IN ('packed', 'failed', 'with_courier') ORDER BY o.order_id`);
+  const [onTrip] = await db.query("SELECT s.order_id, o.order_no, t.trip_id FROM trip_stops s JOIN delivery_trips t ON t.trip_id = s.trip_id JOIN orders o ON o.order_id = s.order_id WHERE t.status = 'planned'");
+  const planned = new Map(onTrip.map((x) => [x.order_no, x.trip_id]));
+  const [trips] = await db.query(`SELECT t.trip_id, DATE_FORMAT(t.trip_date, '%Y-%m-%d') AS trip_date, t.status, t.cash_expected, t.cash_collected, t.cash_handed, t.started_at, t.ended_at,
+      v.number AS vehicle, d.name AS driver, a.label AS area,
+      (SELECT COUNT(*) FROM trip_stops s WHERE s.trip_id = t.trip_id) AS stops, (SELECT SUM(s.status = 'delivered') FROM trip_stops s WHERE s.trip_id = t.trip_id) AS delivered,
+      (SELECT SUM(s.status = 'failed') FROM trip_stops s WHERE s.trip_id = t.trip_id) AS failed
+      FROM delivery_trips t JOIN vehicles v ON v.vehicle_id = t.vehicle_id JOIN drivers d ON d.driver_id = t.driver_id LEFT JOIN delivery_areas a ON a.area_id = t.area_id
+      ORDER BY t.trip_id DESC LIMIT 60`);
+  const [vehicles] = await db.query('SELECT vehicle_id, number, type FROM vehicles WHERE is_active = 1 ORDER BY sort_order, vehicle_id');
+  const [drivers] = await db.query('SELECT driver_id, name, phone, emp_id FROM drivers WHERE is_active = 1 ORDER BY sort_order, driver_id');
+  const [couriers] = await db.query('SELECT courier_id, name, tracking_url FROM couriers WHERE is_active = 1 ORDER BY sort_order, courier_id');
+  const [areas] = await db.query('SELECT area_id, label FROM delivery_areas WHERE is_active = 1 ORDER BY sort_order, area_id');
+  const cs = await commerceSettings.read(db);
+  return {
+    orders: rows.map((r) => ({ ...orderOut(r), trip_id: planned.get(r.order_no) || null })),
+    trips: trips.map((t) => ({ ...t, stops: Number(t.stops), delivered: Number(t.delivered) || 0, failed: Number(t.failed) || 0 })),
+    vehicles, drivers, couriers, areas, failReasons: delivery.FAIL_REASONS, eway: { required: Boolean(cs.eway_bill_required), above: Number(cs.eway_bill_above) },
+  };
+});
+route('post', '/commerce/trips', 'delivery:create', async (req) => {
+  try { return await tx((q) => delivery.createTrip(q, req.body || {}, by(req))); } catch (e) { throw asDelivery(e); }
+}, { status: 201 });
+
+/** a trip with its stops (an office user: any trip; a driver: only their own) */
+async function tripDetail(req, tripId) {
+  const [[t]] = await db.query(`SELECT t.trip_id, DATE_FORMAT(t.trip_date, '%Y-%m-%d') AS trip_date, t.status, t.cash_expected, t.cash_collected, t.cash_handed, t.end_note,
+      t.started_at, t.started_by, t.ended_at, t.ended_by, t.created_by, v.number AS vehicle, v.type AS vehicle_type, d.name AS driver, d.phone AS driver_phone, d.emp_id AS driver_emp, a.label AS area
+      FROM delivery_trips t JOIN vehicles v ON v.vehicle_id = t.vehicle_id JOIN drivers d ON d.driver_id = t.driver_id LEFT JOIN delivery_areas a ON a.area_id = t.area_id WHERE t.trip_id = ?`, [tripId]);
+  if (!t) throw new InputError('Trip not found', 404);
+  const isOffice = office(req);
+  if (!isOffice && t.driver_emp !== by(req)) throw new InputError('This is not one of your trips', 403);
+  const [stops] = await db.query(`SELECT s.stop_id, s.seq, s.status, s.otp, s.receiver_name, s.photo IS NOT NULL AS has_photo, s.failed_reason, s.cash_collected, s.done_at, s.done_by,
+      o.order_no, o.status AS order_status, o.payment_terms, o.amount_due, o.total, o.cartons, o.weight_kg, o.ship_name, o.ship_address, o.ship_town, o.ship_pincode, o.ship_phone, c.name AS customer
+      FROM trip_stops s JOIN orders o ON o.order_id = s.order_id JOIN customers c ON c.customer_id = o.customer_id WHERE s.trip_id = ? ORDER BY s.seq`, [tripId]);
+  const cs = await commerceSettings.read(db);
+  return { ...t, office: isOffice, otpOn: Boolean(cs.delivery_otp), failReasons: delivery.FAIL_REASONS,
+    stops: stops.map(({ otp, ...s }) => ({ ...s, has_photo: Number(s.has_photo) === 1, amount_due: Number(s.amount_due), total: Number(s.total), cash_collected: Number(s.cash_collected),
+      to_collect: s.payment_terms === 'cod' ? Math.max(Number(s.amount_due), 0) : 0, ...(isOffice ? { otp } : {}) })) };
+}
+route('get', '/commerce/trips/:id', 'delivery:view', async (req) => tripDetail(req, Number(req.params.id)));
+route('put', '/commerce/trips/:id/stops', 'delivery:create', async (req) => {
+  try { return await tx((q) => delivery.setStops(q, Number(req.params.id), (req.body.order_nos || []).map(String), by(req))); } catch (e) { throw asDelivery(e); }
+});
+route('post', '/commerce/trips/:id/start', 'delivery:edit', async (req) => {
+  await tripDetail(req, Number(req.params.id)); // a driver only their own trip
+  try { return await tx((q) => delivery.startTrip(q, Number(req.params.id), by(req))); } catch (e) { throw asDelivery(e); }
+});
+route('post', '/commerce/trips/:id/end', 'delivery:edit', async (req) => {
+  try { return await tx((q) => delivery.endTrip(q, Number(req.params.id), req.body || {}, by(req), office(req))); } catch (e) { throw asDelivery(e); }
+});
+route('post', '/commerce/stops/:id/delivered', 'delivery:edit', async (req) => {
+  try { return await tx((q) => delivery.stopDelivered(q, Number(req.params.id), req.body || {}, req.file ? { buffer: req.file.buffer, mimetype: req.file.mimetype } : null, by(req), office(req))); } catch (e) { throw asDelivery(e); }
+}, { before: [upload(8)] });
+route('post', '/commerce/stops/:id/failed', 'delivery:edit', async (req) => {
+  try { return await tx((q) => delivery.stopFailed(q, Number(req.params.id), req.body || {}, by(req), office(req))); } catch (e) { throw asDelivery(e); }
+});
+route('post', '/commerce/stops/:id/cash', 'delivery:edit', async (req) => {
+  try { return await tx((q) => delivery.stopCash(q, Number(req.params.id), req.body || {}, by(req), office(req))); } catch (e) { throw asDelivery(e); }
+});
+route('get', '/commerce/stops/:id/photo', 'delivery:view', async (req, res) => {
+  const [[s]] = await db.query('SELECT trip_id, photo, photo_type FROM trip_stops WHERE stop_id = ?', [Number(req.params.id)]);
+  if (!s || !s.photo) throw new InputError('No photo', 404);
+  await tripDetail(req, s.trip_id);
+  res.set({ 'Content-Type': s.photo_type, 'Cache-Control': 'private, no-store' });
+  res.send(s.photo);
+});
+// My trips (drivers): the trips of the driver linked to this admin user, open ones and today's ended ones
+route('get', '/commerce/my-trips', 'delivery:view', async (req) => {
+  const [rows] = await db.query(`SELECT t.trip_id, DATE_FORMAT(t.trip_date, '%Y-%m-%d') AS trip_date, t.status, v.number AS vehicle, d.name AS driver,
+      (SELECT COUNT(*) FROM trip_stops s WHERE s.trip_id = t.trip_id) AS stops, (SELECT SUM(s.status <> 'pending') FROM trip_stops s WHERE s.trip_id = t.trip_id) AS done
+      FROM delivery_trips t JOIN drivers d ON d.driver_id = t.driver_id JOIN vehicles v ON v.vehicle_id = t.vehicle_id
+      WHERE d.emp_id = ? AND (t.status IN ('planned', 'out') OR t.ended_at > UTC_TIMESTAMP() - INTERVAL 1 DAY) ORDER BY t.trip_id DESC`, [by(req)]);
+  const [[me]] = await db.query('SELECT name FROM drivers WHERE emp_id = ? LIMIT 1', [by(req)]);
+  return { driver: me ? me.name : null, trips: rows.map((r) => ({ ...r, stops: Number(r.stops), done: Number(r.done) || 0 })) };
+});
+// after a failed delivery; courier; customer pickup
+route('post', '/commerce/orders/:no/reattempt', 'delivery:edit', async (req) => {
+  try { return await tx((q) => delivery.reattempt(q, req.params.no, by(req))); } catch (e) { throw asDelivery(e); }
+});
+route('post', '/commerce/orders/:no/return-to-godown', 'delivery:edit', async (req) => {
+  try { return await tx((q) => delivery.returnToGodown(q, req.params.no, req.body.reason, by(req))); } catch (e) { throw asDelivery(e); }
+});
+route('post', '/commerce/orders/:no/courier', 'delivery:edit', async (req) => {
+  try { return await tx((q) => delivery.handToCourier(q, req.params.no, req.body || {}, by(req))); } catch (e) { throw asDelivery(e); }
+});
+route('post', '/commerce/orders/:no/courier-delivered', 'delivery:edit', async (req) => {
+  try { return await tx((q) => delivery.courierDelivered(q, req.params.no, req.body || {}, by(req))); } catch (e) { throw asDelivery(e); }
+});
+route('post', '/commerce/orders/:no/picked-up', 'delivery:edit', async (req) => {
+  try { return await tx((q) => delivery.pickedUp(q, req.params.no, req.body || {}, by(req))); } catch (e) { throw asDelivery(e); }
+});
+
 // An invoice or a credit note for printing (PDF from the browser's print dialog): the snapshot, the order's lines.
 route('get', '/commerce/invoices/:id', 'orders:view', async (req) => {
   const [[inv]] = await db.query(
-    `SELECT i.invoice_id, i.invoice_no, i.fy, i.status, i.issued_at, DATE_FORMAT(i.due_on, '%Y-%m-%d') AS due_on, i.place_of_supply, i.gst_type, i.taxable, i.cgst, i.sgst, i.igst,
+    `SELECT i.invoice_id, i.invoice_no, i.fy, i.status, i.issued_at, DATE_FORMAT(i.due_on, '%Y-%m-%d') AS due_on, i.place_of_supply, i.gst_type, i.taxable, i.delivery_charge, i.delivery_gst, i.cgst, i.sgst, i.igst,
             i.round_off, i.total, i.seller_name, i.seller_gstin, i.seller_address, i.seller_state_code, i.buyer_json, i.is_demo, i.cancelled_at, i.cancel_reason,
             o.order_no, o.order_id, o.subtotal, o.discount, o.coupon_code, o.wallet_used, o.payment_terms
        FROM invoices i JOIN orders o ON o.order_id = i.order_id WHERE i.invoice_id = ?`, [Number(req.params.id)]
@@ -2040,6 +2205,9 @@ route('get', '/commerce/ops', 'any', async (req) => {
       COALESCE(SUM(CASE WHEN amount > 0 AND reason LIKE 'Cashback%' THEN amount END), 0) AS cashback,
       COALESCE(SUM(CASE WHEN amount > 0 AND reason LIKE 'Refund%' THEN amount END), 0) AS refunds FROM wallet_entries`);
   const low = can.stock ? await stock.reorderList(db) : [];
+  const dc = await delivery.opsCounts(db);
+  const seePack = canDo(req, 'packing') || canDo(req, 'orders');
+  const seeDeliver = canDo(req, 'delivery') || canDo(req, 'orders');
   const exp = can.stock ? (await stock.batchList(db)).rows.filter((b) => b.good > 0 && b.state !== 'ok') : [];
   const [next] = await db.query("SELECT o.order_no, o.created_at, c.name AS customer FROM orders o JOIN customers c ON c.customer_id = o.customer_id WHERE o.status = 'new' ORDER BY o.order_id LIMIT 5");
   return {
@@ -2050,6 +2218,8 @@ route('get', '/commerce/ops', 'any', async (req) => {
     lowStock: can.stock ? low.map((r) => ({ sku_code: r.sku_code, name: r.name, available: r.available, reorder_level: r.reorder_level, suggested: r.suggested })) : null,
     expiry: can.stock ? { expired: exp.filter((b) => b.state === 'expired').length, near: exp.filter((b) => b.state === 'near').length } : null,
     nextToPack: can.pack ? next : null,
+    packing: seePack ? { toPick: dc.toPick, toPack: dc.toPack } : null,
+    delivery: seeDeliver ? { waitingTrip: dc.waitingTrip, waitingOther: dc.waitingOther, outNow: dc.outNow, withCourier: dc.withCourier, failed: dc.failed, codDue: dc.codDue, cashOnTrips: dc.cashOnTrips } : null,
   };
 });
 

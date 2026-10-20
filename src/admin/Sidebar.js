@@ -11,7 +11,7 @@ import { Link, useLocation } from 'react-router-dom';
 import Icon from './icons';
 import { can } from '../shared/permissions';
 
-// Each item names the section whose "view" it needs (src/shared/permissions.js); null = every signed-in user.
+// Each item names the section whose "view" (or `action`) it needs (src/shared/permissions.js); null = every signed-in user.
 // Commerce items also need Commerce settings commerce_enabled (me.commerce_enabled).
 export const DASHBOARD = { path: '', label: 'Dashboard', section: null, icon: 'dashboard' };
 const item = (path, label, section, icon, extra = {}) => ({ path, label, section, icon, ...extra });
@@ -28,6 +28,9 @@ export const GROUPS = [
     key: 'commerce', label: 'Commerce', icon: 'sheet', commerce: true, items: [
       item('commerce/ops', 'Operations', null, 'dashboard'),
       item('commerce/orders', 'Orders', 'orders', 'sales'),
+      item('commerce/packing', 'Packing', 'packing', 'products'),
+      item('commerce/delivery', 'Delivery', 'delivery', 'towns', { action: 'create' }),
+      item('commerce/my-trips', 'My trips', 'delivery', 'towns'),
       item('commerce/returns', 'Returns', 'returns', 'leads'),
       item('commerce/customers', 'Customers', 'customers', 'users'),
       item('commerce/promotions', 'Promotions', 'promotions', 'options'),
@@ -56,7 +59,7 @@ export const GROUPS = [
 /** The groups with only the items this user may open (a group with none left is dropped). */
 export const groupsFor = (me) => GROUPS
   .filter((g) => !g.commerce || (me && me.commerce_enabled))
-  .map((g) => ({ ...g, items: g.items.filter((i) => !i.section || can(me && me.perms, i.section, 'view')) }))
+  .map((g) => ({ ...g, items: g.items.filter((i) => !i.section || can(me && me.perms, i.section, i.action || 'view')) }))
   .filter((g) => g.items.length && (!g.commerce || g.items.some((i) => i.section)));
 
 const GROUPS_KEY = 'dfresh-admin-nav-groups';

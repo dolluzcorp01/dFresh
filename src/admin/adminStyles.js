@@ -432,6 +432,33 @@ td.a-pending { background: #fff8e1; box-shadow: inset 3px 0 0 #e3b44f; }
 .a-orderlines small { display: block; }
 .a-price { width: 10ch; }
 .a-ok { color: #1e5e2c; }
+/* Packing and delivery */
+.a-packscan input { font: 600 18px/1.2 ui-monospace, Consolas, monospace; padding: 12px; }
+.a-scanmsg { margin: 8px 0; padding: 12px 14px; border-radius: 10px; font-weight: 700; font-size: 15px; }
+.a-scanmsg.ok { background: #e3f4e6; color: #1e5e2c; }
+.a-scanmsg.bad { background: #b3261e; color: #fff; }
+.a-packprogress { font-size: 15px; }
+.a-donerow td { background: #f0f8f1; }
+.a-bin { width: 70px; }
+.a-deliv { margin: 8px 0 12px; padding: 10px 12px; }
+.a-deliv h4 { margin: 0 0 4px; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--a-ink2); }
+.a-trip-head { display: grid; gap: 4px; margin-bottom: 10px; }
+.a-trip-cash { font-size: 14px; }
+.a-stops { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.a-stop { background: var(--a-card); border: 1px solid var(--a-line); border-inline-start: 5px solid var(--a-gold); border-radius: 12px; padding: 12px; display: grid; gap: 6px; }
+.a-stop-delivered { border-inline-start-color: var(--a-ok); }
+.a-stop-failed { border-inline-start-color: var(--a-bad); }
+.a-stop-head { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+.a-stop-meta { font-size: 13px; }
+.a-collect { color: var(--a-bad); }
+.a-stop-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.a-stop-actions .a-btn { min-height: 44px; flex: 1 1 120px; }
+.a-stop-form { display: grid; gap: 8px; background: #faf8f1; border-radius: 10px; padding: 10px; }
+.a-stop-form .a-btn { min-height: 44px; }
+.a-btn-block { width: 100%; min-height: 48px; margin: 8px 0; }
+.a-endtrip { margin-top: 14px; }
+.a-tripcard { display: grid; gap: 4px; width: 100%; text-align: start; background: var(--a-card); border: 1px solid var(--a-line); border-radius: 12px; padding: 14px; margin-bottom: 10px; font: inherit; color: var(--a-ink); cursor: pointer; min-height: 64px; }
+.a-mytrips { max-width: 640px; }
 /* Inventory: tabs, scan box, stock-in lines */
 .a-tabs { margin-bottom: 14px; }
 .a-scanbox { max-width: 420px; margin: 10px 0 4px; }

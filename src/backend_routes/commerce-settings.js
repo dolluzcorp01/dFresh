@@ -75,7 +75,21 @@ const LISTS = {
   },
   delivery_methods: {
     label: 'Delivery methods', table: 'delivery_methods', pk: 'method_id', auto: true,
-    cols: { label: { label: 'Method', type: 'text', req: true }, needs_tracking_no: { label: 'Tracking no. needed', type: 'bool' }, sort_order: { label: 'Order', type: 'int' }, is_active: { label: 'On', type: 'bool' } },
+    cols: { label: { label: 'Method', type: 'text', req: true }, kind: { label: 'How', type: 'select', req: true, options: [['own', 'Own vehicle (trips)'], ['courier', 'Courier (AWB)'], ['pickup', 'Customer pickup']] },
+      needs_tracking_no: { label: 'Tracking no. needed', type: 'bool' }, sort_order: { label: 'Order', type: 'int' }, is_active: { label: 'On', type: 'bool' } },
+  },
+  vehicles: {
+    label: 'Vehicles', table: 'vehicles', pk: 'vehicle_id', auto: true,
+    cols: { number: { label: 'Number', type: 'text', req: true }, type: { label: 'Type', type: 'text' }, sort_order: { label: 'Order', type: 'int' }, is_active: { label: 'On', type: 'bool' } },
+  },
+  drivers: {
+    label: 'Drivers', table: 'drivers', pk: 'driver_id', auto: true,
+    cols: { name: { label: 'Name', type: 'text', req: true }, phone: { label: 'Phone', type: 'text' }, emp_id: { label: 'Admin user (sees My trips), e.g. DZIND150', type: 'text', nullable: true },
+      sort_order: { label: 'Order', type: 'int' }, is_active: { label: 'On', type: 'bool' } },
+  },
+  couriers: {
+    label: 'Couriers', table: 'couriers', pk: 'courier_id', auto: true,
+    cols: { name: { label: 'Courier', type: 'text', req: true }, tracking_url: { label: 'Tracking link with {awb}', type: 'text' }, sort_order: { label: 'Order', type: 'int' }, is_active: { label: 'On', type: 'bool' } },
   },
   delivery_areas: {
     label: 'Delivery areas and charges', table: 'delivery_areas', pk: 'area_id', auto: true,
@@ -103,6 +117,9 @@ function checkListRow(list, raw, { creating }) {
       continue;
     }
     if (def.type === 'key' && !/^[a-z][a-z0-9_]{1,19}$/.test(s)) errors[col] = 'Small letters, digits and _ (2 to 20)';
+    else if (def.type === 'select' && !def.options.some(([v]) => v === s)) errors[col] = `One of: ${def.options.map(([, l]) => l).join(', ')}`;
+    else if (col === 'tracking_url' && !/^https:\/\/\S+\{awb\}/.test(s)) errors[col] = 'An https link with {awb} where the AWB number goes';
+    else if (col === 'emp_id' && !/^[A-Za-z0-9_-]{1,20}$/.test(s)) errors[col] = 'An employee id like DZIND150';
     else if (def.type === 'int' && !/^\d{1,7}$/.test(s)) errors[col] = 'A whole number';
     else if (def.type === 'decimal' && !/^\d{1,9}(\.\d{1,2})?$/.test(s)) errors[col] = 'A number (2 decimals at most)';
     else if (def.type === 'text' && s.length > (col === 'towns' ? 1000 : 255)) errors[col] = 'Too long';

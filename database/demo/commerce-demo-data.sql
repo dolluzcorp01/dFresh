@@ -33,6 +33,11 @@ UPDATE products SET hsn_code = '48181000' WHERE category_key = 'rolls';
 UPDATE products SET hsn_code = '48182000' WHERE product_id IN ('DZIND-DF023', 'DZIND-DF024');
 UPDATE products SET hsn_code = '33079090' WHERE category_key = 'wipes';
 
+-- DEMO bin / shelf locations in the Kanchipuram godown (rack by product family, shelf by size)
+UPDATE skus s JOIN products p ON p.product_id = s.product_id
+   SET s.bin_location = CONCAT(CASE p.category_key WHEN 'napkins' THEN 'R1' WHEN 'facial' THEN 'R2' WHEN 'kitchen' THEN 'R3' WHEN 'rolls' THEN 'R4' WHEN 'towels' THEN 'R5' ELSE 'R6' END,
+                               '-S', 1 + (CRC32(s.sku_code) % 4));
+
 -- DEMO reorder levels and quantities (the stock itself comes from the seed's stock-ins: scripts/commerce-demo-seed.js)
 INSERT IGNORE INTO stock_levels (sku_code, reorder_level, reorder_qty)
 SELECT s.sku_code, CASE WHEN s.sku_code LIKE '%-R%' THEN 30 ELSE 20 END, s.packs_per_carton * 4 FROM skus s;

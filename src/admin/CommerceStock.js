@@ -72,13 +72,14 @@ function StockTab({ stock }) {
       stock.reload();
     }, `${form.move_type === 'damaged' ? 'Moved to damaged' : 'Back into Returned (R)'}: ${form.qty} x ${form.sku_code.toUpperCase()}`);
   };
-  const lv = (r) => levels[r.sku_code] || { reorder_level: String(r.reorder_level), reorder_qty: String(r.reorder_qty) };
-  const lvDirty = (r) => Boolean(levels[r.sku_code]) && (levels[r.sku_code].reorder_level !== String(r.reorder_level) || levels[r.sku_code].reorder_qty !== String(r.reorder_qty));
+  const lv = (r) => levels[r.sku_code] || { reorder_level: String(r.reorder_level), reorder_qty: String(r.reorder_qty), bin_location: r.bin_location || '' };
+  const lvDirty = (r) => Boolean(levels[r.sku_code]) && (levels[r.sku_code].reorder_level !== String(r.reorder_level) || levels[r.sku_code].reorder_qty !== String(r.reorder_qty)
+    || levels[r.sku_code].bin_location !== (r.bin_location || ''));
   const saveLevel = (r) => act.run(async () => {
-    await api.send('PUT', `/commerce/stock/${encodeURIComponent(r.sku_code)}/levels`, { reorder_level: Number(lv(r).reorder_level), reorder_qty: Number(lv(r).reorder_qty) });
+    await api.send('PUT', `/commerce/stock/${encodeURIComponent(r.sku_code)}/levels`, { reorder_level: Number(lv(r).reorder_level), reorder_qty: Number(lv(r).reorder_qty), bin_location: lv(r).bin_location });
     setLevels((l) => { const n = { ...l }; delete n[r.sku_code]; return n; });
     stock.reload();
-  }, `Reorder level for ${r.sku_code} saved`);
+  }, `${r.sku_code} saved`);
 
   return (
     <Loading state={stock}>
@@ -101,7 +102,7 @@ function StockTab({ stock }) {
             <table className="a-table a-stocktable">
               <thead><tr>
                 <th>SKU</th><th>Product</th><th className="a-num">Good</th><th className="a-num" title="Batches past their expiry date">Expired</th><th className="a-num" title="Held by confirmed orders">Reserved</th>
-                <th className="a-num" title="Good - expired - reserved">Available</th><th className="a-num">(R)</th><th className="a-num">Damaged</th><th>Reorder level / qty</th>
+                <th className="a-num" title="Good - expired - reserved">Available</th><th className="a-num">(R)</th><th className="a-num">Damaged</th><th>Bin · reorder level / qty</th>
                 {d.seesCost && <><th className="a-num">Avg cost</th><th className="a-num">Value</th></>}<th>Last movement</th>
               </tr></thead>
               <tbody>
@@ -118,11 +119,12 @@ function StockTab({ stock }) {
                     <td>
                       {canEdit ? (
                         <span className="a-row">
+                          <input className="a-bin" maxLength={30} aria-label={`Bin ${r.sku_code}`} placeholder="Bin" value={lv(r).bin_location} onChange={(e) => setLevels({ ...levels, [r.sku_code]: { ...lv(r), bin_location: e.target.value } })} />
                           <input type="number" min="0" step="1" className="a-qty" aria-label={`Reorder level ${r.sku_code}`} value={lv(r).reorder_level} onChange={(e) => setLevels({ ...levels, [r.sku_code]: { ...lv(r), reorder_level: e.target.value } })} />
                           <input type="number" min="0" step="1" className="a-qty" aria-label={`Reorder qty ${r.sku_code}`} value={lv(r).reorder_qty} onChange={(e) => setLevels({ ...levels, [r.sku_code]: { ...lv(r), reorder_qty: e.target.value } })} />
                           {lvDirty(r) && <button type="button" className="a-btn a-btn-sm" disabled={act.busy} onClick={() => saveLevel(r)}>Save</button>}
                         </span>
-                      ) : `${r.reorder_level} / ${r.reorder_qty || 'suggest'}`}
+                      ) : `${r.bin_location ? `${r.bin_location} · ` : ''}${r.reorder_level} / ${r.reorder_qty || 'suggest'}`}
                     </td>
                     {d.seesCost && <><td className="a-num">{rs(r.avg_cost)}</td><td className="a-num">{rs(r.value)}</td></>}
                     <td>{fmtDate(r.last_move)}</td>

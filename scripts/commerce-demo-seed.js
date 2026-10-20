@@ -14,7 +14,11 @@
 //    purchase of napkins 6 days ago (costs, so the average cost moves), wet wipes in 3 batches (one expired, one near
 //    expiry, one fresh); after the orders: write-offs (one waiting for approval), a towels count with differences
 //    waiting for approval
-// 6. demo approval requests (pending and decided) and Commerce switched ON
+// 6. delivery setup (2 vehicles, 3 drivers, 2 couriers, 4 delivery areas with charges) before the orders; the orders go
+//    through packing (pick list, scans, packed with cartons and weight) and delivery: past trips (delivered, cash
+//    collected), a customer pickup, couriers (one delivered, one on the way), a failed delivery, one trip out for
+//    delivery now, and orders still Packed, Packing and New
+// 7. demo approval requests (pending and decided) and Commerce switched ON
 // Migrations never contain any of this (docs/COMMERCE-SPEC.md 9). Running it twice does nothing the second time.
 require('dotenv').config({ quiet: true });
 const fs = require('fs');
@@ -28,6 +32,7 @@ const commerce = require('../src/backend_routes/commerce');
 const approvals = require('../src/backend_routes/approvals');
 const pricing = require('../src/backend_routes/pricing');
 const stock = require('../src/backend_routes/stock');
+const delivery = require('../src/backend_routes/delivery');
 
 const db = getDBConnection(DB).promise();
 const ROOT = path.join(__dirname, '..');
@@ -61,37 +66,39 @@ const DEMO_PRICE = {
   'DZIND-DF044': 180,
 };
 const LIST_FACTOR = { default: 1, home: 1, hotel: 0.92, hospital: 0.9, office: 0.94, distributor: 0.8 };
-// [customer #, status, terms (cod | advance | credit), coupon, days ago, [[sku, qty], ...]] - quantities respect the demo carton
-// rules; what was paid is set after the loop (PAID)
+// [customer #, target status, terms (cod | advance | credit), coupon, days ago, [[sku, qty], ...], delivery (own | courier | pickup)]
+// - quantities respect the demo carton rules; what was paid is set after the loop (PAID); pay-on-delivery cash is
+//   collected on the trips
 const ORDERS = [
-  [1, 'delivered', 'credit', 'HOTEL500', 9, [['DF001-M100', 20], ['DF007-M100', 10], ['DF040-M100', 6], ['DF013-M50', 24]]],
-  [3, 'delivered', 'credit', null, 8, [['DF044-M100', 10], ['DF036-M250', 8]]],
-  [7, 'delivered', 'credit', null, 8, [['DF002-M100', 30], ['DF013-M50', 12], ['DF030-M200', 10]]],
-  [9, 'delivered', 'cod', 'WELCOME10', 7, [['DF018-R6', 5]]],
-  [2, 'delivered', 'advance', 'FRESH5', 7, [['DF001-M100', 8], ['DF008-M50', 6]]],
-  [5, 'delivered', 'credit', null, 6, [['DF040-M100', 10], ['DF031-M200', 6]]],
-  [12, 'delivered', 'advance', null, 6, [['DF002-M100', 12], ['DF014-M100', 6]]],
-  [10, 'delivered', 'cod', 'WELCOME10', 5, [['DF017-R4', 6], ['DF023-R1', 6]]],
-  [4, 'dispatched', 'credit', null, 4, [['DF044-M100', 6], ['DF036-M250', 4]]],
-  [8, 'dispatched', 'credit', null, 3, [['DF002-M100', 20], ['DF007-M100', 12]]],
-  [14, 'dispatched', 'cod', null, 3, [['DF001-M100', 10], ['DF024-R1', 6]]],
-  [11, 'dispatched', 'advance', 'FRESH5', 2, [['DF018-R6', 2], ['DF030-M200', 2]]],
-  [6, 'dispatched', 'credit', null, 2, [['DF040-M100', 8]]],
-  [13, 'packed', 'cod', null, 2, [['DF008BLK-M100', 6], ['DF002-M100', 10]]],
-  [1, 'packed', 'credit', null, 1, [['DF007-M100', 15], ['DF013-M50', 6]]],
-  [15, 'packed', 'cod', 'FRESH5', 1, [['DF019-R10', 1], ['DF025-R1', 4]]],
-  [3, 'packed', 'credit', null, 1, [['DF044-M100', 8]]],
-  [2, 'packed', 'advance', null, 1, [['DF001-M100', 6], ['DF008LAV-M50', 4]]],
-  [7, 'new', 'credit', 'HOTEL500', 0, [['DF002-M100', 40], ['DF014-M100', 20], ['DF030-M200', 12], ['DF036-M250', 24], ['DF044-M100', 12]]],
-  [12, 'new', 'cod', null, 0, [['DF001-M100', 10], ['DF008BUR-M50', 6]]],
-  [9, 'new', 'advance', 'FRESH5', 0, [['DF017-R4', 2], ['DF026-R2', 2]]],
-  [5, 'new', 'credit', null, 0, [['DF040-M100', 12], ['DF031-M200', 8]]],
-  [10, 'new', 'cod', null, 0, [['DF023-R1', 6], ['DF035-M10', 2]]],
-  [4, 'new', 'credit', null, 0, [['DF044-M100', 4], ['DF038-M150', 6]]],
-  [14, 'new', 'cod', null, 0, [['DF006-PKT', 10], ['DF001-M100', 6]]],
+  [1, 'delivered', 'credit', 'HOTEL500', 9, [['DF001-M100', 20], ['DF007-M100', 10], ['DF040-M100', 6], ['DF013-M50', 24]], 'own'],
+  [3, 'delivered', 'credit', null, 8, [['DF044-M100', 10], ['DF036-M250', 8]], 'own'],
+  [7, 'delivered', 'credit', null, 8, [['DF002-M100', 30], ['DF013-M50', 12], ['DF030-M200', 10]], 'own'],
+  [9, 'delivered', 'cod', 'WELCOME10', 7, [['DF018-R6', 5]], 'own'],
+  [2, 'delivered', 'advance', 'FRESH5', 7, [['DF001-M100', 8], ['DF008-M50', 6]], 'pickup'],
+  [5, 'delivered', 'credit', null, 6, [['DF040-M100', 10], ['DF031-M200', 6]], 'own'],
+  [12, 'delivered', 'advance', null, 6, [['DF002-M100', 12], ['DF014-M100', 6]], 'courier'],
+  [10, 'delivered', 'cod', 'WELCOME10', 5, [['DF017-R4', 6], ['DF023-R1', 6]], 'own'],
+  [4, 'out_for_delivery', 'credit', null, 1, [['DF044-M100', 6], ['DF036-M250', 4]], 'own'],
+  [8, 'with_courier', 'credit', null, 3, [['DF002-M100', 20], ['DF007-M100', 12]], 'courier'],
+  [14, 'out_for_delivery', 'cod', null, 1, [['DF001-M100', 10], ['DF024-R1', 6]], 'own'],
+  [11, 'out_for_delivery', 'advance', 'FRESH5', 1, [['DF018-R6', 2], ['DF030-M200', 2]], 'own'],
+  [6, 'failed', 'credit', null, 2, [['DF040-M100', 8]], 'own'],
+  [13, 'packed', 'cod', null, 2, [['DF008BLK-M100', 6], ['DF002-M100', 10]], 'own'],
+  [1, 'packed', 'credit', null, 1, [['DF007-M100', 15], ['DF013-M50', 6]], 'own'],
+  [15, 'packed', 'cod', 'FRESH5', 1, [['DF019-R10', 1], ['DF025-R1', 4]], 'pickup'],
+  [3, 'packed', 'credit', null, 1, [['DF044-M100', 8]], 'own'],
+  [2, 'packed', 'advance', null, 1, [['DF001-M100', 6], ['DF008LAV-M50', 4]], 'courier'],
+  [7, 'packing', 'credit', 'HOTEL500', 0, [['DF002-M100', 40], ['DF014-M100', 20], ['DF030-M200', 12], ['DF036-M250', 24], ['DF044-M100', 12]], 'own'],
+  [12, 'packing', 'cod', null, 0, [['DF001-M100', 10], ['DF008BUR-M50', 6]], 'own'],
+  [9, 'new', 'advance', 'FRESH5', 0, [['DF017-R4', 2], ['DF026-R2', 2]], 'own'],
+  [5, 'new', 'credit', null, 0, [['DF040-M100', 12], ['DF031-M200', 8]], 'own'],
+  [10, 'new', 'cod', null, 0, [['DF023-R1', 6], ['DF035-M10', 2]], 'own'],
+  [4, 'new', 'credit', null, 0, [['DF044-M100', 4], ['DF038-M150', 6]], 'own'],
+  [14, 'new', 'cod', null, 0, [['DF006-PKT', 10], ['DF001-M100', 6]], 'own'],
 ];
+const METHOD = { own: 1, courier: 2, pickup: 3 };
 // what each demo order has paid after the loop: order index (1-based) -> 'full' | fraction | 0 (credit orders
-// not listed stay unpaid; 'advance' orders are paid in full by Razorpay at the order day, 'cod' ones when delivered)
+// not listed stay unpaid; 'advance' orders are paid in full by Razorpay at the order day, 'cod' ones on the trip)
 const PAID = { 2: 'full', 3: 0.5, 6: 'full', 9: 0.4 };
 const NOTES = [
   ['Demo Hotel Sangam', 'DEMO - orders every Monday, wants the invoice with GSTIN', 0],
@@ -185,6 +192,17 @@ async function inTx(fn) {
   const [[{ n }]] = await db.query('SELECT COUNT(*) AS n FROM orders');
   if (Number(n) > 0) { console.log(`${n} orders exist already: customers, orders, returns and approvals skipped`); process.exit(0); }
 
+  // DEMO delivery setup (Commerce settings > Delivery): areas with charges, vehicles, drivers, couriers
+  await db.query(`INSERT INTO delivery_areas (area_id, label, towns, charge, free_above, sort_order) VALUES
+      (2, 'Chennai', 'Chennai, 600040, 600042, 600045, 603103', 150, 5000, 2),
+      (3, 'Chengalpattu and Sriperumbudur', 'Chengalpattu, Sriperumbudur, 603001, 602105', 100, 3000, 3),
+      (4, 'Vellore and Arakkonam', 'Vellore, Arakkonam, Katpadi, 632007', 250, 10000, 4)
+    ON DUPLICATE KEY UPDATE label = VALUES(label)`);
+  await db.query("UPDATE delivery_areas SET towns = 'Kanchipuram, 631501, 631502' WHERE area_id = 1");
+  await db.query("INSERT INTO vehicles (number, type, sort_order) VALUES ('TN 21 AB 4521', 'Tata Ace (mini truck)', 1), ('TN 21 CK 0987', 'Bajaj three-wheeler', 2)");
+  await db.query("INSERT INTO drivers (name, phone, sort_order) VALUES ('DEMO Murugan', '+91 90030 11111', 1), ('DEMO Selvam', '+91 90030 22222', 2), ('DEMO Ravi', '+91 90030 33333', 3)");
+  await db.query("INSERT INTO couriers (name, tracking_url, sort_order) VALUES ('DEMO Express Couriers', 'https://example.com/track?awb={awb}', 1), ('DEMO South Parcel Service', 'https://example.org/tracking/{awb}', 2)");
+
   for (const [nm, phone, ctype, town, address, gstin, state, pin, days, limit] of CUSTOMERS) {
     await db.query(`INSERT INTO customers (name, phone, ctype, town, state_code, pincode, address, gstin, credit_days, credit_limit, source, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Phone', UTC_TIMESTAMP() - INTERVAL 12 DAY)`,
@@ -192,42 +210,134 @@ async function inTx(fn) {
   }
   const [custRows] = await db.query('SELECT customer_id FROM customers ORDER BY customer_id LIMIT 15');
   let made = 0;
-  const placed = []; // [order_no, terms, status, daysAgo]
-  for (const [ci, status, terms, coupon, daysAgo, lines] of ORDERS) {
+  const placed = []; // [order_no, terms, status, daysAgo, kind]
+  for (const [ci, status, terms, coupon, daysAgo, lines, kind] of ORDERS) {
     await inTx(async (conn) => {
       const items = lines.map(([sku, qty]) => ({ sku_code: sku, qty, price: null })); // the list price of the customer's type
       const priceDate = new Date(Date.now() + 5.5 * 3600e3 - (daysAgo * 24 + 6) * 3600e3).toISOString().slice(0, 10);
-      const o = await commerce.createOrder(conn, { customer_id: custRows[ci - 1].customer_id, items, coupon_code: coupon, payment_terms: terms, note: 'DEMO order' }, ci % 2 ? 'DZIND148' : 'DZIND002', { priceDate });
+      const o = await commerce.createOrder(conn, { customer_id: custRows[ci - 1].customer_id, items, coupon_code: coupon, payment_terms: terms, delivery_method_id: METHOD[kind], note: 'DEMO order' },
+        ci % 2 ? 'DZIND148' : 'DZIND002', { priceDate });
       if (o.status !== 'new') throw new Error(`${o.order_no} is ${o.status}, expected new`);
-      for (const st of commerce.ORDER_FLOW.slice(1, commerce.ORDER_FLOW.indexOf(status) + 1)) await commerce.advanceOrder(conn, o.order_no, st, 'DZIND002');
-      placed.push([o.order_no, terms, status, daysAgo]);
+      placed.push([o.order_no, terms, status, daysAgo, kind]);
     });
     made += 1;
   }
+  // packing: start (pick list), scan every pack (full cartons as SKU#C), packed with cartons and weight
+  const packAll = async (conn, no) => {
+    const [[o]] = await conn.query('SELECT order_id FROM orders WHERE order_no = ?', [no]);
+    const st = await delivery.packState(conn, o.order_id);
+    for (const l of st.lines) {
+      const code = l.batch_no ? `${l.sku_code}/${l.batch_no}` : l.sku_code;
+      let left = l.need;
+      const ppc = Number(l.packs_per_carton) || 1;
+      while (ppc > 1 && left >= ppc) { await delivery.packScan(conn, no, `${code}#C`, 'DZIND002'); left -= ppc; }
+      while (left > 0) { await delivery.packScan(conn, no, code, 'DZIND002'); left -= 1; }
+    }
+    const units = st.lines.reduce((a2, l) => a2 + l.need, 0);
+    await delivery.markPacked(conn, no, { cartons: Math.max(1, Math.ceil(units / 24)), weight_kg: String(Math.round(units * 0.4 * 10) / 10 || 1) }, 'DZIND002', false);
+  };
+  const beyondNew = placed.filter((x) => x[2] !== 'new');
+  for (const [no, , st] of beyondNew) {
+    await inTx(async (conn) => {
+      await delivery.startPacking(conn, [no], 'DZIND002');
+      if (st !== 'packing') await packAll(conn, no);
+    });
+  }
+  // half of one packing order is scanned already
+  const halfway = beyondNew.find((x) => x[2] === 'packing');
+  await inTx(async (conn) => {
+    const [[o]] = await conn.query('SELECT order_id FROM orders WHERE order_no = ?', [halfway[0]]);
+    const st = await delivery.packState(conn, o.order_id);
+    const l = st.lines.find((x) => !x.batch_no);
+    for (let i = 0; i < Math.min(5, l.need); i += 1) await delivery.packScan(conn, halfway[0], l.sku_code, 'DZIND002');
+  });
+  // delivery: past trips (one per day) for own-vehicle orders delivered, with the cash of pay-on-delivery orders
+  const [drv] = await db.query('SELECT driver_id FROM drivers ORDER BY driver_id');
+  const [veh] = await db.query('SELECT vehicle_id FROM vehicles ORDER BY vehicle_id');
+  const trips = []; // [trip_id, daysAgo]
+  const byDay = new Map();
+  placed.filter((x) => x[2] === 'delivered' && x[4] === 'own').forEach((x) => byDay.set(x[3], [...(byDay.get(x[3]) || []), x]));
+  let tripNo = 0;
+  for (const [daysAgo, group] of [...byDay.entries()].sort((x, y) => y[0] - x[0])) {
+    const pick = tripNo % 2;
+    await inTx(async (conn) => {
+      const t = await delivery.createTrip(conn, { order_nos: group.map((x) => x[0]), vehicle_id: veh[pick].vehicle_id, driver_id: drv[pick].driver_id }, 'DZIND002');
+      await delivery.startTrip(conn, t.trip_id, 'DZIND002');
+      const [stops] = await conn.query('SELECT s.stop_id, o.order_no, o.payment_terms, o.amount_due FROM trip_stops s JOIN orders o ON o.order_id = s.order_id WHERE s.trip_id = ? ORDER BY s.seq', [t.trip_id]);
+      for (const st of stops) {
+        if (st.payment_terms === 'cod') await delivery.stopCash(conn, st.stop_id, { amount: String(Number(st.amount_due)) }, 'DZIND002', true);
+        await delivery.stopDelivered(conn, st.stop_id, { receiver_name: ['Manager on duty', 'Front desk', 'Store keeper', 'Owner'][st.stop_id % 4] }, null, 'DZIND002', true);
+      }
+      const [[cash]] = await conn.query('SELECT COALESCE(SUM(cash_collected), 0) AS c FROM trip_stops WHERE trip_id = ?', [t.trip_id]);
+      await delivery.endTrip(conn, t.trip_id, { cash_handed: String(Number(cash.c)) }, 'DZIND002', true);
+      trips.push([t.trip_id, daysAgo]);
+    });
+    tripNo += 1;
+  }
+  // customer pickup, couriers
+  for (const [no, , st, , kind] of placed) {
+    if (kind === 'pickup' && st === 'delivered') await inTx((conn) => delivery.pickedUp(conn, no, { receiver_name: 'Customer in person' }, 'DZIND002'));
+    if (kind === 'courier' && ['delivered', 'with_courier'].includes(st)) {
+      await inTx(async (conn) => {
+        const [[c]] = await conn.query('SELECT courier_id FROM couriers ORDER BY courier_id LIMIT 1');
+        await delivery.handToCourier(conn, no, { courier_id: c.courier_id, awb_no: `DX${String(7040001 + placed.indexOf(placed.find((x) => x[0] === no)))}IN` }, 'DZIND002');
+        if (st === 'delivered') await delivery.courierDelivered(conn, no, { receiver_name: 'Reception' }, 'DZIND002');
+      });
+    }
+  }
+  // a failed delivery (trip ended) and the trip out for delivery now
+  const failedOnes = placed.filter((x) => x[2] === 'failed');
+  await inTx(async (conn) => {
+    const t = await delivery.createTrip(conn, { order_nos: failedOnes.map((x) => x[0]), vehicle_id: veh[1].vehicle_id, driver_id: drv[2].driver_id }, 'DZIND002');
+    await delivery.startTrip(conn, t.trip_id, 'DZIND002');
+    const [stops] = await conn.query('SELECT stop_id FROM trip_stops WHERE trip_id = ?', [t.trip_id]);
+    for (const st of stops) await delivery.stopFailed(conn, st.stop_id, { reason: 'Shop / office closed', note: 'bank holiday' }, 'DZIND002', true);
+    await delivery.endTrip(conn, t.trip_id, { cash_handed: '0' }, 'DZIND002', true);
+    trips.push([t.trip_id, 2]);
+  });
+  const outNow = placed.filter((x) => x[2] === 'out_for_delivery');
+  const current = await inTx(async (conn) => {
+    const t = await delivery.createTrip(conn, { order_nos: outNow.map((x) => x[0]), vehicle_id: veh[0].vehicle_id, driver_id: drv[1].driver_id, area_id: 1 }, 'DZIND002');
+    await delivery.startTrip(conn, t.trip_id, 'DZIND002');
+    return t.trip_id;
+  });
+  console.log(`demo delivery: ${trips.length} past trips, trip T-${current} out now (${outNow.length} stops), couriers and a pickup`);
+
   // the demo days: orders, history, stock movements, invoices (issued at dispatch, due after the credit days), cashback
   for (const [no, , , daysAgo] of placed) {
     const h = (x) => Math.max(daysAgo * 24 - x, 1);
+    const today = daysAgo === 0;
     await db.query(`UPDATE orders SET created_at = UTC_TIMESTAMP() - INTERVAL ? HOUR, confirmed_at = UTC_TIMESTAMP() - INTERVAL ? HOUR,
+        packing_at = IF(packing_at IS NULL, NULL, UTC_TIMESTAMP() - INTERVAL ? HOUR),
         packed_at = IF(packed_at IS NULL, NULL, UTC_TIMESTAMP() - INTERVAL ? HOUR),
         dispatched_at = IF(dispatched_at IS NULL, NULL, UTC_TIMESTAMP() - INTERVAL ? HOUR),
+        out_at = IF(out_at IS NULL, NULL, UTC_TIMESTAMP() - INTERVAL ? HOUR), courier_at = IF(courier_at IS NULL, NULL, UTC_TIMESTAMP() - INTERVAL ? HOUR),
+        failed_at = IF(failed_at IS NULL, NULL, UTC_TIMESTAMP() - INTERVAL ? HOUR),
         delivered_at = IF(delivered_at IS NULL, NULL, UTC_TIMESTAMP() - INTERVAL ? HOUR) WHERE order_no = ?`,
-    [daysAgo * 24 + 6, daysAgo * 24 + 6, daysAgo * 24 + 4, daysAgo * 24 + 2, h(20), no]);
+    [daysAgo * 24 + 6, daysAgo * 24 + 6, today ? 1 : daysAgo * 24 + 5, daysAgo * 24 + 4, daysAgo * 24 + 2, daysAgo === 1 ? 2 : daysAgo * 24 + 2, daysAgo * 24 + 2, h(20), h(20), no]);
     await db.query(`UPDATE order_status_history hs JOIN orders o ON o.order_id = hs.order_id
-        SET hs.created_at = CASE hs.to_status WHEN 'packed' THEN o.packed_at WHEN 'dispatched' THEN o.dispatched_at WHEN 'delivered' THEN o.delivered_at ELSE o.created_at END
-      WHERE o.order_no = ?`, [no]);
+        SET hs.created_at = CASE hs.to_status WHEN 'packing' THEN o.packing_at WHEN 'packed' THEN o.packed_at WHEN 'out_for_delivery' THEN o.out_at WHEN 'with_courier' THEN o.courier_at
+          WHEN 'failed' THEN o.failed_at WHEN 'delivered' THEN o.delivered_at ELSE o.created_at END
+      WHERE o.order_no = ? AND hs.to_status <> 'edited'`, [no]);
     await db.query('UPDATE stock_movements SET created_at = UTC_TIMESTAMP() - INTERVAL ? HOUR WHERE note = ?', [daysAgo * 24 + 2, `Dispatched ${no}`]);
     await db.query(`UPDATE invoices i JOIN orders o ON o.order_id = i.order_id
         SET i.issued_at = o.dispatched_at, i.due_on = DATE(CONVERT_TZ(o.dispatched_at, '+00:00', '+05:30')) + INTERVAL IF(o.payment_terms = 'credit', o.credit_days, 0) DAY
       WHERE o.order_no = ?`, [no]);
     await db.query("UPDATE wallet_entries w JOIN orders o ON o.order_id = w.order_id SET w.created_at = o.delivered_at WHERE o.order_no = ? AND w.reason LIKE 'Cashback%'", [no]);
+    await db.query("UPDATE payments p JOIN orders o ON o.order_id = p.order_id SET p.received_on = DATE(CONVERT_TZ(o.delivered_at, '+00:00', '+05:30')), p.created_at = o.delivered_at WHERE o.order_no = ? AND p.mode = 'cash' AND o.delivered_at IS NOT NULL", [no]);
+    await db.query('UPDATE pack_scans p JOIN orders o ON o.order_id = p.order_id SET p.created_at = o.packed_at WHERE o.order_no = ? AND o.packed_at IS NOT NULL', [no]);
+  }
+  for (const [tripId, daysAgo] of trips) {
+    await db.query(`UPDATE delivery_trips SET trip_date = DATE(CONVERT_TZ(UTC_TIMESTAMP() - INTERVAL ? HOUR, '+00:00', '+05:30')), created_at = UTC_TIMESTAMP() - INTERVAL ? HOUR,
+        started_at = UTC_TIMESTAMP() - INTERVAL ? HOUR, ended_at = UTC_TIMESTAMP() - INTERVAL ? HOUR WHERE trip_id = ?`, [daysAgo * 24 + 2, daysAgo * 24 + 3, daysAgo * 24 + 2, Math.max(daysAgo * 24 - 21, 1), tripId]);
+    await db.query('UPDATE trip_stops s JOIN orders o ON o.order_id = s.order_id SET s.done_at = COALESCE(o.delivered_at, o.failed_at) WHERE s.trip_id = ?', [tripId]);
   }
   // payments: advance = Razorpay on the order day; cod = cash when delivered; credit = as PAID says
   for (let i = 0; i < placed.length; i += 1) {
-    const [no, terms, status] = placed[i];
+    const [no, terms] = placed[i];
     const [[o]] = await db.query("SELECT amount_due, DATE_FORMAT(CONVERT_TZ(created_at, '+00:00', '+05:30'), '%Y-%m-%d') AS made, DATE_FORMAT(CONVERT_TZ(delivered_at, '+00:00', '+05:30'), '%Y-%m-%d') AS got FROM orders WHERE order_no = ?", [no]);
     let amount = 0; let mode = 'cash'; let day = o.got; let ref = null;
     if (terms === 'advance') { amount = Number(o.amount_due); mode = 'razorpay'; day = o.made; ref = `pay_DEMO${String(i + 1).padStart(4, '0')}`; }
-    else if (terms === 'cod' && status === 'delivered') amount = Number(o.amount_due);
     else if (terms === 'credit' && PAID[i + 1] !== undefined) {
       amount = PAID[i + 1] === 'full' ? Number(o.amount_due) : Math.round(Number(o.amount_due) * PAID[i + 1]);
       mode = 'bank'; day = o.got || o.made; ref = `UTR DEMO${String(i + 1).padStart(6, '0')}`;
