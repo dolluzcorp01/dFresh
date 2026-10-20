@@ -1357,6 +1357,74 @@ route('get', '/commerce/skus', 'viewer', async () => {
   return rows;
 });
 
+// Inventory (commerce_02_inventory.sql): stock = sum of movements per SKU and kind; one location.
+const SKU_NAME = `COALESCE(t.name, pt.name, s.product_id)`;
+const SKU_JOIN = `JOIN products p ON p.product_id = s.product_id
+       LEFT JOIN product_translations t ON t.product_id = s.product_id AND t.lang_code = 'en'
+       LEFT JOIN product_translations pt ON pt.product_id = p.variant_of AND pt.lang_code = 'en'`;
+const MOVE_TYPES = ['in', 'out', 'adjust', 'return', 'damaged'];
+
+route('get', '/commerce/stock', 'viewer', async () => {
+  const [rows] = await db.query(
+    `SELECT s.sku_code, s.product_id, s.size_label, ${SKU_NAME} AS name, COALESCE(l.low_level, 20) AS low_level,
+            COALESCE(SUM(CASE WHEN m.stock_kind = 'good' THEN m.delta END), 0) AS good,
+            COALESCE(SUM(CASE WHEN m.stock_kind = 'returned' THEN m.delta END), 0) AS returned,
+            COALESCE(SUM(CASE WHEN m.stock_kind = 'damaged' THEN m.delta END), 0) AS damaged,
+            MAX(m.created_at) AS last_move
+       FROM skus s ${SKU_JOIN}
+       LEFT JOIN stock_levels l ON l.sku_code = s.sku_code
+       LEFT JOIN stock_movements m ON m.sku_code = s.sku_code
+      GROUP BY s.sku_code, s.product_id, s.size_label, t.name, pt.name, l.low_level
+      ORDER BY s.sku_code`
+  );
+  return rows.map((r) => ({ ...r, good: Number(r.good), returned: Number(r.returned), damaged: Number(r.damaged), low_level: Number(r.low_level) }));
+});
+
+route('get', '/commerce/movements', 'viewer', async (req) => {
+  const sku = typeof req.query.sku === 'string' && req.query.sku ? req.query.sku : null;
+  const [rows] = await db.query(
+    `SELECT m.move_id, m.sku_code, m.move_type, m.stock_kind, m.delta, m.note, m.emp_id, m.created_at,
+            TRIM(CONCAT(COALESCE(e.emp_first_name, ''), ' ', COALESCE(e.emp_last_name, ''))) AS emp_name
+       FROM stock_movements m LEFT JOIN \`${auth.DADMIN}\`.employee e ON e.emp_id = m.emp_id
+      ${sku ? 'WHERE m.sku_code = ?' : ''} ORDER BY m.move_id DESC LIMIT 200`, sku ? [sku] : []
+  );
+  return rows;
+});
+
+// in / out / adjust / return / damaged. Good stock never goes below 0 (out, damaged, a negative adjust).
+route('post', '/commerce/movements', 'editor', async (req) => {
+  const sku = String(req.body.sku_code || '').trim().toUpperCase();
+  const type = String(req.body.move_type || '');
+  const qty = Number(req.body.qty);
+  const note = typeof req.body.note === 'string' ? req.body.note.trim().slice(0, 255) : '';
+  if (!MOVE_TYPES.includes(type)) throw new InputError(`Type: one of ${MOVE_TYPES.join(', ')}`);
+  if (!Number.isInteger(qty) || qty === 0 || Math.abs(qty) > 100000 || (type !== 'adjust' && qty < 0)) {
+    throw new InputError(type === 'adjust' ? 'Quantity: a whole number, + to add, - to remove' : 'Quantity: a whole number above 0');
+  }
+  return tx(async (q) => {
+    const [[row]] = await q.query('SELECT sku_code FROM skus WHERE sku_code = ? FOR UPDATE', [sku]);
+    if (!row) throw new InputError(`No SKU ${sku}`, 404);
+    const [[st]] = await q.query("SELECT COALESCE(SUM(delta), 0) AS good FROM stock_movements WHERE sku_code = ? AND stock_kind = 'good'", [sku]);
+    const goodDelta = { in: qty, out: -qty, adjust: qty, damaged: -qty, return: 0 }[type];
+    if (Number(st.good) + goodDelta < 0) throw new InputError(`Only ${st.good} in good stock for ${sku}`, 409);
+    const rows = type === 'return' ? [['returned', qty]] : type === 'damaged' ? [['good', -qty], ['damaged', qty]] : [['good', goodDelta]];
+    for (const [kind, delta] of rows) {
+      await q.query('INSERT INTO stock_movements (sku_code, move_type, stock_kind, delta, note, emp_id) VALUES (?, ?, ?, ?, ?, ?)', [sku, type, kind, delta, note || null, by(req)]);
+    }
+    await audit(q, { empId: by(req), action: 'create', entity: 'stock', entityId: sku, after: { type, qty, note } });
+    return { sku_code: sku, good: Number(st.good) + goodDelta };
+  });
+});
+
+route('put', '/commerce/stock/:sku/low', 'editor', async (req) => {
+  const level = Number(req.body.low_level);
+  if (!Number.isInteger(level) || level < 0 || level > 100000) throw new InputError('Low level: a whole number, 0 or more');
+  const [r] = await db.query('UPDATE stock_levels SET low_level = ? WHERE sku_code = ?', [level, req.params.sku]);
+  if (!r.affectedRows) throw new InputError('No SKU', 404);
+  await audit(null, { empId: by(req), action: 'update', entity: 'stock_level', entityId: req.params.sku, after: { low_level: level } });
+  return { sku_code: req.params.sku, low_level: level };
+});
+
 router.use('/admin', (err, req, res, next) => { // eslint-disable-line no-unused-vars
   if (err instanceof InputError || err instanceof media.UploadError) {
     return res.status(err.status).json({ success: false, message: err.message, ...(err.code ? { code: err.code } : {}) });

@@ -25,6 +25,7 @@ export const GROUPS = [
   {
     key: 'commerce', label: 'Commerce', icon: 'sheet', items: [
       item('commerce/skus', 'SKUs and labels', 'viewer', 'ruler'),
+      item('commerce/stock', 'Inventory', 'viewer', 'products'),
     ],
   },
   {

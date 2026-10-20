@@ -397,6 +397,21 @@ td.a-pending { background: #fff8e1; box-shadow: inset 3px 0 0 #e3b44f; }
 .a-skucard { display: flex; flex-wrap: wrap; align-items: center; gap: 18px; margin-top: 12px; }
 .a-skucard .a-barcode { background: #fff; border: 1px solid var(--a-line); border-radius: 8px; max-width: 100%; height: auto; }
 .a-skus .a-barcode { display: block; max-width: 220px; height: auto; }
+/* Commerce demo: inventory */
+.a-stats { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 14px; }
+.a-stat { background: var(--a-card); border: 1px solid var(--a-line); border-radius: 12px; padding: 10px 16px; min-width: 110px; display: flex; flex-direction: column; }
+.a-stat b { font-size: 22px; line-height: 1.2; }
+.a-stat span { font-size: 12.5px; color: var(--a-ink2); }
+.a-stat-bad { border-color: var(--a-bad); }
+.a-stat-bad b { color: var(--a-bad); }
+.a-status-bad { background: var(--a-bad); color: #fff; }
+.a-moveform .a-toolbar { align-items: flex-end; }
+.a-moveform .a-grow { flex: 1 1 220px; }
+.a-moveform .a-grow input { width: 100%; }
+.a-qty { width: 7ch; }
+.a-stock .a-num, .a-moves .a-num { white-space: nowrap; }
+.a-lowrow td { background: #fdf1f1; }
+.a-rrow td { background: #f7f5ee; font-size: 13px; }
 /* Excel import: before / after values wrap (long text, Tamil / Hindi keep their shaping via the cell's lang) */
 .a-difftable td { vertical-align: top; }
 .a-difftable td:nth-child(3), .a-difftable td:nth-child(4) { min-width: 160px; max-width: 440px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }
