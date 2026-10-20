@@ -1516,6 +1516,76 @@ route('get', '/commerce/returns', 'viewer', async (req) => {
   return rows.map((r) => ({ ...r, outcome_label: commerce.OUTCOMES[r.outcome] }));
 });
 
+// Customers (CRM, tables in commerce_03_orders.sql)
+const CTYPES = ['Home', 'Hotel', 'Hospital', 'Office', 'Distributor'];
+const CUSTOMER_FIELDS = ['name', 'phone', 'email', 'ctype', 'town', 'address', 'gstin', 'notes', 'follow_up'];
+
+route('get', '/commerce/customers', 'viewer', async () => {
+  const [rows] = await db.query(
+    `SELECT c.customer_id, c.name, c.phone, c.ctype, c.town, c.follow_up, c.lead_id,
+            (SELECT COUNT(*) FROM orders o WHERE o.customer_id = c.customer_id) AS orders,
+            (SELECT COALESCE(SUM(o.total), 0) FROM orders o WHERE o.customer_id = c.customer_id) AS spent,
+            (SELECT COALESCE(SUM(w.amount), 0) FROM wallet_entries w WHERE w.customer_id = c.customer_id) AS wallet,
+            (SELECT MAX(o.created_at) FROM orders o WHERE o.customer_id = c.customer_id) AS last_order,
+            c.follow_up IS NOT NULL AND c.follow_up <= DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+05:30')) AS follow_due
+       FROM customers c ORDER BY c.name`
+  );
+  return rows.map((r) => ({ ...r, orders: Number(r.orders), spent: Number(r.spent), wallet: Number(r.wallet), follow_due: Number(r.follow_due) === 1 }));
+});
+
+route('get', '/commerce/customers/:id', 'viewer', async (req) => {
+  const [[c]] = await db.query(`SELECT customer_id, name, phone, email, ctype, town, address, gstin, notes, DATE_FORMAT(follow_up, '%Y-%m-%d') AS follow_up,
+      lead_id, created_at FROM customers WHERE customer_id = ?`, [Number(req.params.id)]);
+  if (!c) throw new InputError('Customer not found', 404);
+  const [orders] = await db.query('SELECT order_no, status, total, created_at FROM orders WHERE customer_id = ? ORDER BY order_id DESC', [c.customer_id]);
+  const [wallet] = await db.query(`SELECT w.entry_id, w.amount, w.reason, w.created_at, w.emp_id, o.order_no
+      FROM wallet_entries w LEFT JOIN orders o ON o.order_id = w.order_id WHERE w.customer_id = ? ORDER BY w.entry_id DESC`, [c.customer_id]);
+  let lead = null;
+  if (c.lead_id) [[lead]] = await db.query('SELECT lead_ref, form_type, created_at FROM leads WHERE lead_id = ?', [c.lead_id]);
+  return { ...c, orders, wallet, balance: wallet.reduce((a, w) => a + Number(w.amount), 0), lead: lead || null, ctypes: CTYPES };
+});
+
+function customerValues(body) {
+  const v = {};
+  for (const f of CUSTOMER_FIELDS) {
+    if (!(f in body)) continue;
+    const x = typeof body[f] === 'string' ? body[f].trim() : body[f];
+    v[f] = x === '' || x === undefined ? null : x;
+  }
+  if ('name' in v && !v.name) throw new InputError('Name is required');
+  if ('phone' in v && !/^[0-9+ ]{8,20}$/.test(v.phone || '')) throw new InputError('Phone: 8 to 20 digits');
+  if ('ctype' in v && !CTYPES.includes(v.ctype)) throw new InputError(`Type: ${CTYPES.join(', ')}`);
+  if (v.follow_up && !/^\d{4}-\d{2}-\d{2}$/.test(v.follow_up)) throw new InputError('Follow-up: a date');
+  return v;
+}
+
+route('put', '/commerce/customers/:id', 'editor', async (req) => {
+  const v = customerValues(req.body);
+  if (!Object.keys(v).length) throw new InputError('Nothing to change');
+  const [r] = await db.query(`UPDATE customers SET ${Object.keys(v).map((k) => `${k} = ?`).join(', ')} WHERE customer_id = ?`, [...Object.values(v), Number(req.params.id)]);
+  if (!r.affectedRows) throw new InputError('Customer not found', 404);
+  await audit(null, { empId: by(req), action: 'update', entity: 'customer', entityId: String(req.params.id), after: v });
+  return { customer_id: Number(req.params.id) };
+});
+
+// A lead becomes a customer (once): name, phone, e-mail, town; type from the form and business type.
+route('post', '/commerce/customers/from-lead/:leadId', 'editor', async (req) => {
+  const [[l]] = await db.query('SELECT lead_id, lead_ref, form_type, full_name, business_name, business_type, town, phone, email FROM leads WHERE lead_id = ?', [Number(req.params.leadId)]);
+  if (!l) throw new InputError('Lead not found', 404);
+  const [[had]] = await db.query('SELECT customer_id, name FROM customers WHERE lead_id = ?', [l.lead_id]);
+  if (had) return { customer_id: had.customer_id, name: had.name, existed: true };
+  const bt = `${l.business_type || ''} ${l.business_name || ''}`.toLowerCase();
+  const ctype = l.form_type === 'distributor' ? 'Distributor'
+    : /hotel|restaurant|cafe|caterer|lodge|resort|food/.test(bt) ? 'Hotel'
+      : /hospital|clinic|health|medical/.test(bt) ? 'Hospital'
+        : /office|corporate|school|college|bank|it/.test(bt) ? 'Office' : 'Home';
+  const name = l.business_name || l.full_name || l.lead_ref;
+  const [ins] = await db.query('INSERT INTO customers (name, phone, email, ctype, town, notes, lead_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [name, `+91 ${l.phone}`, l.email, ctype, l.town, `From lead ${l.lead_ref}${l.full_name && l.business_name ? ` (contact: ${l.full_name})` : ''}`, l.lead_id]);
+  await audit(null, { empId: by(req), action: 'create', entity: 'customer', entityId: String(ins.insertId), after: { from_lead: l.lead_ref, ctype } });
+  return { customer_id: ins.insertId, name, ctype, existed: false };
+});
+
 router.use('/admin', (err, req, res, next) => { // eslint-disable-line no-unused-vars
   if (err instanceof InputError || err instanceof media.UploadError) {
     return res.status(err.status).json({ success: false, message: err.message, ...(err.code ? { code: err.code } : {}) });

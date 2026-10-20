@@ -209,6 +209,13 @@ function LeadDrawer({ id, onClose, onChanged }) {
     lead.reload();
   }, 'Queued again');
 
+  // Commerce demo: the lead becomes a customer (once; a second click opens the same one)
+  const goTo = useNavigate();
+  const convert = () => act.run(async () => {
+    const r = await api.send('POST', `/commerce/customers/from-lead/${id}`);
+    act.setMsg({ kind: 'ok', text: r.existed ? `Already a customer: ${r.name}. Opening it.` : `Customer created: ${r.name} (${r.ctype}). Opening it.` });
+    setTimeout(() => goTo(`/admin/commerce/customers?open=${r.customer_id}`), 900);
+  });
   // Admin only (test leads before launch, junk): asks first; the sheet row, if already written, stays in the sheet.
   const isAdmin = useCan('admin');
   const confirm = useConfirm();
@@ -240,6 +247,7 @@ function LeadDrawer({ id, onClose, onChanged }) {
       footer={form && (canEdit || isAdmin) ? (
         <>
           {canEdit && <button type="button" className="a-btn" onClick={save} disabled={act.busy}>Save</button>}
+          {canEdit && <button type="button" className="a-btn a-btn-ghost" onClick={convert} disabled={act.busy}>Convert to customer</button>}
           {isAdmin && <button type="button" className="a-btn a-btn-danger" onClick={remove} disabled={act.busy}>Delete lead</button>}
         </>
       ) : null}>
