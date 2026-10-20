@@ -1425,6 +1425,72 @@ route('put', '/commerce/stock/:sku/low', 'editor', async (req) => {
   return { sku_code: req.params.sku, low_level: level };
 });
 
+// Orders (commerce_03_orders.sql, logic in commerce.js): entered in the admin; prices only here.
+const commerce = require('./commerce');
+const asInput = (e) => (e instanceof commerce.CommerceError ? new InputError(e.message, e.status) : e);
+
+route('get', '/commerce/order-form', 'viewer', async () => {
+  const [customers] = await db.query(
+    `SELECT c.customer_id, c.name, c.phone, c.ctype, c.town, COALESCE(SUM(w.amount), 0) AS wallet
+       FROM customers c LEFT JOIN wallet_entries w ON w.customer_id = c.customer_id GROUP BY c.customer_id ORDER BY c.name`
+  );
+  const [skus] = await db.query(`SELECT s.sku_code, ${SKU_NAME} AS name, s.size_label, COALESCE(pr.price, 0) AS price, COALESCE(pr.gst_rate, 18) AS gst_rate
+       FROM skus s ${SKU_JOIN} LEFT JOIN sku_prices pr ON pr.sku_code = s.sku_code WHERE s.is_active = 1 ORDER BY s.sku_code`);
+  const [coupons] = await db.query('SELECT code, kind, value, min_order, expires_on, usage_limit, used, is_active FROM coupons ORDER BY code');
+  return { customers: customers.map((c) => ({ ...c, wallet: Number(c.wallet) })), skus, coupons, payments: commerce.PAYMENTS };
+});
+
+route('post', '/commerce/coupon-check', 'viewer', async (req) => {
+  try {
+    const discount = await commerce.couponDiscount(db, String(req.body.code || '').trim().toUpperCase(), Number(req.body.subtotal) || 0);
+    return { discount };
+  } catch (e) { throw asInput(e); }
+});
+
+route('get', '/commerce/orders', 'viewer', async (req) => {
+  const status = commerce.ORDER_FLOW.includes(req.query.status) ? req.query.status : null;
+  const [rows] = await db.query(
+    `SELECT o.order_no, o.status, o.payment, o.coupon_code, o.total, o.created_at, o.dispatched_at, o.delivered_at,
+            c.name AS customer, c.ctype, c.town, (SELECT SUM(qty) FROM order_items i WHERE i.order_id = o.order_id) AS units
+       FROM orders o JOIN customers c ON c.customer_id = o.customer_id
+      ${status ? 'WHERE o.status = ?' : ''} ORDER BY o.order_id DESC`, status ? [status] : []
+  );
+  const [counts] = await db.query('SELECT status, COUNT(*) AS n FROM orders GROUP BY status');
+  return { rows, counts: Object.fromEntries(counts.map((c) => [c.status, Number(c.n)])) };
+});
+
+route('get', '/commerce/orders/:no', 'viewer', async (req) => {
+  const [[o]] = await db.query(
+    `SELECT o.*, c.name AS customer, c.phone, c.email, c.ctype, c.town, c.address, c.gstin AS customer_gstin
+       FROM orders o JOIN customers c ON c.customer_id = o.customer_id WHERE o.order_no = ?`, [req.params.no]
+  );
+  if (!o) throw new InputError('Order not found', 404);
+  const [items] = await db.query(`SELECT i.sku_code, i.qty, i.price, i.gst_rate, ${SKU_NAME} AS name, s.size_label
+       FROM order_items i JOIN skus s ON s.sku_code = i.sku_code ${SKU_JOIN} WHERE i.order_id = ? ORDER BY i.sku_code`, [o.order_id]);
+  const [settings] = await db.query("SELECT setting_key, setting_value FROM site_settings WHERE setting_key IN ('company_name', 'cin', 'gstin', 'office_phone', 'public_email')");
+  return { ...o, items, seller: Object.fromEntries(settings.map((x) => [x.setting_key, x.setting_value])), payment_label: commerce.PAYMENTS[o.payment] };
+});
+
+route('post', '/commerce/orders', 'editor', async (req) => {
+  try {
+    return await tx(async (q) => {
+      const o = await commerce.createOrder(q, req.body, by(req));
+      await audit(q, { empId: by(req), action: 'create', entity: 'order', entityId: o.order_no, after: { total: o.total } });
+      return o;
+    });
+  } catch (e) { throw asInput(e); }
+});
+
+route('post', '/commerce/orders/:no/status', 'editor', async (req) => {
+  try {
+    return await tx(async (q) => {
+      const to = await commerce.advanceOrder(q, req.params.no, String(req.body.to || ''), by(req));
+      await audit(q, { empId: by(req), action: 'update', entity: 'order', entityId: req.params.no, after: { status: to } });
+      return { order_no: req.params.no, status: to };
+    });
+  } catch (e) { throw asInput(e); }
+});
+
 router.use('/admin', (err, req, res, next) => { // eslint-disable-line no-unused-vars
   if (err instanceof InputError || err instanceof media.UploadError) {
     return res.status(err.status).json({ success: false, message: err.message, ...(err.code ? { code: err.code } : {}) });

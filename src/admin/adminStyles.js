@@ -412,6 +412,26 @@ td.a-pending { background: #fff8e1; box-shadow: inset 3px 0 0 #e3b44f; }
 .a-stock .a-num, .a-moves .a-num { white-space: nowrap; }
 .a-lowrow td { background: #fdf1f1; }
 .a-rrow td { background: #f7f5ee; font-size: 13px; }
+/* Commerce demo: orders */
+.a-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.a-chip { border: 1px solid var(--a-line); background: var(--a-card); border-radius: 999px; padding: 6px 12px; font: inherit; font-size: 13px; cursor: pointer; color: var(--a-ink); }
+.a-chip.on { background: var(--a-ink); color: #fff; border-color: var(--a-ink); }
+.a-rowlink { cursor: pointer; }
+.a-ostatus { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; background: #eee; }
+.a-ostatus-new { background: #e7eefb; color: #1d3f8a; }
+.a-ostatus-packed { background: #fff3cd; color: #6b4e00; }
+.a-ostatus-dispatched { background: #e6f2ff; color: #0b4f8a; }
+.a-ostatus-delivered { background: #e3f4e6; color: #1e5e2c; }
+.a-steps { display: flex; gap: 6px; list-style: none; padding: 0; margin: 0 0 14px; flex-wrap: wrap; }
+.a-steps li { flex: 1 1 100px; border-top: 4px solid var(--a-line); padding-top: 6px; font-weight: 600; font-size: 13px; display: flex; flex-direction: column; }
+.a-steps li.done { border-color: #E5BF24; }
+.a-steps small { font-weight: 400; color: var(--a-ink2); }
+.a-totals { max-width: 360px; margin-left: auto; }
+.a-grand dt, .a-grand dd { font-weight: 700; font-size: 16px; }
+.a-orderlines input[list] { width: 100%; min-width: 150px; }
+.a-orderlines small { display: block; }
+.a-price { width: 10ch; }
+.a-ok { color: #1e5e2c; }
 /* Excel import: before / after values wrap (long text, Tamil / Hindi keep their shaping via the cell's lang) */
 .a-difftable td { vertical-align: top; }
 .a-difftable td:nth-child(3), .a-difftable td:nth-child(4) { min-width: 160px; max-width: 440px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }
