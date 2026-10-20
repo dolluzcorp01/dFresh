@@ -714,9 +714,6 @@ export default function TissueSheet() {
       aria-label={t('sheet_label')}
     >
       <div className="floor" />
-      {!reduced && (
-        <span className="hint" aria-hidden="true"><i /><span>{t('touch')}</span></span>
-      )}
     </div>
   );
 }

@@ -6,7 +6,7 @@
 // language's row is all-or-nothing for required columns; a language with every column empty has its row
 // deleted, so the site falls back to the default language (an empty string would show as blank instead).
 const { getDBConnection } = require('../../config/db');
-const { STAFF_GROUP } = require('./text-groups');
+const { STAFF_GROUP, RETIRED_KEYS } = require('./text-groups');
 
 const db = getDBConnection(process.env.DB_NAME || 'dfresh').promise();
 
@@ -359,7 +359,8 @@ async function completeness(q = db) {
   const langs = await languages(q);
   // staff e-mail words are read in the default language only: never "missing" in another language
   // ui_text: a blank value counts as not translated, in every language (the Translations page counts the same way)
-  const parts = [{ name: 'ui_text', table: 'ui_text', keys: ['text_key'], value: 'value', skip: 'd.text_key NOT IN (SELECT text_key FROM ui_text_keys WHERE group_name = ?)', skipParams: [STAFF_GROUP] },
+  // retired keys (text-groups.js) are not shown anywhere, so never "missing" either
+  const parts = [{ name: 'ui_text', table: 'ui_text', keys: ['text_key'], value: 'value', skip: 'd.text_key NOT IN (SELECT text_key FROM ui_text_keys WHERE group_name = ?) AND d.text_key NOT IN (?)', skipParams: [STAFF_GROUP, RETIRED_KEYS] },
     ...TRANSLATED.map((t) => ({ name: t.name, table: t.tr.table, keys: t.keys }))];
   const out = Object.fromEntries(langs.codes.map((l) => [l, { have: 0, total: 0, parts: {} }]));
   for (const p of parts) {

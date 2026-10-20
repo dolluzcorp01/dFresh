@@ -19,6 +19,7 @@
 //   on its main product. Apply runs the same checks again (it re-reads the file inside its transaction).
 const ExcelJS = require('exceljs');
 const entities = require('./admin-entities');
+const { RETIRED_KEYS } = require('./text-groups');
 const theme = require('./excel-theme');
 
 const CORE = ['en', 'ta', 'hi'];
@@ -112,7 +113,9 @@ async function buildWorkbook(q, { who = 'dFresh admin' } = {}) {
   const { langs, def } = await columnLanguages(q);
   const products = await entities.load('products', null, q);
   const cats = await entities.load('categories', null, q);
-  const [ui] = await q.query('SELECT k.text_key, t.lang_code, t.value FROM ui_text_keys k LEFT JOIN ui_text t ON t.text_key = k.text_key ORDER BY k.group_name, k.text_key');
+  const [ui] = await q.query(
+    'SELECT k.text_key, t.lang_code, t.value FROM ui_text_keys k LEFT JOIN ui_text t ON t.text_key = k.text_key WHERE k.text_key NOT IN (?) ORDER BY k.group_name, k.text_key', [RETIRED_KEYS]
+  );
   const wb = theme.newWorkbook('dFresh Products');
   const meta = { exportedBy: who, filters: null };
 

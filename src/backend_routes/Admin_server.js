@@ -28,7 +28,7 @@ const fontManager = require('./font-manager');
 const outboxWorker = require('./outbox-worker');
 const gsheet = require('./gsheet');
 const settingRules = require('../shared/settingRules');
-const { STAFF_GROUP } = require('./text-groups');
+const { STAFF_GROUP, RETIRED_KEYS } = require('./text-groups');
 
 const router = express.Router();
 const db = getDBConnection(process.env.DB_NAME || 'dfresh').promise();
@@ -783,7 +783,9 @@ for (const name of Object.keys(entities.ENTITIES)) {
 // UI text (Translations grid)
 // ---------------------------------------------------------------------------------------------
 async function uiTextGrid() {
-  const [keys] = await db.query('SELECT text_key, group_name, description, allows_html, max_chars FROM ui_text_keys ORDER BY group_name, text_key');
+  const [keys] = await db.query(
+    'SELECT text_key, group_name, description, allows_html, max_chars FROM ui_text_keys WHERE text_key NOT IN (?) ORDER BY group_name, text_key', [RETIRED_KEYS]
+  );
   const [vals] = await db.query('SELECT text_key, lang_code, value FROM ui_text');
   const map = new Map(keys.map((k) => [k.text_key, {
     ...k, allows_html: Number(k.allows_html), max_chars: k.max_chars === null ? null : Number(k.max_chars),
@@ -880,6 +882,7 @@ route('post', '/ui-text/import', 'editor', async (req) => {
   const errors = [];
   for (const [n, r] of data.entries()) {
     const key = (r[0] || '').trim();
+    if (RETIRED_KEYS.includes(key)) continue; // a text the site no longer shows (text-groups.js): an older CSV may still have it
     if (!known.has(key)) { errors.push(`row ${n + 2}: unknown key "${key}"`); continue; }
     for (const [lang, i] of langCols) {
       const v = (r[i] ?? '').replace(/\r\n/g, '\n');
