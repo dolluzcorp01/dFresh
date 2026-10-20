@@ -27,6 +27,8 @@ INSERT IGNORE INTO commerce_settings (setting_key, grp, label, help, value, valu
   ('order_sources', 'Orders and pricing', 'Order sources', 'Where an order came from, comma separated (New order and New customer offer these).', 'Phone, WhatsApp, Walk-in, Referral, B2B visit, Other', 'text', NULL, 0, 10),
   ('order_min_value_default', 'Orders and pricing', 'Minimum order value (Rs), when the customer type has none', 'Customer types can set their own minimum (list below).', '0', 'decimal', NULL, 0, 20),
   ('manual_discount_allowed', 'Orders and pricing', 'Manual discount on an order allowed', 'Above the approval threshold it waits for approval.', '1', 'bool', NULL, 0, 30),
+  ('prices_include_gst', 'Orders and pricing', 'Prices on the price lists', 'Shown on every price screen. Changing it does not convert the prices already entered: re-check them.', 'exclusive', 'select', '[["exclusive","exclude GST (GST is added on the invoice)"],["inclusive","include GST (the invoice splits it out)"]]', 0, 40),
+  ('gst_rates', 'Orders and pricing', 'GST rates offered for a product (%)', 'Comma separated, e.g. 0, 5, 12, 18. A product can only have one of these.', '0, 5, 12, 18', 'text', NULL, 0, 50),
   ('stock_reserve_at', 'Inventory', 'Reserve stock when', 'Reserved stock is not available for other orders.', 'confirmed', 'select', '[["confirmed","the order is confirmed"],["packing","packing starts"]]', 0, 10),
   ('low_level_default', 'Inventory', 'Low-stock level for a new SKU', 'Below it the SKU gets a red Low badge. Each SKU can have its own.', '20', 'int', NULL, 0, 20),
   ('reorder_qty_default', 'Inventory', 'Reorder quantity for a new SKU', '0 = not set.', '0', 'int', NULL, 0, 30),

@@ -1,8 +1,18 @@
 // dFresh Commerce (DEMO, database dfresh_commerce): order logic shared by the admin routes (Admin_server.js) and the
-// demo seed (scripts/commerce-seed.js), so seeded orders behave exactly like entered ones.
-// Money: prices per pack before GST; discount (coupon) on the subtotal; GST on (subtotal - discount) at each SKU's
-// rate; the wallet pays last. Status: new -> packed -> dispatched (stock out, stock_movements) -> delivered.
+// demo seed (scripts/commerce-demo-seed.js), so seeded orders behave exactly like entered ones.
+// Money: order_items.price is per pack before GST; discount (coupon) on the subtotal; GST on (subtotal - discount) at
+// each product's rate; the wallet pays last. Status: new -> packed -> dispatched (stock out) -> delivered.
+// Prices (phase 2, pricing.js): an empty line price takes the customer type's list price on the order day (Default
+// when the type has none); when the lists include GST (Commerce setting) the price is split into price + GST. A price
+// below the list by more than the setting puts the order in status "approval" with an approval request; approved ->
+// new, rejected / withdrawn / expired -> cancelled (coupon and wallet given back). Quantities respect each SKU's
+// minimum order and, when it is sold in cartons only, its carton size.
+const pricing = require('./pricing');
+const approvals = require('./approvals');
+const commerceSettings = require('./commerce-settings');
+
 const ORDER_FLOW = ['new', 'packed', 'dispatched', 'delivered'];
+const HELD = { approval: 'is waiting for approval (price below the list)', cancelled: 'is cancelled' };
 const PAYMENTS = { cod: 'Cash on delivery', razorpay: 'Razorpay (demo)', bank: 'Bank transfer' };
 const round2 = (n) => Math.round(n * 100) / 100;
 
@@ -47,12 +57,14 @@ function totals(items, discount = 0, walletUsed = 0) {
 }
 
 /**
- * New order. data = { customer_id, items: [{ sku_code, qty, price }], coupon_code?, wallet_use?, payment, note? }.
- * q = a connection inside a transaction. -> { order_id, order_no, ...totals }
+ * New order. data = { customer_id, items: [{ sku_code, qty (packs), price (empty = the list price) }], coupon_code?,
+ * wallet_use?, payment, note? }. opts.replacement: a free replacement (no quantity rules, no price approval);
+ * opts.priceDate (demo seed only, for back-dated orders): the day whose list prices apply (default today).
+ * q = a connection inside a transaction. -> { order_id, order_no, status, held, approval_id, price_list, ...totals }
  */
-async function createOrder(q, data, empId) {
+async function createOrder(q, data, empId, opts = {}) {
   const customerId = Number(data.customer_id);
-  const [[cust]] = await q.query('SELECT customer_id FROM customers WHERE customer_id = ?', [customerId]);
+  const [[cust]] = await q.query('SELECT customer_id, name FROM customers WHERE customer_id = ?', [customerId]);
   if (!cust) throw new CommerceError('Choose a customer');
   if (!PAYMENTS[data.payment]) throw new CommerceError('Choose the payment: COD, Razorpay (demo) or bank transfer');
   const raw = Array.isArray(data.items) ? data.items : [];
@@ -60,18 +72,45 @@ async function createOrder(q, data, empId) {
   for (const it of raw) {
     const sku = String(it.sku_code || '').trim().toUpperCase();
     const qty = Number(it.qty);
-    const price = Number(it.price);
     if (!sku) continue;
-    if (!Number.isInteger(qty) || qty < 1 || qty > 10000) throw new CommerceError(`${sku}: quantity must be a whole number from 1`);
-    if (!(price >= 0) || price > 1000000) throw new CommerceError(`${sku}: price must be 0 or more`);
-    merged.set(sku, { sku_code: sku, qty: (merged.get(sku)?.qty || 0) + qty, price: round2(price) });
+    const p = pricing.parsePrice(it.price);
+    if (!Number.isInteger(qty) || qty < 1 || qty > 100000) throw new CommerceError(`${sku}: quantity must be a whole number from 1`);
+    if (p.error) throw new CommerceError(`${sku}: ${p.error}`);
+    const had = merged.get(sku);
+    merged.set(sku, { sku_code: sku, qty: (had ? had.qty : 0) + qty, entered: had && had.entered !== null ? had.entered : p.value });
   }
   if (!merged.size) throw new CommerceError('Add at least one SKU');
-  const [known] = await q.query('SELECT s.sku_code, COALESCE(p.gst_rate, 18) AS gst_rate FROM skus s LEFT JOIN sku_prices p ON p.sku_code = s.sku_code WHERE s.sku_code IN (?)', [[...merged.keys()]]);
-  const rate = new Map(known.map((k) => [k.sku_code, Number(k.gst_rate)]));
-  const missing = [...merged.keys()].filter((k) => !rate.has(k));
+  const [known] = await q.query(
+    `SELECT s.sku_code, s.is_active, s.packs_per_carton, s.min_order_qty, s.sell_unit, p.gst_rate, p.hsn_code
+       FROM skus s JOIN products p ON p.product_id = s.product_id WHERE s.sku_code IN (?)`, [[...merged.keys()]]
+  );
+  const info = new Map(known.map((k) => [k.sku_code, k]));
+  const missing = [...merged.keys()].filter((k) => !info.has(k));
   if (missing.length) throw new CommerceError(`Unknown SKU: ${missing.join(', ')}`);
-  const items = [...merged.values()].map((i) => ({ ...i, gst_rate: rate.get(i.sku_code) }));
+  const off = [...merged.keys()].filter((k) => !Number(info.get(k).is_active));
+  if (off.length && !opts.replacement) throw new CommerceError(`Switched off, cannot be ordered: ${off.join(', ')}`);
+  const list = await pricing.listOfCustomer(q, customerId);
+  const own = await pricing.ownPricesOn(q, opts.priceDate || pricing.istToday(), [...merged.keys()]);
+  const settings = await commerceSettings.read(q);
+  const inclusive = settings.prices_include_gst === 'inclusive';
+  const problems = [];
+  const items = [...merged.values()].map((i) => {
+    const s = info.get(i.sku_code);
+    if (!opts.replacement) { const bad = pricing.qtyProblem(s, i.qty); if (bad) problems.push(bad); }
+    const listPrice = pricing.resolve(own.get(i.sku_code), list.key).price;
+    let entered = i.entered;
+    if (entered === null) {
+      if (listPrice === null) problems.push(`${i.sku_code} has no price on the ${list.label} or Default list: set it in Products and prices`);
+      entered = listPrice || 0;
+    }
+    const rate = Number(s.gst_rate);
+    const below = listPrice && entered < listPrice ? round2(((listPrice - entered) / listPrice) * 100) : 0;
+    return { sku_code: i.sku_code, qty: i.qty, entered, list_price: listPrice, below, gst_rate: rate, hsn: s.hsn_code,
+      price: inclusive ? round2(entered / (1 + rate / 100)) : entered };
+  });
+  if (problems.length) throw new CommerceError(problems.join('. '));
+  const maxBelow = Math.max(0, ...items.map((i) => i.below));
+  const held = !opts.replacement && maxBelow > 0 && await approvals.needed(q, 'price_below_list', { pct: maxBelow });
 
   const sub = totals(items).subtotal;
   const coupon = data.coupon_code ? String(data.coupon_code).trim().toUpperCase() : null;
@@ -87,21 +126,54 @@ async function createOrder(q, data, empId) {
   await q.query('INSERT INTO order_counters (yr, last_no) VALUES (?, 1) ON DUPLICATE KEY UPDATE last_no = last_no + 1', [yr]);
   const [[ctr]] = await q.query('SELECT last_no FROM order_counters WHERE yr = ?', [yr]);
   const orderNo = `DFO-${String(yr).padStart(2, '0')}${String(ctr.last_no).padStart(4, '0')}`;
+  const status = held ? 'approval' : 'new';
   const [ins] = await q.query(
-    `INSERT INTO orders (order_no, customer_id, status, payment, coupon_code, subtotal, discount, gst, wallet_used, total, note, emp_id)
-     VALUES (?, ?, 'new', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [orderNo, customerId, data.payment, coupon, t.subtotal, t.discount, t.gst, t.walletUsed, t.total, data.note ? String(data.note).slice(0, 255) : null, empId]
+    `INSERT INTO orders (order_no, customer_id, status, price_list, payment, coupon_code, subtotal, discount, gst, wallet_used, total, note, emp_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [orderNo, customerId, status, list.key, data.payment, coupon, t.subtotal, t.discount, t.gst, t.walletUsed, t.total, data.note ? String(data.note).slice(0, 255) : null, empId]
   );
   for (const i of items) {
-    await q.query('INSERT INTO order_items (order_id, sku_code, qty, price, gst_rate) VALUES (?, ?, ?, ?, ?)', [ins.insertId, i.sku_code, i.qty, i.price, i.gst_rate]);
+    await q.query('INSERT INTO order_items (order_id, sku_code, qty, price, gst_rate, hsn, list_price) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [ins.insertId, i.sku_code, i.qty, i.price, i.gst_rate, i.hsn, i.list_price]);
   }
   if (coupon) await q.query('UPDATE coupons SET used = used + 1 WHERE code = ?', [coupon]);
   if (t.walletUsed > 0) {
     await q.query('INSERT INTO wallet_entries (customer_id, amount, reason, order_id, emp_id) VALUES (?, ?, ?, ?, ?)',
       [customerId, -t.walletUsed, `Used on ${orderNo}`, ins.insertId, empId]);
   }
-  return { order_id: ins.insertId, order_no: orderNo, ...t };
+  let approvalId = null;
+  if (held) {
+    const limit = settings.approve_price_below_pct;
+    const lines = items.filter((i) => i.below > limit);
+    approvalId = await approvals.request(q, {
+      kind: 'price_below_list', refType: 'order', refId: orderNo,
+      summary: `${orderNo} for ${cust.name}: ${lines.map((i) => `${i.sku_code} at Rs ${i.entered} (${list.label} list Rs ${i.list_price}, ${i.below}% below)`).join('; ')}`,
+      amount: round2(lines.reduce((a, i) => a + (i.list_price - i.entered) * i.qty, 0)),
+      payload: { order_no: orderNo, list: list.key, lines: lines.map((i) => ({ sku_code: i.sku_code, qty: i.qty, price: i.entered, list_price: i.list_price, below: i.below })) },
+    }, empId);
+  }
+  return { order_id: ins.insertId, order_no: orderNo, status, held, approval_id: approvalId, price_list: list.label, ...t };
 }
+
+/** A held order whose approval was rejected / withdrawn / expired: cancelled, its coupon use and wallet use given back. */
+async function cancelHeld(q, orderNo, reason, empId) {
+  const [[o]] = await q.query('SELECT order_id, customer_id, status, coupon_code, wallet_used FROM orders WHERE order_no = ? FOR UPDATE', [orderNo]);
+  if (!o || o.status !== 'approval') return false;
+  await q.query("UPDATE orders SET status = 'cancelled', cancelled_at = UTC_TIMESTAMP(), cancel_reason = ? WHERE order_id = ?", [String(reason).slice(0, 255), o.order_id]);
+  if (o.coupon_code) await q.query('UPDATE coupons SET used = GREATEST(used - 1, 0) WHERE code = ?', [o.coupon_code]);
+  if (Number(o.wallet_used) > 0) {
+    await q.query('INSERT INTO wallet_entries (customer_id, amount, reason, order_id, emp_id) VALUES (?, ?, ?, ?, ?)',
+      [o.customer_id, Number(o.wallet_used), `Given back: ${orderNo} cancelled`, o.order_id, empId]);
+  }
+  return true;
+}
+
+approvals.onApproved('price_below_list', async (q, p) => {
+  await q.query("UPDATE orders SET status = 'new' WHERE order_no = ? AND status = 'approval'", [p.order_no]);
+});
+approvals.onClosed('price_below_list', async (q, p, status, empId) => {
+  await cancelHeld(q, p.order_no, `Price below the list: approval ${status}`, empId);
+});
 
 /** Delivered: the cashback rule (database/demo/commerce-demo-schema.sql) credits pct % of (subtotal - discount) to the wallet. */
 async function cashback(q, orderId, empId) {
@@ -120,6 +192,7 @@ async function cashback(q, orderId, empId) {
 async function advanceOrder(q, orderNo, to, empId) {
   const [[o]] = await q.query('SELECT order_id, order_no, status FROM orders WHERE order_no = ? FOR UPDATE', [orderNo]);
   if (!o) throw new CommerceError(`No order ${orderNo}`, 404);
+  if (HELD[o.status]) throw new CommerceError(`${orderNo} ${HELD[o.status]}`, 409);
   const next = ORDER_FLOW[ORDER_FLOW.indexOf(o.status) + 1];
   if (!next || to !== next) throw new CommerceError(`${orderNo} is ${o.status}: the next step is ${next || 'none (delivered)'}`, 409);
   if (next === 'dispatched') {
@@ -190,10 +263,10 @@ async function createReturn(q, orderNo, data, empId) {
       [o.customer_id, amount, `Refund ${returnNo} (${orderNo})`, o.order_id, empId]);
   } else if (data.outcome === 'replacement') {
     const items = [...per.entries()].map(([sku, qty]) => ({ sku_code: sku, qty, price: 0 }));
-    replacement = await createOrder(q, { customer_id: o.customer_id, items, payment: 'cod', note: `Replacement for ${returnNo} (${orderNo})` }, empId);
+    replacement = await createOrder(q, { customer_id: o.customer_id, items, payment: 'cod', note: `Replacement for ${returnNo} (${orderNo})` }, empId, { replacement: true });
     await q.query('UPDATE returns SET replacement_order_id = ? WHERE return_id = ?', [replacement.order_id, ins.insertId]);
   }
   return { return_no: returnNo, amount, outcome: data.outcome, replacement_no: replacement ? replacement.order_no : null };
 }
 
-module.exports = { ORDER_FLOW, PAYMENTS, OUTCOMES, CommerceError, createOrder, advanceOrder, createReturn, couponDiscount, walletBalance, totals, istYear };
+module.exports = { ORDER_FLOW, HELD, PAYMENTS, OUTCOMES, CommerceError, createOrder, advanceOrder, createReturn, couponDiscount, walletBalance, totals, istYear };

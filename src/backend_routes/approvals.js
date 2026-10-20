@@ -1,6 +1,7 @@
 // Approvals (docs/COMMERCE-SPEC.md section 2; table approvals, migration 20261020_commerce_approvals.sql).
 // A module that holds an action calls needed(q, kind, facts) and, when true, request(q, ...) instead of doing it; it
-// registers onApproved(kind, fn) so the action runs (in the same transaction) when someone approves.
+// registers onApproved(kind, fn) so the action runs (in the same transaction) when someone approves, and optionally
+// onClosed(kind, fn) for a request that ends without approval (rejected, withdrawn, expired).
 // Who may decide: a user whose role is one of the approver roles (Commerce settings approver_role_ids), who has
 // "approve" on the request's section, and who is not the requester. A reject needs a note. Pending requests older
 // than approval_expiry_days expire (checked whenever the queue is read). Every step is audited.
@@ -21,6 +22,7 @@ const KINDS = {
   price_below_list: { label: 'Price below the list', section: 'products' },
 };
 const handlers = {};
+const closers = {};
 
 class ApprovalError extends Error {
   constructor(message, status = 400) { super(message); this.status = status; }
@@ -28,6 +30,12 @@ class ApprovalError extends Error {
 
 /** a module registers what runs when its kind of request is approved: fn(q, payload, deciderEmpId) */
 function onApproved(kind, fn) { handlers[kind] = fn; }
+/** ... and what runs when it ends without approval: fn(q, payload, status, empId) */
+function onClosed(kind, fn) { closers[kind] = fn; }
+const payloadOf = (row) => (typeof row.payload === 'string' ? JSON.parse(row.payload) : row.payload);
+async function close(q, row, status, empId) {
+  if (closers[row.kind]) await closers[row.kind](q, payloadOf(row) || {}, status, empId);
+}
 
 /** does this action need approval under the current settings? facts = { amount, qty, pct } */
 async function needed(q, kind, facts = {}) {
@@ -58,9 +66,10 @@ async function request(q, { kind, refType = null, refId = null, summary, amount 
 
 async function expireOld(q) {
   const s = await commerceSettings.read(q);
-  const [old] = await q.query("SELECT approval_id FROM approvals WHERE status = 'pending' AND requested_at < UTC_TIMESTAMP() - INTERVAL ? DAY", [s.approval_expiry_days || 7]);
+  const [old] = await q.query("SELECT approval_id, kind, payload FROM approvals WHERE status = 'pending' AND requested_at < UTC_TIMESTAMP() - INTERVAL ? DAY", [s.approval_expiry_days || 7]);
   for (const r of old) {
-    await q.query("UPDATE approvals SET status = 'expired', decided_at = UTC_TIMESTAMP() WHERE approval_id = ? AND status = 'pending'", [r.approval_id]);
+    const [res] = await q.query("UPDATE approvals SET status = 'expired', decided_at = UTC_TIMESTAMP() WHERE approval_id = ? AND status = 'pending'", [r.approval_id]);
+    if (res.affectedRows) await close(q, r, 'expired', 'system');
     await audit(q, { empId: 'system', action: 'expire', entity: 'approval', entityId: String(r.approval_id) });
   }
 }
@@ -114,22 +123,23 @@ async function decide(q, id, decision, note, admin) {
   await q.query('UPDATE approvals SET status = ?, decided_by = ?, decided_at = UTC_TIMESTAMP(), note = ? WHERE approval_id = ?', [decision, admin.emp_id, text || null, id]);
   let ran = false;
   if (decision === 'approved' && handlers[row.kind]) {
-    const payload = typeof row.payload === 'string' ? JSON.parse(row.payload) : row.payload;
-    await handlers[row.kind](q, payload, admin.emp_id);
+    await handlers[row.kind](q, payloadOf(row), admin.emp_id);
     ran = true;
   }
+  if (decision === 'rejected' && closers[row.kind]) { await close(q, row, 'rejected', admin.emp_id); ran = true; }
   await audit(q, { empId: admin.emp_id, action: decision === 'approved' ? 'approve' : 'reject', entity: 'approval', entityId: String(id), before: { status: 'pending' }, after: { status: decision, note: text || null, summary: row.summary, ran } });
   return { approval_id: id, status: decision, ran };
 }
 
 async function withdraw(q, id, admin) {
-  const [[row]] = await q.query('SELECT approval_id, status, requested_by FROM approvals WHERE approval_id = ? FOR UPDATE', [id]);
+  const [[row]] = await q.query('SELECT approval_id, kind, payload, status, requested_by FROM approvals WHERE approval_id = ? FOR UPDATE', [id]);
   if (!row) throw new ApprovalError('No such request', 404);
   if (row.requested_by !== admin.emp_id) throw new ApprovalError('Only the person who raised it can withdraw it', 403);
   if (row.status !== 'pending') throw new ApprovalError(`It is already ${row.status}`, 409);
   await q.query("UPDATE approvals SET status = 'withdrawn', decided_by = ?, decided_at = UTC_TIMESTAMP() WHERE approval_id = ?", [admin.emp_id, id]);
+  await close(q, row, 'withdrawn', admin.emp_id);
   await audit(q, { empId: admin.emp_id, action: 'withdraw', entity: 'approval', entityId: String(id), before: { status: 'pending' }, after: { status: 'withdrawn' } });
   return { approval_id: id, status: 'withdrawn' };
 }
 
-module.exports = { KINDS, ApprovalError, onApproved, needed, request, list, countDecidable, decide, withdraw, expireOld, cannotDecide };
+module.exports = { KINDS, ApprovalError, onApproved, onClosed, needed, request, list, countDecidable, decide, withdraw, expireOld, cannotDecide };

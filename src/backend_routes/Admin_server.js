@@ -36,6 +36,8 @@ const { InputError } = entities;
 const permissions = require('../shared/permissions');
 const approvals = require('./approvals');
 const commerceSettings = require('./commerce-settings');
+const pricing = require('./pricing');
+const priceExcel = require('./price-excel');
 const MB = 1024 * 1024;
 const upload = (maxMb) => multer({ storage: multer.memoryStorage(), limits: { fileSize: maxMb * MB, files: 1 } }).single('file');
 
@@ -1480,15 +1482,25 @@ route('put', '/commerce/stock/:sku/low', 'inventory:edit', async (req) => {
 const commerce = require('./commerce');
 const asInput = (e) => (e instanceof commerce.CommerceError ? new InputError(e.message, e.status) : e);
 
+// The New order form: customers with their price list (customer type), SKUs with their selling rules and today's own
+// prices per list (the form resolves Default the same way pricing.resolve does), the price basis and the approval rule.
 route('get', '/commerce/order-form', 'orders:create', async () => {
   const [customers] = await db.query(
-    `SELECT c.customer_id, c.name, c.phone, c.ctype, c.town, COALESCE(SUM(w.amount), 0) AS wallet
-       FROM customers c LEFT JOIN wallet_entries w ON w.customer_id = c.customer_id GROUP BY c.customer_id ORDER BY c.name`
+    `SELECT c.customer_id, c.name, c.phone, c.ctype, c.town, COALESCE(ct.type_key, 'default') AS list_key,
+            (SELECT COALESCE(SUM(w.amount), 0) FROM wallet_entries w WHERE w.customer_id = c.customer_id) AS wallet
+       FROM customers c LEFT JOIN customer_types ct ON ct.type_key = LOWER(c.ctype) OR ct.label = c.ctype ORDER BY c.name`
   );
-  const [skus] = await db.query(`SELECT s.sku_code, ${SKU_NAME} AS name, s.size_label, COALESCE(pr.price, 0) AS price, COALESCE(pr.gst_rate, 18) AS gst_rate
-       FROM skus s ${SKU_JOIN} LEFT JOIN sku_prices pr ON pr.sku_code = s.sku_code WHERE s.is_active = 1 ORDER BY s.sku_code`);
+  const today = pricing.istToday();
+  const own = await pricing.ownPricesOn(db, today);
+  const skus = (await pricing.skuRows(db)).filter((s) => s.is_active)
+    .map((s) => ({ sku_code: s.sku_code, name: s.name, size_label: s.size_label, gst_rate: s.gst_rate, packs_per_carton: s.packs_per_carton, min_order_qty: s.min_order_qty, sell_unit: s.sell_unit, own: own.get(s.sku_code) || {} }));
   const [coupons] = await db.query('SELECT code, kind, value, min_order, expires_on, usage_limit, used, is_active FROM coupons ORDER BY code');
-  return { customers: customers.map((c) => ({ ...c, wallet: Number(c.wallet) })), skus, coupons, payments: commerce.PAYMENTS };
+  const cs = await commerceSettings.read(db);
+  return {
+    customers: customers.map((c) => ({ ...c, wallet: Number(c.wallet) })), skus, coupons, payments: commerce.PAYMENTS,
+    lists: await pricing.lists(db), basis: await pricing.basis(db), today,
+    approval: { on: Boolean(cs.approve_price_below_on), pct: Number(cs.approve_price_below_pct) || 0 },
+  };
 });
 
 route('post', '/commerce/coupon-check', 'orders:create', async (req) => {
@@ -1499,7 +1511,7 @@ route('post', '/commerce/coupon-check', 'orders:create', async (req) => {
 });
 
 route('get', '/commerce/orders', 'orders:view', async (req) => {
-  const status = commerce.ORDER_FLOW.includes(req.query.status) ? req.query.status : null;
+  const status = commerce.ORDER_FLOW.includes(req.query.status) || commerce.HELD[req.query.status] ? req.query.status : null;
   const [rows] = await db.query(
     `SELECT o.order_no, o.status, o.payment, o.coupon_code, o.total, o.created_at, o.dispatched_at, o.delivered_at,
             c.name AS customer, c.ctype, c.town, (SELECT SUM(qty) FROM order_items i WHERE i.order_id = o.order_id) AS units
@@ -1516,21 +1528,24 @@ route('get', '/commerce/orders/:no', 'orders:view', async (req) => {
        FROM orders o JOIN customers c ON c.customer_id = o.customer_id WHERE o.order_no = ?`, [req.params.no]
   );
   if (!o) throw new InputError('Order not found', 404);
-  const [items] = await db.query(`SELECT i.sku_code, i.qty, i.price, i.gst_rate, ${SKU_NAME} AS name, s.size_label
+  const [items] = await db.query(`SELECT i.sku_code, i.qty, i.price, i.gst_rate, i.hsn, i.list_price, ${SKU_NAME} AS name, s.size_label
        FROM order_items i JOIN skus s ON s.sku_code = i.sku_code ${SKU_JOIN} WHERE i.order_id = ? ORDER BY i.sku_code`, [o.order_id]);
+  const [[approval]] = await db.query("SELECT approval_id, status, decided_by, note FROM approvals WHERE ref_type = 'order' AND ref_id = ? ORDER BY approval_id DESC LIMIT 1", [o.order_no]);
+  const listLabel = (await pricing.lists(db)).find((l) => l.key === o.price_list);
   const cs = await commerceSettings.read(db);
   const [site] = await db.query("SELECT setting_key, setting_value FROM site_settings WHERE setting_key IN ('cin', 'office_phone', 'public_email')");
   const siteMap = Object.fromEntries(site.map((x) => [x.setting_key, x.setting_value]));
   const seller = { name: cs.invoice_seller_name, gstin: cs.invoice_seller_gstin, address: cs.invoice_seller_address, state_code: cs.invoice_seller_state_code,
     bank: cs.invoice_bank_details, cin: siteMap.cin, phone: siteMap.office_phone, email: siteMap.public_email };
-  return { ...o, items, seller, invoice_demo: commerceSettings.invoiceIsDemo(cs), payment_label: commerce.PAYMENTS[o.payment] };
+  return { ...o, items, seller, invoice_demo: commerceSettings.invoiceIsDemo(cs), payment_label: commerce.PAYMENTS[o.payment],
+    price_list_label: listLabel ? listLabel.label : o.price_list, prices_basis: (await pricing.basis(db)).short, approval: approval || null };
 });
 
 route('post', '/commerce/orders', 'orders:create', async (req) => {
   try {
     return await tx(async (q) => {
       const o = await commerce.createOrder(q, req.body, by(req));
-      await audit(q, { empId: by(req), action: 'create', entity: 'order', entityId: o.order_no, after: { total: o.total } });
+      await audit(q, { empId: by(req), action: 'create', entity: 'order', entityId: o.order_no, after: { total: o.total, status: o.status, price_list: o.price_list } });
       return o;
     });
   } catch (e) { throw asInput(e); }
@@ -1749,6 +1764,127 @@ route('get', '/commerce/ops', 'any', async (req) => {
     nextToPack: can.pack ? next : null,
   };
 });
+
+// ---------------------------------------------------------------------------------------------
+// Products and prices (docs/COMMERCE-SPEC.md 4.3; logic in pricing.js, Excel in price-excel.js). Section "products":
+// view = the grid, history; edit = prices, SKU fields, product HSN / GST, bulk change, Excel. Commerce must be on.
+// ---------------------------------------------------------------------------------------------
+const asPrice = (e) => {
+  if (!(e instanceof pricing.PricingError)) return e;
+  const err = new InputError(e.message, e.status);
+  if (e.errors) { err.code = 'fields'; err.fields = e.errors; }
+  return err;
+};
+const COMMERCE_ONLY = { before: [commerceGate] };
+const effectiveOf = (v) => {
+  const d = v ? String(v) : pricing.istToday();
+  if (!pricing.isDate(d)) throw new InputError('Effective from: a date like 2026-11-01');
+  if (d < pricing.istToday()) throw new InputError(`Effective from: today (${pricing.istToday()}) or later`);
+  return d;
+};
+
+route('get', '/prices', 'products:view', async () => {
+  const today = pricing.istToday();
+  const rows = await pricing.skuRows(db);
+  const own = await pricing.ownPricesOn(db, today);
+  const next = await pricing.upcoming(db, today);
+  const [cats] = await db.query(
+    `SELECT c.category_key, COALESCE(t.name, c.category_key) AS label FROM categories c
+       LEFT JOIN category_translations t ON t.category_key = c.category_key AND t.lang_code = 'en' ORDER BY c.sort_order`
+  );
+  const [[demo]] = await db.query("SELECT COUNT(*) AS n FROM price_changes WHERE source = 'seed'");
+  return {
+    today, basis: await pricing.basis(db), lists: await pricing.lists(db), gstRates: pricing.gstRates(await commerceSettings.read(db)),
+    sellUnits: pricing.SELL_UNITS, categories: cats, demo: Number(demo.n) > 0,
+    rows: rows.map((r) => ({ ...r, own: own.get(r.sku_code) || {}, upcoming: next.get(r.sku_code) || [] })),
+  };
+}, COMMERCE_ONLY);
+
+route('put', '/prices', 'products:edit', async (req) => {
+  try {
+    return await tx(async (q) => {
+      const r = await pricing.setPrices(q, req.body.changes, { effective: effectiveOf(req.body.effective_from), source: 'grid', empId: by(req) });
+      return { changed: r.changed.length, skipped: r.skipped, effective_from: req.body.effective_from || pricing.istToday() };
+    });
+  } catch (e) { throw asPrice(e); }
+}, COMMERCE_ONLY);
+
+route('get', '/prices/history/:sku', 'products:view', async (req) => {
+  const [rows] = await db.query(
+    `SELECT c.change_id, c.list_key, c.old_price, c.new_price, c.effective_from, c.source, c.emp_id, c.changed_at,
+            TRIM(CONCAT(COALESCE(e.emp_first_name, ''), ' ', COALESCE(e.emp_last_name, ''))) AS emp_name
+       FROM price_changes c LEFT JOIN \`${auth.DADMIN}\`.employee e ON e.emp_id = c.emp_id
+      WHERE c.sku_code = ? ORDER BY c.change_id DESC LIMIT 200`, [String(req.params.sku)]
+  );
+  return rows.map((r) => ({ ...r, effective_from: pricing.ymd(r.effective_from), old_price: r.old_price === null ? null : Number(r.old_price), new_price: r.new_price === null ? null : Number(r.new_price) }));
+}, COMMERCE_ONLY);
+
+route('put', '/prices/skus/:sku', 'products:edit', async (req) => {
+  const { values, errors } = pricing.checkSkuFields(req.body || {});
+  if (Object.keys(errors).length) { const err = new InputError(Object.values(errors)[0]); err.code = 'fields'; err.fields = errors; throw err; }
+  if (!Object.keys(values).length) throw new InputError('Nothing to change');
+  try {
+    return await tx(async (q) => ({ changed: await pricing.updateSku(q, String(req.params.sku), values, by(req)) }));
+  } catch (e) { throw asPrice(e); }
+}, COMMERCE_ONLY);
+
+route('put', '/prices/products/:id', 'products:edit', async (req) => {
+  const { values, errors } = pricing.checkTax(req.body || {}, pricing.gstRates(await commerceSettings.read(db)));
+  if (Object.keys(errors).length) { const err = new InputError(Object.values(errors)[0]); err.code = 'fields'; err.fields = errors; throw err; }
+  if (!Object.keys(values).length) throw new InputError('Nothing to change');
+  try {
+    return await tx(async (q) => ({ changed: await pricing.updateProductTax(q, String(req.params.id), values, by(req)) }));
+  } catch (e) { throw asPrice(e); }
+}, COMMERCE_ONLY);
+
+// Bulk change: preview = the exact rows that would change (and their fingerprint); save sends the fingerprint back and
+// is refused when the prices moved since the preview (someone else saved meanwhile).
+const bulkPrint = (rows) => crypto.createHash('sha256').update(rows.map((r) => `${r.sku_code}/${r.list_key}:${r.old_price}>${r.new_price}`).join('|')).digest('hex');
+route('post', '/prices/bulk', 'products:edit', async (req) => {
+  try {
+    if (req.body.preview) {
+      const plan = await pricing.bulkPlan(db, req.body);
+      return { preview: true, ...plan, fingerprint: bulkPrint(plan.rows) };
+    }
+    return await tx(async (q) => {
+      const plan = await pricing.bulkPlan(q, req.body);
+      if (!plan.rows.length) throw new InputError('Nothing would change');
+      if (req.body.fingerprint !== bulkPrint(plan.rows)) throw new InputError('Prices changed since the preview: preview again', 409);
+      const r = await pricing.setPrices(q, plan.rows.map((x) => ({ sku_code: x.sku_code, list_key: x.list_key, price: x.new_price })), { effective: plan.effective, source: 'bulk', empId: by(req) });
+      await audit(q, { empId: by(req), action: 'bulk', entity: 'sku_price', entityId: String(req.body.list_key), after: { category: req.body.category_key || 'all', mode: req.body.mode, value: req.body.value, rounding: req.body.rounding, effective_from: plan.effective, prices: r.changed.length } });
+      return { preview: false, changed: r.changed.length, effective: plan.effective };
+    });
+  } catch (e) { throw asPrice(e); }
+}, COMMERCE_ONLY);
+
+route('get', '/prices/export.xlsx', 'products:edit', async (req, res) => {
+  const wb = await priceExcel.buildWorkbook(db, { who: await exportedBy(req) });
+  const bytes = await theme.send(res, wb, `dFresh_Price_List_${theme.istStamp(new Date(), false)}.xlsx`);
+  await audit(null, { empId: by(req), action: 'export', entity: 'sku_price', after: { file: 'prices.xlsx', bytes } });
+}, COMMERCE_ONLY);
+
+// Import: dry run first (fingerprint of the file and the effective date), Apply only with that fingerprint; checked
+// again inside the transaction.
+route('post', '/prices/import', 'products:edit', async (req) => {
+  if (!req.file) throw new InputError('Choose the .xlsx file');
+  const dryRun = req.query.dryRun !== '0';
+  const effective = effectiveOf(req.query.effective);
+  const fileHash = crypto.createHash('sha256').update(req.file.buffer).update(`|${effective}`).digest('hex');
+  try {
+    if (dryRun) {
+      const { plan, ...report } = await priceExcel.diffWorkbook(db, req.file.buffer, effective);
+      return { dryRun: true, fileHash, ...report };
+    }
+    if (req.query.hash !== fileHash) throw new InputError('This file (or its effective date) is not the one that passed the dry run. Run the dry run again.');
+    return await tx(async (q) => {
+      const { plan, ...report } = await priceExcel.diffWorkbook(q, req.file.buffer, effective);
+      if (!report.ok) throw new InputError(`Fix the ${report.errors.length} error(s) first (run the dry run again): ${report.errors.slice(0, 3).join(' | ')}`);
+      const applied = await priceExcel.applyPlan(q, plan, { effective, empId: by(req) });
+      await audit(q, { empId: by(req), action: 'import', entity: 'sku_price', after: { effective_from: effective, ...report.summary, applied } });
+      return { dryRun: false, applied, fileHash, ...report };
+    });
+  } catch (e) { throw asPrice(e); }
+}, { before: [commerceGate, upload(5)] });
 
 // ---------------------------------------------------------------------------------------------
 // Roles and permissions (docs/COMMERCE-SPEC.md 1; migration 20261020_commerce_access.sql)

@@ -29,6 +29,7 @@ import CommerceReturns from './CommerceReturns';
 import CommerceCustomers from './CommerceCustomers';
 import CommercePromotions from './CommercePromotions';
 import CommerceOps from './CommerceOps';
+import Prices from './Prices';
 import Settings from './Settings';
 import Users from './Users';
 import AuditLog from './AuditLog';
@@ -164,6 +165,7 @@ export default function AdminApp() {
             <Route path="commerce/customers" element={<Need section="customers" commerce><CommerceCustomers /></Need>} />
             <Route path="commerce/promotions" element={<Need section="promotions" commerce><CommercePromotions /></Need>} />
             <Route path="commerce/ops" element={<Need commerce><CommerceOps /></Need>} />
+            <Route path="commerce/prices" element={<Need section="products" commerce><Prices /></Need>} />
             <Route path="settings" element={<Need section="settings"><Settings /></Need>} />
             <Route path="commerce-settings" element={<Need section="settings"><CommerceSettings /></Need>} />
             <Route path="users" element={<Need section="users"><Users /></Need>} />

@@ -5,19 +5,7 @@
 -- (tag demo-2026-10-20), structure only.
 
 
--- from commerce_01_sku.sql
-
-CREATE TABLE IF NOT EXISTS skus (
-  sku_code    VARCHAR(30)  NOT NULL,
-  product_id  VARCHAR(30)  NOT NULL,
-  size_label  VARCHAR(120) NOT NULL,
-  is_active   TINYINT(1)   NOT NULL DEFAULT 1,
-  created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (sku_code),
-  KEY idx_sku_product (product_id),
-  CONSTRAINT fk_sku_product FOREIGN KEY (product_id) REFERENCES products (product_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
+-- skus, sku_prices and price_changes come from the migration 20261020_commerce_pricing.sql (phase 2).
 
 
 -- from commerce_02_inventory.sql
@@ -46,14 +34,6 @@ CREATE TABLE IF NOT EXISTS stock_movements (
 
 
 -- from commerce_03_orders.sql
-
-CREATE TABLE IF NOT EXISTS sku_prices (
-  sku_code  VARCHAR(30)   NOT NULL,
-  price     DECIMAL(10,2) NOT NULL,                
-  gst_rate  DECIMAL(5,2)  NOT NULL DEFAULT 18.00,  
-  PRIMARY KEY (sku_code),
-  CONSTRAINT fk_price_sku FOREIGN KEY (sku_code) REFERENCES skus (sku_code)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS customers (
   customer_id  INT          NOT NULL AUTO_INCREMENT,
@@ -93,7 +73,8 @@ CREATE TABLE IF NOT EXISTS orders (
   order_id       BIGINT        NOT NULL AUTO_INCREMENT,
   order_no       VARCHAR(20)   NOT NULL,
   customer_id    INT           NOT NULL,
-  status         VARCHAR(12)   NOT NULL DEFAULT 'new',  
+  status         VARCHAR(12)   NOT NULL DEFAULT 'new',  -- approval (price below list, waiting) | new | packed | dispatched | delivered | cancelled
+  price_list     VARCHAR(20)   NULL,                    -- the price list used (phase 2)
   payment        VARCHAR(20)   NOT NULL,                
   coupon_code    VARCHAR(20)   NULL,
   subtotal       DECIMAL(12,2) NOT NULL,
@@ -107,6 +88,8 @@ CREATE TABLE IF NOT EXISTS orders (
   packed_at      DATETIME      NULL,
   dispatched_at  DATETIME      NULL,
   delivered_at   DATETIME      NULL,
+  cancelled_at   DATETIME      NULL,
+  cancel_reason  VARCHAR(255)  NULL,
   PRIMARY KEY (order_id),
   UNIQUE KEY uq_order_no (order_no),
   KEY idx_order_status (status, created_at),
@@ -117,8 +100,10 @@ CREATE TABLE IF NOT EXISTS order_items (
   order_id  BIGINT        NOT NULL,
   sku_code  VARCHAR(30)   NOT NULL,
   qty       INT           NOT NULL,
-  price     DECIMAL(10,2) NOT NULL,
-  gst_rate  DECIMAL(5,2)  NOT NULL,
+  price       DECIMAL(10,2) NOT NULL,                 -- per pack before GST
+  gst_rate    DECIMAL(5,2)  NOT NULL,
+  hsn         VARCHAR(8)    NULL,                     -- snapshot on the order day (phase 2)
+  list_price  DECIMAL(10,2) NULL,                     -- the list price that day, as entered on the list (phase 2)
   PRIMARY KEY (order_id, sku_code),
   CONSTRAINT fk_item_order FOREIGN KEY (order_id) REFERENCES orders (order_id) ON DELETE CASCADE,
   CONSTRAINT fk_item_sku FOREIGN KEY (sku_code) REFERENCES skus (sku_code)

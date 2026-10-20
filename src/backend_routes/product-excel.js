@@ -527,4 +527,4 @@ async function applyPlan(q, plan, empId) {
   return changes;
 }
 
-module.exports = { buildWorkbook, diffWorkbook, applyPlan, SPEC_HEADER };
+module.exports = { buildWorkbook, diffWorkbook, applyPlan, SPEC_HEADER, cellValue, sheetRows }; // the last two: price-excel.js

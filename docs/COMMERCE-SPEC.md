@@ -155,9 +155,14 @@ VARCHAR(20). "(c)" = changed existing table, "(n)" = new.
 | Table | Columns | Keys |
 |---|---|---|
 | products (c) | + hsn_code VARCHAR(8) DEFAULT '4818', + gst_rate DECIMAL(5,2) DEFAULT 18.00 | |
-| skus (n, demo exists) | sku_code VARCHAR(30), product_id, pack_label, packs_per_carton INT DEFAULT 1, min_order_qty INT DEFAULT 1, base_price DECIMAL(10,2) NULL, barcode VARCHAR(40) (defaults to sku_code), is_active, created_by/at, updated_by/at | PK sku_code; UNIQUE barcode; INDEX product_id; FK product_id |
-| sku_prices (n, demo differs) | sku_code, type_key, price DECIMAL(10,2), updated_by, updated_at | PK (sku_code, type_key); FKs |
-| price_changes (n) | change_id AI, sku_code, type_key NULL (= base), old_price, new_price, emp_id, changed_at | INDEX (sku_code, changed_at) |
+| skus (n) | sku_code VARCHAR(30), product_id, size_label, packs_per_carton INT DEFAULT 1, min_order_qty INT DEFAULT 1 (packs), sell_unit (pack / carton / both), is_active, created_by/at, updated_by/at | PK sku_code; INDEX product_id; FK product_id |
+| sku_prices (n) | sku_code, list_key ('default' = the base price, or a customer type key), effective_from DATE, price DECIMAL(10,2) NULL (NULL = no own price from that day), created_by, created_at | PK (sku_code, list_key, effective_from); FK sku |
+| price_changes (n) | change_id AI, sku_code, list_key, old_price, new_price, effective_from, source (grid / bulk / import / seed), emp_id, changed_at | INDEX (sku_code, changed_at) |
+
+Built in phase 2 (migration `20261020_commerce_pricing.sql`): the price on a day is the row with the latest
+`effective_from` on or before it; a customer type without its own price uses the Default list (the "base price" above).
+Barcode labels stay on SKUs and labels (sku_code is the barcode for now). Commerce settings `prices_include_gst` and
+`gst_rates` (0, 5, 12, 18).
 
 ### 4.4 Inventory
 | Table | Columns | Keys |
