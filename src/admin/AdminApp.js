@@ -18,6 +18,7 @@ import Translations from './Translations';
 import EntityPage from './EntityPage';
 import Languages from './Languages';
 import Brochures from './Brochures';
+import CommerceSkus from './CommerceSkus';
 import Settings from './Settings';
 import Users from './Users';
 import AuditLog from './AuditLog';
@@ -143,6 +144,7 @@ export default function AdminApp() {
             <Route path="form-options" element={<EntityPage key="form-options" name="form-options" />} />
             <Route path="languages" element={<Languages />} />
             <Route path="brochures" element={<Brochures />} />
+            <Route path="commerce/skus" element={<CommerceSkus />} />
             <Route path="settings" element={<Settings />} />
             <Route path="users" element={<Users />} />
             <Route path="audit" element={<AuditLog />} />

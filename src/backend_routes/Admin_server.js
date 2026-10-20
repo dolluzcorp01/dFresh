@@ -1341,6 +1341,22 @@ route('get', '/audit', 'admin', async (req) => {
 });
 
 // Errors from any admin route: input / upload problems and DB constraint errors get a plain message.
+// ---------------------------------------------------------------------------------------------
+// Commerce DEMO (branch `commerce`, database dfresh_commerce only): SKUs (commerce_01_sku.sql)
+// ---------------------------------------------------------------------------------------------
+route('get', '/commerce/skus', 'viewer', async () => {
+  const [rows] = await db.query(
+    `SELECT s.sku_code, s.product_id, s.size_label, s.is_active,
+            COALESCE(t.name, pt.name, s.product_id) AS name
+       FROM skus s
+       JOIN products p ON p.product_id = s.product_id
+       LEFT JOIN product_translations t ON t.product_id = s.product_id AND t.lang_code = 'en'
+       LEFT JOIN product_translations pt ON pt.product_id = p.variant_of AND pt.lang_code = 'en'
+      ORDER BY s.sku_code`
+  );
+  return rows;
+});
+
 router.use('/admin', (err, req, res, next) => { // eslint-disable-line no-unused-vars
   if (err instanceof InputError || err instanceof media.UploadError) {
     return res.status(err.status).json({ success: false, message: err.message, ...(err.code ? { code: err.code } : {}) });

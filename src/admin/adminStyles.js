@@ -392,6 +392,11 @@ td.a-pending { background: #fff8e1; box-shadow: inset 3px 0 0 #e3b44f; }
 .a-file.a-uploading { cursor: progress; }
 .a-file.a-file-off { opacity: .5; cursor: not-allowed; }
 .a-btn .a-upload-name { color: inherit; opacity: .8; }
+/* Commerce demo: SKUs and labels */
+.a-scanbox input[type="search"] { min-width: min(360px, 100%); font-family: monospace; font-size: 15px; }
+.a-skucard { display: flex; flex-wrap: wrap; align-items: center; gap: 18px; margin-top: 12px; }
+.a-skucard .a-barcode { background: #fff; border: 1px solid var(--a-line); border-radius: 8px; max-width: 100%; height: auto; }
+.a-skus .a-barcode { display: block; max-width: 220px; height: auto; }
 /* Excel import: before / after values wrap (long text, Tamil / Hindi keep their shaping via the cell's lang) */
 .a-difftable td { vertical-align: top; }
 .a-difftable td:nth-child(3), .a-difftable td:nth-child(4) { min-width: 160px; max-width: 440px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }

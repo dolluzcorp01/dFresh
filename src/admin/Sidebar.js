@@ -23,6 +23,11 @@ export const GROUPS = [
     ],
   },
   {
+    key: 'commerce', label: 'Commerce', icon: 'sheet', items: [
+      item('commerce/skus', 'SKUs and labels', 'viewer', 'ruler'),
+    ],
+  },
+  {
     key: 'content', label: 'Website content', icon: 'content', items: [
       item('banners', 'Banners', 'viewer', 'banners'), item('translations', 'Translations', 'viewer', 'translations'),
       item('towns', 'Towns', 'viewer', 'towns'), item('form-options', 'Form options', 'viewer', 'options'),
