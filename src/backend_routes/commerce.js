@@ -103,6 +103,19 @@ async function createOrder(q, data, empId) {
   return { order_id: ins.insertId, order_no: orderNo, ...t };
 }
 
+/** Delivered: the cashback rule (commerce_05_promotions.sql) credits pct % of (subtotal - discount) to the wallet. */
+async function cashback(q, orderId, empId) {
+  const [[rule]] = await q.query('SELECT pct, min_order, is_active FROM cashback_rule WHERE rule_id = 1').catch(() => [[null]]);
+  if (!rule || !Number(rule.is_active)) return 0;
+  const [[o]] = await q.query('SELECT order_no, customer_id, subtotal, discount FROM orders WHERE order_id = ?', [orderId]);
+  const base = Number(o.subtotal) - Number(o.discount);
+  if (base <= 0 || base < Number(rule.min_order)) return 0;
+  const amount = round2(base * (Number(rule.pct) / 100));
+  await q.query('INSERT INTO wallet_entries (customer_id, amount, reason, order_id, emp_id) VALUES (?, ?, ?, ?, ?)',
+    [o.customer_id, amount, `Cashback ${Number(rule.pct)}% on ${o.order_no}`, orderId, empId]);
+  return amount;
+}
+
 /** One step on: new -> packed -> dispatched (stock out) -> delivered. -> the new status */
 async function advanceOrder(q, orderNo, to, empId) {
   const [[o]] = await q.query('SELECT order_id, order_no, status FROM orders WHERE order_no = ? FOR UPDATE', [orderNo]);
@@ -122,6 +135,7 @@ async function advanceOrder(q, orderNo, to, empId) {
     }
   }
   await q.query(`UPDATE orders SET status = ?, ${next}_at = UTC_TIMESTAMP() WHERE order_id = ?`, [next, o.order_id]);
+  if (next === 'delivered') await cashback(q, o.order_id, empId);
   return next;
 }
 

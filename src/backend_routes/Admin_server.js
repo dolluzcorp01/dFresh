@@ -1586,6 +1586,57 @@ route('post', '/commerce/customers/from-lead/:leadId', 'editor', async (req) => 
   return { customer_id: ins.insertId, name, ctype, existed: false };
 });
 
+// Promotions (coupons: commerce_03_orders.sql, cashback rule: commerce_05_promotions.sql)
+route('get', '/commerce/promotions', 'viewer', async () => {
+  const [coupons] = await db.query(`SELECT code, kind, value, min_order, DATE_FORMAT(expires_on, '%Y-%m-%d') AS expires_on, usage_limit, used, is_active,
+      expires_on IS NOT NULL AND expires_on < DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+05:30')) AS expired FROM coupons ORDER BY code`);
+  const [[rule]] = await db.query('SELECT pct, min_order, is_active FROM cashback_rule WHERE rule_id = 1');
+  const [[given]] = await db.query("SELECT COALESCE(SUM(amount), 0) AS total, COUNT(*) AS n FROM wallet_entries WHERE reason LIKE 'Cashback%'");
+  return { coupons: coupons.map((c) => ({ ...c, expired: Number(c.expired) === 1 })), cashback: rule, cashbackGiven: { total: Number(given.total), n: Number(given.n) } };
+});
+
+function couponValues(b) {
+  const code = String(b.code || '').trim().toUpperCase();
+  if (!/^[A-Z0-9]{3,20}$/.test(code)) throw new InputError('Code: 3 to 20 letters or digits');
+  if (!['percent', 'fixed'].includes(b.kind)) throw new InputError('Type: percent or fixed');
+  const value = Number(b.value);
+  if (!(value > 0) || (b.kind === 'percent' && value > 90)) throw new InputError(b.kind === 'percent' ? 'Percent: 1 to 90' : 'Amount: above 0');
+  const minOrder = Number(b.min_order) || 0;
+  const limit = b.usage_limit === '' || b.usage_limit === null || b.usage_limit === undefined ? null : Number(b.usage_limit);
+  if (limit !== null && !(Number.isInteger(limit) && limit > 0)) throw new InputError('Usage limit: a whole number, or empty for no limit');
+  const exp = b.expires_on ? String(b.expires_on) : null;
+  if (exp && !/^\d{4}-\d{2}-\d{2}$/.test(exp)) throw new InputError('Expiry: a date');
+  return { code, kind: b.kind, value, min_order: minOrder, expires_on: exp, usage_limit: limit, is_active: b.is_active === false || b.is_active === 0 ? 0 : 1 };
+}
+
+route('post', '/commerce/coupons', 'editor', async (req) => {
+  const v = couponValues(req.body);
+  const [[had]] = await db.query('SELECT code FROM coupons WHERE code = ?', [v.code]);
+  if (had) throw new InputError(`Coupon ${v.code} exists already`, 409);
+  await db.query('INSERT INTO coupons (code, kind, value, min_order, expires_on, usage_limit, is_active) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [v.code, v.kind, v.value, v.min_order, v.expires_on, v.usage_limit, v.is_active]);
+  await audit(null, { empId: by(req), action: 'create', entity: 'coupon', entityId: v.code, after: v });
+  return v;
+});
+
+route('put', '/commerce/coupons/:code', 'editor', async (req) => {
+  const v = couponValues({ ...req.body, code: req.params.code });
+  const [r] = await db.query('UPDATE coupons SET kind = ?, value = ?, min_order = ?, expires_on = ?, usage_limit = ?, is_active = ? WHERE code = ?',
+    [v.kind, v.value, v.min_order, v.expires_on, v.usage_limit, v.is_active, v.code]);
+  if (!r.affectedRows) throw new InputError('No such coupon', 404);
+  await audit(null, { empId: by(req), action: 'update', entity: 'coupon', entityId: v.code, after: v });
+  return v;
+});
+
+route('put', '/commerce/cashback', 'editor', async (req) => {
+  const pct = Number(req.body.pct);
+  const minOrder = Number(req.body.min_order) || 0;
+  if (!(pct >= 0 && pct <= 50)) throw new InputError('Cashback: 0 to 50 %');
+  await db.query('UPDATE cashback_rule SET pct = ?, min_order = ?, is_active = ? WHERE rule_id = 1', [pct, minOrder, req.body.is_active ? 1 : 0]);
+  await audit(null, { empId: by(req), action: 'update', entity: 'cashback', entityId: '1', after: { pct, minOrder, is_active: Boolean(req.body.is_active) } });
+  return { pct, min_order: minOrder, is_active: req.body.is_active ? 1 : 0 };
+});
+
 router.use('/admin', (err, req, res, next) => { // eslint-disable-line no-unused-vars
   if (err instanceof InputError || err instanceof media.UploadError) {
     return res.status(err.status).json({ success: false, message: err.message, ...(err.code ? { code: err.code } : {}) });

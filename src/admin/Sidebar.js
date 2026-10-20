@@ -27,6 +27,7 @@ export const GROUPS = [
       item('commerce/orders', 'Orders', 'viewer', 'sales'),
       item('commerce/returns', 'Returns', 'viewer', 'leads'),
       item('commerce/customers', 'Customers', 'viewer', 'users'),
+      item('commerce/promotions', 'Promotions', 'viewer', 'options'),
       item('commerce/skus', 'SKUs and labels', 'viewer', 'ruler'),
       item('commerce/stock', 'Inventory', 'viewer', 'products'),
     ],
