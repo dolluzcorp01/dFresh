@@ -165,7 +165,7 @@ for f in $(ls database/migrations/*.sql | sort); do
   echo "== $f"; sudo mysql --default-character-set=utf8mb4 dfresh < "$f" || { echo "FAILED: $f"; break; }
 done
 ```
-The 34 migrations, in the order they must run (tick each; a later update applies only the new ones):
+The 35 migrations, in the order they must run (tick each; a later update applies only the new ones):
 
 - [ ] `20261009_phase3_home_ui_text.sql`
 - [ ] `20261009_phase4_products_ui_text.sql`
@@ -208,7 +208,10 @@ The 34 migrations, in the order they must run (tick each; a later update applies
 - [ ] `20261020_commerce_settings.sql` - Commerce settings with their defaults and lists; `commerce_enabled` = **off**
       (the commerce screens stay hidden until it is switched on)
 
-This exact sequence (schema, seed, 34 migrations) was run on an empty database on 20 Oct 2026 without an error.
+- [ ] `20261020_commerce_stock.sql` - inventory: stock movements, reorder levels, suppliers, batches (products get
+      `track_batches`, on for wet wipes), stock-ins, write-offs, stock counts, SKU average cost; no stock
+
+This exact sequence (schema, seed, 35 migrations) was run on an empty database on 20 Oct 2026 without an error.
 `database/demo/` is never applied here: it is demo data for the `dfresh_commerce` copy only.
 
 ```bash

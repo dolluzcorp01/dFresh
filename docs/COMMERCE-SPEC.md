@@ -174,6 +174,16 @@ Barcode labels stay on SKUs and labels (sku_code is the barcode for now). Commer
 Stock on hand = SUM(delta) per sku, location, kind. **Available = good on hand - active reservations.** No stock
 column is ever typed in; a nightly check compares sums and logs a warning if a negative appears.
 
+Built in phase 4 (migration `20261020_commerce_stock.sql`, `src/backend_routes/stock.js`): stock in (production from the
+Kanchipuram unit or purchase from a supplier, cost per pack, reference, scan to add lines); `skus.avg_cost` = weighted
+average cost updated by every stock in (stock value shown only to roles with view on Reports or Products and prices);
+batches for products with `track_batches` (wet wipes by default): batch no., manufacture and expiry date, dispatch
+earliest expiry first, expired batches excluded from Available and never dispatched, near expiry within the Commerce
+setting `expiry_warn_days`; write-offs (damaged / expired / lost / sample, photo optional) through the write-off
+approval above the thresholds; stock counts (all SKUs or a category, tracked SKUs per batch) whose differences post as
+`count` movements after approval; reorder level and quantity per SKU (`stock_levels`) and the Reorder list. Movement
+types: production, purchase, out, return, damaged, write_off, count. Not built yet: more than one location.
+
 ### 4.5 Customers and wallet
 | Table | Columns | Keys |
 |---|---|---|

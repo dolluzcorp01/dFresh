@@ -6,31 +6,11 @@
 
 
 -- skus, sku_prices and price_changes come from the migration 20261020_commerce_pricing.sql (phase 2); orders,
--- order_items, payments, invoices, credit notes and stock reservations from 20261020_commerce_sales.sql (phase 3).
+-- order_items, payments, invoices, credit notes and stock reservations from 20261020_commerce_sales.sql (phase 3);
+-- stock movements, levels, batches, stock-ins, suppliers, write-offs and counts from 20261020_commerce_stock.sql (phase 4).
 
 
 -- from commerce_02_inventory.sql
-
-CREATE TABLE IF NOT EXISTS stock_levels (
-  sku_code   VARCHAR(30) NOT NULL,
-  low_level  INT         NOT NULL DEFAULT 20,
-  PRIMARY KEY (sku_code),
-  CONSTRAINT fk_level_sku FOREIGN KEY (sku_code) REFERENCES skus (sku_code)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE TABLE IF NOT EXISTS stock_movements (
-  move_id     BIGINT       NOT NULL AUTO_INCREMENT,
-  sku_code    VARCHAR(30)  NOT NULL,
-  move_type   VARCHAR(10)  NOT NULL,              
-  stock_kind  VARCHAR(10)  NOT NULL,              
-  delta       INT          NOT NULL,              
-  note        VARCHAR(255) NULL,
-  emp_id      VARCHAR(20)  NOT NULL,
-  created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (move_id),
-  KEY idx_move_sku (sku_code, created_at),
-  CONSTRAINT fk_move_sku FOREIGN KEY (sku_code) REFERENCES skus (sku_code)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 
 

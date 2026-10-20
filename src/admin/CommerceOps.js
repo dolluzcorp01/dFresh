@@ -3,7 +3,7 @@
 // wallet credit given (cashback + refunds). Plus the next orders to pack and the SKUs to reorder. A card or table is
 // only there when the role can view its section (the API sends null for the others).
 import { Link } from 'react-router-dom';
-import { InfoCard, Loading, fmtDate, useLoad } from './ui';
+import { InfoCard, Loading, Notice, fmtDate, useLoad } from './ui';
 import { rs } from './CommerceReturns';
 
 function Card({ to, value, label, sub, bad }) {
@@ -29,11 +29,17 @@ export default function CommerceOps() {
       <Loading state={ops}>
         {d && (
           <>
+            {d.lowStock && d.lowStock.length > 0 && (
+              <Notice kind="warn">{d.lowStock.length} SKU{d.lowStock.length === 1 ? ' is' : 's are'} below the reorder level: <Link to="/admin/commerce/stock?tab=reorder">open the Reorder list</Link>.</Notice>
+            )}
+            {d.expiry && d.expiry.expired + d.expiry.near > 0 && (
+              <Notice kind={d.expiry.expired ? 'error' : 'warn'}>{d.expiry.expired ? `${d.expiry.expired} expired batch${d.expiry.expired === 1 ? '' : 'es'} in stock (blocked from orders: write them off)` : ''}{d.expiry.expired && d.expiry.near ? '; ' : ''}{d.expiry.near ? `${d.expiry.near} batch${d.expiry.near === 1 ? '' : 'es'} near expiry` : ''}: <Link to="/admin/commerce/stock?tab=batches">Batches</Link>.</Notice>
+            )}
             <div className="a-stats">
               {d.today && <Card to="/admin/commerce/orders" value={d.today.n} label="orders today" sub={rs(d.today.value)} />}
               {d.toPack !== null && <Card to="/admin/commerce/orders?status=new" value={d.toPack} label="to pack" bad={d.toPack > 0} />}
               {d.toDispatch !== null && <Card to="/admin/commerce/orders?status=packed" value={d.toDispatch} label="to dispatch" bad={d.toDispatch > 0} />}
-              {d.lowStock && <Card to="/admin/commerce/stock?low=1" value={d.lowStock.length} label="low stock SKUs" bad={d.lowStock.length > 0} />}
+              {d.lowStock && <Card to="/admin/commerce/stock?tab=reorder" value={d.lowStock.length} label="below reorder level" bad={d.lowStock.length > 0} />}
               {d.openReturns !== null && <Card to="/admin/commerce/returns" value={d.openReturns} label="open returns" sub="replacement not delivered" />}
               {d.walletGiven && <Card to="/admin/commerce/customers" value={rs(d.walletGiven.total)} label="wallet credit given" sub={`cashback ${rs(d.walletGiven.cashback)}, refunds ${rs(d.walletGiven.refunds)}`} />}
             </div>
@@ -51,8 +57,8 @@ export default function CommerceOps() {
               <div className="a-card">
                 <h2>Reorder (low stock)</h2>
                 {d.lowStock.length ? (
-                  <table className="a-table"><thead><tr><th>SKU</th><th>Product</th><th className="a-num">Good</th><th className="a-num">Low level</th></tr></thead>
-                    <tbody>{d.lowStock.map((s) => <tr key={s.sku_code}><td><code>{s.sku_code}</code></td><td>{s.name}</td><td className="a-num a-bad">{s.good}</td><td className="a-num">{s.low_level}</td></tr>)}</tbody></table>
+                  <table className="a-table"><thead><tr><th>SKU</th><th>Product</th><th className="a-num">Available</th><th className="a-num">Level</th><th className="a-num">Suggested</th></tr></thead>
+                    <tbody>{d.lowStock.map((s) => <tr key={s.sku_code}><td><code>{s.sku_code}</code></td><td>{s.name}</td><td className="a-num a-bad">{s.available}</td><td className="a-num">{s.reorder_level}</td><td className="a-num">{s.suggested}</td></tr>)}</tbody></table>
                 ) : <p className="a-muted">All SKUs above their level.</p>}
               </div>
               )}

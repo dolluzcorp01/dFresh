@@ -189,7 +189,7 @@ function OrderDrawer({ no, canEdit, onClose, onChanged }) {
     act.run(async () => {
       const r = await api.send('POST', `/commerce/orders/${no}/status`, { to: next });
       reload();
-      act.setMsg({ kind: 'ok', text: `${no} is now ${LABEL[r.status]}${r.invoice_no ? `: invoice ${r.invoice_no} issued` : ''}.` });
+      act.setMsg({ kind: 'ok', text: `${no} is now ${LABEL[r.status]}${r.invoice_no ? `: invoice ${r.invoice_no} issued` : ''}${r.batches && r.batches.length ? `; from batch ${r.batches.map((b) => `${b.batch_no} (${b.qty} x ${b.sku_code}, exp. ${day(b.expiry_date)})`).join(', ')}` : ''}.` });
     });
   };
   const printInvoice = (id, cn) => act.run(async () => {
@@ -251,6 +251,7 @@ function OrderDrawer({ no, canEdit, onClose, onChanged }) {
             </div>
             <Totals t={{ ...d, coupon: d.coupon_code }} paid={d.amount_paid} due={d.amount_due} cancelled={d.status === 'cancelled'} />
             {d.reserved.length > 0 && <p className="a-muted">Stock reserved: {d.reserved.map((r) => `${r.qty} x ${r.sku_code}`).join(', ')}</p>}
+            {d.batches && d.batches.length > 0 && <p className="a-batchesout">Batches sent (earliest expiry first): {d.batches.map((b) => `${b.qty} x ${b.sku_code} batch ${b.batch_no}, expires ${day(b.expiry_date)}`).join('; ')}</p>}
             <Payments order={d} canEdit={canEdit} onChanged={reload} />
             {d.invoices.length > 0 && (
               <>
@@ -566,7 +567,7 @@ function OrderForm({ order = null, onClose, onSaved }) {
                       <td><input list="order-skus" value={l.sku_code} aria-label={`SKU ${n + 1}`} onChange={(e) => setLine(n, { sku_code: e.target.value })} />
                         <small className={sku ? 'a-muted' : 'a-bad'}>{l.sku_code ? (sku ? `${sku.name} - ${sku.size_label}` : 'Unknown SKU') : ''}</small>
                         {sku && <small className="a-muted a-ordernote">Carton {sku.packs_per_carton} packs · min {sku.min_order_qty} · {sku.sell_unit === 'carton' ? 'full cartons only' : sku.sell_unit === 'both' ? 'packs or cartons' : 'packs'}</small>}
-                        {sku && <small className={`a-avail${short ? ' a-bad' : ' a-muted'}`}>Available {sku.available} (in stock {sku.good}, reserved {sku.reserved})</small>}</td>
+                        {sku && <small className={`a-avail${short ? ' a-bad' : ' a-muted'}`}>Available {sku.available} (in stock {sku.good}{sku.expired ? `, expired ${sku.expired} blocked` : ''}, reserved {sku.reserved})</small>}</td>
                       <td className="a-num">
                         <span className="a-row">
                           <input type="number" min="1" step="1" className="a-qty" value={l.qty} aria-label={`Qty ${n + 1}`} onChange={(e) => setLine(n, { qty: e.target.value })} />

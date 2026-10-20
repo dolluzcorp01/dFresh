@@ -215,7 +215,7 @@ async function bulkPlan(q, b) {
   return { rows, effective: eff };
 }
 
-/** product HSN / GST rate check -> { values, errors } */
+/** product HSN / GST rate / batch tracking check -> { values, errors } */
 function checkTax(raw, rates) {
   const values = {};
   const errors = {};
@@ -229,6 +229,7 @@ function checkTax(raw, rates) {
     if (String(raw.gst_rate ?? '').trim() === '' || !rates.includes(g)) errors.gst_rate = `GST rate: one of ${rates.join(', ')} %`;
     else values.gst_rate = g;
   }
+  if ('track_batches' in raw) values.track_batches = raw.track_batches === true || raw.track_batches === 1 || raw.track_batches === '1' ? 1 : 0;
   return { values, errors };
 }
 
@@ -256,7 +257,7 @@ function checkSkuFields(raw) {
 async function skuRows(q) {
   const [rows] = await q.query(
     `SELECT s.sku_code, s.product_id, s.size_label, s.packs_per_carton, s.min_order_qty, s.sell_unit, s.is_active,
-            p.category_key, p.hsn_code, p.gst_rate, COALESCE(t.name, pt.name, s.product_id) AS name,
+            p.category_key, p.hsn_code, p.gst_rate, p.track_batches, COALESCE(t.name, pt.name, s.product_id) AS name,
             COALESCE(ct.name, p.category_key) AS category
        FROM skus s JOIN products p ON p.product_id = s.product_id
        LEFT JOIN product_translations t ON t.product_id = s.product_id AND t.lang_code = 'en'
@@ -265,7 +266,7 @@ async function skuRows(q) {
        LEFT JOIN category_translations ct ON ct.category_key = p.category_key AND ct.lang_code = 'en'
       ORDER BY c.sort_order, p.sort_order, s.sku_code`
   );
-  return rows.map((r) => ({ ...r, gst_rate: Number(r.gst_rate), packs_per_carton: Number(r.packs_per_carton), min_order_qty: Number(r.min_order_qty), is_active: Number(r.is_active) === 1 }));
+  return rows.map((r) => ({ ...r, gst_rate: Number(r.gst_rate), packs_per_carton: Number(r.packs_per_carton), min_order_qty: Number(r.min_order_qty), is_active: Number(r.is_active) === 1, track_batches: Number(r.track_batches) === 1 }));
 }
 
 /** save a SKU's selling fields (checked values from checkSkuFields), audited -> true when something changed */
@@ -282,9 +283,9 @@ async function updateSku(q, skuCode, values, empId, source = 'grid') {
 
 /** save a product's HSN / GST rate (checked values from checkTax), audited -> true when something changed */
 async function updateProductTax(q, productId, values, empId, source = 'grid') {
-  const [[before]] = await q.query('SELECT product_id, hsn_code, gst_rate FROM products WHERE product_id = ? FOR UPDATE', [productId]);
+  const [[before]] = await q.query('SELECT product_id, hsn_code, gst_rate, track_batches FROM products WHERE product_id = ? FOR UPDATE', [productId]);
   if (!before) throw new PricingError(`No product ${productId}`, 404);
-  const set = Object.fromEntries(Object.entries(values).filter(([k, v]) => (k === 'gst_rate' ? Number(before[k]) !== Number(v) : String(before[k]) !== String(v))));
+  const set = Object.fromEntries(Object.entries(values).filter(([k, v]) => (k === 'gst_rate' || k === 'track_batches' ? Number(before[k]) !== Number(v) : String(before[k]) !== String(v))));
   if (!Object.keys(set).length) return false;
   await q.query(`UPDATE products SET ${Object.keys(set).map((k) => `${k} = ?`).join(', ')} WHERE product_id = ?`, [...Object.values(set), productId]);
   await audit(q, { empId, action: 'update', entity: 'product_tax', entityId: productId, before: Object.fromEntries(Object.keys(set).map((k) => [k, k === 'gst_rate' ? Number(before[k]) : before[k]])), after: { ...set, source } });

@@ -13,7 +13,8 @@
 // or taken from the price list (pricing.js; split out of the price when the lists include GST). Wallet credit used
 // counts as paid; payments and refunds are recorded rows; amount_due = total - wallet - payments + refunds.
 //
-// Stock: Available = good stock - active reservations of other orders. An order cannot ask for more than available,
+// Stock (stock.js): Available = good stock - expired batches - active reservations of other orders. Dispatch takes
+// batch-tracked SKUs earliest expiry first and never an expired batch. An order cannot ask for more than available,
 // except with the override (a role with "approve" on Orders), which waits for approval. Reservations are made when the
 // order is confirmed (or when it is packed: Commerce setting stock_reserve_at), re-made on every edit, consumed at
 // dispatch (stock out) and released on cancel.
@@ -27,6 +28,7 @@ const pricing = require('./pricing');
 const approvals = require('./approvals');
 const commerceSettings = require('./commerce-settings');
 const invoices = require('./invoices');
+const stock = require('./stock');
 const numbering = require('./numbering');
 const { audit } = require('./audit');
 const { checkSetting } = require('../shared/settingRules');
@@ -59,22 +61,8 @@ async function walletBalance(q, customerId) {
   return Number(r.bal);
 }
 
-async function goodStock(q, sku) {
-  const [[r]] = await q.query("SELECT COALESCE(SUM(delta), 0) AS good FROM stock_movements WHERE sku_code = ? AND stock_kind = 'good'", [sku]);
-  return Number(r.good);
-}
-
-/** good stock, active reservations (of other orders than exceptOrderId) and available per SKU -> Map */
-async function availability(q, skuCodes, exceptOrderId = null) {
-  const out = new Map();
-  if (!skuCodes.length) return out;
-  const [good] = await q.query("SELECT sku_code, COALESCE(SUM(delta), 0) AS good FROM stock_movements WHERE stock_kind = 'good' AND sku_code IN (?) GROUP BY sku_code", [skuCodes]);
-  const [res] = await q.query("SELECT sku_code, COALESCE(SUM(qty), 0) AS qty FROM stock_reservations WHERE status = 'active' AND sku_code IN (?) AND order_id <> ? GROUP BY sku_code", [skuCodes, exceptOrderId || 0]);
-  const g = new Map(good.map((r) => [r.sku_code, Number(r.good)]));
-  const r = new Map(res.map((x) => [x.sku_code, Number(x.qty)]));
-  for (const s of skuCodes) out.set(s, { good: g.get(s) || 0, reserved: r.get(s) || 0, available: (g.get(s) || 0) - (r.get(s) || 0) });
-  return out;
-}
+/** good stock, expired, reserved by other orders and available per SKU (stock.js) */
+const availability = (q, skuCodes, exceptOrderId = 0) => stock.availability(q, skuCodes, exceptOrderId);
 
 /** The coupon's discount for this subtotal, or a CommerceError saying why it does not apply. */
 async function couponDiscount(q, code, subtotal, { lock = false, ownUse = false } = {}) {
@@ -212,7 +200,7 @@ async function prepare(q, data, opts = {}) {
       price: inclusive ? round2(entered / (1 + rate / 100)) : entered };
   });
   if (short.length && !data.override_stock) {
-    short.forEach((x) => problems.push(`${x.sku_code}: only ${Math.max(x.available, 0)} available (${x.good} in stock, ${x.reserved} reserved for other orders); ${x.qty} asked`));
+    short.forEach((x) => problems.push(`${x.sku_code}: only ${Math.max(x.available, 0)} available (${x.good} in stock${x.expired ? `, ${x.expired} expired` : ''}, ${x.reserved} reserved for other orders); ${x.qty} asked`));
   }
   if (short.length && data.override_stock && !opts.canOverride) problems.push('Ordering more than the available stock needs a role with "approve" on Orders');
   if (problems.length) throw new CommerceError(problems.join('. '));
@@ -443,13 +431,7 @@ async function doCancel(q, orderId, reason, empId) {
   await q.query("UPDATE orders SET status = 'cancelled', cancelled_at = UTC_TIMESTAMP(), cancel_reason = ?, version = version + 1, updated_by = ?, updated_at = UTC_TIMESTAMP() WHERE order_id = ?",
     [String(reason).slice(0, 255), empId, orderId]);
   await release(q, orderId);
-  if (o.status === 'dispatched') {
-    const [items] = await q.query('SELECT sku_code, qty FROM order_items WHERE order_id = ?', [orderId]);
-    for (const i of items) {
-      await q.query("INSERT INTO stock_movements (sku_code, move_type, stock_kind, delta, note, emp_id) VALUES (?, 'return', 'good', ?, ?, ?)",
-        [i.sku_code, i.qty, `Cancelled after dispatch, goods back: ${o.order_no}`, empId]);
-    }
-  }
+  if (o.status === 'dispatched') await stock.goodsBack(q, o.order_no, empId);
   const inv = await invoices.cancelForOrder(q, orderId, `Order ${o.order_no} cancelled: ${reason}`, empId);
   if (o.coupon_code) await q.query('UPDATE coupons SET used = GREATEST(used - 1, 0) WHERE code = ?', [o.coupon_code]);
   if (Number(o.wallet_used) > 0) {
@@ -508,25 +490,18 @@ async function advanceOrder(q, orderNo, to, empId, { at = null } = {}) {
   const settings = await commerceSettings.read(q);
   let invoiceNo = null;
   if (next === 'packed' && settings.stock_reserve_at === 'packing') await reserve(q, o.order_id);
+  let batchesOut = [];
   if (next === 'dispatched') {
-    const [items] = await q.query('SELECT sku_code, qty FROM order_items WHERE order_id = ? ORDER BY sku_code', [o.order_id]);
-    for (const i of items) {
-      await q.query('SELECT sku_code FROM skus WHERE sku_code = ? FOR UPDATE', [i.sku_code]);
-      const have = await goodStock(q, i.sku_code);
-      if (have < i.qty) throw new CommerceError(`Not enough ${i.sku_code} in the godown: ${have} good, ${i.qty} needed`, 409);
-    }
-    for (const i of items) {
-      await q.query("INSERT INTO stock_movements (sku_code, move_type, stock_kind, delta, note, emp_id) VALUES (?, 'out', 'good', ?, ?, ?)",
-        [i.sku_code, -i.qty, `Dispatched ${orderNo}`, empId]);
-    }
+    try { batchesOut = await stock.dispatchOut(q, o.order_id, orderNo, empId); } catch (e) { if (e instanceof stock.StockError) throw new CommerceError(e.message, e.status); throw e; }
     await q.query("UPDATE stock_reservations SET status = 'consumed', closed_at = UTC_TIMESTAMP() WHERE order_id = ? AND status = 'active'", [o.order_id]);
     invoiceNo = (await invoices.issue(q, o.order_id, empId, { at })).invoice_no;
   }
   await q.query(`UPDATE orders SET status = ?, ${next}_at = UTC_TIMESTAMP(), version = version + 1, updated_by = ?, updated_at = UTC_TIMESTAMP() WHERE order_id = ?`, [next, empId, o.order_id]);
-  await history(q, o.order_id, o.status, next, invoiceNo ? `Invoice ${invoiceNo}` : null, empId);
+  const fromBatches = batchesOut.filter((b) => b.batch_no).map((b) => `${b.qty} x ${b.sku_code} batch ${b.batch_no}`).join(', ');
+  await history(q, o.order_id, o.status, next, [invoiceNo ? `Invoice ${invoiceNo}` : null, fromBatches ? `from ${fromBatches}` : null].filter(Boolean).join('; ') || null, empId);
   if (next === 'delivered') await cashback(q, o.order_id, empId);
   await audit(q, { empId, action: 'status', entity: 'order', entityId: orderNo, before: { status: o.status }, after: { status: next, invoice: invoiceNo } });
-  return { status: next, invoice_no: invoiceNo };
+  return { status: next, invoice_no: invoiceNo, batches: batchesOut.filter((b) => b.batch_no) };
 }
 
 /** payment modes offered (Commerce setting payment_methods, names from MODES) -> { key: label } */
@@ -625,8 +600,8 @@ async function createReturn(q, orderNo, data, empId) {
   for (const l of lines) {
     await q.query('INSERT INTO return_items (return_id, sku_code, qty, item_check) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE qty = qty + VALUES(qty)',
       [ins.insertId, l.sku_code, l.qty, l.item_check]);
-    await q.query("INSERT INTO stock_movements (sku_code, move_type, stock_kind, delta, note, emp_id) VALUES (?, 'return', ?, ?, ?, ?)",
-      [l.sku_code, l.item_check === 'ok' ? 'returned' : 'damaged', l.qty, `${returnNo} on ${orderNo}: ${reason}`.slice(0, 255), empId]);
+    await q.query("INSERT INTO stock_movements (sku_code, move_type, stock_kind, delta, ref_type, ref_id, note, emp_id) VALUES (?, 'return', ?, ?, 'return', ?, ?, ?)",
+      [l.sku_code, l.item_check === 'ok' ? 'returned' : 'damaged', l.qty, returnNo, `${returnNo} on ${orderNo}: ${reason}`.slice(0, 255), empId]);
   }
   let replacement = null;
   if (data.outcome === 'wallet') {

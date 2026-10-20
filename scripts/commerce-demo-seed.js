@@ -2,15 +2,19 @@
 // Run after a fresh copy of dfresh + every migration (database/migrations, incl. 20261020_commerce_*):
 //   node scripts/commerce-demo-seed.js
 // 1. the demo screens' interim tables (database/demo/commerce-demo-schema.sql; replaced in phases 3-8)
-// 2. SQL demo data (database/demo/commerce-demo-data.sql): SKUs with carton sizes, minimum orders and HSN codes, a week
-//    of stock, coupons, cashback rule
+// 2. SQL demo data (database/demo/commerce-demo-data.sql): SKUs with carton sizes, minimum orders and HSN codes,
+//    reorder levels, a little returned stock, coupons, cashback rule
 // 3. DEMO prices on all 6 lists (Default + 5 customer types) for every SKU, through src/backend_routes/pricing.js:
 //    effective 30 days ago, a +5 % change on the toilet rolls 5 days ago and one scheduled for the 1st of next month
 // 4. 15 demo customers (addresses with state and PIN, credit terms by type; one in Karnataka for IGST) and 25 orders
 //    across all statuses, through src/backend_routes/commerce.js (list prices of the customer's type, coupons, stock
 //    reserved, stock out and invoice at dispatch, cashback on delivery); then the dates are moved back to the demo
 //    days, payments recorded (paid, part paid, one overdue invoice), 2 returns, notes and follow-ups
-// 5. demo approval requests (pending and decided) and Commerce switched ON
+// 5. stock through src/backend_routes/stock.js: 2 suppliers, production stock-ins for every SKU 12 days ago and a
+//    purchase of napkins 6 days ago (costs, so the average cost moves), wet wipes in 3 batches (one expired, one near
+//    expiry, one fresh); after the orders: write-offs (one waiting for approval), a towels count with differences
+//    waiting for approval
+// 6. demo approval requests (pending and decided) and Commerce switched ON
 // Migrations never contain any of this (docs/COMMERCE-SPEC.md 9). Running it twice does nothing the second time.
 require('dotenv').config({ quiet: true });
 const fs = require('fs');
@@ -23,6 +27,7 @@ const { getDBConnection } = require('../config/db');
 const commerce = require('../src/backend_routes/commerce');
 const approvals = require('../src/backend_routes/approvals');
 const pricing = require('../src/backend_routes/pricing');
+const stock = require('../src/backend_routes/stock');
 
 const db = getDBConnection(DB).promise();
 const ROOT = path.join(__dirname, '..');
@@ -149,6 +154,34 @@ async function inTx(fn) {
     console.log(`demo prices: ${changes.length} on ${lists.length} lists, ${rolls.length * lists.length} changed 5 days ago, 1 scheduled for ${nextMonth}`);
   } else console.log('prices exist already: skipped');
 
+  // DEMO stock: suppliers and stock-ins with costs (every pack in the godown comes from a stock in)
+  const [[{ ins }]] = await db.query('SELECT COUNT(*) AS ins FROM stock_ins');
+  if (!Number(ins)) {
+    const dayAgo = (n) => new Date(Date.now() + 5.5 * 3600e3 - n * 86400e3).toISOString().slice(0, 10);
+    const atAgo = (n) => new Date(Date.now() - n * 86400e3);
+    await db.query(`INSERT INTO suppliers (name, phone, gstin, address, created_by) VALUES
+      ('DEMO Sri Lakshmi Paper Traders', '+91 94440 11223', '33AAACS1234L1Z2', 'Sidco Industrial Estate, Ambattur, Chennai', 'demo-seed'),
+      ('DEMO Coimbatore Hygiene Products', '+91 98940 55667', '33AAACC5678H1Z9', 'Avinashi Road, Coimbatore', 'demo-seed')`);
+    const [[sup1]] = await db.query("SELECT supplier_id FROM suppliers WHERE name LIKE 'DEMO Sri Lakshmi%'");
+    const [[sup2]] = await db.query("SELECT supplier_id FROM suppliers WHERE name LIKE 'DEMO Coimbatore%'");
+    const [all] = await db.query("SELECT s.sku_code, s.product_id, p.track_batches FROM skus s JOIN products p ON p.product_id = s.product_id ORDER BY s.sku_code");
+    const LOW = { 'DF037-M150': 8, 'DF017-R4': 14, 'DF028-M100': 8 }; // a few SKUs run low on purpose
+    const qtyOf = (sku) => LOW[sku] || 80 + ([...sku].reduce((a, c) => a + c.charCodeAt(0), 0) * 37) % 200;
+    const costOf = (pid, f) => Math.round(DEMO_PRICE[pid] * f * 100) / 100;
+    const paper = all.filter((x) => !Number(x.track_batches) && DEMO_PRICE[x.product_id]);
+    await inTx((q) => stock.stockIn(q, { kind: 'production', received_on: dayAgo(12), reference: 'DEMO batch sheet KPM-1012', note: 'DEMO opening stock from the Kanchipuram unit',
+      lines: paper.map((x) => ({ sku_code: x.sku_code, qty: qtyOf(x.sku_code), unit_cost: costOf(x.product_id, 0.55) })) }, 'DZIND002', { allowPast: true, at: atAgo(12) }));
+    const napkins = paper.filter((x) => ['DZIND-DF001', 'DZIND-DF002', 'DZIND-DF007'].includes(x.product_id));
+    await inTx((q) => stock.stockIn(q, { kind: 'purchase', supplier_id: sup1.supplier_id, received_on: dayAgo(6), reference: 'DEMO SLPT/2026/0418', note: 'DEMO top-up while the unit was on maintenance',
+      lines: napkins.map((x) => ({ sku_code: x.sku_code, qty: 48, unit_cost: costOf(x.product_id, 0.66) })) }, 'DZIND148', { allowPast: true, at: atAgo(6) }));
+    const wipes = all.filter((x) => Number(x.track_batches));
+    for (const [batch, mfg, exp, qty, agoIn, f] of [['WW2504', -200, -5, 10, 190, 0.6], ['WW2509', -160, 20, 40, 150, 0.62], ['WW2603', -20, 345, 80, 15, 0.64]]) {
+      await inTx((q) => stock.stockIn(q, { kind: 'purchase', supplier_id: sup2.supplier_id, received_on: dayAgo(agoIn), reference: `DEMO CHP/${batch}`, note: 'DEMO wet wipes',
+        lines: wipes.map((x) => ({ sku_code: x.sku_code, qty, unit_cost: costOf(x.product_id, f), batch_no: batch, mfg_date: dayAgo(-mfg), expiry_date: dayAgo(-exp) })) }, 'DZIND002', { allowPast: true, at: atAgo(agoIn) }));
+    }
+    console.log(`demo stock: 2 suppliers, production stock in for ${paper.length} SKUs, a purchase of ${napkins.length} napkin SKUs, wet wipes in 3 batches`);
+  } else console.log('stock-ins exist already: skipped');
+
   const [[{ n }]] = await db.query('SELECT COUNT(*) AS n FROM orders');
   if (Number(n) > 0) { console.log(`${n} orders exist already: customers, orders, returns and approvals skipped`); process.exit(0); }
 
@@ -222,12 +255,24 @@ async function inTx(fn) {
   const [[ord]] = await db.query("SELECT order_no, subtotal FROM orders WHERE status = 'new' ORDER BY order_id LIMIT 1");
   await inTx(async (q) => {
     await approvals.request(q, { kind: 'refund', refType: 'return', refId: ret.return_no, summary: `DEMO - refund Rs 2,400 to the bank for ${ret.return_no} (above the Rs 2,000 limit)`, amount: 2400, payload: { demo: true } }, 'DZIND002');
-    await approvals.request(q, { kind: 'write_off', refType: 'stock', refId: 'DF019-R10', summary: 'DEMO - write off 25 packs of DF019-R10 (wet cartons)', amount: 1850, payload: { demo: true, qty: 25 } }, 'DZIND002');
     await approvals.request(q, { kind: 'discount', refType: 'order', refId: ord.order_no, summary: `DEMO - 15 % manual discount on ${ord.order_no} (limit 10 %)`, amount: Math.round(Number(ord.subtotal) * 0.15), payload: { demo: true, pct: 15 } }, 'DZIND148');
     const id = await approvals.request(q, { kind: 'goodwill_credit', refType: 'customer', refId: 'Demo Cafe Thendral', summary: 'DEMO - Rs 300 goodwill wallet credit for a late delivery', amount: 300, payload: { demo: true } }, 'DZIND148');
     await q.query("UPDATE approvals SET status = 'approved', decided_by = 'DZIND002', decided_at = UTC_TIMESTAMP() - INTERVAL 2 HOUR, note = 'DEMO - OK, regular customer', requested_at = UTC_TIMESTAMP() - INTERVAL 5 HOUR WHERE approval_id = ?", [id]);
   });
+  // inventory after the orders: damaged in the godown, a small sample write-off (posts at once), the expired wet wipes
+  // written off (above the threshold: waits for approval), a towels count with two differences (waits for approval)
+  await inTx((q) => stock.recordMove(q, { sku_code: 'DF019-R10', qty: 3, move_type: 'damaged', note: 'DEMO carton crushed in the godown' }, 'DZIND002'));
+  await inTx((q) => stock.requestWriteOff(q, { sku_code: 'DF001-M100', stock_kind: 'good', qty: 2, reason_type: 'sample', reason: 'DEMO samples for a hotel visit' }, 'DZIND148'));
+  const [[expired]] = await db.query("SELECT batch_id FROM batches WHERE batch_no = 'WW2504' LIMIT 1");
+  const wo = await inTx((q) => stock.requestWriteOff(q, { sku_code: 'DF044-M100', stock_kind: 'good', batch_id: expired.batch_id, qty: 10, reason_type: 'expired', reason: 'DEMO batch WW2504 expired on the shelf' }, 'DZIND002'));
+  const cnt = await inTx((q) => stock.startCount(q, 'towels', 'DZIND002'));
+  const det = await stock.countDetail(db, cnt.count_id);
+  const DIFF = { 'DF036-M250': -2, 'DF040-M100': 3 };
+  await inTx((q) => stock.saveCount(q, cnt.count_id, det.lines.map((l) => ({ line_id: l.line_id, counted: l.system_qty + (DIFF[l.sku_code] || 0) })), 'DZIND002'));
+  const sub = await inTx((q) => stock.submitCount(q, cnt.count_id, 'DZIND002'));
+  console.log(`demo inventory: damaged 3 x DF019-R10, sample write-off posted, expired write-off #${wo.write_off_id} ${wo.status}, count #${cnt.count_id} ${sub.status} (${sub.differences} differences)`);
+
   await db.query("UPDATE commerce_settings SET value = '1', updated_by = 'demo-seed', updated_at = UTC_TIMESTAMP() WHERE setting_key = 'commerce_enabled'");
-  console.log(`demo: ${CUSTOMERS.length} customers, ${made} orders, 2 returns, ${NOTES.length} follow-ups, 4 approval requests; Commerce switched on`);
+  console.log(`demo: ${CUSTOMERS.length} customers, ${made} orders, 2 returns, ${NOTES.length} follow-ups, 3 approval requests + the write-off and count; Commerce switched on`);
   process.exit(0);
 })().catch((e) => { console.error('commerce-demo-seed failed:', e.message); process.exit(1); });

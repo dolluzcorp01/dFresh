@@ -67,6 +67,15 @@ export const api = {
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   },
+  /** Opens a file response (a photo) in a new tab, with the session cookie. false when pop-ups are blocked. */
+  open: async (path) => {
+    const w = window.open('', '_blank');
+    if (!w) return false;
+    const res = await apiFetch(`${BASE}${path}`);
+    if (!res.ok) { w.close(); await handle(res); }
+    w.location.href = URL.createObjectURL(await res.blob());
+    return true;
+  },
 };
 
 /** URL-safe id for composite keys (matches admin-entities parseId: parts joined with "~"). */

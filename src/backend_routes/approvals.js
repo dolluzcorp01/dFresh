@@ -22,6 +22,7 @@ const KINDS = {
   price_below_list: { label: 'Price below the list', section: 'products' },
   over_available: { label: 'Order above the available stock', section: 'orders' },
   credit_order: { label: 'Order over the credit limit or with overdue invoices', section: 'customers' },
+  stock_count: { label: 'Stock count differences', section: 'inventory' },
 };
 const handlers = {};
 const closers = {};
@@ -52,6 +53,7 @@ async function needed(q, kind, facts = {}) {
     case 'price_below_list': return s.approve_price_below_on && (facts.pct || 0) > s.approve_price_below_pct;
     case 'over_available': return s.approve_over_available !== false;
     case 'credit_order': return s.approve_credit_order !== false;
+    case 'stock_count': return true;
     default: throw new Error(`unknown approval kind ${kind}`);
   }
 }

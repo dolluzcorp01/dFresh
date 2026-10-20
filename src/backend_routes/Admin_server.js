@@ -1411,75 +1411,218 @@ route('get', '/commerce/skus', 'inventory:view', async () => {
   return rows;
 });
 
-// Inventory (database/demo/commerce-demo-schema.sql): stock = sum of movements per SKU and kind; one location.
+// Inventory (migration 20261020_commerce_stock.sql, logic in stock.js). Section "inventory": view = stock, batches,
+// stock-ins, write-offs, counts, reorder list, movements; create = stock in, write-off request, start a count, record
+// damaged / returned; edit = reorder levels, suppliers, count quantities and submit, Excel export; approve = decide
+// write-offs and count differences (Setup > Approvals). Costs and stock value only for a role that can view Reports or
+// Products and prices.
 const SKU_NAME = `COALESCE(t.name, pt.name, s.product_id)`;
 const SKU_JOIN = `JOIN products p ON p.product_id = s.product_id
        LEFT JOIN product_translations t ON t.product_id = s.product_id AND t.lang_code = 'en'
        LEFT JOIN product_translations pt ON pt.product_id = p.variant_of AND pt.lang_code = 'en'`;
-const MOVE_TYPES = ['in', 'out', 'adjust', 'return', 'damaged'];
+const stock = require('./stock');
+const seesCost = (req) => canDo(req, 'reports') || canDo(req, 'products');
+const asStock = (e) => (e instanceof stock.StockError ? new InputError(e.message, e.status) : e);
 
-route('get', '/commerce/stock', 'inventory:view', async () => {
+route('get', '/commerce/stock', 'inventory:view', async (req) => {
+  const cs = await commerceSettings.read(db);
   const [rows] = await db.query(
-    `SELECT s.sku_code, s.product_id, s.size_label, ${SKU_NAME} AS name, COALESCE(l.low_level, 20) AS low_level,
-            COALESCE(SUM(CASE WHEN m.stock_kind = 'good' THEN m.delta END), 0) AS good,
+    `SELECT s.sku_code, s.product_id, s.size_label, s.packs_per_carton, s.avg_cost, p.category_key, p.track_batches, ${SKU_NAME} AS name,
+            COALESCE(l.reorder_level, ?) AS reorder_level, COALESCE(l.reorder_qty, ?) AS reorder_qty,
             COALESCE(SUM(CASE WHEN m.stock_kind = 'returned' THEN m.delta END), 0) AS returned,
             COALESCE(SUM(CASE WHEN m.stock_kind = 'damaged' THEN m.delta END), 0) AS damaged,
             MAX(m.created_at) AS last_move,
-            (SELECT COALESCE(SUM(r.qty), 0) FROM stock_reservations r WHERE r.sku_code = s.sku_code AND r.status = 'active') AS reserved
+            (SELECT COUNT(DISTINCT b.batch_id) FROM batches b JOIN stock_movements bm ON bm.batch_id = b.batch_id AND bm.stock_kind = 'good' WHERE b.sku_code = s.sku_code) AS batches
        FROM skus s ${SKU_JOIN}
-       LEFT JOIN stock_levels l ON l.sku_code = s.sku_code
+       LEFT JOIN stock_levels l ON l.sku_code = s.sku_code AND l.location_id = 1
        LEFT JOIN stock_movements m ON m.sku_code = s.sku_code
-      GROUP BY s.sku_code, s.product_id, s.size_label, t.name, pt.name, l.low_level
-      ORDER BY s.sku_code`
+      GROUP BY s.sku_code, s.product_id, s.size_label, s.packs_per_carton, s.avg_cost, p.category_key, p.track_batches, t.name, pt.name, l.reorder_level, l.reorder_qty
+      ORDER BY s.sku_code`, [Number(cs.low_level_default) || 20, Number(cs.reorder_qty_default) || 0]
   );
-  return rows.map((r) => ({ ...r, good: Number(r.good), returned: Number(r.returned), damaged: Number(r.damaged), low_level: Number(r.low_level),
-    reserved: Number(r.reserved), available: Number(r.good) - Number(r.reserved) }));
+  const av = await stock.availability(db, rows.map((r) => r.sku_code));
+  const cost = seesCost(req);
+  const out = rows.map(({ avg_cost: ac, ...r }) => {
+    const a = av.get(r.sku_code);
+    return { ...r, ...a, returned: Number(r.returned), damaged: Number(r.damaged), reorder_level: Number(r.reorder_level), reorder_qty: Number(r.reorder_qty),
+      track_batches: Number(r.track_batches) === 1, batches: Number(r.batches), low: a.available < Number(r.reorder_level),
+      ...(cost ? { avg_cost: ac === null ? null : Number(ac), value: ac === null ? null : Math.round(a.good * Number(ac) * 100) / 100 } : {}) };
+  });
+  return { rows: out, seesCost: cost, totalValue: cost ? Math.round(out.reduce((x, r) => x + (r.value || 0), 0) * 100) / 100 : null, warnDays: Number(cs.expiry_warn_days) || 60 };
 });
 
-route('get', '/commerce/movements', 'inventory:view', async (req) => {
-  const sku = typeof req.query.sku === 'string' && req.query.sku ? req.query.sku : null;
+route('put', '/commerce/stock/:sku/levels', 'inventory:edit', async (req) => {
+  const level = Number(req.body.reorder_level);
+  const qty = Number(req.body.reorder_qty);
+  if (!Number.isInteger(level) || level < 0 || level > 100000) throw new InputError('Reorder level: a whole number, 0 or more');
+  if (!Number.isInteger(qty) || qty < 0 || qty > 1000000) throw new InputError('Reorder quantity: a whole number, 0 or more (0 = suggest)');
+  const [[s]] = await db.query('SELECT sku_code FROM skus WHERE sku_code = ?', [req.params.sku]);
+  if (!s) throw new InputError('No SKU', 404);
+  const [[before]] = await db.query('SELECT reorder_level, reorder_qty FROM stock_levels WHERE sku_code = ? AND location_id = 1', [s.sku_code]);
+  await db.query(`INSERT INTO stock_levels (sku_code, location_id, reorder_level, reorder_qty, updated_by, updated_at) VALUES (?, 1, ?, ?, ?, UTC_TIMESTAMP())
+     ON DUPLICATE KEY UPDATE reorder_level = VALUES(reorder_level), reorder_qty = VALUES(reorder_qty), updated_by = VALUES(updated_by), updated_at = VALUES(updated_at)`, [s.sku_code, level, qty, by(req)]);
+  await audit(null, { empId: by(req), action: 'update', entity: 'stock_level', entityId: s.sku_code, before: before || null, after: { reorder_level: level, reorder_qty: qty } });
+  return { sku_code: s.sku_code, reorder_level: level, reorder_qty: qty };
+});
+
+// Movement log: filters sku, type, from / to (India days), emp, batch (batch no.); newest first, at most 1000.
+async function movementRows(req, limit) {
+  const where = [];
+  const params = [];
+  if (req.query.sku) { where.push('m.sku_code = ?'); params.push(String(req.query.sku).toUpperCase()); }
+  if (req.query.type) { where.push('m.move_type = ?'); params.push(String(req.query.type)); }
+  if (req.query.emp) { where.push('m.emp_id = ?'); params.push(String(req.query.emp)); }
+  if (req.query.batch) { where.push('b.batch_no = ?'); params.push(String(req.query.batch).toUpperCase()); }
+  for (const [k, op] of [['from', '>='], ['to', '<=']]) {
+    if (!req.query[k]) continue;
+    if (!pricing.isDate(String(req.query[k]))) throw new InputError(`${k}: a date like 2026-10-01`);
+    where.push(`DATE(CONVERT_TZ(m.created_at, '+00:00', '+05:30')) ${op} ?`); params.push(String(req.query[k]));
+  }
   const [rows] = await db.query(
-    `SELECT m.move_id, m.sku_code, m.move_type, m.stock_kind, m.delta, m.note, m.emp_id, m.created_at,
+    `SELECT m.move_id, m.sku_code, m.move_type, m.stock_kind, m.delta, m.unit_cost, m.ref_type, m.ref_id, m.note, m.emp_id, m.created_at, b.batch_no,
             TRIM(CONCAT(COALESCE(e.emp_first_name, ''), ' ', COALESCE(e.emp_last_name, ''))) AS emp_name
-       FROM stock_movements m LEFT JOIN \`${auth.DADMIN}\`.employee e ON e.emp_id = m.emp_id
-      ${sku ? 'WHERE m.sku_code = ?' : ''} ORDER BY m.move_id DESC LIMIT 200`, sku ? [sku] : []
+       FROM stock_movements m LEFT JOIN batches b ON b.batch_id = m.batch_id LEFT JOIN \`${auth.DADMIN}\`.employee e ON e.emp_id = m.emp_id
+      ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY m.move_id DESC LIMIT ?`, [...params, limit]
   );
+  const cost = seesCost(req);
+  return rows.map(({ unit_cost: uc, ...r }) => ({ ...r, type_label: stock.MOVE_LABEL[r.move_type] || r.move_type, ...(cost ? { unit_cost: uc === null ? null : Number(uc) } : {}) }));
+}
+route('get', '/commerce/movements', 'inventory:view', async (req) => {
+  const rows = await movementRows(req, 1000);
+  const [who] = await db.query(`SELECT DISTINCT m.emp_id, TRIM(CONCAT(COALESCE(e.emp_first_name, ''), ' ', COALESCE(e.emp_last_name, ''))) AS name
+      FROM stock_movements m LEFT JOIN \`${auth.DADMIN}\`.employee e ON e.emp_id = m.emp_id ORDER BY m.emp_id`);
+  return { rows, types: stock.MOVE_LABEL, who };
+});
+route('get', '/commerce/movements/export.xlsx', 'inventory:edit', async (req, res) => {
+  const rows = await movementRows(req, 20000);
+  const cost = seesCost(req);
+  const wb = theme.newWorkbook('dFresh Stock movements');
+  const filters = ['sku', 'type', 'from', 'to', 'emp', 'batch'].filter((k) => req.query[k]).map((k) => `${k}: ${req.query[k]}`).join(', ') || null;
+  theme.tableSheet(wb, 'Movements', {
+    title: 'dFresh Stock movements', exportedBy: await exportedBy(req), filters,
+    columns: [{ header: 'When', type: 'date' }, { header: 'SKU' }, { header: 'Type' }, { header: 'Stock' }, { header: 'Change', type: 'number' }, { header: 'Batch' },
+      ...(cost ? [{ header: 'Cost / pack (Rs)', type: 'number' }] : []), { header: 'Reference' }, { header: 'Note' }, { header: 'Who' }],
+    rows: rows.map((r) => [r.created_at, r.sku_code, r.type_label, stock.KIND_LABEL[r.stock_kind], r.delta, r.batch_no, ...(cost ? [r.unit_cost] : []),
+      r.ref_type ? `${r.ref_type} ${r.ref_id}` : null, r.note, `${r.emp_name || ''} (${r.emp_id})`]),
+  });
+  const bytes = await theme.send(res, wb, `dFresh_Stock_Movements_${theme.istStamp(new Date(), false)}.xlsx`);
+  await audit(null, { empId: by(req), action: 'export', entity: 'stock', after: { filters, rows: rows.length, file: 'movements.xlsx', bytes } });
+});
+
+// Record form: good -> damaged, or packs back into Returned (R) stock. Stock in, write-off and counts have their own tabs.
+route('post', '/commerce/movements', 'inventory:create', async (req) => {
+  try { return await tx((q) => stock.recordMove(q, req.body || {}, by(req))); } catch (e) { throw asStock(e); }
+});
+
+// Suppliers
+const supplierValues = (b) => {
+  const v = { name: String(b.name || '').trim().slice(0, 150), phone: String(b.phone || '').trim().slice(0, 20) || null, gstin: String(b.gstin || '').trim().toUpperCase() || null,
+    address: String(b.address || '').trim().slice(0, 255) || null, is_active: b.is_active === false || b.is_active === 0 || b.is_active === '0' ? 0 : 1 };
+  if (!v.name) throw new InputError('Name is required');
+  if (v.gstin) { const g = settingRules.checkSetting('gstin', v.gstin); if (g.error) throw new InputError(`GSTIN: ${g.error}`); v.gstin = g.value; }
+  return v;
+};
+route('get', '/commerce/suppliers', 'inventory:view', async () => {
+  const [rows] = await db.query(`SELECT s.supplier_id, s.name, s.phone, s.gstin, s.address, s.is_active,
+      (SELECT COUNT(*) FROM stock_ins i WHERE i.supplier_id = s.supplier_id) AS stock_ins, (SELECT MAX(received_on) FROM stock_ins i WHERE i.supplier_id = s.supplier_id) AS last_in
+      FROM suppliers s ORDER BY s.is_active DESC, s.name`);
   return rows;
 });
+route('post', '/commerce/suppliers', 'inventory:create', async (req) => {
+  const v = supplierValues(req.body || {});
+  const [[dup]] = await db.query('SELECT supplier_id FROM suppliers WHERE name = ?', [v.name]);
+  if (dup) throw new InputError(`A supplier called ${v.name} exists already`, 409);
+  const [ins] = await db.query('INSERT INTO suppliers (name, phone, gstin, address, is_active, created_by) VALUES (?, ?, ?, ?, ?, ?)', [v.name, v.phone, v.gstin, v.address, v.is_active, by(req)]);
+  await audit(null, { empId: by(req), action: 'create', entity: 'supplier', entityId: String(ins.insertId), after: v });
+  return { supplier_id: ins.insertId, ...v };
+}, { status: 201 });
+route('put', '/commerce/suppliers/:id', 'inventory:edit', async (req) => {
+  const v = supplierValues(req.body || {});
+  const [[before]] = await db.query('SELECT name, phone, gstin, address, is_active FROM suppliers WHERE supplier_id = ?', [Number(req.params.id)]);
+  if (!before) throw new InputError('No such supplier', 404);
+  await db.query('UPDATE suppliers SET name = ?, phone = ?, gstin = ?, address = ?, is_active = ? WHERE supplier_id = ?', [v.name, v.phone, v.gstin, v.address, v.is_active, Number(req.params.id)]);
+  await audit(null, { empId: by(req), action: 'update', entity: 'supplier', entityId: String(req.params.id), before, after: v });
+  return { supplier_id: Number(req.params.id), ...v };
+});
 
-// in / out / adjust / return / damaged. Good stock never goes below 0 (out, damaged, a negative adjust).
-route('post', '/commerce/movements', 'inventory:create', async (req) => {
-  const sku = String(req.body.sku_code || '').trim().toUpperCase();
-  const type = String(req.body.move_type || '');
-  const qty = Number(req.body.qty);
-  const note = typeof req.body.note === 'string' ? req.body.note.trim().slice(0, 255) : '';
-  if (!MOVE_TYPES.includes(type)) throw new InputError(`Type: one of ${MOVE_TYPES.join(', ')}`);
-  if (!Number.isInteger(qty) || qty === 0 || Math.abs(qty) > 100000 || (type !== 'adjust' && qty < 0)) {
-    throw new InputError(type === 'adjust' ? 'Quantity: a whole number, + to add, - to remove' : 'Quantity: a whole number above 0');
+// Stock in
+route('get', '/commerce/stock-ins', 'inventory:view', async (req) => {
+  const [ins] = await db.query(`SELECT i.stock_in_id, i.kind, i.supplier_id, sp.name AS supplier, DATE_FORMAT(i.received_on, '%Y-%m-%d') AS received_on, i.reference, i.note, i.emp_id, i.created_at,
+      TRIM(CONCAT(COALESCE(e.emp_first_name, ''), ' ', COALESCE(e.emp_last_name, ''))) AS emp_name
+      FROM stock_ins i LEFT JOIN suppliers sp ON sp.supplier_id = i.supplier_id LEFT JOIN \`${auth.DADMIN}\`.employee e ON e.emp_id = i.emp_id
+      ORDER BY i.stock_in_id DESC LIMIT 200`);
+  const [lines] = ins.length ? await db.query(`SELECT l.stock_in_id, l.sku_code, l.qty, l.unit_cost, l.avg_before, l.avg_after, b.batch_no, DATE_FORMAT(b.expiry_date, '%Y-%m-%d') AS expiry_date
+      FROM stock_in_lines l LEFT JOIN batches b ON b.batch_id = l.batch_id WHERE l.stock_in_id IN (?) ORDER BY l.line_id`, [ins.map((i) => i.stock_in_id)]) : [[]];
+  const cost = seesCost(req);
+  return { seesCost: cost, rows: ins.map((i) => {
+    const ls = lines.filter((l) => l.stock_in_id === i.stock_in_id).map(({ unit_cost: uc, avg_before: ab, avg_after: aa, ...l }) => ({ ...l, ...(cost ? { unit_cost: Number(uc), avg_before: ab === null ? null : Number(ab), avg_after: Number(aa) } : {}) }));
+    return { ...i, lines: ls, packs: ls.reduce((a, l) => a + l.qty, 0), ...(cost ? { value: Math.round(ls.reduce((a, l) => a + l.qty * l.unit_cost, 0) * 100) / 100 } : {}) };
+  }) };
+});
+route('post', '/commerce/stock-ins', 'inventory:create', async (req) => {
+  try {
+    const r = await tx((q) => stock.stockIn(q, req.body || {}, by(req)));
+    return seesCost(req) ? r : { stock_in_id: r.stock_in_id, lines: r.lines.map(({ avg_before: ab, avg_after: aa, ...l }) => l) }; // eslint-disable-line no-unused-vars
+  } catch (e) { throw asStock(e); }
+});
+
+// Batches: expired / near expiry / ok with their good stock; the batches of one SKU with stock (write-off picker)
+route('get', '/commerce/batches', 'inventory:view', async (req) => {
+  if (req.query.sku) {
+    const kind = stock.KIND_LABEL[req.query.kind] ? req.query.kind : 'good';
+    return { rows: (await stock.batchStock(db, String(req.query.sku).toUpperCase(), kind)).filter((b) => b.qty > 0) };
   }
-  return tx(async (q) => {
-    const [[row]] = await q.query('SELECT sku_code FROM skus WHERE sku_code = ? FOR UPDATE', [sku]);
-    if (!row) throw new InputError(`No SKU ${sku}`, 404);
-    const [[st]] = await q.query("SELECT COALESCE(SUM(delta), 0) AS good FROM stock_movements WHERE sku_code = ? AND stock_kind = 'good'", [sku]);
-    const goodDelta = { in: qty, out: -qty, adjust: qty, damaged: -qty, return: 0 }[type];
-    if (Number(st.good) + goodDelta < 0) throw new InputError(`Only ${st.good} in good stock for ${sku}`, 409);
-    const rows = type === 'return' ? [['returned', qty]] : type === 'damaged' ? [['good', -qty], ['damaged', qty]] : [['good', goodDelta]];
-    for (const [kind, delta] of rows) {
-      await q.query('INSERT INTO stock_movements (sku_code, move_type, stock_kind, delta, note, emp_id) VALUES (?, ?, ?, ?, ?, ?)', [sku, type, kind, delta, note || null, by(req)]);
-    }
-    await audit(q, { empId: by(req), action: 'create', entity: 'stock', entityId: sku, after: { type, qty, note } });
-    return { sku_code: sku, good: Number(st.good) + goodDelta };
-  });
+  return stock.batchList(db);
 });
 
-route('put', '/commerce/stock/:sku/low', 'inventory:edit', async (req) => {
-  const level = Number(req.body.low_level);
-  if (!Number.isInteger(level) || level < 0 || level > 100000) throw new InputError('Low level: a whole number, 0 or more');
-  const [r] = await db.query('UPDATE stock_levels SET low_level = ? WHERE sku_code = ?', [level, req.params.sku]);
-  if (!r.affectedRows) throw new InputError('No SKU', 404);
-  await audit(null, { empId: by(req), action: 'update', entity: 'stock_level', entityId: req.params.sku, after: { low_level: level } });
-  return { sku_code: req.params.sku, low_level: level };
+// Write-offs (photo optional, kept in the database and shown only here)
+route('get', '/commerce/write-offs', 'inventory:view', async (req) => {
+  const [rows] = await db.query(`SELECT w.write_off_id, w.sku_code, w.stock_kind, w.qty, w.reason_type, w.reason, w.value, w.status, w.approval_id, w.emp_id, w.created_at, w.posted_at,
+      w.photo IS NOT NULL AS has_photo, b.batch_no, a.status AS approval_status, a.decided_by, a.note AS approval_note
+      FROM write_offs w LEFT JOIN batches b ON b.batch_id = w.batch_id LEFT JOIN approvals a ON a.approval_id = w.approval_id ORDER BY w.write_off_id DESC LIMIT 200`);
+  const cost = seesCost(req);
+  const cs = await commerceSettings.read(db);
+  return { types: stock.WRITE_OFF_TYPES, kinds: stock.KIND_LABEL, rule: { on: Boolean(cs.approve_writeoff_on), value: Number(cs.approve_writeoff_value_above), qty: Number(cs.approve_writeoff_qty_above) },
+    rows: rows.map(({ value, ...r }) => ({ ...r, has_photo: Number(r.has_photo) === 1, ...(cost ? { value: value === null ? null : Number(value) } : {}) })) };
 });
+route('post', '/commerce/write-offs', 'inventory:create', async (req) => {
+  try {
+    const r = await tx((q) => stock.requestWriteOff(q, req.body || {}, by(req), req.file ? { buffer: req.file.buffer, mimetype: req.file.mimetype } : null));
+    return seesCost(req) ? r : { ...r, value: undefined };
+  } catch (e) { throw asStock(e); }
+}, { before: [upload(5)] });
+route('get', '/commerce/write-offs/:id/photo', 'inventory:view', async (req, res) => {
+  const [[w]] = await db.query('SELECT photo, photo_type FROM write_offs WHERE write_off_id = ?', [Number(req.params.id)]);
+  if (!w || !w.photo) throw new InputError('No photo', 404);
+  res.set({ 'Content-Type': w.photo_type, 'Cache-Control': 'private, no-store' });
+  res.send(w.photo);
+});
+
+// Stock counts
+route('get', '/commerce/counts', 'inventory:view', async () => {
+  const [rows] = await db.query(`SELECT c.count_id, c.scope, c.status, c.approval_id, c.started_by, c.started_at, c.submitted_by, c.submitted_at, c.closed_at,
+      COALESCE(ct.name, c.scope) AS scope_label, a.decided_by, a.note AS approval_note,
+      (SELECT COUNT(*) FROM stock_count_lines l WHERE l.count_id = c.count_id) AS line_count,
+      (SELECT COUNT(*) FROM stock_count_lines l WHERE l.count_id = c.count_id AND l.counted IS NOT NULL) AS counted,
+      (SELECT COUNT(*) FROM stock_count_lines l WHERE l.count_id = c.count_id AND l.expected IS NOT NULL AND l.counted <> l.expected) AS differences
+      FROM stock_counts c LEFT JOIN category_translations ct ON ct.category_key = c.scope AND ct.lang_code = 'en' LEFT JOIN approvals a ON a.approval_id = c.approval_id
+      ORDER BY c.count_id DESC LIMIT 100`);
+  const [cats] = await db.query("SELECT c.category_key, COALESCE(t.name, c.category_key) AS label FROM categories c LEFT JOIN category_translations t ON t.category_key = c.category_key AND t.lang_code = 'en' ORDER BY c.sort_order");
+  return { rows: rows.map((r) => ({ ...r, scope_label: r.scope === 'all' ? 'All SKUs' : r.scope_label })), categories: cats };
+});
+route('post', '/commerce/counts', 'inventory:create', async (req) => {
+  try { return await tx((q) => stock.startCount(q, req.body.scope, by(req))); } catch (e) { throw asStock(e); }
+}, { status: 201 });
+route('get', '/commerce/counts/:id', 'inventory:view', async (req) => {
+  try { return await stock.countDetail(db, Number(req.params.id)); } catch (e) { throw asStock(e); }
+});
+route('put', '/commerce/counts/:id', 'inventory:edit', async (req) => {
+  try { return await tx((q) => stock.saveCount(q, Number(req.params.id), req.body.lines, by(req))); } catch (e) { throw asStock(e); }
+});
+route('post', '/commerce/counts/:id/submit', 'inventory:edit', async (req) => {
+  try { return await tx((q) => stock.submitCount(q, Number(req.params.id), by(req))); } catch (e) { throw asStock(e); }
+});
+
+route('get', '/commerce/reorder', 'inventory:view', async () => stock.reorderList(db));
 
 // Orders (migration 20261020_commerce_sales.sql, logic in commerce.js, invoices in invoices.js): entered in the admin;
 // prices only here. Section "orders": view = list, order, invoice; create = New order; edit = edit, status, cancel,
@@ -1601,12 +1744,13 @@ route('get', '/commerce/orders/:no', 'orders:view', async (req) => {
        FROM invoices i LEFT JOIN credit_notes cn ON cn.invoice_id = i.invoice_id WHERE i.order_id = ? ORDER BY i.invoice_id`, [o.order_id]);
   const [appr] = await db.query("SELECT approval_id, kind, status, summary, requested_by, decided_by, note FROM approvals WHERE ref_type = 'order' AND ref_id = ? ORDER BY approval_id", [o.order_no]);
   const [res] = await db.query("SELECT sku_code, qty, status FROM stock_reservations WHERE order_id = ? AND status = 'active'", [o.order_id]);
+  const batchesOut = await stock.batchesOfOrder(db, o.order_no);
   const listLabel = (await pricing.lists(db)).find((l) => l.key === o.price_list);
   const cs = await commerceSettings.read(db);
   const live = invs.find((i) => i.status === 'issued');
   const overdue = Boolean(live && o.status !== 'cancelled' && Number(o.amount_due) > 0.005 && live.due_on < pricing.istToday() && (o.payment_terms !== 'cod' || o.status === 'delivered'));
   return {
-    ...o, items, history: hist, payments: pays, invoices: invs.map((i) => ({ ...i, is_demo: Number(i.is_demo) === 1 })),
+    ...o, items, history: hist, payments: pays, batches: batchesOut, invoices: invs.map((i) => ({ ...i, is_demo: Number(i.is_demo) === 1 })),
     approvals: appr.map((a) => ({ ...a, kind_label: (approvals.KINDS[a.kind] || {}).label || a.kind })), reserved: res,
     status_label: commerce.STATUS_LABEL[o.status], pay_label: commerce.PAYMENT_STATUS[o.payment_status], terms_label: commerce.TERMS[o.payment_terms],
     editable: commerce.EDITABLE[o.status] || null, overdue, due_on: live ? live.due_on : null,
@@ -1895,17 +2039,16 @@ route('get', '/commerce/ops', 'any', async (req) => {
   const [[w]] = await db.query(`SELECT COALESCE(SUM(CASE WHEN amount > 0 THEN amount END), 0) AS total,
       COALESCE(SUM(CASE WHEN amount > 0 AND reason LIKE 'Cashback%' THEN amount END), 0) AS cashback,
       COALESCE(SUM(CASE WHEN amount > 0 AND reason LIKE 'Refund%' THEN amount END), 0) AS refunds FROM wallet_entries`);
-  const [low] = await db.query(`SELECT s.sku_code, ${SKU_NAME} AS name, COALESCE(l.low_level, 20) AS low_level,
-      COALESCE((SELECT SUM(m.delta) FROM stock_movements m WHERE m.sku_code = s.sku_code AND m.stock_kind = 'good'), 0) AS good
-      FROM skus s ${SKU_JOIN} LEFT JOIN stock_levels l ON l.sku_code = s.sku_code
-      HAVING good < low_level ORDER BY good`);
+  const low = can.stock ? await stock.reorderList(db) : [];
+  const exp = can.stock ? (await stock.batchList(db)).rows.filter((b) => b.good > 0 && b.state !== 'ok') : [];
   const [next] = await db.query("SELECT o.order_no, o.created_at, c.name AS customer FROM orders o JOIN customers c ON c.customer_id = o.customer_id WHERE o.status = 'new' ORDER BY o.order_id LIMIT 5");
   return {
     today: can.orders ? { n: Number(today.n), value: Number(today.value) } : null,
     toPack: can.pack ? Number(st.to_pack) || 0 : null, toDispatch: can.dispatch ? Number(st.to_dispatch) || 0 : null,
     openReturns: can.returns ? Number(ret.n) : null,
     walletGiven: can.wallet ? { total: Number(w.total), cashback: Number(w.cashback), refunds: Number(w.refunds) } : null,
-    lowStock: can.stock ? low.map((r) => ({ ...r, good: Number(r.good), low_level: Number(r.low_level) })) : null,
+    lowStock: can.stock ? low.map((r) => ({ sku_code: r.sku_code, name: r.name, available: r.available, reorder_level: r.reorder_level, suggested: r.suggested })) : null,
+    expiry: can.stock ? { expired: exp.filter((b) => b.state === 'expired').length, near: exp.filter((b) => b.state === 'near').length } : null,
     nextToPack: can.pack ? next : null,
   };
 });

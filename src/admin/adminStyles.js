@@ -432,6 +432,14 @@ td.a-pending { background: #fff8e1; box-shadow: inset 3px 0 0 #e3b44f; }
 .a-orderlines small { display: block; }
 .a-price { width: 10ch; }
 .a-ok { color: #1e5e2c; }
+/* Inventory: tabs, scan box, stock-in lines */
+.a-tabs { margin-bottom: 14px; }
+.a-scanbox { max-width: 420px; margin: 10px 0 4px; }
+.a-scanbox input { font-family: ui-monospace, Consolas, monospace; }
+.a-batchfields { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12.5px; }
+.a-batchfields input:not([type="date"]) { width: 110px; }
+.a-batchfields label { display: inline-flex; gap: 4px; align-items: center; }
+.a-silines div { font-size: 12.5px; }
 /* Orders: overdue badge, addresses, payments, history */
 .a-overdue { display: inline-block; margin-inline-start: 6px; padding: 1px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 700; background: #b3261e; color: #fff; }
 .a-ostatus-approval { background: #fff3cd; color: #6b4e00; }

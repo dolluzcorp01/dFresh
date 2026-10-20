@@ -178,11 +178,11 @@ function SkuDrawer({ sku, meta, canEdit, onClose, onSaved }) {
   const hist = useLoad(`/prices/history/${encodeURIComponent(sku.sku_code)}`);
   const act = useAction();
   const [f, setF] = useState({ packs_per_carton: String(sku.packs_per_carton), min_order_qty: String(sku.min_order_qty), sell_unit: sku.sell_unit });
-  const [tax, setTax] = useState({ hsn_code: sku.hsn_code, gst_rate: String(sku.gst_rate) });
+  const [tax, setTax] = useState({ hsn_code: sku.hsn_code, gst_rate: String(sku.gst_rate), track_batches: sku.track_batches });
   const [errors, setErrors] = useState({});
   const sizes = meta.rows.filter((r) => r.product_id === sku.product_id).length;
   const skuDirty = f.packs_per_carton !== String(sku.packs_per_carton) || f.min_order_qty !== String(sku.min_order_qty) || f.sell_unit !== sku.sell_unit;
-  const taxDirty = tax.hsn_code !== sku.hsn_code || tax.gst_rate !== String(sku.gst_rate);
+  const taxDirty = tax.hsn_code !== sku.hsn_code || tax.gst_rate !== String(sku.gst_rate) || tax.track_batches !== sku.track_batches;
   const listLabel = (k) => (meta.lists.find((l) => l.key === k) || {}).label || k;
   const send = (path, body, text) => act.run(async () => {
     try {
@@ -222,7 +222,9 @@ function SkuDrawer({ sku, meta, canEdit, onClose, onSaved }) {
             </select>
             {errors.gst_rate && <small className="a-bad" role="alert">{errors.gst_rate}</small>}</label>
         </div>
-        {canEdit && <p><button type="button" className="a-btn a-btn-sm" disabled={!taxDirty || act.busy} onClick={() => send(`/prices/products/${encodeURIComponent(sku.product_id)}`, tax, `${sku.name}: HSN and GST saved for every size`)}>Save tax</button></p>}
+        <label className="a-inline"><input type="checkbox" checked={tax.track_batches} onChange={(e) => setTax({ ...tax, track_batches: e.target.checked })} /> Track batches and expiry
+          <small className="a-muted"> (a stock in asks for batch no., manufacture and expiry date; dispatch takes the earliest expiry first; expired stock cannot be ordered)</small></label>
+        {canEdit && <p><button type="button" className="a-btn a-btn-sm" disabled={!taxDirty || act.busy} onClick={() => send(`/prices/products/${encodeURIComponent(sku.product_id)}`, tax, `${sku.name}: HSN, GST and batch tracking saved for every size`)}>Save tax and batches</button></p>}
       </fieldset>
       <h3>Prices today ({meta.basis.short})</h3>
       <table className="a-table">
