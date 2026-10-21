@@ -27,6 +27,9 @@ const KINDS = {
   return_window: { label: 'Return outside the window', section: 'returns' },
   no_refund: { label: 'Return with no refund', section: 'returns' },
   restock: { label: 'Recheck: returned (R) to good stock', section: 'inventory' },
+  price_list: { label: 'Customer price list', section: 'customers' },
+  customer_merge: { label: 'Merge customers', section: 'customers' },
+  customer_hold: { label: 'Order for a customer on hold', section: 'customers' },
 };
 const handlers = {};
 const closers = {};
@@ -60,6 +63,8 @@ async function needed(q, kind, facts = {}) {
     case 'stock_count': return true;
     case 'return_window': case 'restock': return true;
     case 'no_refund': return s.approve_no_refund !== false;
+    case 'price_list': return s.approve_price_list !== false;
+    case 'customer_merge': case 'customer_hold': return true;
     default: throw new Error(`unknown approval kind ${kind}`);
   }
 }

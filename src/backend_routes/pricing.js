@@ -87,14 +87,15 @@ function resolve(own, listKey) {
   return { price: null, from: null };
 }
 
-/** the price list of a customer: their customer type (key or name), else Default */
+/** the price list of a customer: its own one (phase 8, through approval), else its customer type's, else Default */
 async function listOfCustomer(q, customerId) {
   const [[r]] = await q.query(
-    `SELECT ct.type_key, ct.label FROM customers c
-       LEFT JOIN customer_types ct ON ct.type_key = LOWER(c.ctype) OR ct.label = c.ctype
+    `SELECT COALESCE(c.price_list, c.type_key) AS list_key, own.label AS own_label, ct.label AS type_label, c.price_list FROM customers c
+       LEFT JOIN customer_types ct ON ct.type_key = c.type_key LEFT JOIN customer_types own ON own.type_key = c.price_list
       WHERE c.customer_id = ? LIMIT 1`, [customerId]
   );
-  return r && r.type_key ? { key: r.type_key, label: r.label } : { key: DEFAULT_LIST, label: 'Default' };
+  if (!r || r.list_key === DEFAULT_LIST) return { key: DEFAULT_LIST, label: 'Default', own: Boolean(r && r.price_list) };
+  return { key: r.list_key, label: r.price_list ? r.own_label : r.type_label, own: Boolean(r.price_list) };
 }
 
 /** quantity rules of a SKU for `qty` packs -> a message, or null when fine */

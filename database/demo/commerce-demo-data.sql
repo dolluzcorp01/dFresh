@@ -1,5 +1,5 @@
 -- dFresh Commerce DEMO data (SQL part) - NOT a migration. Run only by scripts/commerce-demo-seed.js on dfresh_commerce,
--- after database/demo/commerce-demo-schema.sql: SKUs from the catalogue (with demo carton sizes, minimum orders and
+-- after every migration: SKUs from the catalogue (with demo carton sizes, minimum orders and
 -- HSN codes), reorder levels and a little returned stock. Prices, customers, orders, returns and
 -- approvals are made by the script through the same code as the admin (pricing.js, commerce.js).
 

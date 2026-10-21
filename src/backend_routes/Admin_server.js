@@ -1396,7 +1396,7 @@ route('get', '/audit', 'audit:view', async (req) => {
 
 // Errors from any admin route: input / upload problems and DB constraint errors get a plain message.
 // ---------------------------------------------------------------------------------------------
-// Commerce DEMO (branch `commerce`, database dfresh_commerce only): SKUs (database/demo/commerce-demo-schema.sql)
+// Commerce DEMO (branch `commerce`, database dfresh_commerce only): SKUs (migration 20261020_commerce_pricing.sql)
 // ---------------------------------------------------------------------------------------------
 route('get', '/commerce/skus', 'inventory:view', async () => {
   const [rows] = await db.query(
@@ -1645,14 +1645,20 @@ route('get', '/commerce/order-form', 'orders:view', async (req) => {
   if (!canDo(req, 'orders', 'create') && !canDo(req, 'orders', 'edit')) throw new InputError('This needs create or edit on Orders', 403);
   let except = 0;
   if (req.query.order) { const [[o]] = await db.query('SELECT order_id FROM orders WHERE order_no = ?', [String(req.query.order)]); except = o ? o.order_id : 0; }
-  const [customers] = await db.query(
-    `SELECT c.customer_id, c.name, c.business_name, c.phone, c.ctype, c.town, c.address, c.state_code, c.pincode, c.gstin, c.credit_days, c.credit_limit,
-            COALESCE(ct.type_key, 'default') AS list_key,
+  const ownEmp = await ownOnly(req);
+  const [custRows] = await db.query(
+    `SELECT c.customer_id, c.customer_no, c.name, c.business_name, c.phone, ct.label AS ctype, c.type_key, c.status, c.hold_reason, c.credit_days, c.credit_limit,
+            COALESCE(c.price_list, c.type_key) AS list_key, c.price_list IS NOT NULL AS own_list,
+            (SELECT a.town FROM customer_addresses a WHERE a.customer_id = c.customer_id AND a.kind = 'shipping' AND a.is_default = 1 AND a.is_active = 1 LIMIT 1) AS town,
             (SELECT COALESCE(SUM(w.amount), 0) FROM wallet_entries w WHERE w.customer_id = c.customer_id) AS wallet,
             (SELECT COALESCE(SUM(o.amount_due), 0) FROM orders o WHERE o.customer_id = c.customer_id AND o.status <> 'cancelled' AND o.amount_due > 0) AS outstanding,
             (SELECT COUNT(*) FROM invoices i JOIN orders o ON o.order_id = i.order_id WHERE o.customer_id = c.customer_id AND ${commerce.OVERDUE_SQL}) AS overdue
-       FROM customers c LEFT JOIN customer_types ct ON ct.type_key = LOWER(c.ctype) OR ct.label = c.ctype ORDER BY c.name`
+       FROM customers c JOIN customer_types ct ON ct.type_key = c.type_key WHERE c.merged_into IS NULL AND (c.status <> 'inactive' OR c.customer_id = ?) ${ownEmp ? 'AND c.owner_emp_id = ?' : ''} ORDER BY c.name`,
+    [except ? (await db.query('SELECT customer_id FROM orders WHERE order_id = ?', [except]))[0][0].customer_id : 0, ...(ownEmp ? [ownEmp] : [])]
   );
+  const [addrRows] = custRows.length ? await db.query(`SELECT address_id, customer_id, kind, label, name, gstin, contact_person, phone, address, town, state_code, pincode, delivery_area_id, is_default
+      FROM customer_addresses WHERE is_active = 1 AND customer_id IN (?) ORDER BY is_default DESC, address_id`, [custRows.map((c) => c.customer_id)]) : [[]];
+  const customers = custRows.map((c) => ({ ...c, own_list: Number(c.own_list) === 1, addresses: addrRows.filter((a) => a.customer_id === c.customer_id).map((a) => ({ ...a, is_default: Number(a.is_default) === 1 })) }));
   const today = pricing.istToday();
   const own = await pricing.ownPricesOn(db, today);
   const all = (await pricing.skuRows(db)).filter((s) => s.is_active);
@@ -1679,6 +1685,7 @@ route('get', '/commerce/order-form', 'orders:view', async (req) => {
 // What the order would be as it is typed (totals, offers on the lines, free lines, coupon, wallet, approvals); nothing saved
 route('post', '/commerce/orders/preview', 'orders:view', async (req) => {
   if (!canDo(req, 'orders', 'create') && !canDo(req, 'orders', 'edit')) throw new InputError('This needs create or edit on Orders', 403);
+  await seeCustomer(req, (req.body || {}).customer_id || (await db.query('SELECT customer_id FROM orders WHERE order_no = ?', [String((req.body || {}).order_no || '')]))[0].map((x) => x.customer_id)[0]);
   try {
     return await commerce.previewOrder(db, req.body || {}, by(req), { orderNo: req.body && req.body.order_no ? String(req.body.order_no) : null, canOverride: canDo(req, 'orders', 'approve') });
   } catch (e) { throw asInput(e); }
@@ -1689,6 +1696,8 @@ route('post', '/commerce/orders/preview', 'orders:view', async (req) => {
 async function orderRows(req, limit = 500) {
   const where = [];
   const params = [];
+  const ownEmp = await ownOnly(req); // own customers only (Commerce setting): their orders only
+  if (ownEmp) { where.push('c.owner_emp_id = ?'); params.push(ownEmp); }
   const st = String(req.query.status || '');
   if (commerce.STATUS_LABEL[st]) { where.push('o.status = ?'); params.push(st); }
   if (commerce.PAYMENT_STATUS[req.query.pay]) { where.push('o.payment_status = ?'); params.push(req.query.pay); }
@@ -1708,12 +1717,12 @@ async function orderRows(req, limit = 500) {
   }
   const [rows] = await db.query(
     `SELECT o.order_no, o.status, o.payment_status, o.payment_terms, o.gst_type, o.place_of_supply, o.coupon_code, o.total, o.amount_due, o.created_at,
-            o.dispatched_at, o.delivered_at, c.name AS customer, c.phone, c.ctype, COALESCE(ct.type_key, 'default') AS type_key, o.ship_town AS town,
+            o.dispatched_at, o.delivered_at, c.name AS customer, c.phone, ct.label AS ctype, c.type_key, o.ship_town AS town,
             i.invoice_no, DATE_FORMAT(i.due_on, '%Y-%m-%d') AS due_on,
             (i.invoice_id IS NOT NULL AND ${commerce.OVERDUE_SQL}) AS overdue,
             (SELECT SUM(qty) FROM order_items it WHERE it.order_id = o.order_id) AS units
        FROM orders o JOIN customers c ON c.customer_id = o.customer_id
-       LEFT JOIN customer_types ct ON ct.type_key = LOWER(c.ctype) OR ct.label = c.ctype
+       JOIN customer_types ct ON ct.type_key = c.type_key
        LEFT JOIN invoices i ON i.live_order_id = o.order_id
       ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY o.order_id DESC LIMIT ?`, [...params, limit]
   );
@@ -1745,10 +1754,12 @@ route('get', '/commerce/orders/export.xlsx', 'orders:edit', async (req, res) => 
 
 route('get', '/commerce/orders/:no', 'orders:view', async (req) => {
   const [[o]] = await db.query(
-    `SELECT o.*, c.name AS customer, c.phone, c.email, c.ctype, c.credit_days AS customer_credit_days, c.credit_limit
-       FROM orders o JOIN customers c ON c.customer_id = o.customer_id WHERE o.order_no = ?`, [req.params.no]
+    `SELECT o.*, c.customer_no, c.name AS customer, c.phone, c.email, ct.label AS ctype, c.status AS customer_status, c.owner_emp_id, c.credit_days AS customer_credit_days, c.credit_limit
+       FROM orders o JOIN customers c ON c.customer_id = o.customer_id JOIN customer_types ct ON ct.type_key = c.type_key WHERE o.order_no = ?`, [req.params.no]
   );
   if (!o) throw new InputError('Order not found', 404);
+  const ownO = await ownOnly(req);
+  if (ownO && o.owner_emp_id !== ownO) throw new InputError('This order is for a customer of another sales owner', 403);
   const [items] = await db.query(`SELECT i.sku_code, i.is_free, i.qty, i.price, i.list_price, i.offer_id, i.offer_discount, i.coupon_discount, i.wallet_discount, i.hsn, i.gst_rate, i.taxable, i.cgst, i.sgst, i.igst,
        i.line_total, ${SKU_NAME} AS name, s.size_label, s.packs_per_carton, s.min_order_qty, s.sell_unit, f.name AS offer_name, f.kind AS offer_kind, f.pct AS offer_pct, f.min_qty AS offer_min_qty,
        f.min_unit AS offer_min_unit, f.buy_qty AS offer_buy, f.get_qty AS offer_get, f.get_sku_code AS offer_get_sku
@@ -1792,12 +1803,15 @@ route('get', '/commerce/orders/:no', 'orders:view', async (req) => {
 });
 
 route('post', '/commerce/orders', 'orders:create', async (req) => {
+  await seeCustomer(req, (req.body || {}).customer_id);
   try {
     return await tx((q) => commerce.createOrder(q, req.body, by(req), { canOverride: canDo(req, 'orders', 'approve') }));
   } catch (e) { throw asInput(e); }
 });
 
 route('put', '/commerce/orders/:no', 'orders:edit', async (req) => {
+  const [[ord]] = await db.query('SELECT customer_id FROM orders WHERE order_no = ?', [req.params.no]);
+  if (ord) await seeCustomer(req, ord.customer_id);
   try {
     return await tx((q) => commerce.updateOrder(q, req.params.no, req.body, by(req), { canOverride: canDo(req, 'orders', 'approve') }));
   } catch (e) { throw asInput(e); }
@@ -2166,8 +2180,8 @@ route('get', '/commerce/reports/promotions', 'reports:view', async (req) => {
       COUNT(CASE WHEN source = 'cashback' THEN 1 END) AS credits FROM wallet_entries WHERE ${IN('created_at')}`, span);
   const [byCredit] = await db.query(`SELECT d.source AS took, SUM(a.amount) AS amount FROM wallet_allocations a JOIN wallet_entries d ON d.entry_id = a.debit_entry_id
       JOIN wallet_entries c ON c.entry_id = a.credit_entry_id WHERE c.source = 'cashback' AND a.given_back = 0 AND d.source IN ('used', 'expired') AND ${IN('d.created_at')} GROUP BY d.source`, span);
-  const [owed] = await db.query(`SELECT c.customer_id, c.name, c.ctype, SUM(w.amount) AS balance FROM wallet_entries w JOIN customers c ON c.customer_id = w.customer_id
-      GROUP BY c.customer_id, c.name, c.ctype HAVING balance > 0.005 ORDER BY balance DESC`);
+  const [owed] = await db.query(`SELECT c.customer_id, c.name, ct.label AS ctype, SUM(w.amount) AS balance FROM wallet_entries w JOIN customers c ON c.customer_id = w.customer_id
+      JOIN customer_types ct ON ct.type_key = c.type_key GROUP BY c.customer_id, c.name, ct.label HAVING balance > 0.005 ORDER BY balance DESC`);
   const [left] = await db.query(`SELECT source, SUM(remaining) AS amount, SUM(CASE WHEN expires_on IS NOT NULL AND expires_on <= ${IST_TODAY_DATE} + INTERVAL 30 DAY THEN remaining ELSE 0 END) AS soon
       FROM wallet_entries WHERE remaining > 0.005 AND (expires_on IS NULL OR expires_on >= ${IST_TODAY_DATE}) GROUP BY source`);
   const used = byCredit.find((x) => x.took === 'used'); const exp = byCredit.find((x) => x.took === 'expired');
@@ -2212,112 +2226,273 @@ route('get', '/commerce/reports/returns', 'reports:view', async (req) => {
   };
 });
 
-// Customers (CRM, tables in database/demo/commerce-demo-schema.sql)
-const CTYPES = ['Home', 'Hotel', 'Hospital', 'Office', 'Distributor'];
-const CUSTOMER_FIELDS = ['name', 'business_name', 'phone', 'email', 'ctype', 'town', 'state_code', 'pincode', 'address', 'gstin', 'source', 'notes', 'follow_up'];
+// ---------------------------------------------------------------------------------------------
+// Customers (CRM, docs/COMMERCE-SPEC.md 4.5; logic in customers.js, Excel in customer-excel.js). Section "customers":
+// view = list, drawer, timeline, statement, follow-ups; create = new customer, convert a lead, Excel import of new
+// ones; edit = everything on a customer (addresses, contacts, tags, status, owner, activity, follow-ups, credit, its
+// own price list and a merge: the last three may wait for approval); approve = decide those (Setup > Approvals).
+// With the Commerce setting own_customers_only, the roles listed there see only the customers they own and their orders.
+// ---------------------------------------------------------------------------------------------
+const customers = require('./customers');
+const customerExcel = require('./customer-excel');
 const customerRules = require('../shared/customerRules');
+const asCustomer = (e) => {
+  if (!(e instanceof customers.CustomerError)) return e;
+  const err = new InputError(e.message, e.status);
+  if (e.code) { err.code = e.code; err.fields = e.fields; }
+  return err;
+};
+/** the emp_id this user is limited to (own customers only), or null */
+async function ownOnly(req) { return customers.ownScope(req.admin, await commerceSettings.read(db)); }
+/** 404 / 403 unless this user may see the customer */
+async function seeCustomer(req, id) {
+  const [[c]] = await db.query('SELECT customer_id, owner_emp_id FROM customers WHERE customer_id = ?', [Number(id)]);
+  if (!c) throw new InputError('Customer not found', 404);
+  const own = await ownOnly(req);
+  if (own && c.owner_emp_id !== own) throw new InputError('This customer belongs to another sales owner', 403);
+  return c;
+}
+/** admin users with their names (dAdmin employee: first and last name only) */
+async function adminPeople(q) {
+  const [rows] = await q.query(`SELECT a.emp_id, TRIM(CONCAT(COALESCE(e.emp_first_name, ''), ' ', COALESCE(e.emp_last_name, ''))) AS name
+      FROM admin_users a LEFT JOIN \`${auth.DADMIN}\`.employee e ON e.emp_id = a.emp_id WHERE a.is_active = 1 ORDER BY name, a.emp_id`);
+  return rows.map((r) => ({ emp_id: r.emp_id, name: r.name || r.emp_id }));
+}
 
-// New customer typed in the admin (phone / WhatsApp / walk-in). Same rules as the drawer; a phone (last 10 digits)
-// or e-mail that is already a customer answers 409 code 'duplicate' with that customer, nothing saved.
-route('post', '/commerce/customers', 'customers:create', async (req) => {
-  const { values: v, errors } = customerRules.checkCustomer(req.body || {});
-  if (Object.keys(errors).length) {
-    const err = new InputError(Object.values(errors)[0]);
-    err.code = 'fields';
-    err.fields = errors;
-    throw err;
+// The list. Filters: q (CUS no., name, business, phone, GSTIN), type, status (default: not merged), town, tag, owner,
+// no_order_days (no order in N days, or never), outstanding_min, wallet_min, segment (saved filters).
+const CUSTOMER_LIST = `SELECT c.customer_id, c.customer_no, c.name, c.business_name, c.phone, c.email, c.type_key, ct.label AS type_label, c.status, c.hold_reason, c.source,
+       c.owner_emp_id, c.price_list, c.credit_days, c.credit_limit, c.lead_id, c.created_at,
+       (SELECT a.town FROM customer_addresses a WHERE a.customer_id = c.customer_id AND a.kind = 'shipping' AND a.is_default = 1 AND a.is_active = 1 LIMIT 1) AS town,
+       (SELECT GROUP_CONCAT(g.tag ORDER BY g.tag) FROM customer_tags g WHERE g.customer_id = c.customer_id) AS tags,
+       (SELECT COUNT(*) FROM orders o WHERE o.customer_id = c.customer_id AND o.status <> 'cancelled') AS orders,
+       (SELECT MAX(o.created_at) FROM orders o WHERE o.customer_id = c.customer_id AND o.status <> 'cancelled') AS last_order,
+       (SELECT COALESCE(SUM(o.amount_due), 0) FROM orders o WHERE o.customer_id = c.customer_id AND o.status <> 'cancelled' AND o.amount_due > 0) AS outstanding,
+       (SELECT COUNT(*) FROM invoices i JOIN orders o ON o.order_id = i.order_id WHERE o.customer_id = c.customer_id AND ${commerce.OVERDUE_SQL}) AS overdue,
+       (SELECT COALESCE(SUM(w.amount), 0) FROM wallet_entries w WHERE w.customer_id = c.customer_id) AS wallet,
+       (SELECT MIN(f.due_on) FROM follow_ups f WHERE f.customer_id = c.customer_id AND f.status = 'open') AS next_follow_up
+  FROM customers c JOIN customer_types ct ON ct.type_key = c.type_key`;
+async function customerRows(req, filters) {
+  const f = filters || {};
+  const where = []; const args = []; const having = [];
+  const own = await ownOnly(req);
+  if (own) { where.push('c.owner_emp_id = ?'); args.push(own); }
+  if (f.status === 'merged') where.push('c.merged_into IS NOT NULL');
+  else { where.push('c.merged_into IS NULL'); if (customers.STATUS[f.status]) { where.push('c.status = ?'); args.push(f.status); } }
+  if (f.q) {
+    const like = `%${String(f.q).trim()}%`; const digits = String(f.q).replace(/\D/g, '');
+    where.push(`(c.customer_no LIKE ? OR c.name LIKE ? OR c.business_name LIKE ?${digits.length >= 4 ? ' OR c.phone_digits LIKE ?' : ''}
+      OR EXISTS (SELECT 1 FROM customer_addresses a WHERE a.customer_id = c.customer_id AND a.gstin LIKE ?))`);
+    args.push(like, like, like, ...(digits.length >= 4 ? [`%${digits}%`] : []), like);
   }
-  const [[dup]] = await db.query(
-    `SELECT customer_id, name FROM customers
-      WHERE RIGHT(REGEXP_REPLACE(phone, '[^0-9]', ''), 10) = ? OR (? IS NOT NULL AND LOWER(email) = LOWER(?)) LIMIT 1`,
-    [customerRules.phoneDigits(v.phone), v.email, v.email]
-  );
-  if (dup) {
-    const err = new InputError(`Already a customer: ${dup.name}`, 409);
-    err.code = 'duplicate';
-    err.fields = { customer_id: dup.customer_id, name: dup.name };
-    throw err;
+  if (f.type) { where.push('c.type_key = ?'); args.push(String(f.type)); }
+  if (f.owner) { if (f.owner === 'none') where.push('c.owner_emp_id IS NULL'); else { where.push('c.owner_emp_id = ?'); args.push(String(f.owner)); } }
+  if (f.tag) { where.push('EXISTS (SELECT 1 FROM customer_tags g WHERE g.customer_id = c.customer_id AND g.tag = ?)'); args.push(String(f.tag).toLowerCase()); }
+  if (f.town) { where.push("EXISTS (SELECT 1 FROM customer_addresses a WHERE a.customer_id = c.customer_id AND a.is_active = 1 AND a.town = ?)"); args.push(String(f.town)); }
+  if (Number(f.no_order_days) > 0) {
+    where.push(`NOT EXISTS (SELECT 1 FROM orders o WHERE o.customer_id = c.customer_id AND o.status <> 'cancelled' AND o.created_at >= UTC_TIMESTAMP() - INTERVAL ? DAY)`);
+    args.push(Number(f.no_order_days));
   }
-  // credit terms start from the customer type's defaults (Commerce settings > Customer types)
-  const [[ct]] = await db.query('SELECT default_credit_days, default_credit_limit FROM customer_types WHERE type_key = LOWER(?) OR label = ? LIMIT 1', [v.ctype, v.ctype]);
-  const [ins] = await db.query(
-    `INSERT INTO customers (name, business_name, phone, email, ctype, town, state_code, pincode, address, gstin, credit_days, credit_limit, source, notes, follow_up)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [v.name, v.business_name, v.phone, v.email, v.ctype, v.town, v.state_code, v.pincode, v.address, v.gstin, ct ? ct.default_credit_days : 0, ct ? ct.default_credit_limit : 0, v.source, v.notes, v.follow_up]
-  );
-  await audit(null, { empId: by(req), action: 'create', entity: 'customer', entityId: String(ins.insertId), after: { name: v.name, source: v.source, state: v.state_code } });
-  return { customer_id: ins.insertId, name: v.name, ctype: v.ctype, phone: v.phone, wallet: 0, town: v.town };
+  if (Number(f.outstanding_min) > 0) { having.push('outstanding >= ?'); }
+  if (Number(f.wallet_min) > 0) { having.push('wallet >= ?'); }
+  const [rows] = await db.query(`${CUSTOMER_LIST} ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ${having.length ? `HAVING ${having.join(' AND ')}` : ''} ORDER BY c.name LIMIT 1000`,
+    [...args, ...(Number(f.outstanding_min) > 0 ? [Number(f.outstanding_min)] : []), ...(Number(f.wallet_min) > 0 ? [Number(f.wallet_min)] : [])]);
+  return rows.map((r) => ({ ...r, tags: r.tags ? r.tags.split(',') : [], orders: Number(r.orders), outstanding: Number(r.outstanding), overdue: Number(r.overdue), wallet: Number(r.wallet),
+    credit_limit: Number(r.credit_limit), status_label: customers.STATUS[r.status] }));
+}
+const FILTER_KEYS = ['q', 'type', 'status', 'town', 'tag', 'owner', 'no_order_days', 'outstanding_min', 'wallet_min'];
+async function filtersOf(req) {
+  const f = Object.fromEntries(FILTER_KEYS.map((k) => [k, typeof req.query[k] === 'string' ? req.query[k].trim() : '']).filter(([, v]) => v));
+  if (req.query.segment) {
+    const [[sg]] = await db.query('SELECT filters FROM customer_segments WHERE segment_id = ?', [Number(req.query.segment)]);
+    if (!sg) throw new InputError('No such segment', 404);
+    return { ...JSON.parse(sg.filters), ...f };
+  }
+  return f;
+}
+
+route('get', '/commerce/customers', 'customers:view', async (req) => {
+  const filters = await filtersOf(req);
+  const rows = await customerRows(req, filters);
+  const [segments] = await db.query('SELECT segment_id, name, filters, created_by FROM customer_segments ORDER BY name');
+  const [tags] = await db.query('SELECT tag, COUNT(*) AS n FROM customer_tags GROUP BY tag ORDER BY tag');
+  const [towns] = await db.query("SELECT DISTINCT town FROM customer_addresses WHERE is_active = 1 AND town IS NOT NULL AND town <> '' ORDER BY town");
+  return { rows, filters, segments: segments.map((x) => ({ ...x, filters: JSON.parse(x.filters) })), tags: tags.map((x) => ({ tag: x.tag, n: Number(x.n) })), towns: towns.map((x) => x.town),
+    types: await customers.types(db), owners: await adminPeople(db), statuses: customers.STATUS, ownOnly: Boolean(await ownOnly(req)) };
+});
+route('post', '/commerce/segments', 'customers:view', async (req) => {
+  const name = String(req.body.name || '').trim().slice(0, 80);
+  if (!name) throw new InputError('Name the segment');
+  const f = Object.fromEntries(Object.entries(req.body.filters || {}).filter(([k, v]) => FILTER_KEYS.includes(k) && String(v).trim()).map(([k, v]) => [k, String(v).trim()]));
+  if (!Object.keys(f).length) throw new InputError('Set at least one filter first');
+  const [[had]] = await db.query('SELECT segment_id FROM customer_segments WHERE name = ?', [name]);
+  if (had) throw new InputError(`A segment "${name}" exists already`, 409);
+  const [ins] = await db.query('INSERT INTO customer_segments (name, filters, created_by) VALUES (?, ?, ?)', [name, JSON.stringify(f), by(req)]);
+  await audit(null, { empId: by(req), action: 'create', entity: 'segment', entityId: String(ins.insertId), after: { name, filters: f } });
+  return { segment_id: ins.insertId };
+}, { status: 201 });
+route('delete', '/commerce/segments/:id', 'customers:edit', async (req) => {
+  const [[sg]] = await db.query('SELECT name, filters FROM customer_segments WHERE segment_id = ?', [Number(req.params.id)]);
+  if (!sg) throw new InputError('No such segment', 404);
+  await db.query('DELETE FROM customer_segments WHERE segment_id = ?', [Number(req.params.id)]);
+  await audit(null, { empId: by(req), action: 'delete', entity: 'segment', entityId: String(req.params.id), before: sg });
+  return { deleted: true };
 });
 
-route('get', '/commerce/customers', 'customers:view', async () => {
-  const [rows] = await db.query(
-    `SELECT c.customer_id, c.name, c.phone, c.ctype, c.town, c.follow_up, c.lead_id,
-            (SELECT COUNT(*) FROM orders o WHERE o.customer_id = c.customer_id) AS orders,
-            (SELECT COALESCE(SUM(o.total), 0) FROM orders o WHERE o.customer_id = c.customer_id AND o.status <> 'cancelled') AS spent,
-            (SELECT COALESCE(SUM(o.amount_due), 0) FROM orders o WHERE o.customer_id = c.customer_id AND o.status <> 'cancelled' AND o.amount_due > 0) AS outstanding,
-            (SELECT COUNT(*) FROM invoices i JOIN orders o ON o.order_id = i.order_id WHERE o.customer_id = c.customer_id AND ${commerce.OVERDUE_SQL}) AS overdue,
-            (SELECT COALESCE(SUM(w.amount), 0) FROM wallet_entries w WHERE w.customer_id = c.customer_id) AS wallet,
-            (SELECT MAX(o.created_at) FROM orders o WHERE o.customer_id = c.customer_id) AS last_order,
-            c.follow_up IS NOT NULL AND c.follow_up <= DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+05:30')) AS follow_due
-       FROM customers c ORDER BY c.name`
-  );
-  return rows.map((r) => ({ ...r, orders: Number(r.orders), spent: Number(r.spent), wallet: Number(r.wallet), outstanding: Number(r.outstanding), overdue: Number(r.overdue), follow_due: Number(r.follow_due) === 1 }));
+// Excel: export the filtered list; import = dry run first, Apply only that file (fingerprint), checked again
+route('get', '/commerce/customers/export.xlsx', 'customers:view', async (req, res) => {
+  const filters = await filtersOf(req);
+  const rows = await customerRows(req, filters);
+  const wb = await customerExcel.buildWorkbook(db, rows, { who: await exportedBy(req), filters: Object.keys(filters).length ? Object.entries(filters).map(([k, v]) => `${k}: ${v}`).join(', ') : null });
+  const bytes = await theme.send(res, wb, `dFresh_Customers_${theme.istStamp(new Date(), false)}.xlsx`);
+  await audit(null, { empId: by(req), action: 'export', entity: 'customer', after: { filters, rows: rows.length, bytes } });
+});
+route('post', '/commerce/customers/import', 'customers:create', async (req) => {
+  if (!req.file) throw new InputError('Choose the .xlsx file');
+  if (!canDo(req, 'customers', 'edit')) throw new InputError('The import needs create and edit on Customers', 403);
+  const fileHash = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
+  try {
+    if (req.query.dryRun !== '0') { const { plan, ...report } = await customerExcel.diffWorkbook(db, req.file.buffer); return { dryRun: true, fileHash, ...report }; }
+    if (req.query.hash !== fileHash) throw new InputError('This file is not the one that passed the dry run. Run the dry run again.');
+    return await tx(async (q) => {
+      const { plan, ...report } = await customerExcel.diffWorkbook(q, req.file.buffer);
+      if (!report.ok) throw new InputError(`Fix the ${report.errors.length} error(s) first (run the dry run again): ${report.errors.slice(0, 3).join(' | ')}`);
+      const applied = await customerExcel.applyPlan(q, plan, by(req));
+      await audit(q, { empId: by(req), action: 'import', entity: 'customer', after: { ...report.summary, created: applied.created } });
+      return { dryRun: false, fileHash, applied, ...report };
+    });
+  } catch (e) { throw asCustomer(e); }
+}, { before: [commerceGate, upload(5)] });
+
+// New customer typed in the admin (also from New order): the customer, its billing address (+ shipping, or the same),
+// contacts, tags. Duplicate phone / e-mail / GSTIN answers 409 code 'duplicate' with that customer.
+route('post', '/commerce/customers', 'customers:create', async (req) => {
+  const own = await ownOnly(req);
+  try { return await tx((q) => customers.createCustomer(q, { ...req.body, owner_emp_id: own || (req.body || {}).owner_emp_id }, by(req))); } catch (e) { throw asCustomer(e); }
+}, { status: 201 });
+
+// duplicate pairs (same phone, e-mail, GSTIN or name) for the Merge tool
+route('get', '/commerce/customers/duplicates', 'customers:edit', async () => {
+  const [rows] = await db.query(`SELECT a.customer_id AS a_id, a.customer_no AS a_no, a.name AS a_name, b.customer_id AS b_id, b.customer_no AS b_no, b.name AS b_name,
+      CONCAT_WS(', ', IF(a.phone_digits = b.phone_digits, 'phone', NULL), IF(a.email IS NOT NULL AND a.email = b.email, 'e-mail', NULL),
+        IF(LOWER(a.name) = LOWER(b.name), 'name', NULL),
+        IF(EXISTS (SELECT 1 FROM customer_addresses x JOIN customer_addresses y ON y.gstin = x.gstin WHERE x.customer_id = a.customer_id AND y.customer_id = b.customer_id AND x.gstin IS NOT NULL), 'GSTIN', NULL)) AS why
+      FROM customers a JOIN customers b ON b.customer_id > a.customer_id AND a.merged_into IS NULL AND b.merged_into IS NULL
+      WHERE a.phone_digits = b.phone_digits OR (a.email IS NOT NULL AND a.email = b.email) OR LOWER(a.name) = LOWER(b.name)
+         OR EXISTS (SELECT 1 FROM customer_addresses x JOIN customer_addresses y ON y.gstin = x.gstin WHERE x.customer_id = a.customer_id AND y.customer_id = b.customer_id AND x.gstin IS NOT NULL)
+      ORDER BY a.customer_no LIMIT 50`);
+  return rows;
+});
+route('post', '/commerce/customers/merge', 'customers:edit', async (req) => {
+  try { return await tx((q) => customers.requestMerge(q, Number(req.body.keep_id), Number(req.body.merge_id), req.body.reason, by(req))); } catch (e) { throw asCustomer(e); }
+}, { status: 201 });
+
+// My follow-ups (?all=1: everyone's, for a role with edit on Customers); overdue ones first
+route('get', '/commerce/follow-ups', 'customers:view', async (req) => {
+  const all = req.query.all === '1' && canDo(req, 'customers', 'edit');
+  const own = await ownOnly(req);
+  const [rows] = await db.query(`SELECT f.follow_up_id, f.customer_id, f.assignee, DATE_FORMAT(f.due_on, '%Y-%m-%d') AS due_on, f.note, f.status, f.snoozes, f.created_by, f.created_at,
+      c.customer_no, c.name AS customer, c.phone, f.due_on < ${IST_TODAY_DATE} AS overdue, f.due_on = ${IST_TODAY_DATE} AS today
+      FROM follow_ups f JOIN customers c ON c.customer_id = f.customer_id
+      WHERE f.status = 'open' ${all ? '' : 'AND f.assignee = ?'} ${own ? 'AND c.owner_emp_id = ?' : ''} ORDER BY f.due_on, f.follow_up_id`, [...(all ? [] : [by(req)]), ...(own ? [own] : [])]);
+  return { rows: rows.map((r) => ({ ...r, overdue: Number(r.overdue) === 1, today: Number(r.today) === 1 })), all, people: await adminPeople(db) };
+});
+route('put', '/commerce/follow-ups/:id', 'customers:view', async (req) => {
+  const [[f]] = await db.query('SELECT customer_id, assignee FROM follow_ups WHERE follow_up_id = ?', [Number(req.params.id)]);
+  if (!f) throw new InputError('No such follow-up', 404);
+  if (f.assignee !== by(req) && !canDo(req, 'customers', 'edit')) throw new InputError('Only its assignee (or a role with edit on Customers) can close it', 403);
+  await seeCustomer(req, f.customer_id);
+  try { return await tx((q) => customers.updateFollowUp(q, Number(req.params.id), req.body || {}, by(req))); } catch (e) { throw asCustomer(e); }
 });
 
 route('get', '/commerce/customers/:id', 'customers:view', async (req) => {
-  const [[c]] = await db.query(`SELECT customer_id, name, business_name, phone, email, ctype, town, state_code, pincode, address, gstin, credit_days, credit_limit, source, notes,
-      DATE_FORMAT(follow_up, '%Y-%m-%d') AS follow_up, lead_id, created_at FROM customers WHERE customer_id = ?`, [Number(req.params.id)]);
-  if (!c) throw new InputError('Customer not found', 404);
-  const [orders] = await db.query(`SELECT o.order_no, o.status, o.total, o.amount_due, o.payment_status, o.created_at, i.invoice_no, DATE_FORMAT(i.due_on, '%Y-%m-%d') AS due_on,
+  await seeCustomer(req, req.params.id);
+  const id = Number(req.params.id);
+  const [[c]] = await db.query(`SELECT c.*, ct.label AS type_label, k.customer_no AS merged_into_no FROM customers c JOIN customer_types ct ON ct.type_key = c.type_key
+      LEFT JOIN customers k ON k.customer_id = c.merged_into WHERE c.customer_id = ?`, [id]);
+  const [orders] = await db.query(`SELECT o.order_no, o.status, o.total, o.amount_due, o.payment_status, o.created_at, o.bill_gstin, o.ship_town, i.invoice_no, DATE_FORMAT(i.due_on, '%Y-%m-%d') AS due_on,
       (i.invoice_id IS NOT NULL AND ${commerce.OVERDUE_SQL}) AS overdue
-      FROM orders o LEFT JOIN invoices i ON i.live_order_id = o.order_id WHERE o.customer_id = ? ORDER BY o.order_id DESC`, [c.customer_id]);
-  const [[pendingCredit]] = await db.query("SELECT approval_id, summary FROM approvals WHERE kind = 'credit_raise' AND ref_type = 'customer' AND ref_id = ? AND status = 'pending' LIMIT 1", [String(c.customer_id)]);
-  const st = await wallet.statement(db, c.customer_id);
-  const walletRows = [...st.entries].reverse();
+      FROM orders o LEFT JOIN invoices i ON i.live_order_id = o.order_id WHERE o.customer_id = ? ORDER BY o.order_id DESC`, [id]);
+  const [contacts] = await db.query('SELECT contact_id, name, role, phone, email, whatsapp, gets_invoices FROM customer_contacts WHERE customer_id = ? AND is_active = 1 ORDER BY contact_id', [id]);
+  const [tags] = await db.query('SELECT tag FROM customer_tags WHERE customer_id = ? ORDER BY tag', [id]);
+  const [follow] = await db.query(`SELECT follow_up_id, assignee, DATE_FORMAT(due_on, '%Y-%m-%d') AS due_on, note, status, snoozes, done_at, done_by, done_note,
+      due_on < ${IST_TODAY_DATE} AND status = 'open' AS overdue FROM follow_ups WHERE customer_id = ? ORDER BY status = 'done', due_on LIMIT 30`, [id]);
+  const [pending] = await db.query("SELECT approval_id, kind, summary FROM approvals WHERE ref_type = 'customer' AND ref_id = ? AND status = 'pending'", [String(id)]);
+  const list = await pricing.listOfCustomer(db, id);
   let lead = null;
-  if (c.lead_id) [[lead]] = await db.query('SELECT lead_ref, form_type, created_at FROM leads WHERE lead_id = ?', [c.lead_id]);
-  return { ...c, credit_limit: Number(c.credit_limit), orders: orders.map((o) => ({ ...o, overdue: Number(o.overdue) === 1 })), wallet: walletRows, balance: st.balance, expiring: st.expiring,
-    outstanding: orders.filter((o) => o.status !== 'cancelled' && Number(o.amount_due) > 0).reduce((a, o) => a + Number(o.amount_due), 0),
-    pendingCredit: pendingCredit || null, lead: lead || null, ctypes: CTYPES, states: GST_STATES };
+  if (c.lead_id) {
+    [[lead]] = await db.query(`SELECT lead_id, lead_ref, form_type, status, full_name, business_name, business_type, town, phone, email, monthly_quantity, message, staff_notes, source_page, created_at, updated_at
+        FROM leads WHERE lead_id = ?`, [c.lead_id]);
+    if (lead) lead.products = (await db.query('SELECT product_id FROM lead_products WHERE lead_id = ?', [c.lead_id]).catch(() => [[]]))[0].map((x) => x.product_id);
+  }
+  const lists = await pricing.lists(db);
+  return {
+    ...c, phone_digits: undefined, credit_limit: Number(c.credit_limit), status_label: customers.STATUS[c.status], tags: tags.map((x) => x.tag),
+    addresses: await customers.addressesOf(db, id), contacts: contacts.map((x) => ({ ...x, whatsapp: Number(x.whatsapp) === 1, gets_invoices: Number(x.gets_invoices) === 1 })),
+    followUps: follow.map((x) => ({ ...x, overdue: Number(x.overdue) === 1 })), orders: orders.map((o) => ({ ...o, overdue: Number(o.overdue) === 1 })),
+    outstanding: orders.filter((o) => o.status !== 'cancelled' && Number(o.amount_due) > 0).reduce((a, o) => a + Number(o.amount_due), 0), wallet: await wallet.balance(db, id),
+    priceList: list, lists, pending, pendingCredit: pending.find((x) => x.kind === 'credit_raise') || null, lead: lead || null,
+    types: await customers.types(db), owners: await adminPeople(db), statuses: customers.STATUS, activityKinds: customers.ACTIVITY, states: GST_STATES, sources: customerRules.SOURCES,
+    areas: (await db.query('SELECT area_id, label FROM delivery_areas WHERE is_active = 1 ORDER BY sort_order, area_id'))[0],
+  };
+});
+route('get', '/commerce/customers/:id/timeline', 'customers:view', async (req) => {
+  await seeCustomer(req, req.params.id);
+  return customers.timeline(db, Number(req.params.id));
+});
+route('get', '/commerce/customers/:id/statement', 'customers:view', async (req) => {
+  await seeCustomer(req, req.params.id);
+  const from = pricing.isDate(String(req.query.from || '')) ? String(req.query.from) : null;
+  const to = pricing.isDate(String(req.query.to || '')) ? String(req.query.to) : null;
+  const [[c]] = await db.query('SELECT customer_id, customer_no, name, business_name, phone, credit_days, credit_limit FROM customers WHERE customer_id = ?', [Number(req.params.id)]);
+  const addr = (await customers.addressesOf(db, c.customer_id)).find((a) => a.kind === 'billing' && a.is_default) || null;
+  const cs = await commerceSettings.read(db);
+  return { customer: { ...c, credit_limit: Number(c.credit_limit) }, bill: addr, from, to, seller: { name: cs.invoice_seller_name, address: cs.invoice_seller_address }, ...(await customers.statement(db, c.customer_id, { from, to })) };
 });
 
-function customerValues(body) {
-  const v = {};
-  for (const f of CUSTOMER_FIELDS) {
-    if (!(f in body)) continue;
-    const x = typeof body[f] === 'string' ? body[f].trim() : body[f];
-    v[f] = x === '' || x === undefined ? null : x;
-  }
-  if ('name' in v && !v.name) throw new InputError('Name is required');
-  if ('phone' in v && !/^[0-9+ ]{8,20}$/.test(v.phone || '')) throw new InputError('Phone: 8 to 20 digits');
-  if ('ctype' in v && !CTYPES.includes(v.ctype)) throw new InputError(`Type: ${CTYPES.join(', ')}`);
-  if (v.follow_up && !/^\d{4}-\d{2}-\d{2}$/.test(v.follow_up)) throw new InputError('Follow-up: a date');
-  if ('state_code' in v && !GST_STATES.some(([code]) => code === v.state_code)) throw new InputError('State: choose one');
-  if (v.pincode && !/^[1-9]\d{5}$/.test(v.pincode)) throw new InputError('PIN code: 6 digits');
-  return v;
-}
+// changes (each audited in customers.js)
+const custTx = (fn) => async (req) => {
+  await seeCustomer(req, req.params.id);
+  try { return await tx((q) => fn(q, req)); } catch (e) { throw asCustomer(e); }
+};
+route('put', '/commerce/customers/:id', 'customers:edit', custTx(async (q, req) => {
+  const own = await ownOnly(req);
+  const body = { ...(req.body || {}) };
+  if (own) delete body.owner_emp_id; // a limited user cannot give the customer away
+  const r = await customers.updateCore(q, Number(req.params.id), body, by(req));
+  if (Array.isArray(body.tags)) await customers.setTags(q, Number(req.params.id), body.tags, by(req));
+  return r;
+}));
+route('put', '/commerce/customers/:id/status', 'customers:edit', custTx((q, req) => customers.setStatus(q, Number(req.params.id), req.body.status, req.body.reason, by(req))));
+route('put', '/commerce/customers/:id/price-list', 'customers:edit', custTx((q, req) => customers.requestPriceList(q, Number(req.params.id), req.body.price_list || null, by(req))));
+route('post', '/commerce/customers/:id/addresses', 'customers:edit', custTx((q, req) => customers.saveAddress(q, Number(req.params.id), null, req.body || {}, by(req))), { status: 201 });
+route('put', '/commerce/customers/:id/addresses/:aid', 'customers:edit', custTx((q, req) => customers.saveAddress(q, Number(req.params.id), Number(req.params.aid), req.body || {}, by(req))));
+route('post', '/commerce/customers/:id/contacts', 'customers:edit', custTx((q, req) => customers.saveContact(q, Number(req.params.id), null, req.body || {}, by(req))), { status: 201 });
+route('put', '/commerce/customers/:id/contacts/:cid', 'customers:edit', custTx((q, req) => customers.saveContact(q, Number(req.params.id), Number(req.params.cid), req.body || {}, by(req))));
+route('post', '/commerce/customers/:id/activity', 'customers:edit', custTx((q, req) => customers.addActivity(q, Number(req.params.id), req.body || {}, by(req))), { status: 201 });
+route('post', '/commerce/customers/:id/follow-ups', 'customers:edit', custTx((q, req) => customers.addFollowUp(q, Number(req.params.id), req.body || {}, by(req))), { status: 201 });
 
 // Credit terms of a customer: days apply at once; a higher limit waits for approval (Commerce setting), a lower one
 // applies at once. Audited.
 async function applyCredit(q, customerId, days, limit, empId) {
-  const [[before]] = await q.query('SELECT credit_days, credit_limit FROM customers WHERE customer_id = ? FOR UPDATE', [customerId]);
-  await q.query('UPDATE customers SET credit_days = ?, credit_limit = ? WHERE customer_id = ?', [days, limit, customerId]);
-  await audit(q, { empId, action: 'credit_change', entity: 'customer', entityId: String(customerId), before: { credit_days: before.credit_days, credit_limit: Number(before.credit_limit) }, after: { credit_days: days, credit_limit: limit } });
+  const [[before]] = await q.query('SELECT customer_no, credit_days, credit_limit FROM customers WHERE customer_id = ? FOR UPDATE', [customerId]);
+  await q.query('UPDATE customers SET credit_days = ?, credit_limit = ?, updated_by = ?, updated_at = UTC_TIMESTAMP() WHERE customer_id = ?', [days, limit, empId, customerId]);
+  await audit(q, { empId, action: 'credit_change', entity: 'customer', entityId: before.customer_no, before: { credit_days: before.credit_days, credit_limit: Number(before.credit_limit) }, after: { credit_days: days, credit_limit: limit } });
 }
 approvals.onApproved('credit_raise', async (q, p, empId) => { await applyCredit(q, p.customer_id, p.credit_days, p.credit_limit, empId); });
 route('put', '/commerce/customers/:id/credit', 'customers:edit', async (req) => {
+  await seeCustomer(req, req.params.id);
   const days = Number(req.body.credit_days);
   const limit = Number(req.body.credit_limit);
   if (!Number.isInteger(days) || days < 0 || days > 365) throw new InputError('Credit days: 0 to 365');
   if (!/^\d{1,9}(\.\d{1,2})?$/.test(String(req.body.credit_limit ?? '').trim())) throw new InputError('Credit limit: Rs, 0 or more');
   return tx(async (q) => {
-    const [[c]] = await q.query('SELECT customer_id, name, credit_days, credit_limit FROM customers WHERE customer_id = ? FOR UPDATE', [Number(req.params.id)]);
-    if (!c) throw new InputError('Customer not found', 404);
+    const [[c]] = await q.query('SELECT customer_id, customer_no, name, credit_days, credit_limit FROM customers WHERE customer_id = ? FOR UPDATE', [Number(req.params.id)]);
     if (limit > Number(c.credit_limit) && await approvals.needed(q, 'credit_raise')) {
       const [[had]] = await q.query("SELECT approval_id FROM approvals WHERE kind = 'credit_raise' AND ref_type = 'customer' AND ref_id = ? AND status = 'pending'", [String(c.customer_id)]);
       if (had) throw new InputError(`A credit change for ${c.name} already waits for approval (#${had.approval_id})`, 409);
       const id = await approvals.request(q, { kind: 'credit_raise', refType: 'customer', refId: String(c.customer_id),
-        summary: `${c.name}: credit limit Rs ${Number(c.credit_limit)} -> Rs ${limit}, ${c.credit_days} -> ${days} days`, amount: limit,
+        summary: `${c.customer_no} ${c.name}: credit limit Rs ${Number(c.credit_limit)} -> Rs ${limit}, ${c.credit_days} -> ${days} days`, amount: limit,
         payload: { customer_id: c.customer_id, credit_days: days, credit_limit: limit } }, by(req));
       return { pending: true, approval_id: id };
     }
@@ -2326,31 +2501,10 @@ route('put', '/commerce/customers/:id/credit', 'customers:edit', async (req) => 
   });
 });
 
-route('put', '/commerce/customers/:id', 'customers:edit', async (req) => {
-  const v = customerValues(req.body);
-  if (!Object.keys(v).length) throw new InputError('Nothing to change');
-  const [r] = await db.query(`UPDATE customers SET ${Object.keys(v).map((k) => `${k} = ?`).join(', ')} WHERE customer_id = ?`, [...Object.values(v), Number(req.params.id)]);
-  if (!r.affectedRows) throw new InputError('Customer not found', 404);
-  await audit(null, { empId: by(req), action: 'update', entity: 'customer', entityId: String(req.params.id), after: v });
-  return { customer_id: Number(req.params.id) };
-});
-
-// A lead becomes a customer (once): name, phone, e-mail, town; type from the form and business type.
+// A lead becomes a customer (once): name, phone, e-mail, town, its contact person, billing and shipping address.
 route('post', '/commerce/customers/from-lead/:leadId', 'customers:create', async (req) => {
-  const [[l]] = await db.query('SELECT lead_id, lead_ref, form_type, full_name, business_name, business_type, town, phone, email FROM leads WHERE lead_id = ?', [Number(req.params.leadId)]);
-  if (!l) throw new InputError('Lead not found', 404);
-  const [[had]] = await db.query('SELECT customer_id, name FROM customers WHERE lead_id = ?', [l.lead_id]);
-  if (had) return { customer_id: had.customer_id, name: had.name, existed: true };
-  const bt = `${l.business_type || ''} ${l.business_name || ''}`.toLowerCase();
-  const ctype = l.form_type === 'distributor' ? 'Distributor'
-    : /hotel|restaurant|cafe|caterer|lodge|resort|food/.test(bt) ? 'Hotel'
-      : /hospital|clinic|health|medical/.test(bt) ? 'Hospital'
-        : /office|corporate|school|college|bank|it/.test(bt) ? 'Office' : 'Home';
-  const name = l.business_name || l.full_name || l.lead_ref;
-  const [ins] = await db.query('INSERT INTO customers (name, phone, email, ctype, town, notes, lead_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    [name, `+91 ${l.phone}`, l.email, ctype, l.town, `From lead ${l.lead_ref}${l.full_name && l.business_name ? ` (contact: ${l.full_name})` : ''}`, l.lead_id]);
-  await audit(null, { empId: by(req), action: 'create', entity: 'customer', entityId: String(ins.insertId), after: { from_lead: l.lead_ref, ctype } });
-  return { customer_id: ins.insertId, name, ctype, existed: false };
+  const own = await ownOnly(req);
+  try { return await tx((q) => customers.fromLead(q, Number(req.params.leadId), { ...(req.body || {}), owner_emp_id: own || (req.body || {}).owner_emp_id }, by(req))); } catch (e) { throw asCustomer(e); }
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -2375,8 +2529,8 @@ async function promoLists(q) {
   const [types] = await q.query('SELECT type_key, label FROM customer_types ORDER BY sort_order, label');
   const [cats] = await q.query("SELECT DISTINCT category_key FROM products WHERE category_key IS NOT NULL AND category_key <> '' ORDER BY category_key");
   const [skus] = await q.query(`SELECT s.sku_code, ${SKU_NAME} AS name, s.size_label FROM skus s ${SKU_JOIN} WHERE s.is_active = 1 ORDER BY s.sku_code`);
-  const [customers] = await q.query('SELECT customer_id, name, ctype FROM customers ORDER BY name');
-  return { types, categories: cats.map((c) => c.category_key), skus, customers };
+  const [custs] = await q.query("SELECT c.customer_id, c.name, ct.label AS ctype FROM customers c JOIN customer_types ct ON ct.type_key = c.type_key WHERE c.merged_into IS NULL ORDER BY c.name");
+  return { types, categories: cats.map((c) => c.category_key), skus, customers: custs };
 }
 const fixedDates = (from, to) => { if (from && to && to < from) throw new InputError('Valid to: on or after Valid from'); };
 
@@ -2464,8 +2618,8 @@ route('put', '/commerce/coupons/:code', 'promotions:edit', async (req) => tx(asy
   return { code };
 }));
 route('get', '/commerce/coupons/:code/usage', 'promotions:view', async (req) => {
-  const [rows] = await db.query(`SELECT r.id, r.amount, r.status, r.created_at, r.released_at, o.order_no, o.status AS order_status, o.total, c.name AS customer, c.ctype
-      FROM coupon_redemptions r JOIN orders o ON o.order_id = r.order_id JOIN customers c ON c.customer_id = r.customer_id WHERE r.code = ? ORDER BY r.id DESC`, [String(req.params.code).toUpperCase()]);
+  const [rows] = await db.query(`SELECT r.id, r.amount, r.status, r.created_at, r.released_at, o.order_no, o.status AS order_status, o.total, c.name AS customer, ct.label AS ctype
+      FROM coupon_redemptions r JOIN orders o ON o.order_id = r.order_id JOIN customers c ON c.customer_id = r.customer_id JOIN customer_types ct ON ct.type_key = c.type_key WHERE r.code = ? ORDER BY r.id DESC`, [String(req.params.code).toUpperCase()]);
   return rows.map((r) => ({ ...r, amount: Number(r.amount), total: Number(r.total) }));
 });
 
@@ -2557,8 +2711,9 @@ route('post', '/commerce/promotions/run-jobs', 'promotions:edit', async (req) =>
 // Wallet: the statement (Customers or Promotions view); manual credit / debit (Promotions create; approval: setting)
 route('get', '/commerce/customers/:id/wallet', 'any', async (req) => {
   if (!canDo(req, 'customers') && !canDo(req, 'promotions')) throw new InputError('The wallet needs "view" on Customers or Promotions', 403);
-  const [[c]] = await db.query('SELECT customer_id, name, business_name, phone, ctype, town, address FROM customers WHERE customer_id = ?', [Number(req.params.id)]);
-  if (!c) throw new InputError('Customer not found', 404);
+  await seeCustomer(req, req.params.id);
+  const [[c]] = await db.query(`SELECT c.customer_id, c.customer_no, c.name, c.business_name, c.phone, ct.label AS ctype, a.town, a.address FROM customers c JOIN customer_types ct ON ct.type_key = c.type_key
+      LEFT JOIN customer_addresses a ON a.customer_id = c.customer_id AND a.kind = 'billing' AND a.is_default = 1 AND a.is_active = 1 WHERE c.customer_id = ?`, [Number(req.params.id)]);
   const [pending] = await db.query("SELECT approval_id, kind, summary, requested_by, requested_at FROM approvals WHERE kind IN ('goodwill_credit', 'wallet_debit') AND ref_type = 'customer' AND ref_id = ? AND status = 'pending'", [String(c.customer_id)]);
   const cs = await commerceSettings.read(db);
   return { customer: c, ...(await wallet.statement(db, c.customer_id)), usable: (await wallet.plan(db, c.customer_id, 1e9)).total, pending, sources: wallet.SOURCES,
@@ -2580,6 +2735,7 @@ route('get', '/commerce/ops', 'any', async (req) => {
   const low = can.stock ? await stock.reorderList(db) : [];
   const dc = await delivery.opsCounts(db);
   const seeInspect = can.returns || canDo(req, 'inventory', 'edit');
+  const [[fu]] = await db.query(`SELECT COUNT(*) AS overdue, SUM(assignee = ?) AS mine FROM follow_ups WHERE status = 'open' AND due_on < ${IST_TODAY_DATE}`, [by(req)]);
   const seePack = canDo(req, 'packing') || canDo(req, 'orders');
   const seeDeliver = canDo(req, 'delivery') || canDo(req, 'orders');
   const exp = can.stock ? (await stock.batchList(db)).rows.filter((b) => b.good > 0 && b.state !== 'ok') : [];
@@ -2588,6 +2744,7 @@ route('get', '/commerce/ops', 'any', async (req) => {
     today: can.orders ? { n: Number(today.n), value: Number(today.value) } : null,
     toPack: can.pack ? Number(st.to_pack) || 0 : null, toDispatch: can.dispatch ? Number(st.to_dispatch) || 0 : null,
     returns: seeInspect ? { toCollect: can.returns ? dc.returnsToCollect : null, toInspect: dc.returnsToInspect, toDecide: can.returns ? dc.returnsToDecide : null } : null,
+    followUps: can.wallet ? { overdue: Number(fu.overdue) || 0, mine: Number(fu.mine) || 0 } : null,
     walletGiven: can.wallet ? { total: Number(w.total), cashback: Number(w.cashback), refunds: Number(w.refunds) } : null, // total = owed to customers now
     lowStock: can.stock ? low.map((r) => ({ sku_code: r.sku_code, name: r.name, available: r.available, reorder_level: r.reorder_level, suggested: r.suggested })) : null,
     expiry: can.stock ? { expired: exp.filter((b) => b.state === 'expired').length, near: exp.filter((b) => b.state === 'near').length } : null,

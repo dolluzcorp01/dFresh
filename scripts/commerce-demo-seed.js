@@ -1,15 +1,19 @@
 // Commerce DEMO seed - ONLY for the database dfresh_commerce (refuses DB_NAME or a connection to anything else).
 // Run after a fresh copy of dfresh + every migration (database/migrations, incl. 20261020_commerce_*):
 //   node scripts/commerce-demo-seed.js
-// 1. the demo screens' interim tables (database/demo/commerce-demo-schema.sql; replaced in phases 3-8)
+// 1. (the demo's interim tables are gone: phases 2-8 made every one of them a migration)
 // 2. SQL demo data (database/demo/commerce-demo-data.sql): SKUs with carton sizes, minimum orders and HSN codes,
-//    reorder levels, a little returned stock, coupons, cashback rule
+//    reorder levels, a little returned stock
 // 3. DEMO prices on all 6 lists (Default + 5 customer types) for every SKU, through src/backend_routes/pricing.js:
 //    effective 30 days ago, a +5 % change on the toilet rolls 5 days ago and one scheduled for the 1st of next month
-// 4. 15 demo customers (addresses with state and PIN, credit terms by type; one in Karnataka for IGST) and 26 orders
-//    across all statuses, through src/backend_routes/commerce.js (list prices of the customer's type, coupons, stock
-//    reserved, stock out and invoice at dispatch, cashback on delivery); then the dates are moved back to the demo
-//    days, payments recorded (paid, part paid, one overdue invoice), notes and follow-ups
+// 4. 15 demo customers through src/backend_routes/customers.js (CUS-0001..., billing and shipping addresses with state
+//    and PIN, credit terms by type, one in Karnataka for IGST, contacts, sales owners, tags) and 26 orders across all
+//    statuses, through src/backend_routes/commerce.js (list prices of the customer's type, coupons, stock reserved, stock
+//    out and invoice at dispatch); then the dates are moved back to the demo days, payments recorded (paid, part paid,
+//    one overdue invoice)
+// 4c. CRM (phase 8): two hotels with a second branch (a second GSTIN: Karnataka, Puducherry), timeline entries (calls,
+//    visits, WhatsApp), follow-ups (some overdue), one customer on hold, a duplicate pair to merge (the same lodge
+//    entered twice with another number), a lead converted to a customer, a saved segment
 // 4b. returns through src/backend_routes/returns.js, one in every status: outside the window waiting for approval, a
 //    courier reverse pickup still without AWB, a pickup on a planned trip, received (scanned), inspected, refunded to
 //    the wallet (credit note), a partial one (IGST order: refund less to pay + replacement, courier reverse pickup),
@@ -45,6 +49,7 @@ const delivery = require('../src/backend_routes/delivery');
 const returns = require('../src/backend_routes/returns');
 const promotions = require('../src/backend_routes/promotions');
 const wallet = require('../src/backend_routes/wallet');
+const customers = require('../src/backend_routes/customers');
 
 const db = getDBConnection(DB).promise();
 const ROOT = path.join(__dirname, '..');
@@ -113,11 +118,6 @@ const METHOD = { own: 1, courier: 2, pickup: 3 };
 // what each demo order has paid after the loop: order index (1-based) -> 'full' | fraction | 0 (credit orders
 // not listed stay unpaid; 'advance' orders are paid in full by Razorpay at the order day, 'cod' ones on the trip)
 const PAID = { 2: 'full', 3: 0.5, 6: 'full', 9: 0.4 };
-const NOTES = [
-  ['Demo Hotel Sangam', 'DEMO - orders every Monday, wants the invoice with GSTIN', 0],
-  ['Demo City Hospital', 'DEMO - asked for a bulk price on hand towels', -1],
-  ['Demo Distributor Vellore', 'DEMO - distributor for Vellore district, monthly order', 5],
-];
 
 async function inTx(fn) {
   const conn = await db.getConnection();
@@ -141,12 +141,11 @@ async function inTx(fn) {
 
   const raw = await mysql.createConnection({ host: process.env.DB_HOST, port: process.env.DB_PORT, user: process.env.DB_USER, password: process.env.DB_PASSWORD, database: DB, multipleStatements: true, timezone: 'Z' });
   await raw.query("SET time_zone = '+00:00'");
-  const [[{ has }]] = await raw.query("SELECT COUNT(*) AS has FROM information_schema.tables WHERE table_schema = ? AND table_name = 'customers'", [DB]);
+  const [[{ has }]] = await raw.query('SELECT COUNT(*) AS has FROM stock_levels');
   if (!Number(has)) {
-    await raw.query(fs.readFileSync(path.join(ROOT, 'database/demo/commerce-demo-schema.sql'), 'utf8'));
     await raw.query(fs.readFileSync(path.join(ROOT, 'database/demo/commerce-demo-data.sql'), 'utf8'));
-    console.log('demo tables and SQL demo data: done');
-  } else console.log('demo tables exist already: skipped');
+    console.log('SQL demo data: done');
+  } else console.log('SQL demo data exists already: skipped');
   await raw.end();
 
   // DEMO prices through the same code as the admin (history, audit)
@@ -216,10 +215,20 @@ async function inTx(fn) {
   await db.query("INSERT INTO drivers (name, phone, sort_order) VALUES ('DEMO Murugan', '+91 90030 11111', 1), ('DEMO Selvam', '+91 90030 22222', 2), ('DEMO Ravi', '+91 90030 33333', 3)");
   await db.query("INSERT INTO couriers (name, tracking_url, sort_order) VALUES ('DEMO Express Couriers', 'https://example.com/track?awb={awb}', 1), ('DEMO South Parcel Service', 'https://example.org/tracking/{awb}', 2)");
 
+  // DEMO customers through customers.js (the drawer's rules), owners DZIND148 / DZIND002, tags, a contact each
+  const TAGS = { Hotel: ['horeca', 'monthly'], Hospital: ['healthcare', 'b2b'], Office: ['b2b'], Distributor: ['distributor', 'b2b'], Home: ['retail'] };
+  let k = 0;
   for (const [nm, phone, ctype, town, address, gstin, state, pin, days, limit] of CUSTOMERS) {
-    await db.query(`INSERT INTO customers (name, phone, ctype, town, state_code, pincode, address, gstin, credit_days, credit_limit, source, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Phone', UTC_TIMESTAMP() - INTERVAL 12 DAY)`,
-    [nm, `+91 ${phone.slice(0, 5)} ${phone.slice(5)}`, ctype, town, state, pin, address, gstin, days, limit]);
+    k += 1;
+    const idx = k;
+    const addr = { label: ctype === 'Home' ? 'Home' : 'Main', name: nm, gstin, address, town, state_code: state, pincode: pin };
+    await inTx(async (q) => {
+      const c = await customers.createCustomer(q, { name: nm, business_name: ctype === 'Home' ? null : nm, type_key: ctype, phone, source: 'Phone', owner_emp_id: idx % 5 === 0 ? null : idx % 2 ? 'DZIND148' : 'DZIND002',
+        tags: TAGS[ctype], bill: addr, ship: { ...addr, gstin: null, contact_person: ctype === 'Home' ? nm.replace('Demo Home ', '') : 'Store keeper', phone },
+        contacts: ctype === 'Home' ? [] : [{ name: `DEMO ${['Ramesh', 'Suresh', 'Anitha', 'Kumar', 'Divya'][idx % 5]}`, role: ctype === 'Hospital' ? 'Purchase officer' : 'Manager', phone, email: `demo.buyer${idx}@example.com`, whatsapp: true, gets_invoices: true }],
+      }, 'demo-seed');
+      await q.query('UPDATE customers SET credit_days = ?, credit_limit = ?, created_at = UTC_TIMESTAMP() - INTERVAL 40 DAY WHERE customer_id = ?', [days, limit, c.customer_id]);
+    });
   }
   const [custRows] = await db.query('SELECT customer_id FROM customers ORDER BY customer_id LIMIT 15');
   // DEMO promotions (the same tables the Promotions screen edits), valid from 30 days back so the back-dated orders get them
@@ -458,9 +467,50 @@ async function inTx(fn) {
         ELSE COALESCE(r.closed_at, r.inspected_at, r.created_at) END WHERE r.return_no = ?`, [madeRet[i]]);
   }
   console.log(`demo returns: ${madeRet.join(', ')}; pickup on trip T-${pickupTrip} (planned)`);
-  for (const [nm, note, days] of NOTES) {
-    await db.query("UPDATE customers SET notes = ?, follow_up = DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+05:30')) + INTERVAL ? DAY WHERE name = ?", [note, days, nm]);
-  }
+  // CRM (phase 8): second branches, timeline, follow-ups, on hold, a duplicate pair, a lead converted, a segment
+  const cid = async (nm) => (await db.query('SELECT customer_id FROM customers WHERE name = ? AND merged_into IS NULL ORDER BY customer_id LIMIT 1', [nm]))[0][0].customer_id;
+  await inTx(async (q) => {
+    const sangam = await cid('Demo Hotel Sangam');
+    await q.query("UPDATE customer_addresses SET label = 'Branch 1 - Kanchipuram' WHERE customer_id = ?", [sangam]);
+    await customers.saveAddress(q, sangam, null, { kind: 'billing', label: 'Branch 2 - Bengaluru', name: 'Demo Hotel Sangam (Bengaluru)', gstin: '29AAACD0001A1Z9', address: 'MG Road', town: 'Bengaluru', state_code: '29', pincode: '560001' }, 'demo-seed');
+    await customers.saveAddress(q, sangam, null, { kind: 'shipping', label: 'Branch 2 - Bengaluru', name: 'Demo Hotel Sangam (Bengaluru)', contact_person: 'DEMO Prakash (stores)', phone: '9800000101', address: 'MG Road', town: 'Bengaluru', state_code: '29', pincode: '560001' }, 'demo-seed');
+    await customers.saveContact(q, sangam, null, { name: 'DEMO Prakash', role: 'Stores, Bengaluru branch', phone: '9800000101', whatsapp: true }, 'demo-seed');
+    const anjappar = await cid('Demo Restaurant Anjappar');
+    await q.query("UPDATE customer_addresses SET label = 'Branch 1 - Velachery', gstin = IF(kind = 'billing', '33AAACD0012A1Z2', NULL) WHERE customer_id = ?", [anjappar]);
+    await customers.saveAddress(q, anjappar, null, { kind: 'billing', label: 'Branch 2 - Puducherry', name: 'Demo Restaurant Anjappar (Puducherry)', gstin: '34AAACD0012A1Z0', address: 'Mission Street', town: 'Puducherry', state_code: '34', pincode: '605001' }, 'demo-seed');
+    await customers.saveAddress(q, anjappar, null, { kind: 'shipping', label: 'Branch 2 - Puducherry', name: 'Demo Restaurant Anjappar (Puducherry)', contact_person: 'DEMO Selvi', phone: '9800000112', address: 'Mission Street', town: 'Puducherry', state_code: '34', pincode: '605001' }, 'demo-seed');
+    // timeline typed by hand (calls, visits, WhatsApp, mails, notes) a few days back
+    const act = async (nm, kind, daysAgo, note, emp) => {
+      await q.query('INSERT INTO customer_activity (customer_id, kind, happened_at, note, emp_id) VALUES (?, ?, UTC_TIMESTAMP() - INTERVAL ? HOUR, ?, ?)', [await cid(nm), kind, daysAgo * 24 + 3, note, emp]);
+    };
+    await act('Demo Hotel Sangam', 'visit', 12, 'DEMO - visited both kitchens; Bengaluru branch wants its own invoices (its GSTIN)', 'DZIND148');
+    await act('Demo Hotel Sangam', 'call', 3, 'DEMO - asked for the overdue invoice to be resent', 'DZIND148');
+    await act('Demo City Hospital', 'mail', 6, 'DEMO - sent the price list for hand towels', 'DZIND002');
+    await act('Demo Distributor Vellore', 'whatsapp', 2, 'DEMO - shared the new wet wipes offer (10 + 1)', 'DZIND148');
+    await act('Demo Bank Branch', 'call', 1, 'DEMO - disputes the last invoice: on hold until settled', 'DZIND002');
+    await act('Demo Cafe Thendral', 'note', 4, 'DEMO - prefers delivery before 9 am', 'DZIND002');
+    // follow-ups: two overdue, one today, two later
+    const fu = async (nm, who, inDays, note) => {
+      await q.query("INSERT INTO follow_ups (customer_id, assignee, due_on, note, created_by, created_at) VALUES (?, ?, DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+05:30')) + INTERVAL ? DAY, ?, ?, UTC_TIMESTAMP() - INTERVAL 5 DAY)",
+        [await cid(nm), who, inDays, note, 'DZIND002']);
+    };
+    await fu('Demo Hotel Sangam', 'DZIND148', -3, 'DEMO - collect the overdue payment');
+    await fu('Demo City Hospital', 'DZIND002', -1, 'DEMO - confirm the bulk towel price');
+    await fu('Demo Distributor Vellore', 'DZIND148', 0, 'DEMO - monthly order call');
+    await fu('Demo Tech Park Office', 'DZIND002', 5, 'DEMO - quarterly review');
+    await fu('Demo Home Priya', 'DZIND148', 8, 'DEMO - festival offer reminder');
+    await customers.setStatus(q, await cid('Demo Bank Branch'), 'on_hold', 'DEMO - invoice dispute, new orders need approval', 'DZIND002');
+    // the same lodge entered twice (another number): the duplicate pair to merge
+    const d = await customers.createCustomer(q, { name: 'Demo Lodge Kamakshi', type_key: 'hotel', phone: '9800000214', email: 'demo.kamakshi@example.com', source: 'WhatsApp', owner_emp_id: 'DZIND002', tags: ['horeca'],
+      bill: { label: 'Main', name: 'Demo Lodge Kamakshi', address: 'East Raja Street', town: 'Kanchipuram', state_code: '33', pincode: '631501' },
+      contacts: [{ name: 'DEMO Kamakshi reception', role: 'Reception', phone: '9800000214', whatsapp: true }] }, 'demo-seed');
+    await q.query("INSERT INTO customer_activity (customer_id, kind, happened_at, note, emp_id) VALUES (?, 'whatsapp', UTC_TIMESTAMP() - INTERVAL 30 HOUR, 'DEMO - asked for the price of rolls on WhatsApp (the reception number)', 'DZIND002')", [d.customer_id]);
+    // a lead converted to a customer (its history shows on the customer)
+    const [[lead]] = await q.query("SELECT lead_id FROM leads WHERE business_name = 'Test Hotel Pvt Ltd' LIMIT 1");
+    if (lead) await customers.fromLead(q, lead.lead_id, { address: 'Ennaikaran Street', pincode: '631501' }, 'demo-seed');
+    await q.query("INSERT INTO customer_segments (name, filters, created_by) VALUES ('DEMO Hotels owing money', ?, 'demo-seed')", [JSON.stringify({ type: 'hotel', outstanding_min: '1' })]);
+  });
+  console.log('demo CRM: 2 hotels with a second branch (GSTIN 29 / 34), 6 timeline entries, 5 follow-ups (2 overdue), Demo Bank Branch on hold, a duplicate Demo Lodge Kamakshi, a lead converted, a segment');
 
   // cashback of the delivered orders whose return window has passed (the hourly job does this on the live system)
   const cb = await inTx((q) => promotions.cashbackDue(q, 'system'));
@@ -495,6 +545,6 @@ async function inTx(fn) {
   console.log(`demo inventory: damaged 3 x DF019-R10, sample write-off posted, expired write-off #${wo.write_off_id} ${wo.status}, count #${cnt.count_id} ${sub.status} (${sub.differences} differences)`);
 
   await db.query("UPDATE commerce_settings SET value = '1', updated_by = 'demo-seed', updated_at = UTC_TIMESTAMP() WHERE setting_key = 'commerce_enabled'");
-  console.log(`demo: ${CUSTOMERS.length} customers, ${made} orders, ${madeRet.length} returns, ${NOTES.length} follow-ups, approvals from the returns, wallet, write-off and count; Commerce switched on`);
+  console.log(`demo: ${CUSTOMERS.length} customers (+ a duplicate to merge and a converted lead), ${made} orders, ${madeRet.length} returns, approvals from the returns, wallet, write-off and count; Commerce switched on`);
   process.exit(0);
 })().catch((e) => { console.error('commerce-demo-seed failed:', e.message); process.exit(1); });

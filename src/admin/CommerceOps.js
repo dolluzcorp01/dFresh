@@ -47,6 +47,7 @@ export default function CommerceOps() {
               {d.returns && d.returns.toCollect !== null && <Card to="/admin/commerce/returns?status=collecting" value={d.returns.toCollect} label="returns to collect" sub="customer, trip pickup or courier" />}
               {d.returns && <Card to="/admin/commerce/returns?status=received" value={d.returns.toInspect} label="returns to inspect" sub="at the godown or picked up" bad={d.returns.toInspect > 0} />}
               {d.returns && d.returns.toDecide !== null && <Card to="/admin/commerce/returns?status=inspected" value={d.returns.toDecide} label="returns to decide" sub="refund, replace or no refund" />}
+              {d.followUps && <Card to="/admin/commerce/follow-ups" value={d.followUps.overdue} label="follow-ups overdue" sub={`${d.followUps.mine} of them yours`} bad={d.followUps.overdue > 0} />}
               {d.walletGiven && <Card to="/admin/commerce/customers" value={rs(d.walletGiven.total)} label="wallet balance owed to customers" sub={`from cashback ${rs(d.walletGiven.cashback)}, refunds ${rs(d.walletGiven.refunds)}`} />}
             </div>
             <div className="a-grid2">

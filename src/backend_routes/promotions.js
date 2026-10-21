@@ -159,11 +159,11 @@ async function goodsValue(q, orderId) {
 
 /** work out and credit the cashback of a delivered order (once) -> amount */
 async function creditCashback(q, orderId, empId) {
-  const [[o]] = await q.query(`SELECT order_id, order_no, customer_id, price_list, status, cashback_amount, DATE_FORMAT(CONVERT_TZ(delivered_at, '+00:00', '+05:30'), '%Y-%m-%d') AS delivered_on
-      FROM orders WHERE order_id = ? FOR UPDATE`, [orderId]);
+  const [[o]] = await q.query(`SELECT o.order_id, o.order_no, o.customer_id, c.type_key, o.status, o.cashback_amount, DATE_FORMAT(CONVERT_TZ(o.delivered_at, '+00:00', '+05:30'), '%Y-%m-%d') AS delivered_on
+      FROM orders o JOIN customers c ON c.customer_id = o.customer_id WHERE o.order_id = ? FOR UPDATE`, [orderId]);
   if (!o || o.status !== 'delivered' || o.cashback_amount !== null) return 0;
   const base = await goodsValue(q, orderId);
-  const rule = await cashbackRule(q, o.price_list, o.delivered_on);
+  const rule = await cashbackRule(q, o.type_key, o.delivered_on); // the customer type's rule (not its price list)
   let amount = 0;
   if (rule && base > 0 && base >= Number(rule.min_order)) {
     amount = round2(base * (Number(rule.pct) / 100));

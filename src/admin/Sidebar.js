@@ -33,6 +33,7 @@ export const GROUPS = [
       item('commerce/my-trips', 'My trips', 'delivery', 'towns'),
       item('commerce/returns', 'Returns', 'returns', 'leads'),
       item('commerce/customers', 'Customers', 'customers', 'users'),
+      item('commerce/follow-ups', 'My follow-ups', 'customers', 'leads'),
       item('commerce/promotions', 'Promotions', 'promotions', 'options'),
       item('commerce/prices', 'Products and prices', 'products', 'sheet'),
       item('commerce/skus', 'SKUs and labels', 'inventory', 'ruler'),

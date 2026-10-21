@@ -55,7 +55,7 @@ const HELD = { approval: 'is waiting for approval', cancelled: 'is cancelled' };
 const TERMS = { cod: 'Pay on delivery', advance: 'Paid in advance', credit: 'On credit' };
 const MODES = { cash: 'Cash', upi: 'UPI', bank: 'Bank transfer', cheque: 'Cheque', razorpay: 'Razorpay (manual)' };
 const PAYMENT_STATUS = { unpaid: 'Unpaid', partly_paid: 'Part paid', paid: 'Paid', part_refunded: 'Part refunded', refunded: 'Refunded' };
-const HOLD_KINDS = ['price_below_list', 'over_available', 'credit_order', 'discount'];
+const HOLD_KINDS = ['price_below_list', 'over_available', 'credit_order', 'discount', 'customer_hold'];
 const EDITABLE = { approval: 'free', new: 'free', packing: 'reason', packed: 'reason' };
 const round2 = (n) => Math.round(n * 100) / 100;
 // An invoice is overdue when its order still owes money after the due date (issue day + the credit days); a pay-on-
@@ -162,8 +162,8 @@ function checkAddress(raw, which) {
   return { values: v };
 }
 
-/** the customer's address as the default billing / shipping address */
-const customerAddress = (c) => ({ name: c.business_name || c.name, gstin: c.gstin || null, address: c.address, town: c.town, state_code: c.state_code || '33', pincode: c.pincode || null, phone: c.phone });
+/** a customer address (phase 8, customer_addresses) as an order address */
+const fromAddress = (a) => (a ? { name: a.name, gstin: a.gstin || null, address: a.address, town: a.town, state_code: a.state_code, pincode: a.pincode, phone: a.phone } : null);
 
 /** overdue invoices of a customer -> { n, amount } */
 async function overdueOf(q, customerId) {
@@ -189,8 +189,11 @@ async function outstandingOf(q, customerId, exceptOrderId = 0) {
 async function prepare(q, data, opts = {}) {
   const editing = opts.order || null;
   const customerId = editing ? editing.customer_id : Number(data.customer_id);
-  const [[cust]] = await q.query('SELECT customer_id, name, business_name, phone, gstin, address, town, state_code, pincode, credit_days, credit_limit FROM customers WHERE customer_id = ?', [customerId]);
+  const [[cust]] = await q.query(`SELECT customer_id, customer_no, name, business_name, phone, type_key, status, hold_reason, credit_days, credit_limit, merged_into
+      FROM customers WHERE customer_id = ?`, [customerId]);
   if (!cust) throw new CommerceError('Choose a customer');
+  if (cust.merged_into) throw new CommerceError(`${cust.customer_no} was merged into another customer: choose that one`);
+  if (cust.status === 'inactive' && !editing && !opts.replacement) throw new CommerceError(`${cust.name} is inactive: no new orders (Customers: make it active first)`);
   const terms = String(data.payment_terms || (editing ? editing.payment_terms : 'cod'));
   if (!TERMS[terms]) throw new CommerceError('Choose the payment terms: pay on delivery, paid in advance or on credit');
 
@@ -241,7 +244,7 @@ async function prepare(q, data, opts = {}) {
   });
   // automatic offers: slab % on the line, buy X get Y = free lines (their stock counts like any line)
   const offers = opts.replacement ? { lines: lines.map((l) => ({ ...l, offer_id: null, offer_label: null, offer_discount: 0 })), free: [], applied: [] }
-    : await promotions.applyOffers(q, list.key, opts.priceDate || pricing.istToday(), lines);
+    : await promotions.applyOffers(q, cust.type_key, opts.priceDate || pricing.istToday(), lines); // offers follow the customer type, not its price list
   const freeLines = [];
   if (offers.free.length) {
     const [fi] = await q.query(`SELECT s.sku_code, p.gst_rate, p.hsn_code, p.category_key FROM skus s JOIN products p ON p.product_id = s.product_id WHERE s.sku_code IN (?)`, [offers.free.map((f) => f.sku_code)]);
@@ -268,9 +271,25 @@ async function prepare(q, data, opts = {}) {
   if (problems.length) throw new CommerceError(problems.join('. '));
 
   // addresses and GST type
-  const base = customerAddress(cust);
-  const prevBill = editing ? { name: editing.bill_name, gstin: editing.bill_gstin, address: editing.bill_address, town: editing.bill_town, state_code: editing.bill_state_code, pincode: editing.bill_pincode, phone: editing.bill_phone } : base;
-  const prevShip = editing ? { name: editing.ship_name, address: editing.ship_address, town: editing.ship_town, state_code: editing.ship_state_code, pincode: editing.ship_pincode, phone: editing.ship_phone } : base;
+  // the customer's billing and shipping addresses (phase 8): the ones chosen, else the defaults; typed changes on top
+  const [addrs] = await q.query(`SELECT address_id, kind, name, gstin, contact_person, phone, address, town, state_code, pincode, delivery_area_id, is_default
+      FROM customer_addresses WHERE customer_id = ? AND is_active = 1 ORDER BY is_default DESC, address_id`, [customerId]);
+  const pick = (kind, wanted, had) => {
+    const id = wanted !== undefined && wanted !== '' && wanted !== null ? Number(wanted) : had || null;
+    if (id) {
+      const a = addrs.find((x) => x.address_id === id && x.kind === kind);
+      if (!a) throw new CommerceError(`That ${kind} address is not one of ${cust.name}'s`);
+      return a;
+    }
+    return addrs.find((x) => x.kind === kind) || null;
+  };
+  const billAddr = pick('billing', data.bill_address_id, editing ? editing.bill_address_id : null);
+  const shipAddr = pick('shipping', data.ship_address_id, editing ? editing.ship_address_id : null);
+  const chose = (k) => data[`${k}_address_id`] !== undefined && data[`${k}_address_id`] !== '' && (!editing || Number(data[`${k}_address_id`]) !== Number(editing[`${k}_address_id`]));
+  const prevBill = editing && !chose('bill') ? { name: editing.bill_name, gstin: editing.bill_gstin, address: editing.bill_address, town: editing.bill_town, state_code: editing.bill_state_code, pincode: editing.bill_pincode, phone: editing.bill_phone }
+    : fromAddress(billAddr) || { name: cust.business_name || cust.name, phone: cust.phone, state_code: '' };
+  const prevShip = editing && !chose('ship') ? { name: editing.ship_name, address: editing.ship_address, town: editing.ship_town, state_code: editing.ship_state_code, pincode: editing.ship_pincode, phone: editing.ship_phone }
+    : fromAddress(shipAddr) || prevBill;
   const bill = checkAddress(data.bill ? { ...prevBill, ...data.bill } : prevBill, 'bill');
   if (bill.error) throw new CommerceError(bill.error);
   const ship = checkAddress(data.ship ? { ...prevShip, ...data.ship } : prevShip, 'ship');
@@ -282,7 +301,7 @@ async function prepare(q, data, opts = {}) {
   const methodId = data.delivery_method_id !== undefined && data.delivery_method_id !== '' ? Number(data.delivery_method_id) : editing ? editing.delivery_method_id : null;
   const method = await deliveryMethod(q, methodId);
   if (!method) throw new CommerceError('Choose the delivery method');
-  const areaWanted = data.delivery_area_id !== undefined ? data.delivery_area_id : editing ? editing.delivery_area_id : '';
+  const areaWanted = data.delivery_area_id !== undefined && data.delivery_area_id !== '' ? data.delivery_area_id : editing && !chose('ship') ? editing.delivery_area_id : shipAddr && shipAddr.delivery_area_id ? shipAddr.delivery_area_id : '';
   const goodsAfterOffers = round2(offers.lines.reduce((a, l) => a + l.qty * l.price - l.offer_discount, 0));
   const delivery = method.kind === 'pickup' ? { area: null, charge: 0 } : await deliveryCharge(q, ship.values, goodsAfterOffers, areaWanted === '' || areaWanted === null ? null : Number(areaWanted));
   if (opts.replacement) delivery.charge = 0;
@@ -292,7 +311,7 @@ async function prepare(q, data, opts = {}) {
   let coupon = null;
   if (couponCode && !opts.replacement) {
     try {
-      coupon = await promotions.evalCoupon(q, couponCode, { customerId, typeKey: list.key, lines: offers.lines.map((l) => ({ sku_code: l.sku_code, category_key: l.category_key, net: round2(l.qty * l.price - l.offer_discount) })),
+      coupon = await promotions.evalCoupon(q, couponCode, { customerId, typeKey: cust.type_key, lines: offers.lines.map((l) => ({ sku_code: l.sku_code, category_key: l.category_key, net: round2(l.qty * l.price - l.offer_discount) })),
         goods: goodsAfterOffers, deliveryCharge: delivery.charge, orderId: editing ? editing.order_id : 0, hasOffers: offers.applied.length > 0, settings, lock: !opts.preview });
     } catch (e) { if (e instanceof promotions.PromoError) throw new CommerceError(e.message, e.status); throw e; }
   }
@@ -335,6 +354,9 @@ async function prepare(q, data, opts = {}) {
 
   // what holds the order
   const holds = [];
+  if (!opts.replacement && opts.isNew && cust.status === 'on_hold') {
+    holds.push({ kind: 'customer_hold', amount: null, what: `${cust.customer_no} is on hold${cust.hold_reason ? ` (${cust.hold_reason})` : ''}` });
+  }
   if (!opts.replacement && discountTotal > 0 && await approvals.needed(q, 'discount', { pct: discountPct })) {
     holds.push({ kind: 'discount', amount: discountTotal, what: `discounts ${rs(discountTotal)} = ${discountPct}% of the goods (${[t.offer_discount ? `offers ${rs(t.offer_discount)}` : null,
       t.discount ? `coupon ${coupon.code} ${rs(t.discount)}` : null, t.manual_discount ? `manual ${rs(t.manual_discount)}: ${manualReason}` : null].filter(Boolean).join(', ')}); limit ${Number(settings.approve_discount_pct_above)}%` });
@@ -364,6 +386,7 @@ async function prepare(q, data, opts = {}) {
   }
   return { cust, list, terms, creditDays: Number(cust.credit_days) || 0, lines: t.lines, totals: t, coupon: coupon ? coupon.code : null, couponInfo: coupon, offers: offers.applied,
     manualReason, walletUsed, walletGst: walletUsed > 0 ? walletGst : null, walletCap, walletPlan, discountTotal, discountPct, deliveryWaived: waived,
+    billAddressId: chose('bill') || !editing ? (billAddr ? billAddr.address_id : null) : editing.bill_address_id, shipAddressId: chose('ship') || !editing ? (shipAddr ? shipAddr.address_id : null) : editing.ship_address_id,
     bill: bill.values, ship: ship.values, pos, gstType, holds, settings, method, area: delivery.area };
 }
 
@@ -468,8 +491,8 @@ async function insertLines(q, orderId, lines) {
     );
   }
 }
-const addrCols = (p) => [p.bill.name, p.bill.gstin, p.bill.address, p.bill.town, p.bill.state_code, p.bill.pincode, p.bill.phone,
-  p.ship.name, p.ship.address, p.ship.town, p.ship.state_code, p.ship.pincode, p.ship.phone];
+const addrCols = (p) => [p.bill.name, p.bill.gstin, p.bill.address, p.bill.town, p.bill.state_code, p.bill.pincode, p.bill.phone, p.billAddressId,
+  p.ship.name, p.ship.address, p.ship.town, p.ship.state_code, p.ship.pincode, p.ship.phone, p.shipAddressId];
 
 /**
  * New order (q inside a transaction). opts.replacement: a free replacement (no quantity / stock / approval rules);
@@ -484,11 +507,11 @@ async function createOrder(q, data, empId, opts = {}) {
   const status = p.holds.length ? 'approval' : 'new';
   const [ins] = await q.query(
     `INSERT INTO orders (order_no, customer_id, price_list, status, payment_terms, credit_days, delivery_method_id, delivery_kind, delivery_area_id,
-       bill_name, bill_gstin, bill_address, bill_town, bill_state_code, bill_pincode, bill_phone,
-       ship_name, ship_address, ship_town, ship_state_code, ship_pincode, ship_phone, place_of_supply, gst_type,
+       bill_name, bill_gstin, bill_address, bill_town, bill_state_code, bill_pincode, bill_phone, bill_address_id,
+       ship_name, ship_address, ship_town, ship_state_code, ship_pincode, ship_phone, ship_address_id, place_of_supply, gst_type,
        coupon_code, subtotal, discount, offer_discount, manual_discount, manual_discount_reason, delivery_charge, delivery_gst, delivery_waived, taxable, cgst, sgst, igst, gst, round_off, total,
        wallet_used, wallet_discount, wallet_gst, amount_due, note, emp_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [orderNo, p.cust.customer_id, p.list.key, status, p.terms, p.creditDays, p.method.method_id, p.method.kind, p.area ? p.area.area_id : null, ...addrCols(p), p.pos, p.gstType,
       p.coupon, t.subtotal, t.discount, t.offer_discount, t.manual_discount, p.manualReason, t.delivery_charge, t.delivery_gst, p.deliveryWaived, t.taxable, t.cgst, t.sgst, t.igst, t.gst, t.round_off, t.total,
       p.walletUsed, t.wallet_discount, p.walletGst, round2(t.total - (p.walletUsed - t.wallet_discount)), data.note ? String(data.note).slice(0, 255) : null, empId]
@@ -545,8 +568,8 @@ async function previewOrder(q, data, empId, opts = {}) {
 }
 
 const ORDER_COLS = `order_id, order_no, customer_id, status, payment_terms, credit_days, delivery_method_id, delivery_area_id, coupon_code, wallet_used, version, total,
-  bill_name, bill_gstin, bill_address, bill_town, bill_state_code, bill_pincode, bill_phone,
-  ship_name, ship_address, ship_town, ship_state_code, ship_pincode, ship_phone`;
+  bill_name, bill_gstin, bill_address, bill_town, bill_state_code, bill_pincode, bill_phone, bill_address_id,
+  ship_name, ship_address, ship_town, ship_state_code, ship_pincode, ship_phone, ship_address_id`;
 
 /**
  * Edit an order (q inside a transaction). data as createOrder + { version, reason }. Packed needs a reason; the stock is
@@ -581,8 +604,8 @@ async function updateOrder(q, orderNo, data, empId, opts = {}) {
   if (o.status === 'packed') status = 'packing'; // the packer checks it again
   await q.query(
     `UPDATE orders SET status = ?, payment_terms = ?, delivery_method_id = ?, delivery_kind = ?, delivery_area_id = ?,
-       bill_name = ?, bill_gstin = ?, bill_address = ?, bill_town = ?, bill_state_code = ?, bill_pincode = ?, bill_phone = ?,
-       ship_name = ?, ship_address = ?, ship_town = ?, ship_state_code = ?, ship_pincode = ?, ship_phone = ?, place_of_supply = ?, gst_type = ?,
+       bill_name = ?, bill_gstin = ?, bill_address = ?, bill_town = ?, bill_state_code = ?, bill_pincode = ?, bill_phone = ?, bill_address_id = ?,
+       ship_name = ?, ship_address = ?, ship_town = ?, ship_state_code = ?, ship_pincode = ?, ship_phone = ?, ship_address_id = ?, place_of_supply = ?, gst_type = ?,
        coupon_code = ?, subtotal = ?, discount = ?, offer_discount = ?, manual_discount = ?, manual_discount_reason = ?, delivery_charge = ?, delivery_gst = ?, delivery_waived = ?,
        taxable = ?, cgst = ?, sgst = ?, igst = ?, gst = ?, round_off = ?, total = ?, wallet_used = ?, wallet_discount = ?, wallet_gst = ?,
        note = ?, version = version + 1, updated_by = ?, updated_at = UTC_TIMESTAMP() WHERE order_id = ?`,

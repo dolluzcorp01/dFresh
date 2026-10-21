@@ -361,7 +361,9 @@ const blankLine = () => ({ sku_code: '', qty: 1, unit: 'pack', price: '', auto: 
 const fromOrder = (o, which) => (which === 'bill'
   ? { name: o.bill_name, gstin: o.bill_gstin || '', address: o.bill_address || '', town: o.bill_town || '', state_code: o.bill_state_code, pincode: o.bill_pincode || '', phone: o.bill_phone || '' }
   : { name: o.ship_name, address: o.ship_address || '', town: o.ship_town || '', state_code: o.ship_state_code, pincode: o.ship_pincode || '', phone: o.ship_phone || '' });
-const fromCustomer = (c) => ({ name: c.business_name || c.name, gstin: c.gstin || '', address: c.address || '', town: c.town || '', state_code: c.state_code || '33', pincode: c.pincode || '', phone: c.phone || '' });
+/** a customer address (phase 8) as the form's address fields */
+const fromAddress = (a) => ({ name: a.name, gstin: a.gstin || '', address: a.address || '', town: a.town || '', state_code: a.state_code, pincode: a.pincode || '', phone: a.phone || '' });
+const addrLabel = (a) => `${a.label || a.name}${a.gstin ? ` - GSTIN ${a.gstin}` : ''} (${a.town || ''} ${a.state_code})${a.is_default ? ' - default' : ''}`;
 
 /** New order (no `order`) or Edit order (`order` = the order's detail). */
 function OrderForm({ order = null, onClose, onSaved }) {
@@ -373,7 +375,8 @@ function OrderForm({ order = null, onClose, onSaved }) {
   const [lines, setLines] = useState(() => (editing ? order.items.map((i) => ({ sku_code: i.sku_code, qty: i.qty, unit: 'pack', price: Number(i.list_price) === Number(i.price) ? '' : String(Number(i.price)), auto: Number(i.list_price) === Number(i.price) })) : [blankLine()]));
   const [bill, setBill] = useState(editing ? fromOrder(order, 'bill') : null);
   const [ship, setShip] = useState(editing ? fromOrder(order, 'ship') : null);
-  const [sameShip, setSameShip] = useState(!editing);
+  const [billId, setBillId] = useState(editing && order.bill_address_id ? String(order.bill_address_id) : '');
+  const [shipId, setShipId] = useState(editing && order.ship_address_id ? String(order.ship_address_id) : '');
   const [coupon, setCoupon] = useState(editing ? order.coupon_code || '' : '');
   const [couponApplied, setCouponApplied] = useState(editing ? order.coupon_code || '' : '');
   const [manual, setManual] = useState(editing && Number(order.manual_discount) ? { amount: String(Number(order.manual_discount)), reason: order.manual_discount_reason || '' } : { amount: '', reason: '' });
@@ -390,11 +393,24 @@ function OrderForm({ order = null, onClose, onSaved }) {
   const skuMap = useMemo(() => new Map(((f && f.skus) || []).map((s) => [s.sku_code, s])), [f]);
   const customer = f && f.customers.find((c) => String(c.customer_id) === String(customerId));
   // a new order takes the customer's address (both); the form keeps what was typed afterwards
-  useEffect(() => { if (!editing && customer) { setBill(fromCustomer(customer)); setShip(fromCustomer(customer)); setSameShip(true); } }, [customerId, Boolean(customer)]); // eslint-disable-line react-hooks/exhaustive-deps
+  // a new order takes the customer's default billing and shipping address (phase 8: one of each kind, chosen below)
+  const billAddrs = customer ? customer.addresses.filter((a) => a.kind === 'billing') : [];
+  const shipAddrs = customer ? customer.addresses.filter((a) => a.kind === 'shipping') : [];
+  useEffect(() => {
+    if (editing || !customer) return;
+    const b = billAddrs[0]; const sh = shipAddrs[0];
+    setBillId(b ? String(b.address_id) : ''); setShipId(sh ? String(sh.address_id) : '');
+    setBill(b ? fromAddress(b) : { name: customer.business_name || customer.name, gstin: '', address: '', town: '', state_code: '33', pincode: '', phone: customer.phone });
+    setShip(sh ? fromAddress(sh) : b ? { ...fromAddress(b), gstin: '' } : null);
+  }, [customerId, Boolean(customer)]); // eslint-disable-line react-hooks/exhaustive-deps
+  const chooseAddr = (kind, idv) => {
+    const a = customer.addresses.find((x) => String(x.address_id) === idv);
+    if (kind === 'billing') { setBillId(idv); if (a) setBill(fromAddress(a)); } else { setShipId(idv); setAreaId(''); if (a) setShip(fromAddress(a)); }
+  };
   const listKey = customer ? customer.list_key : 'default';
   const list = f ? f.lists.find((l) => l.key === listKey) || { key: 'default', label: 'Default' } : null;
   const inclusive = Boolean(f && f.basis.inclusive);
-  const shipTo = sameShip ? bill : ship;
+  const shipTo = ship || bill;
   const gstType = shipTo && f && shipTo.state_code === f.sellerState ? 'intra' : 'inter';
   const rows = lines.map((l) => {
     const sku = skuMap.get(l.sku_code.trim().toUpperCase());
@@ -430,7 +446,7 @@ function OrderForm({ order = null, onClose, onSaved }) {
     payment_terms: terms, note, coupon_code: couponApplied.trim().toUpperCase() || null, wallet_use: Number(wallet) || 0,
     manual_discount: manual.amount, manual_discount_reason: manual.reason,
     items: rows.filter((r) => r.l.sku_code && r.sku).map((r) => ({ sku_code: r.l.sku_code.trim().toUpperCase(), qty: r.packs, price: r.l.auto ? '' : r.l.price })),
-    bill, ship: sameShip ? { ...bill } : ship, override_stock: override, delivery_method_id: method ? method.method_id : '', delivery_area_id: areaId,
+    bill, ship: ship || { ...bill }, bill_address_id: billId, ship_address_id: shipId, override_stock: override, delivery_method_id: method ? method.method_id : '', delivery_area_id: areaId,
   });
   const ready = Boolean(customerId && bill && bill.name && rows.some((r) => r.sku) && !rows.some((r) => r.problem));
   const key = ready ? JSON.stringify({ ...body(), customer_id: customerId }) : '';
@@ -498,13 +514,13 @@ function OrderForm({ order = null, onClose, onSaved }) {
               <label className="a-field"><span>Customer <button type="button" className="a-link a-newcust" onClick={() => setAddingCustomer(true)}>+ New customer</button></span>
                 <select value={customerId} aria-label="Customer" onChange={(e) => { setCustomerId(e.target.value); setWallet(''); }}>
                   <option value="">Choose...</option>
-                  {f.customers.map((c) => <option key={c.customer_id} value={c.customer_id}>{c.name} - {c.ctype}{c.town ? `, ${c.town}` : ''} ({c.phone}){c.overdue ? ' - OVERDUE' : ''}</option>)}
+                  {f.customers.map((c) => <option key={c.customer_id} value={c.customer_id}>{c.customer_no} {c.name} - {c.ctype}{c.town ? `, ${c.town}` : ''} ({c.phone}){c.status === 'on_hold' ? ' - ON HOLD' : ''}{c.overdue ? ' - OVERDUE' : ''}</option>)}
                 </select>
               </label>
             )}
             {addingCustomer && <NewCustomerDrawer onClose={() => setAddingCustomer(false)} onSaved={(c) => pickCustomer(c.customer_id)} onOpenExisting={pickCustomer} />}
             {customer && (
-              <p className="a-muted a-custline">Price list: <b>{list.label}</b>. Credit: {customer.credit_limit > 0 ? `${customer.credit_days} days, limit ${rs(customer.credit_limit)}` : 'none'}; owes {rs(customer.outstanding)}
+              <p className="a-muted a-custline">Price list: <b>{list.label}</b>{customer.own_list ? ' (its own, not its type\'s)' : ''}. Credit: {customer.credit_limit > 0 ? `${customer.credit_days} days, limit ${rs(customer.credit_limit)}` : 'none'}; owes {rs(customer.outstanding)}
                 {customer.overdue > 0 && <span className="a-overdue">{customer.overdue} overdue</span>}</p>
             )}
             <div className="a-grid2">
@@ -514,11 +530,19 @@ function OrderForm({ order = null, onClose, onSaved }) {
               <label className="a-field"><span>Note</span><input value={note} maxLength={255} onChange={(e) => setNote(e.target.value)} placeholder="e.g. WhatsApp order, deliver before 10 am" /></label>
             </div>
             {creditOver && <Notice kind="warn">Over the credit limit: {rs(customer.outstanding)} open + this order {rs(thisDue)} &gt; {rs(customer.credit_limit)}. It waits for approval.</Notice>}
+            {customer && customer.status === 'on_hold' && <Notice kind="warn">{customer.name} is on hold{customer.hold_reason ? `: ${customer.hold_reason}` : ''}. A new order waits for approval.</Notice>}
             {overdueHold && <Notice kind="warn">{customer.name} has {customer.overdue} overdue invoice{customer.overdue === 1 ? '' : 's'}: a new order waits for approval.</Notice>}
             {bill && (
               <>
-                <div className="a-addr">{addr(bill, setBill, 'bill')}{!sameShip && addr(ship, setShip, 'ship')}</div>
-                <label className="a-inline"><input type="checkbox" checked={sameShip} onChange={(e) => { setSameShip(e.target.checked); if (!e.target.checked) setShip({ ...bill }); }} /> Ship to the billing address</label>
+                {customer && (
+                  <div className="a-grid2">
+                    <label className="a-field"><span>Bill to (its GSTIN goes on the invoice)</span>
+                      <select value={billId} aria-label="Billing address" onChange={(e) => chooseAddr('billing', e.target.value)}>{billAddrs.map((a) => <option key={a.address_id} value={a.address_id}>{addrLabel(a)}</option>)}</select></label>
+                    <label className="a-field"><span>Ship to (the GST follows this state)</span>
+                      <select value={shipId} aria-label="Shipping address" onChange={(e) => chooseAddr('shipping', e.target.value)}>{shipAddrs.map((a) => <option key={a.address_id} value={a.address_id}>{addrLabel(a)}</option>)}</select></label>
+                  </div>
+                )}
+                <div className="a-addr">{addr(bill, setBill, 'bill')}{ship && addr(ship, setShip, 'ship')}</div>
                 <p className="a-gst">GST: {gstType === 'intra' ? `CGST + SGST (${stateName(shipTo.state_code)}, the seller's state)` : `IGST (${stateName(shipTo.state_code)} is another state)`}</p>
                 <div className="a-grid2">
                   <label className="a-field"><span>Delivery</span>

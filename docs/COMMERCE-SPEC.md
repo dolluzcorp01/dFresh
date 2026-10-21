@@ -342,6 +342,37 @@ Commerce > Promotions (Coupons, Offers, Cashback, Wallets), New order, Customers
   waived, wallet as discount), cashback credited / used / expired / reversed, wallet balance owed to customers now
   (by source, what expires within 30 days, the largest balances).
 
+### 5.5d Built in phase 8 (customers)
+Migration `20261021_commerce_customers.sql` (replaces the demo customers table), logic `src/backend_routes/customers.js`,
+Excel `customer-excel.js`, screens Commerce > Customers (list, drawer: `CustomerDrawer.js`), My follow-ups, New order.
+- CUS-0001 numbers (number series `CUS`, setting `customer_prefix`; never DFC, the credit note series). Type from the
+  customer types; status Active / On hold (a new order waits for the `customer_hold` approval) / Inactive (no new
+  orders); a sales owner (admin user). Setting `own_customers_only` (default off) with `own_customers_role_ids`
+  (default Sales): those roles see only the customers they own and those customers' orders (list, drawer, order list,
+  order detail, New order, preview; 403 otherwise).
+- `customer_addresses`: billing addresses each with their own GSTIN, which must belong to their state (B2B branches);
+  shipping addresses with contact person, phone and delivery area; one default of each kind. An order picks one
+  billing and one shipping address (`orders.bill_address_id`, `ship_address_id`; the order keeps its own snapshot);
+  the GST type follows the shipping state; the invoice shows the chosen billing GSTIN.
+- `customer_contacts` (role, phone, e-mail, WhatsApp, gets invoices). `customer_activity` (calls, WhatsApp, visits,
+  mails, notes with date and who) on a timeline with the lead, orders, payments, returns, wallet and follow-ups.
+  `follow_ups` (assignee, due date, done with an outcome / snooze); My follow-ups; Operations card "follow-ups overdue".
+- `customer_tags`, filters (type, status, town, tag, owner, no order in N days, owing at least, wallet at least) and
+  `customer_segments` (saved filters).
+- A price list of its own (`customers.price_list`) through the `price_list` approval (setting `approve_price_list`);
+  offers, coupons and cashback still follow the customer type.
+- Statement of account: invoices and refunds (debit), payments, wallet used as payment, credit notes (credit), refunds
+  to the wallet (debit), running balance, opening balance for a period; ageing of what is open by invoice date
+  0-30 / 31-60 / 61-90 / 90+; print / PDF.
+- Duplicates: the same mobile (last 10 digits), e-mail or GSTIN (any billing address) is refused on create, edit and
+  import with that customer named; Merge duplicates (pairs by phone, e-mail, GSTIN or name) moves orders, addresses,
+  contacts, wallet, coupon uses, activity, follow-ups and tags to the kept customer through the `customer_merge`
+  approval; the merged one becomes inactive (`merged_into`), audited.
+- Leads: Convert to customer fills the billing and shipping address (GSTIN from a distributor form), the contact
+  person and the owner (the lead's assignee); the customer shows the lead with its form, status, message and products.
+- Excel export of the filtered list (default addresses) and import: dry run first, Apply only that file with 0 errors;
+  new rows create customers, rows with Customer_no change them, with the drawer's checks (and duplicates between rows).
+
 ### 5.6 Approval
 `pending` -> `approved` (the action runs) / `rejected` / `expired` / `withdrawn` (by the requester).
 

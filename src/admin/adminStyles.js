@@ -463,6 +463,14 @@ td.a-pending { background: #fff8e1; box-shadow: inset 3px 0 0 #e3b44f; }
 .a-freeline td { background: #f0f8f1; }
 .a-cashback { background: #fff8dc; border-radius: 8px; padding: 8px 10px; }
 .a-offrow td { color: var(--a-ink2); background: #faf9f5; }
+.a-tag { display: inline-block; background: #f1ede1; color: var(--a-ink2); border-radius: 999px; padding: 1px 8px; font-size: 12px; margin: 0 4px 2px 0; }
+.a-custhead { margin: 0 0 8px; }
+.a-timeline { list-style: none; padding: 0; margin: 10px 0; display: grid; gap: 6px; }
+.a-timeline li { border-inline-start: 3px solid var(--a-line); padding: 4px 10px; font-size: 14px; overflow-wrap: anywhere; }
+.a-timeline .a-tl-activity { border-color: var(--a-gold); background: #fffbea; }
+.a-timeline .a-tl-order, .a-timeline .a-tl-payment { border-color: #0b4f8a; }
+.a-timeline .a-tl-return, .a-timeline .a-tl-wallet { border-color: #6b675e; }
+.a-tl-when { color: var(--a-muted); font-size: 12px; }
 .a-wallet h3 { margin: 0; }
 .a-stop-head { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
 .a-stop-meta { font-size: 13px; }

@@ -1,5 +1,5 @@
 // dFresh Commerce (DEMO, branch `commerce`, database dfresh_commerce): SKU and barcode.
-// One SKU per product / colour version and pack size (database/demo/commerce-demo-schema.sql). The barcode is the
+// One SKU per product / colour version and pack size (migration 20261020_commerce_pricing.sql). The barcode is the
 // SKU printed as Code 128 (JsBarcode). "Scan / search SKU": a USB scanner types the code and Enter, like a keyboard.
 // Print labels: a label sheet (A4, 3 x 8) in a new window, printed or saved as PDF from the browser. Three kinds, the
 // scan formats of the pack check and the return receiving (phase 5 / 6): pack labels (SKU), carton labels (SKU#C =

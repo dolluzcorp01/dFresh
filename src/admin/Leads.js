@@ -209,11 +209,11 @@ function LeadDrawer({ id, onClose, onChanged }) {
     lead.reload();
   }, 'Queued again');
 
-  // Commerce demo: the lead becomes a customer (once; a second click opens the same one)
+  // Commerce: the lead becomes a customer (once; a second click opens the same one) with its address and contact person
   const goTo = useNavigate();
   const convert = () => act.run(async () => {
     const r = await api.send('POST', `/commerce/customers/from-lead/${id}`);
-    act.setMsg({ kind: 'ok', text: r.existed ? `Already a customer: ${r.name}. Opening it.` : `Customer created: ${r.name} (${r.ctype}). Opening it.` });
+    act.setMsg({ kind: 'ok', text: r.existed ? `Already a customer: ${r.customer_no} ${r.name}. Opening it.` : `Customer ${r.customer_no} created: ${r.name} (${r.type_key}), with its address and contact person. Opening it.` });
     setTimeout(() => goTo(`/admin/commerce/customers?open=${r.customer_id}`), 900);
   });
   // Admin only (test leads before launch, junk): asks first; the sheet row, if already written, stays in the sheet.
