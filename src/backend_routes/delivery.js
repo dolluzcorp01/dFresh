@@ -20,7 +20,7 @@ const { audit } = require('./audit');
 const commerce = require('./commerce');
 const commerceSettings = require('./commerce-settings');
 const notifications = require('./notifications');
-const { imageType } = require('./photo-check');
+const { storable } = require('./photo-check');
 const crypto = require('crypto');
 const returns = require('./returns');
 const stock = require('./stock');
@@ -307,10 +307,10 @@ async function stopDelivered(q, stopId, b, photo, empId, office) {
   const name = String(b.receiver_name || '').trim().slice(0, 120);
   if (!name) throw new DeliveryError('Who received it? (name)');
   if (st.otp && String(b.otp || '').trim() !== st.otp) throw Object.assign(new DeliveryError('The OTP does not match: ask the customer for the 4-digit code'), { otpWrong: true });
-  const type = photo ? imageType(photo) : null;
-  if (photo && !type) throw new DeliveryError('Photo: a JPEG, PNG or WebP picture');
+  const pic = photo ? await storable(photo) : null; // checked by its bytes and made small (photo-check.js)
+  if (photo && !pic) throw new DeliveryError('Photo: a JPEG, PNG or WebP picture');
   await q.query("UPDATE trip_stops SET status = 'delivered', receiver_name = ?, photo = ?, photo_type = ?, done_by = ?, done_at = UTC_TIMESTAMP() WHERE stop_id = ?",
-    [name, photo ? photo.buffer : null, type, empId, stopId]);
+    [name, pic ? pic.buffer : null, pic ? pic.mimetype : null, empId, stopId]);
   const o = await lockOrder(q, st.order_no, ['out_for_delivery']);
   await commerce.setStatus(q, o, 'delivered', empId, `Received by ${name} (trip T-${t.trip_id})${photo ? ', photo' : ''}`, { received_by: name, delivery_attempts: (await attempts(q, o.order_id)) + 1 });
   return { stop_id: stopId, status: 'delivered' };
@@ -356,9 +356,9 @@ async function stopPickedUp(q, stopId, b, photo, empId, office) {
   if (st.status !== 'pending') throw new DeliveryError(`This stop is ${st.status} already`, 409);
   if (st.kind !== 'pickup') throw new DeliveryError(`${st.order_no} is a delivery, not a return pickup`);
   if (!photo) throw new DeliveryError('Take a photo of the packs picked up');
-  const type = imageType(photo);
-  if (!type) throw new DeliveryError('Photo: a JPEG, PNG or WebP picture');
-  photo = { ...photo, mimetype: type }; // eslint-disable-line no-param-reassign
+  const pic = await storable(photo); // checked by its bytes and made small (photo-check.js)
+  if (!pic) throw new DeliveryError('Photo: a JPEG, PNG or WebP picture');
+  photo = pic; // eslint-disable-line no-param-reassign
   const name = String(b.receiver_name || '').trim().slice(0, 120) || null;
   await q.query("UPDATE trip_stops SET status = 'picked_up', receiver_name = ?, photo = ?, photo_type = ?, done_by = ?, done_at = UTC_TIMESTAMP() WHERE stop_id = ?",
     [name, photo.buffer, photo.mimetype, empId, stopId]);

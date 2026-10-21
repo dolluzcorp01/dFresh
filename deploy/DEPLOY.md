@@ -36,12 +36,12 @@ on the system node; only `dfresh-api` gets node 22, through `--interpreter`.
 |---|---|
 | Release archive (upload, gzip) | ~7 MB each (last 2 kept in `/var/www/dfresh-upload`) |
 | Release unpacked (server code, React build, pre-rendered pages, fonts, migrations, media sources) | ~10 MB |
-| `node_modules`, production only (`npm ci --omit=dev`) | ~120-130 MB |
+| `node_modules`, production only (`npm ci --omit=dev`) | ~120-130 MB (+21 MB with Commerce: pdfkit) |
 | = one release folder | ~140 MB |
 | `/var/www/dfresh.prev` (rollback copy) | ~140 MB |
 | `media/` (images, script fonts, admin uploads) | ~8 MB at launch, grows with uploads |
 | `private/` (brochure PDFs, font state) | < 20 MB |
-| MySQL `dfresh` | ~10-20 MB |
+| MySQL `dfresh` | ~10-20 MB; with Commerce + ~0.3 MB per photo (delivery, return, write-off photos are stored in the database, made small on upload) |
 | Backups, 7 days (database + media + brochures) | ~60-100 MB |
 | **Steady total** | **~0.4 GB** (peak ~0.55 GB for a few minutes during an update) |
 
@@ -165,7 +165,7 @@ for f in $(ls database/migrations/*.sql | sort); do
   echo "== $f"; sudo mysql --default-character-set=utf8mb4 dfresh < "$f" || { echo "FAILED: $f"; break; }
 done
 ```
-The 41 migrations, in the order they must run (tick each; a later update applies only the new ones):
+The 40 migrations, in the order they must run (tick each; a later update applies only the new ones):
 
 - [ ] `20261009_phase3_home_ui_text.sql`
 - [ ] `20261009_phase4_products_ui_text.sql`
@@ -198,36 +198,32 @@ The 41 migrations, in the order they must run (tick each; a later update applies
 - [ ] `20261019_times_to_utc.sql` - every stored time becomes UTC (shifts the existing rows once by this MySQL's
       default offset; a marker row makes a second run a no-op). On a NEW install it simply runs in order. On a
       database that is already LIVE: only with the app stopped, see "One-off: times to UTC" in step 12.
-- [ ] `20261020_commerce_access.sql` - roles and their permissions (Admin, Sub-admin built in; Viewer, Operations,
-      Warehouse, Sales); every admin user gets a role (admin -> Admin, editor -> Sub-admin, viewer -> Viewer)
-- [ ] `20261020_commerce_approvals.sql` - the approvals table (empty)
-- [ ] `20261020_commerce_pricing.sql` - products get `hsn_code` (4818) and `gst_rate` (18); tables `skus`, `sku_prices`
-      (per list and effective date) and `price_changes` (history); no SKUs, no prices
-- [ ] `20261020_commerce_sales.sql` - orders, order lines (tax snapshot), status history, stock reservations,
-      payments, invoices and credit notes (numbers come from `number_series` per financial year); no orders
-- [ ] `20261020_commerce_settings.sql` - Commerce settings with their defaults and lists; `commerce_enabled` = **off**
-      (the commerce screens stay hidden until it is switched on)
+- [ ] `20261021_commerce_01_access.sql` - roles and permissions (Admin, Sub-admin built in; Viewer, Operations,
+      Warehouse, Sales, Delivery); every admin user gets a role (admin -> Admin, editor -> Sub-admin, viewer -> Viewer)
+      and a notification e-mail field (empty = the dAdmin e-mail)
+- [ ] `20261021_commerce_02_settings.sql` - Commerce settings with their defaults (90 rows, 12 "To be confirmed",
+      `commerce_enabled` = **off**), number series, customer types, return reasons, delivery methods, areas, locations
+- [ ] `20261021_commerce_03_approvals.sql` - the approvals table (empty)
+- [ ] `20261021_commerce_04_catalogue.sql` - products get `hsn_code` (4818), `gst_rate` (18) and `track_batches` (on for
+      wet wipes); SKUs, prices per list and date, price history (no SKUs, no prices)
+- [ ] `20261021_commerce_05_stock.sql` - inventory: suppliers, batches, stock-ins, stock movements, reorder levels,
+      write-offs, stock counts (no stock)
+- [ ] `20261021_commerce_06_customers.sql` - customers, addresses (GSTIN per branch), contacts, activity, follow-ups,
+      tags, segments (no customers)
+- [ ] `20261021_commerce_07_orders.sql` - orders, order lines, status history, stock reservations, payments, invoices,
+      credit notes (no orders)
+- [ ] `20261021_commerce_08_delivery.sql` - vehicles, drivers, couriers, picks, pack scans, trips and stops (no trips)
+- [ ] `20261021_commerce_09_returns.sql` - returns, return lines, photos, scans, history, refunds, credit note lines
+- [ ] `20261021_commerce_10_promotions_wallet.sql` - coupons, offers, cashback rules, the wallet (all empty)
+- [ ] `20261021_commerce_11_notifications.sql` - notification templates (EN for every event, TA / HI for the customer
+      events, marked "check the wording"), notification log, daily job runs; mail outbox gets `attachments`
 
-- [ ] `20261020_commerce_ship.sql` - packing and delivery: SKU bin, delivery method kind, vehicles, drivers, couriers,
-      order delivery fields (method, area, charge, AWB, e-way bill, cartons, weight), picks, pack scans, trips and stops,
-      the example role Delivery; no trips
-- [ ] `20261020_commerce_stock.sql` - inventory: stock movements, reorder levels, suppliers, batches (products get
-      `track_batches`, on for wet wipes), stock-ins, write-offs, stock counts, SKU average cost; no stock
-- [ ] `20261021_commerce_customers.sql` - customers (CUS-0001, type, status, owner, own price list, credit terms),
-      billing and shipping addresses (GSTIN per branch), contacts, activity, follow-ups, tags, segments, address ids on
-      orders and the customer foreign key, the customer settings; no customers
-- [ ] `20261021_commerce_reports.sql` - settings only: place of supply rule (B2B billing GSTIN state, to be confirmed by
-      the accountant), slow-moving days
-- [ ] `20261021_commerce_returns.sql` - returns and refunds: returns, return lines, photos, scans, history, refunds,
-      credit note lines, return pickups as trip stops, payment status "part refunded", Warehouse may view returns; no returns
-- [ ] `20261021_commerce_wallet_promotions.sql` - coupons (scope, redemptions), offers (slabs, buy X get Y), cashback
-      rules, the wallet (entries with source and expiry, allocations), order and line discount columns (a free line may
-      repeat a SKU), the promotions settings; no coupons, offers, rules or wallet entries
-- [ ] `20261022_commerce_notifications.sql` - notifications: event on / off and reminder settings, templates (EN for
-      every event, TA / HI for the customer events, marked "check the wording"), notification log, daily job runs,
-      customer language and opt-outs, order contact, staff notification e-mail, mail outbox attachments
+The 11 commerce files replace the 12 of the commerce branch's phases (consolidated on 21 Oct 2026, never applied on
+any database but the `dfresh_commerce` demo): each table in its final shape, no file patches another. Built on a
+copy of the main-state database, they give exactly the schema and defaults of the old set (89 tables, columns, 270
+indexes, 84 foreign keys and every default row compared), plus `trip_stops.otp_fails`.
 
-This exact sequence (schema, seed, 41 migrations) was run on an empty database on 21 Oct 2026 without an error.
+This exact sequence (schema, seed, 40 migrations) was run on an empty database on 21 Oct 2026 without an error.
 `database/demo/` is never applied here: it is demo data for the `dfresh_commerce` copy only.
 
 ```bash
@@ -655,6 +651,11 @@ Restore the database backup (step 13) only if a migration changed or removed dat
 
 `deploy/backup.sh` (in every release) dumps the dfresh database and archives `media/` (all uploads) and
 `private/brochures/` into `/var/backups/dfresh/<date>/`, keeping 7 days (~60-100 MB: the disk is small).
+With Commerce nothing changes here: every Commerce table is in the database dump, and so are the delivery, return
+and write-off photos (stored in the database, ~0.3 MB each after upload); invoices, credit notes and statements are
+built as PDF when needed and never stored. (Checked on 21 Oct 2026: a dump of the commerce demo restored all 89
+tables, the photos, orders, invoices and the Tamil / Hindi templates byte for byte.) Watch the backup size line once
+Commerce is on: about 30 photos a day add ~9 MB a day to each nightly dump.
 ```bash
 cat > ~/.my.cnf <<'EOF'
 [mysqldump]
@@ -676,6 +677,68 @@ Restore: `gunzip -c dfresh.sql.gz | sudo mysql --default-character-set=utf8mb4 d
 
 ---
 
+## 14. Commerce go-live [PC + server + admin]
+
+Commerce goes live in two steps: first the release that HAS Commerce but keeps it switched OFF (the site and the
+admin work exactly as before; Setup gains Approvals, Commerce settings, Notifications and Roles), then, when sir
+approves, Commerce is switched ON in the admin. Nothing of Commerce runs while it is off: its menus are hidden, its
+API answers 404, no notification mail and no daily or hourly job runs.
+
+### A. The release, Commerce off
+1. **[server]** a backup first (step 13), and one kept apart:
+   ```bash
+   KEEP_DAYS=7 APP_DIR=/var/www/dfresh sh /var/www/dfresh/deploy/backup.sh
+   cp -r /var/backups/dfresh/$(date +%F) /var/backups/dfresh/before-commerce
+   ```
+2. **[PC]** `npm run release:pack` on the merged `main` (~7.3 MB; it carries `fonts/pdf` for the PDF documents).
+3. **[server]** "Update" (step 12) with that archive. `npm ci` installs pdfkit (+21 MB). In step 2 of the Update the
+   new migrations are the 11 `20261021_commerce_NN_*.sql`; run them in name order. Then check (read only):
+   ```bash
+   sudo mysql dfresh -e "SELECT (SELECT COUNT(*) FROM roles) roles, (SELECT COUNT(*) FROM commerce_settings) settings,
+     (SELECT value FROM commerce_settings WHERE setting_key = 'commerce_enabled') commerce_on,
+     (SELECT COUNT(*) FROM admin_users WHERE role_id IS NULL) users_without_role,
+     (SELECT GROUP_CONCAT(CONCAT(emp_id, ':', role, '->', role_id)) FROM admin_users) users"
+   #   expect 7 / 90 / 0 / 0; admin -> 1 (Admin), editor -> 2 (Sub-admin), viewer -> 3 (Viewer)
+   ```
+4. **[server]** after the swap: `curl -s -o /dev/null -w '%{http_code}' https://dfresh.us/en` 200, the quick checks
+   of step 9, `pm2 show dfresh-api` (memory: ~75 MB at rest, ~175 MB at the busiest; the restart limit is 350 MB).
+5. **[admin]** sign in: Commerce menu NOT there; Setup > Admin users shows each person's role; Setup > Commerce
+   settings opens. An editor of the old site is now Sub-admin, which can also open the Audit log, delete leads,
+   edit Languages and import the product Excel: give them another role (Setup > Roles) if that is too much.
+
+Rollback of step A: "Rollback to the previous release" (step 12). The previous code ignores the new tables and
+columns (they only add); keep the database as it is. Only a user added or re-roled with the new release would look
+like a viewer to the old code (it reads the old `role` column).
+
+### B. Before switching on [admin, with sir and the accountant]
+- Every **"To be confirmed"** value (docs/SIR-DECISIONS.md): the seller GSTIN (until it is real, every invoice says
+  "DEMO - not a tax invoice"), place of supply rule, prices with or without GST, cashback GST treatment, approver
+  roles and limits, WhatsApp / SMS (stay off: no provider).
+- Invoice: seller name, address, state code 33, invoice and credit note prefixes and the first number; round-off.
+- Delivery: methods, areas and charges (with free-above), vehicles, drivers (link each driver to their admin user:
+  Commerce settings > Drivers, emp_id), couriers with their tracking link.
+- Roles and users: who is Operations, Warehouse, Sales, Delivery; their notification e-mails (Setup > Admin users).
+- Notifications: e-mail on; which events; the daily hour; the Tamil and Hindi texts checked and saved (the "check"
+  mark goes away).
+- Catalogue and stock: SKUs and labels, prices on every list (Products and prices, Excel), opening stock as stock-in
+  with costs, reorder levels, suppliers. Customers: the Excel import, or typed.
+
+### C. Switch on
+Setup > Commerce settings > General > "Commerce back office on" > On > Save (audited). The Commerce menu appears at
+once for the roles that have it; the hourly and daily jobs start on their next run (daily mails from the daily hour).
+First check with an internal test customer: an order, packed, then **cancelled before dispatch** (no invoice
+number is used: invoice numbers are gap-free and a dispatched test would keep its number with a credit note).
+
+### D. Rollback after switching on
+- First choice: switch Commerce **off** again (the same setting). Everything stays in the database, nothing is sent,
+  the site is untouched; switch on again when fixed.
+- Code problem: step 12 rollback to the previous release that has Commerce (or the pre-Commerce one: it ignores
+  the Commerce tables). The data stays.
+- Restoring `before-commerce` (step A1) is the last resort: it takes the WHOLE database back, so every lead, content
+  change, order and invoice made since is lost. Take a fresh dump first.
+
+---
+
 ## How dFresh differs from the other dApps on this server
 
 - Own Node 22 (`/opt/node22/bin/node`) through pm2 `--interpreter`; the system node v18 and the other apps are
@@ -689,7 +752,8 @@ Restore: `gunzip -c dfresh.sql.gz | sudo mysql --default-character-set=utf8mb4 d
 - Exactly ONE pm2 instance: the same process runs the e-mail and Google Sheet outbox worker.
 - The server writes to `media/` (admin uploads, script fonts built at run time) and `private/` (brochures, font state).
 - Its own `JWT_SECRET`: dFresh never reads a dAdmin token; changing it signs out dFresh admins only.
-- dAdmin access is column-limited (10 columns of `dadmin.employee`) plus write access to `dadmin.login_otp` only.
+- dAdmin access is column-limited (10 columns of `dadmin.employee`) plus write access to `dadmin.login_otp` only;
+  Commerce adds nothing there (staff notification mails use `emp_mail_id`, already granted).
 - Search engine indexing is an admin switch (`site_indexing`), not an env variable.
 - Maintenance: the same nginx mechanism as dAssist (error_page + switch file `MAINTENANCE`), with dFresh's own
   page in `/var/www/dfresh/maintenance/`; the switch closes the public pages only (`/admin`, `/api/` stay up).

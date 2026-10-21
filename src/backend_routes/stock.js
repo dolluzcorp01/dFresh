@@ -17,7 +17,7 @@ const { audit } = require('./audit');
 const approvals = require('./approvals');
 const commerceSettings = require('./commerce-settings');
 const pricing = require('./pricing');
-const { imageType } = require('./photo-check');
+const { storable } = require('./photo-check');
 
 const MOVE_LABEL = {
   production: 'Stock in (production)', purchase: 'Stock in (purchase)', out: 'Dispatched', return: 'Back in', damaged: 'Moved to damaged',
@@ -288,8 +288,8 @@ async function requestWriteOff(q, data, empId, photo = null) {
   if (!Number.isInteger(qty) || qty < 1) throw new StockError('Quantity: packs, a whole number from 1');
   if (!type) throw new StockError('Why: damaged, expired, lost or sample');
   if (!reason) throw new StockError('Say what happened');
-  const photoType = photo ? imageType(photo) : null;
-  if (photo && !photoType) throw new StockError('Photo: a JPEG, PNG or WebP picture');
+  const pic = photo ? await storable(photo) : null; // checked by its bytes and made small (photo-check.js)
+  if (photo && !pic) throw new StockError('Photo: a JPEG, PNG or WebP picture');
   let batchId = data.batch_id ? Number(data.batch_id) : null;
   if (Number(s.track_batches) && kind === 'good' && !batchId) throw new StockError('This product is tracked by batch: choose the batch');
   if (batchId) {
@@ -302,7 +302,7 @@ async function requestWriteOff(q, data, empId, photo = null) {
   const needs = await approvals.needed(q, 'write_off', { amount: value || 0, qty });
   const [ins] = await q.query(
     'INSERT INTO write_offs (sku_code, stock_kind, batch_id, qty, reason_type, reason, value, photo, photo_type, status, emp_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    [sku, kind, batchId, qty, type, reason, value, photo ? photo.buffer : null, photoType, 'pending', empId]
+    [sku, kind, batchId, qty, type, reason, value, pic ? pic.buffer : null, pic ? pic.mimetype : null, 'pending', empId]
   );
   const id = ins.insertId;
   await audit(q, { empId, action: 'request', entity: 'write_off', entityId: String(id), after: { sku, qty, kind, batch_id: batchId, type, reason, value, needs_approval: needs, photo: Boolean(photo) } });

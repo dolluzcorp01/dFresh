@@ -18,7 +18,7 @@ const approvals = require('./approvals');
 const commerce = require('./commerce');
 const commerceSettings = require('./commerce-settings');
 const notifications = require('./notifications');
-const { imageType } = require('./photo-check');
+const { storable } = require('./photo-check');
 const invoices = require('./invoices');
 const numbering = require('./numbering');
 const promotions = require('./promotions');
@@ -131,9 +131,9 @@ async function createReturn(q, orderNo, data, empId) {
 async function addPhoto(q, returnNo, kind, file, empId) {
   const r = await lockReturn(q, returnNo);
   if (!['request', 'pickup', 'inspect'].includes(kind)) throw new ReturnError('Photo kind: request, pickup or inspect');
-  const type = imageType(file);
-  if (!type) throw new ReturnError('Photo: a JPEG, PNG or WebP picture');
-  const [ins] = await q.query('INSERT INTO return_photos (return_id, kind, photo, photo_type, emp_id) VALUES (?, ?, ?, ?, ?)', [r.return_id, kind, file.buffer, type, empId]);
+  const pic = await storable(file); // checked by its bytes and made small (photo-check.js)
+  if (!pic) throw new ReturnError('Photo: a JPEG, PNG or WebP picture');
+  const [ins] = await q.query('INSERT INTO return_photos (return_id, kind, photo, photo_type, emp_id) VALUES (?, ?, ?, ?, ?)', [r.return_id, kind, pic.buffer, pic.mimetype, empId]);
   await history(q, r.return_id, 'photo', `${kind} photo added`, empId);
   return { photo_id: ins.insertId };
 }
