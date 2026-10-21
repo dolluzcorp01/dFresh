@@ -7,6 +7,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import JsBarcode from 'jsbarcode';
 import { InfoCard, Loading, Notice, useLoad } from './ui';
+import { FONT_STACK, PRINT_FONTS, printWhenReady } from './printKit';
 
 const BARCODE = { format: 'CODE128', margin: 6, background: '#ffffff', lineColor: '#121214', font: 'monospace' };
 
@@ -40,10 +41,10 @@ function printLabels(items, copies, what) {
     <div class="label"><div class="name">${esc(s.name)}</div>${barcodeSvg(s.code)}<div class="size">${esc(s.sub)}</div></div>`).join('');
   const w = window.open('', '_blank');
   if (!w) return false;
-  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>dFresh ${esc(what)} - ${items.length}</title>
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>dFresh ${esc(what)} - ${items.length}</title>${PRINT_FONTS}
 <style>
   @page { size: A4; margin: 8mm; }
-  body { margin: 0; font-family: Arial, sans-serif; color: #121214; }
+  body { margin: 0; font-family: ${FONT_STACK}; color: #121214; }
   .sheet { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2mm; }
   .label { height: 34mm; border: 1px dashed #c9c6bc; border-radius: 2mm; padding: 1.5mm 2mm; display: flex; flex-direction: column;
            align-items: center; justify-content: center; overflow: hidden; break-inside: avoid; }
@@ -54,8 +55,7 @@ function printLabels(items, copies, what) {
 </style></head><body><div class="bar">dFresh ${esc(what)} - ${items.length} label(s), ${copies} each. Print, or choose "Save as PDF".</div>
 <div class="sheet">${labels}</div></body></html>`);
   w.document.close();
-  w.focus();
-  setTimeout(() => w.print(), 300);
+  printWhenReady(w);
   return true;
 }
 

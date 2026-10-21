@@ -381,6 +381,26 @@ router.get('/fonts.css', (req, res) => {
   res.type('text/css').set('Cache-Control', 'public, max-age=60').send(require('./font-manager').css());
 });
 
+// Fonts for the admin's print windows (pick list, packing slip, labels, trip sheet, invoice print): the FULL script fonts
+// of fonts/source (the site's own font files are subsets holding only the site's texts, so a customer name typed in
+// Tamil could miss letters). One family "dFresh Print" with a face per script and its unicode-range: the browser loads
+// only the scripts a page uses. Public like the site fonts (open font licence, no data).
+const PRINT_SCRIPTS = (() => {
+  const dir = require('path').join(__dirname, '..', '..', 'fonts');
+  const list = JSON.parse(require('fs').readFileSync(require('path').join(dir, 'scripts.json'), 'utf8')).scripts;
+  return list.filter((s) => !s.bundled && require('fs').existsSync(require('path').join(dir, 'source', s.file))).map((s) => ({ ...s, path: require('path').join(dir, 'source', s.file) }));
+})();
+router.get('/print-fonts.css', (req, res) => {
+  const css = PRINT_SCRIPTS.map((s) => `@font-face { font-family: 'dFresh Print'; font-weight: 100 900; font-display: block; src: url(print-fonts/${s.file}) format('woff2'); unicode-range: ${s.ranges.map((r) => `U+${r}`).join(', ')}; }`).join('\n');
+  res.type('text/css').set('Cache-Control', 'public, max-age=86400').send(`/* dFresh print fonts (Public_server.js) */\n${css}\n`);
+});
+router.get('/print-fonts/:file', (req, res) => {
+  const s = PRINT_SCRIPTS.find((x) => x.file === req.params.file);
+  if (!s) return res.status(404).json({ success: false, message: 'No such font' });
+  res.set({ 'Content-Type': 'font/woff2', 'Cache-Control': 'public, max-age=2592000' });
+  return res.sendFile(s.path);
+});
+
 router.get('/languages', async (req, res) => {
   try {
     sendCached(req, res, await loadLanguages());

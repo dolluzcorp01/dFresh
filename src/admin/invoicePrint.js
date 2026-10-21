@@ -2,6 +2,7 @@
 // watermark shows while the seller GSTIN is a placeholder. A credit note for returned packs lists its lines at the
 // invoice's own tax (CGST + SGST or IGST as invoiced); a cancellation credit note shows the totals only.
 import { api } from './adminApi';
+import { FONT_STACK, PRINT_FONTS, printWhenReady } from './printKit';
 
 const esc = (v) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const day = (d) => (d ? new Date(`${String(d).slice(0, 10)}T00:00:00Z`).toLocaleDateString('en-IN', { timeZone: 'UTC', day: 'numeric', month: 'short', year: 'numeric' }) : '');
@@ -13,8 +14,8 @@ export const addrLines = (a, state) => [a.name, a.address, [a.town, a.pincode].f
 export function printDoc(title, body, demo) {
   const w = window.open('', '_blank');
   if (!w) return false;
-  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>
-  @page { size: A4; margin: 12mm; } body { font-family: Arial, sans-serif; color: #121214; font-size: 12px; margin: 0; }
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title>${PRINT_FONTS}<style>
+  @page { size: A4; margin: 12mm; } body { font-family: ${FONT_STACK}; color: #121214; font-size: 12px; margin: 0; }
   .demo { background: #fdf1f1; color: #9b1c1c; padding: 6px 10px; font-weight: 700; margin-bottom: 10px; }
   .wm { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; z-index: 0; }
   .wm span { transform: rotate(-30deg); font-size: 56px; font-weight: 800; color: rgba(155, 28, 28, .13); white-space: nowrap; }
@@ -28,8 +29,7 @@ export function printDoc(title, body, demo) {
   </style></head><body>${demo ? '<div class="wm"><span>DEMO - not a tax invoice</span></div><div class="demo">DEMO - not a tax invoice (the seller GSTIN is still to be confirmed)</div>' : ''}
   <div class="bar"><button onclick="window.print()">Print / Save as PDF</button></div>${body}</body></html>`);
   w.document.close();
-  w.focus();
-  setTimeout(() => w.print(), 300);
+  printWhenReady(w);
   return true;
 }
 

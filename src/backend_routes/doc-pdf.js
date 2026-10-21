@@ -1,11 +1,11 @@
 // Documents as PDF (phase 10): the tax invoice, the credit note and the statement of account, attached to the
 // notification mails (built when the mail is sent, outbox-worker.js) and downloadable in the admin. The same data as
 // the printed versions (invoiceData / creditNoteData feed GET /commerce/invoices/:id and /credit-notes/:id, and
-// src/admin/invoicePrint.js prints them in the browser), so the PDF and the print never disagree. English, A4, the
-// dFresh logo on an ink band; "DEMO - not a tax invoice" while the seller GSTIN is a placeholder.
+// src/admin/invoicePrint.js prints them in the browser), so the PDF and the print never disagree. A4, the dFresh logo
+// on an ink band, labels in English; names, addresses and notes print in whatever script they were typed in
+// (pdf-writer.js: pdfkit with the Noto fonts). "DEMO - not a tax invoice" while the seller GSTIN is a placeholder.
 const fs = require('fs');
 const path = require('path');
-const sharp = require('sharp');
 const { Pdf, PAGE_W } = require('./pdf-writer');
 const commerceSettings = require('./commerce-settings');
 const customers = require('./customers');
@@ -74,15 +74,12 @@ async function statementData(q, customerId, { from = null, to = null } = {}) {
 }
 
 // ---------------------------------------------------------------- layout
-let logoJpeg = null; // { buf, w, h }: the mail logo flattened on ink, built once
-async function logo() {
-  if (!logoJpeg) {
-    const png = fs.readFileSync(path.join(__dirname, 'mail-logo.png'));
-    const { data, info } = await sharp(png).flatten({ background: INK }).jpeg({ quality: 90 }).toBuffer({ resolveWithObject: true });
-    logoJpeg = { buf: data, w: info.width, h: info.height };
-  }
-  return logoJpeg;
-}
+let logoPng = null; // the mail logo (on-dark), read once
+const logo = () => {
+  if (!logoPng) logoPng = fs.readFileSync(path.join(__dirname, 'mail-logo.png'));
+  return logoPng;
+};
+const LOGO_RATIO = 124 / 68; // mail-logo.png
 const money = (v) => Number(v || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const signed = (n) => `${Number(n) > 0 ? '+' : Number(n) < 0 ? '-' : ''}${Math.abs(Number(n)).toFixed(2)}`;
 const day = (d) => (d ? new Date(`${String(d).slice(0, 10)}T00:00:00Z`).toLocaleDateString('en-IN', { timeZone: 'UTC', day: 'numeric', month: 'short', year: 'numeric' }) : '');
@@ -92,14 +89,14 @@ const addrLines = (a, state) => [a.name, a.address, [a.town, a.pincode].filter(B
 /** a page writer with a cursor, the dFresh header on every page and page numbers at the end */
 class Doc {
   constructor(title, demo) {
-    this.pdf = new Pdf();
+    this.pdf = new Pdf({ title });
     this.title = title;
     this.demo = demo;
     this.y = 0;
   }
 
   async start() {
-    this.logo = await logo();
+    this.logo = logo();
     this.header();
     return this;
   }
@@ -108,8 +105,8 @@ class Doc {
     const p = this.pdf;
     p.rect(0, 0, PAGE_W, 54, { fill: INK });
     p.rect(0, 54, PAGE_W, 3, { fill: GOLD });
-    const h = 30; const w = (this.logo.w / this.logo.h) * h;
-    p.jpeg(this.logo.buf, this.logo.w, this.logo.h, M, 12, w, h);
+    const h = 30;
+    p.image(this.logo, M, 12, LOGO_RATIO * h, h);
     p.text(M, 20, this.title, { size: 14, bold: true, color: '#FCFBF6', align: 'right', width: CW });
     this.y = 72;
     if (this.demo) {
@@ -189,11 +186,8 @@ class Doc {
 
   finish() {
     const n = this.pdf.pageCount;
-    this.pdf.pages.forEach((ops, i) => {
-      this.pdf.ops = ops;
-      this.pdf.text(M, 842 - 30, `${this.title} - page ${i + 1} of ${n}`, { size: 7.5, color: GREY, align: 'right', width: CW });
-    });
-    return this.pdf.toBuffer({ title: this.title });
+    for (let i = 0; i < n; i += 1) this.pdf.onPage(i).text(M, 842 - 30, `${this.title} - page ${i + 1} of ${n}`, { size: 7.5, color: GREY, align: 'right', width: CW });
+    return this.pdf.toBuffer();
   }
 }
 
@@ -238,7 +232,7 @@ async function invoicePdf(q, id) {
   ]);
   if (inv.credit_notes.length) d.para(`Credit notes against this invoice: ${inv.credit_notes.map((c) => `${c.credit_note_no} (${istDay(c.issued_at)}, Rs ${money(c.total)}${c.reason ? ` - ${c.reason}` : ''})`).join('; ')}`, { color: INK });
   d.para('Marketed by dFresh. Prices per pack before GST. This is a computer-generated invoice.');
-  return { filename: `${inv.invoice_no.replace(/\//g, '-')}.pdf`, buffer: d.finish() };
+  return { filename: `${inv.invoice_no.replace(/\//g, '-')}.pdf`, buffer: await d.finish() };
 }
 
 async function creditNotePdf(q, id) {
@@ -261,7 +255,7 @@ async function creditNotePdf(q, id) {
   d.totals([['Taxable value', money(cn.taxable)], ...(intra ? [['CGST', money(cn.cgst)], ['SGST', money(cn.sgst)]] : [['IGST', money(cn.igst)]]),
     ...(Number(cn.round_off) ? [['Total before round off', money(Number(cn.total) - Number(cn.round_off))], ['Round off', signed(cn.round_off)]] : []), ['Credit total', `Rs ${money(cn.total)}`, true]]);
   d.para('Marketed by dFresh. This is a computer-generated credit note.');
-  return { filename: `${cn.credit_note_no.replace(/\//g, '-')}.pdf`, buffer: d.finish() };
+  return { filename: `${cn.credit_note_no.replace(/\//g, '-')}.pdf`, buffer: await d.finish() };
 }
 
 const BUCKETS = [['d0_30', '0-30 days'], ['d31_60', '31-60 days'], ['d61_90', '61-90 days'], ['d90', 'Over 90 days']];
@@ -286,7 +280,7 @@ async function statementPdf(q, customerId, range = {}) {
     d.table(BUCKETS.map(([, label]) => ({ label, w: 25, align: 'right' })), [BUCKETS.map(([k]) => money(st.ageing[k]))]);
   }
   d.para('Ageing by the invoice date. Please send the payment reference (UTR or cheque number) with every payment. This is a computer-generated statement.');
-  return { filename: `Statement-${c.customer_no}-${today}.pdf`, buffer: d.finish() };
+  return { filename: `Statement-${c.customer_no}-${today}.pdf`, buffer: await d.finish() };
 }
 
 /** an attachment spec from mail_outbox.attachments -> { filename, buffer } | null (the document is gone) */
