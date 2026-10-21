@@ -165,7 +165,7 @@ for f in $(ls database/migrations/*.sql | sort); do
   echo "== $f"; sudo mysql --default-character-set=utf8mb4 dfresh < "$f" || { echo "FAILED: $f"; break; }
 done
 ```
-The 39 migrations, in the order they must run (tick each; a later update applies only the new ones):
+The 40 migrations, in the order they must run (tick each; a later update applies only the new ones):
 
 - [ ] `20261009_phase3_home_ui_text.sql`
 - [ ] `20261009_phase4_products_ui_text.sql`
@@ -216,13 +216,15 @@ The 39 migrations, in the order they must run (tick each; a later update applies
 - [ ] `20261021_commerce_customers.sql` - customers (CUS-0001, type, status, owner, own price list, credit terms),
       billing and shipping addresses (GSTIN per branch), contacts, activity, follow-ups, tags, segments, address ids on
       orders and the customer foreign key, the customer settings; no customers
+- [ ] `20261021_commerce_reports.sql` - settings only: place of supply rule (B2B billing GSTIN state, to be confirmed by
+      the accountant), slow-moving days
 - [ ] `20261021_commerce_returns.sql` - returns and refunds: returns, return lines, photos, scans, history, refunds,
       credit note lines, return pickups as trip stops, payment status "part refunded", Warehouse may view returns; no returns
 - [ ] `20261021_commerce_wallet_promotions.sql` - coupons (scope, redemptions), offers (slabs, buy X get Y), cashback
       rules, the wallet (entries with source and expiry, allocations), order and line discount columns (a free line may
       repeat a SKU), the promotions settings; no coupons, offers, rules or wallet entries
 
-This exact sequence (schema, seed, 39 migrations) was run on an empty database on 21 Oct 2026 without an error.
+This exact sequence (schema, seed, 40 migrations) was run on an empty database on 21 Oct 2026 without an error.
 `database/demo/` is never applied here: it is demo data for the `dfresh_commerce` copy only.
 
 ```bash

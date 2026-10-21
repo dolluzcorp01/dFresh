@@ -166,7 +166,7 @@ export default function AdminApp() {
             <Route path="commerce/stock" element={<Need section="inventory" commerce><CommerceStock /></Need>} />
             <Route path="commerce/orders" element={<Need section="orders" commerce><CommerceOrders /></Need>} />
             <Route path="commerce/returns" element={<Need section="returns" commerce><CommerceReturns /></Need>} />
-            <Route path="commerce/reports" element={<Need section="reports" commerce><CommerceReports /></Need>} />
+            <Route path="commerce/reports" element={<Need commerce><CommerceReports /></Need>} />
             <Route path="commerce/follow-ups" element={<Need section="customers" commerce><MyFollowUps /></Need>} />
             <Route path="commerce/customers" element={<Need section="customers" commerce><CommerceCustomers /></Need>} />
             <Route path="commerce/promotions" element={<Need section="promotions" commerce><CommercePromotions /></Need>} />

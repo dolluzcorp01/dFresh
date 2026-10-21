@@ -21,7 +21,7 @@ import { NewReturn, ReturnDrawer, ReturnsTable } from './CommerceReturns';
 import { addrLines, printCreditNote, printInvoice as printInvoiceDoc, signed } from './invoicePrint';
 import { NewCustomerDrawer } from './CommerceCustomers';
 import { PriceBasis } from './Prices';
-import { GST_STATES, stateName } from '../shared/gstStates';
+import { GST_STATES, placeOfSupply, stateName } from '../shared/gstStates';
 
 const FLOWS = {
   own: ['new', 'packing', 'packed', 'out_for_delivery', 'delivered'], courier: ['new', 'packing', 'packed', 'with_courier', 'delivered'], pickup: ['new', 'packing', 'packed', 'delivered'],
@@ -411,7 +411,8 @@ function OrderForm({ order = null, onClose, onSaved }) {
   const list = f ? f.lists.find((l) => l.key === listKey) || { key: 'default', label: 'Default' } : null;
   const inclusive = Boolean(f && f.basis.inclusive);
   const shipTo = ship || bill;
-  const gstType = shipTo && f && shipTo.state_code === f.sellerState ? 'intra' : 'inter';
+  const pos = shipTo && f ? placeOfSupply(bill && bill.gstin, shipTo.state_code, f.posRule) : null; // the server's rule (gstStates.js)
+  const gstType = pos && pos.code === f.sellerState ? 'intra' : 'inter';
   const rows = lines.map((l) => {
     const sku = skuMap.get(l.sku_code.trim().toUpperCase());
     const packs = (Number(l.qty) || 0) * (sku && l.unit === 'carton' ? Number(sku.packs_per_carton) || 1 : 1);
@@ -543,7 +544,7 @@ function OrderForm({ order = null, onClose, onSaved }) {
                   </div>
                 )}
                 <div className="a-addr">{addr(bill, setBill, 'bill')}{ship && addr(ship, setShip, 'ship')}</div>
-                <p className="a-gst">GST: {gstType === 'intra' ? `CGST + SGST (${stateName(shipTo.state_code)}, the seller's state)` : `IGST (${stateName(shipTo.state_code)} is another state)`}</p>
+                <p className="a-gst">GST: {gstType === 'intra' ? 'CGST + SGST' : 'IGST'} - place of supply {stateName(pos.code)} ({pos.code}): {pos.reason}{gstType === 'intra' ? ", the seller's state" : ", another state than the seller's"}</p>
                 <div className="a-grid2">
                   <label className="a-field"><span>Delivery</span>
                     <select value={method ? String(method.method_id) : ''} aria-label="Delivery method" onChange={(e) => setMethodId(e.target.value)}>{f.methods.map((m) => <option key={m.method_id} value={m.method_id}>{m.label}</option>)}</select></label>

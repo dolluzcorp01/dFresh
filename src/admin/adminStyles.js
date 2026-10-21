@@ -209,7 +209,7 @@ tr.a-target td { background: #fff6d6; }
   background: var(--a-ink); color: #fff; box-shadow: 0 10px 30px rgba(18, 18, 20, .25); font-weight: 600; }
 .adm .a-toast a { color: var(--a-gold); text-decoration: none; }
 .a-toast .a-x { color: #fff; }
-.a-num { text-align: end; font-variant-numeric: tabular-nums; }
+.a-num, .a-table .a-num { text-align: end; font-variant-numeric: tabular-nums; }
 .a-off td { color: var(--a-muted); }
 .a-thumb { width: 40px; height: 40px; object-fit: contain; background: #fff; border: 1px solid var(--a-line); border-radius: 6px; }
 /* Unsaved drag order (useOrderDraft.js): sticky bar at the bottom, "Order saved" toast, the save-or-discard question */
@@ -471,6 +471,18 @@ td.a-pending { background: #fff8e1; box-shadow: inset 3px 0 0 #e3b44f; }
 .a-timeline .a-tl-order, .a-timeline .a-tl-payment { border-color: #0b4f8a; }
 .a-timeline .a-tl-return, .a-timeline .a-tl-wallet { border-color: #6b675e; }
 .a-tl-when { color: var(--a-muted); font-size: 12px; }
+.a-chart { position: relative; margin: 12px 0; background: #fff; border: 1px solid var(--a-line); border-radius: 12px; padding: 10px 12px; max-width: 900px; }
+.a-chart figcaption { font-size: 13px; color: var(--a-ink2); margin-bottom: 4px; }
+.a-chart-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12px; color: var(--a-ink2); margin-bottom: 4px; }
+.a-chart svg text { font-family: inherit; }
+.a-chart svg g:focus { outline: none; }
+.a-chart svg g:hover path, .a-chart svg g:focus path { opacity: .82; }
+.a-chart-tip { position: absolute; z-index: 5; pointer-events: none; background: #fff; border: 1px solid var(--a-line); border-radius: 8px; padding: 6px 10px; font-size: 12px; color: var(--a-ink2); box-shadow: 0 4px 14px rgba(18, 18, 20, .12); min-width: 160px; }
+.a-chart-tip b { color: var(--a-ink); font-size: 13px; }
+.a-chart-tip-t { color: var(--a-ink); font-weight: 600; margin-bottom: 2px; }
+.a-totalrow td { font-weight: 700; border-top: 2px solid var(--a-ink); }
+.a-report-table h2 { font-size: 15px; margin: 18px 0 6px; }
+.a-business { margin-bottom: 16px; }
 .a-wallet h3 { margin: 0; }
 .a-stop-head { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
 .a-stop-meta { font-size: 13px; }

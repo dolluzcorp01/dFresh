@@ -1,7 +1,8 @@
 // dFresh Commerce (DEMO, database dfresh_commerce): operations dashboard. Each card opens the matching screen:
 // today's orders, to pack (New), to dispatch (Packed), low stock, returns to collect / inspect / decide,
 // the wallet balance owed to customers. Plus the next orders to pack and the SKUs to reorder. A card or table is
-// only there when the role can view its section (the API sends null for the others).
+// only there when the role can view its section (the API sends null for the others). The Business view (sales,
+// margin, owed, stock value, top SKUs and customers) only for a role with Reports and Products and prices.
 import { Link } from 'react-router-dom';
 import { InfoCard, Loading, Notice, fmtDate, useLoad } from './ui';
 import { rs } from './CommerceReturns';
@@ -11,6 +12,27 @@ function Card({ to, value, label, sub, bad }) {
     <Link to={to} className={`a-stat a-statlink${bad ? ' a-stat-bad' : ''}`}>
       <b>{value}</b><span>{label}</span>{sub ? <small>{sub}</small> : null}
     </Link>
+  );
+}
+
+/** the Business view (a role with Reports and Products and prices): sales, margin, what is owed, stock value, the tops */
+function Business({ b }) {
+  return (
+    <div className="a-card a-business">
+      <h2>Business</h2>
+      <div className="a-stats">
+        <Card to="/admin/commerce/reports" value={rs(b.today)} label="sales today" sub="invoices - credit notes" />
+        <Card to="/admin/commerce/reports" value={rs(b.month)} label="sales this month" sub={`since ${b.monthFrom}`} />
+        <Card to="/admin/commerce/reports" value={rs(b.margin)} label="margin this month" sub={b.marginPct === null ? null : `${b.marginPct}% of the goods value`} />
+        <Card to="/admin/commerce/reports" value={rs(b.outstanding)} label="owed by customers" />
+        <Card to="/admin/commerce/reports" value={rs(b.stockValue)} label="stock value" sub="good stock at average cost" />
+        <Card to="/admin/commerce/reports" value={rs(b.wallet)} label="wallets owed to customers" />
+      </div>
+      <div className="a-grid2">
+        <div><h3>Top SKUs this month</h3><table className="a-table"><tbody>{b.topSkus.map((x) => <tr key={x.name}><td>{x.name}</td><td className="a-num">{rs(x.total)}</td></tr>)}</tbody></table></div>
+        <div><h3>Top customers this month</h3><table className="a-table"><tbody>{b.topCustomers.map((x) => <tr key={x.name}><td>{x.name}</td><td className="a-num">{rs(x.total)}</td></tr>)}</tbody></table></div>
+      </div>
+    </div>
   );
 }
 
@@ -29,6 +51,7 @@ export default function CommerceOps() {
       <Loading state={ops}>
         {d && (
           <>
+            {d.business && <Business b={d.business} />}
             {d.lowStock && d.lowStock.length > 0 && (
               <Notice kind="warn">{d.lowStock.length} SKU{d.lowStock.length === 1 ? ' is' : 's are'} below the reorder level: <Link to="/admin/commerce/stock?tab=reorder">open the Reorder list</Link>.</Notice>
             )}

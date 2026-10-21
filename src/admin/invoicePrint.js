@@ -47,7 +47,7 @@ export function invoiceHtml(inv) {
   return `<div class="row"><div><h1>Tax invoice</h1><b>${esc(inv.seller_name)}</b><br>${esc(inv.seller_address)}<br>
     GSTIN: ${esc(inv.is_demo ? 'to be confirmed' : inv.seller_gstin)} &middot; State: ${esc(inv.seller_state)} (${esc(inv.seller_state_code)})${inv.cin ? ` &middot; CIN: ${esc(inv.cin)}` : ''}<br>${esc(inv.phone)} &middot; ${esc(inv.email)}</div>
     <div><b>Invoice ${esc(inv.invoice_no)}</b><br>Date: ${istDay(inv.issued_at)}<br>Order: ${esc(inv.order_no)}<br>Due on: ${day(inv.due_on)}<br>
-    Place of supply: ${esc(inv.pos_state)} (${esc(inv.place_of_supply)})<br>${intra ? 'CGST + SGST (same state)' : 'IGST (inter-state)'}</div></div>
+    Place of supply: ${esc(inv.pos_state)} (${esc(inv.place_of_supply)})<br><small>${esc(inv.pos_reason || '')}</small><br>${intra ? 'CGST + SGST (same state as the seller)' : 'IGST (inter-state)'}</div></div>
     ${inv.status === 'cancelled' ? `<div class="cancelled">CANCELLED ${inv.cancel_reason ? `- ${esc(inv.cancel_reason)}` : ''}</div>` : ''}
     <div class="row"><div><b>Bill to</b><br>${addrLines(b, `${inv.bill_state} (${b.state_code})`).map(esc).join('<br>')}</div>
     <div><b>Ship to</b><br>${addrLines(s, `${inv.ship_state} (${s.state_code})`).map(esc).join('<br>')}</div></div>
@@ -85,7 +85,7 @@ export function creditNoteHtml(cn) {
   return `<div class="row"><div><h1>Credit note</h1><b>${esc(cn.seller_name)}</b><br>${esc(cn.seller_address)}<br>
     GSTIN: ${esc(cn.is_demo ? 'to be confirmed' : cn.seller_gstin)} &middot; State: ${esc(cn.seller_state)} (${esc(cn.seller_state_code)})</div>
     <div><b>Credit note ${esc(cn.credit_note_no)}</b><br>Date: ${istDay(cn.issued_at)}<br>Against invoice <b>${esc(cn.invoice_no)}</b> of ${istDay(cn.invoice_date)}<br>Order: ${esc(cn.order_no)}${cn.return_no ? `<br>Return: ${esc(cn.return_no)}` : ''}<br>
-    Place of supply: ${esc(cn.pos_state)} (${esc(cn.place_of_supply)})<br>${intra ? 'CGST + SGST (as invoiced)' : 'IGST (as invoiced)'}</div></div>
+    Place of supply: ${esc(cn.pos_state)} (${esc(cn.place_of_supply)}), as invoiced<br><small>${esc(cn.pos_reason || '')}</small><br>${intra ? 'CGST + SGST (as invoiced)' : 'IGST (as invoiced)'}</div></div>
     <div class="row"><div><b>To</b><br>${addrLines(cn.buyer.bill, `${cn.bill_state} (${cn.buyer.bill.state_code})`).map(esc).join('<br>')}</div><div>Reason: ${esc(cn.reason)}</div></div>
     ${lines ? `<table><thead><tr><th>#</th><th>Item returned</th><th>HSN</th><th class="n">Qty</th><th class="n">Taxable</th>${intra ? '<th class="n">CGST</th><th class="n">SGST</th>' : '<th class="n">IGST</th>'}<th class="n">Amount</th></tr></thead><tbody>${lines}</tbody></table>` : ''}
     <table class="tot"><tbody><tr><td>Taxable value</td><td class="n">${Number(cn.taxable).toFixed(2)}</td></tr>

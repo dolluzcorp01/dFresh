@@ -44,7 +44,7 @@ const wallet = require('./wallet');
 const numbering = require('./numbering');
 const { audit } = require('./audit');
 const { checkSetting } = require('../shared/settingRules');
-const { isStateCode, stateName } = require('../shared/gstStates');
+const { isStateCode, stateName, placeOfSupply } = require('../shared/gstStates');
 
 const STATUS_LABEL = {
   approval: 'Waiting for approval', new: 'New', packing: 'Packing', packed: 'Packed', out_for_delivery: 'Out for delivery', with_courier: 'Handed to courier',
@@ -294,7 +294,9 @@ async function prepare(q, data, opts = {}) {
   if (bill.error) throw new CommerceError(bill.error);
   const ship = checkAddress(data.ship ? { ...prevShip, ...data.ship } : prevShip, 'ship');
   if (ship.error) throw new CommerceError(ship.error);
-  const pos = ship.values.state_code;
+  // place of supply: B2B = the billing GSTIN's state, B2C = the shipping state (setting place_of_supply_rule)
+  const posInfo = placeOfSupply(bill.values.gstin, ship.values.state_code, settings.place_of_supply_rule);
+  const pos = posInfo.code;
   const gstType = pos === String(settings.invoice_seller_state_code || '33') ? 'intra' : 'inter';
 
   // delivery method, area and charge (a free-delivery coupon waives the charge)
@@ -387,7 +389,7 @@ async function prepare(q, data, opts = {}) {
   return { cust, list, terms, creditDays: Number(cust.credit_days) || 0, lines: t.lines, totals: t, coupon: coupon ? coupon.code : null, couponInfo: coupon, offers: offers.applied,
     manualReason, walletUsed, walletGst: walletUsed > 0 ? walletGst : null, walletCap, walletPlan, discountTotal, discountPct, deliveryWaived: waived,
     billAddressId: chose('bill') || !editing ? (billAddr ? billAddr.address_id : null) : editing.bill_address_id, shipAddressId: chose('ship') || !editing ? (shipAddr ? shipAddr.address_id : null) : editing.ship_address_id,
-    bill: bill.values, ship: ship.values, pos, gstType, holds, settings, method, area: delivery.area };
+    bill: bill.values, ship: ship.values, pos, posReason: posInfo.reason, gstType, holds, settings, method, area: delivery.area };
 }
 
 async function history(q, orderId, from, to, note, empId) {
@@ -558,7 +560,7 @@ async function previewOrder(q, data, empId, opts = {}) {
     lines: p.lines.map((l) => ({ sku_code: l.sku_code, qty: l.qty, price: l.price, entered: l.entered, list_price: l.list_price, is_free: l.is_free, offer_id: l.offer_id || null, offer_label: l.offer_label || null,
       offer_discount: l.offer_discount, coupon_discount: l.coupon_discount, wallet_discount: l.wallet_discount, taxable: l.taxable, line_total: l.line_total })),
     totals: { ...t, lines: undefined, wallet_used: p.walletUsed, wallet_paid: round2(p.walletUsed - t.wallet_discount), due: round2(t.total - (p.walletUsed - t.wallet_discount)) },
-    gst_type: p.gstType, offers: p.offers, coupon: p.couponInfo ? { code: p.couponInfo.code, kind: p.couponInfo.kind, discount: p.couponInfo.discount, delivery_waived: p.couponInfo.delivery_waived,
+    gst_type: p.gstType, place_of_supply: p.pos, pos_reason: p.posReason, offers: p.offers, coupon: p.couponInfo ? { code: p.couponInfo.code, kind: p.couponInfo.kind, discount: p.couponInfo.discount, delivery_waived: p.couponInfo.delivery_waived,
       excluded: p.couponInfo.excluded, capped: p.couponInfo.capped, cap: p.couponInfo.cap, description: p.couponInfo.description } : null,
     wallet: { used: p.walletUsed, cap: p.walletCap, max_pct: Number(p.settings.wallet_max_use_pct), gst: p.settings.cashback_gst_treatment === 'payment' ? 'payment' : 'discount', by_source: p.walletPlan ? p.walletPlan.bySource : {},
       usable: (await wallet.plan(q, p.cust.customer_id, 1e9, order ? order.order_id : 0)).total },

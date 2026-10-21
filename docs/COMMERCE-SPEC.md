@@ -373,6 +373,32 @@ Excel `customer-excel.js`, screens Commerce > Customers (list, drawer: `Customer
 - Excel export of the filtered list (default addresses) and import: dry run first, Apply only that file with 0 errors;
   new rows create customers, rows with Customer_no change them, with the drawer's checks (and duplicates between rows).
 
+### 5.5e Built in phase 9 (reports)
+`src/backend_routes/reports.js`, screens Commerce > Reports (`CommerceReports.js`, charts `ReportChart.js`) and the
+Business view on Operations; migration `20261021_commerce_reports.sql` (settings only).
+- One area with a period (India dates, presets), the report's filters, checks, a chart where useful, every table with
+  totals, Excel (same numbers) and Print / PDF. Each report needs view on its own section: Sales = Orders, GST and the
+  accounting export = Reports, Margin = Reports + Products and prices, Stock = Inventory (values only with Reports +
+  Products and prices), Receivables = Customers, Delivery, Returns, Promotions.
+- Sales = invoices issued in the period minus credit notes issued in it (returns and cancellations; delivery charges
+  and round-off included), by day / month / SKU / category / customer / customer type / town / area / sales owner,
+  with the previous period of the same length; check: total = invoices - credit notes.
+- GST: output tax by rate and type, B2B (invoice-wise, GSTIN), B2C large (inter-state above Rs 2.5 lakh), B2C small by
+  state and rate (net of their credit notes), credit notes (registered / unregistered large), HSN summary (delivery as
+  SAC 9965); checks: register GST on invoices = invoice GST, on credit notes = credit note GST. The Excel has the GST
+  offline tool's sheets (b2b, b2cl, b2cs, cdnr, cdnur, hsn): column names on row 4, data from row 5.
+- Margin per SKU, customer or order: taxable value (after discounts, less returns) against packs x average cost.
+- Stock: value by SKU and category, movement summary of good stock (opening, in, out, back in, written off, other,
+  closing; check: closing = Inventory), slow-moving (setting `slow_moving_days`), near expiry and expired, reorder.
+- Receivables: owed by customer with ageing (0-30 / 31-60 / 61-90 / 90+ by invoice date) and credit limit use, overdue
+  invoices, collections by mode, pay-on-delivery cash by driver; check: total = what the orders still owe.
+- Delivery by driver and area (delivered, within 24 hours of the trip start, failed, pickups), trips with cash collected
+  vs handed over. Returns and Promotions moved here from phases 6 and 7.
+- Business view (Operations, a role with Reports + Products and prices): sales today and this month, margin, owed by
+  customers, stock value, wallets owed, top SKUs and customers.
+- Accounting export: a CSV journal (date, voucher type, number, party, GSTIN, ledger, debit, credit, narration) of
+  sales, credit notes, receipts, refunds and wallet use, every voucher balanced; Tally / Zoho stays "To be confirmed".
+
 ### 5.6 Approval
 `pending` -> `approved` (the action runs) / `rejected` / `expired` / `withdrawn` (by the requester).
 
@@ -391,8 +417,11 @@ Numbers are never reused; a cancelled invoice keeps its number and is marked can
 
 ### 6.2 GST
 - Seller state: Tamil Nadu (33). Place of supply = the shipping address state.
-- Same state: CGST + SGST (half the rate each). Other state: IGST (the full rate). Decided per order from the state
-  code, shown on the order before saving.
+- Place of supply (phase 9 fix, setting `place_of_supply_rule`, "To be confirmed by the accountant"): B2B (the billing
+  address has a GSTIN) = the state of that GSTIN (its first two digits), even when shipped to another state (bill-to /
+  ship-to); B2C (no GSTIN) = the shipping state. CGST + SGST (half the rate each) only when the place of supply is the
+  seller's state, otherwise IGST. Shown with its reason on the order (before saving and in the drawer), the invoice
+  and the credit note, which always follows its invoice (`src/shared/gstStates.js` placeOfSupply / posReason).
 - Each line keeps its HSN, rate and tax amounts as they were on the day (snapshot): later price or rate changes never
   change an issued invoice.
 - B2B (buyer has a GSTIN): GSTIN and state on the invoice. B2C: name and address.

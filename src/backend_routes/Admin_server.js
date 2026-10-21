@@ -1635,7 +1635,7 @@ route('get', '/commerce/reorder', 'inventory:view', async () => stock.reorderLis
 // prices only here. Section "orders": view = list, order, invoice; create = New order; edit = edit, status, cancel,
 // payments, Excel export; approve = may ask to order above the available stock (the request waits for approval).
 const commerce = require('./commerce');
-const { GST_STATES, stateName } = require('../shared/gstStates');
+const { GST_STATES, stateName, posReason } = require('../shared/gstStates');
 const asInput = (e) => (e instanceof commerce.CommerceError || e instanceof invoices.InvoiceError ? new InputError(e.message, e.status) : e);
 
 // The New order / Edit order form: customers (price list, address, credit), SKUs with selling rules, today's own prices
@@ -1671,7 +1671,7 @@ route('get', '/commerce/order-form', 'orders:view', async (req) => {
   return {
     customers: customers.map((c) => ({ ...c, wallet: Number(c.wallet), outstanding: Number(c.outstanding), overdue: Number(c.overdue), credit_limit: Number(c.credit_limit) })),
     skus, coupons, terms: commerce.TERMS, lists: await pricing.lists(db), basis: await pricing.basis(db), today, states: GST_STATES,
-    sellerState: cs.invoice_seller_state_code, roundOff: Boolean(cs.invoice_round_off), canOverride: canDo(req, 'orders', 'approve'),
+    sellerState: cs.invoice_seller_state_code, posRule: cs.place_of_supply_rule, roundOff: Boolean(cs.invoice_round_off), canOverride: canDo(req, 'orders', 'approve'),
     methods: (await db.query('SELECT method_id, label, kind FROM delivery_methods WHERE is_active = 1 ORDER BY sort_order, method_id'))[0],
     areas: (await db.query('SELECT area_id, label, towns, charge, free_above FROM delivery_areas WHERE is_active = 1 ORDER BY sort_order, area_id'))[0]
       .map((a) => ({ ...a, charge: Number(a.charge), free_above: a.free_above === null ? null : Number(a.free_above) })),
@@ -1788,7 +1788,7 @@ route('get', '/commerce/orders/:no', 'orders:view', async (req) => {
     approvals: appr.map((a) => ({ ...a, kind_label: (approvals.KINDS[a.kind] || {}).label || a.kind })), reserved: res,
     status_label: commerce.STATUS_LABEL[o.status], pay_label: commerce.PAYMENT_STATUS[o.payment_status], terms_label: commerce.TERMS[o.payment_terms],
     editable: commerce.EDITABLE[o.status] || null, overdue, due_on: live ? live.due_on : null,
-    gst_label: o.gst_type === 'intra' ? `CGST + SGST (${stateName(o.place_of_supply)}, same state as the seller)` : `IGST (${stateName(o.place_of_supply)}, another state)`,
+    gst_label: `${o.gst_type === 'intra' ? 'CGST + SGST' : 'IGST'} - place of supply ${stateName(o.place_of_supply)} (${o.place_of_supply}): ${posReason(o.bill_gstin, o.place_of_supply)}${o.gst_type === 'intra' ? ', the seller\'s state' : ', another state than the seller\'s'}`,
     bill_state: stateName(o.bill_state_code), ship_state: stateName(o.ship_state_code),
     price_list_label: listLabel ? listLabel.label : o.price_list, prices_basis: (await pricing.basis(db)).short,
     modes: commerce.modesOffered(cs), modeLabels: commerce.MODES, cancelNeedsApproval: commerce.GONE.includes(o.status) && Boolean(cs.approve_cancel_after_dispatch),
@@ -2015,7 +2015,7 @@ route('get', '/commerce/invoices/:id', 'orders:view', async (req) => {
   const s = Object.fromEntries(site.map((x) => [x.setting_key, x.setting_value]));
   const buyer = typeof inv.buyer_json === 'string' ? JSON.parse(inv.buyer_json) : inv.buyer_json;
   return { ...inv, buyer_json: undefined, buyer, lines, credit_notes: cns, is_demo: Number(inv.is_demo) === 1, seller_state: stateName(inv.seller_state_code),
-    pos_state: stateName(inv.place_of_supply), bill_state: stateName(buyer.bill.state_code), ship_state: stateName(buyer.ship.state_code), cin: s.cin, phone: s.office_phone, email: s.public_email };
+    pos_state: stateName(inv.place_of_supply), pos_reason: posReason(buyer.bill.gstin, inv.place_of_supply), bill_state: stateName(buyer.bill.state_code), ship_state: stateName(buyer.ship.state_code), cin: s.cin, phone: s.office_phone, email: s.public_email };
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -2155,75 +2155,103 @@ route('get', '/commerce/credit-notes/:id', 'any', async (req) => {
       FROM credit_note_lines l JOIN skus s ON s.sku_code = l.sku_code ${SKU_JOIN} WHERE l.credit_note_id = ? ORDER BY l.id`, [cn.credit_note_id]);
   const buyer = typeof cn.buyer_json === 'string' ? JSON.parse(cn.buyer_json) : cn.buyer_json;
   return { ...cn, buyer_json: undefined, buyer, lines, is_demo: Number(cn.is_demo) === 1, seller_state: stateName(cn.seller_state_code), pos_state: stateName(cn.place_of_supply),
+    pos_reason: posReason(buyer.bill.gstin, cn.place_of_supply),
     bill_state: stateName(buyer.bill.state_code) };
 });
 
-// Reports: coupons and offers used, discounts given, cashback credited / used / expired / reversed in a period, and the
-// wallet balance owed to customers now (total liability, by source, the largest balances)
-route('get', '/commerce/reports/promotions', 'reports:view', async (req) => {
+// ---------------------------------------------------------------------------------------------
+// Reports (docs/COMMERCE-SPEC.md 10; logic in reports.js). One Reports area: period (India dates), filters, totals, a
+// chart where useful, Excel and print on every report. Each report needs view on its own section; costs and margins
+// need view on Reports and on Products and prices.
+// ---------------------------------------------------------------------------------------------
+const reports = require('./reports');
+const seesCosts = (req) => canDo(req, 'reports') && canDo(req, 'products');
+const REPORTS = {
+  sales: { label: 'Sales', section: 'Orders', can: (req) => canDo(req, 'orders'), run: (q, p) => reports.sales(q, p) },
+  gst: { label: 'GST (GSTR-1)', section: 'Reports', can: (req) => canDo(req, 'reports'), run: (q, p) => reports.gst(q, p) },
+  margin: { label: 'Margin', section: 'Reports + Products and prices', can: seesCosts, run: (q, p) => reports.margin(q, p) },
+  stock: { label: 'Stock', section: 'Inventory', can: (req) => canDo(req, 'inventory'), run: (q, p, req) => reports.stockReport(q, p, { seesCost: seesCosts(req) }) },
+  receivables: { label: 'Receivables', section: 'Customers', can: (req) => canDo(req, 'customers'), run: (q, p) => reports.receivables(q, p) },
+  delivery: { label: 'Delivery', section: 'Delivery', can: (req) => canDo(req, 'delivery'), run: (q, p) => reports.deliveryReport(q, p) },
+  returns: { label: 'Returns', section: 'Returns', can: (req) => canDo(req, 'returns'), run: (q, p) => reports.returnsReport(q, p) },
+  promotions: { label: 'Promotions and wallet', section: 'Promotions', can: (req) => canDo(req, 'promotions'), run: (q, p) => reports.promotionsReport(q, p) },
+  accounting: { label: 'Accounting export', section: 'Reports', can: (req) => canDo(req, 'reports'), run: null },
+};
+/** the period and filters of a report request (this month by default) */
+function reportParams(req) {
   const today = pricing.istToday();
   const from = pricing.isDate(String(req.query.from || '')) ? String(req.query.from) : `${today.slice(0, 8)}01`;
   const to = pricing.isDate(String(req.query.to || '')) ? String(req.query.to) : today;
-  const span = [`${from} 00:00:00`, to];
-  const IN = (col) => `${col} >= CONVERT_TZ(?, '+05:30', '+00:00') AND ${col} < CONVERT_TZ(DATE_ADD(?, INTERVAL 1 DAY), '+05:30', '+00:00')`;
-  const n = (x) => Number(x) || 0;
-  const [coupons] = await db.query(`SELECT r.code, c.kind, COUNT(*) AS orders, COUNT(DISTINCT r.customer_id) AS customers, SUM(r.amount) AS amount
-      FROM coupon_redemptions r JOIN coupons c ON c.code = r.code WHERE r.status = 'active' AND ${IN('r.created_at')} GROUP BY r.code, c.kind ORDER BY amount DESC`, span);
-  const [offers] = await db.query(`SELECT f.offer_id, f.name, f.kind, COUNT(DISTINCT i.order_id) AS orders, SUM(i.offer_discount) AS discount,
-      SUM(CASE WHEN i.is_free = 1 THEN i.qty ELSE 0 END) AS free_packs, SUM(CASE WHEN i.is_free = 1 THEN i.qty * COALESCE(i.list_price, 0) ELSE 0 END) AS free_value
-      FROM order_items i JOIN offers f ON f.offer_id = i.offer_id JOIN orders o ON o.order_id = i.order_id WHERE o.status <> 'cancelled' AND ${IN('o.created_at')}
-      GROUP BY f.offer_id, f.name, f.kind ORDER BY orders DESC`, span);
-  const [months] = await db.query(`SELECT DATE_FORMAT(CONVERT_TZ(created_at, '+00:00', '+05:30'), '%Y-%m') AS month, COUNT(*) AS orders, SUM(subtotal) AS goods, SUM(offer_discount) AS offers,
-      SUM(discount) AS coupons, SUM(manual_discount) AS manual, SUM(delivery_waived) AS delivery, SUM(wallet_discount) AS wallet
-      FROM orders WHERE status <> 'cancelled' AND ${IN('created_at')} GROUP BY month ORDER BY month`, span);
-  const [[cb]] = await db.query(`SELECT COALESCE(SUM(CASE WHEN source = 'cashback' THEN amount END), 0) AS credited, COALESCE(-SUM(CASE WHEN source = 'reversed' THEN amount END), 0) AS reversed,
-      COUNT(CASE WHEN source = 'cashback' THEN 1 END) AS credits FROM wallet_entries WHERE ${IN('created_at')}`, span);
-  const [byCredit] = await db.query(`SELECT d.source AS took, SUM(a.amount) AS amount FROM wallet_allocations a JOIN wallet_entries d ON d.entry_id = a.debit_entry_id
-      JOIN wallet_entries c ON c.entry_id = a.credit_entry_id WHERE c.source = 'cashback' AND a.given_back = 0 AND d.source IN ('used', 'expired') AND ${IN('d.created_at')} GROUP BY d.source`, span);
-  const [owed] = await db.query(`SELECT c.customer_id, c.name, ct.label AS ctype, SUM(w.amount) AS balance FROM wallet_entries w JOIN customers c ON c.customer_id = w.customer_id
-      JOIN customer_types ct ON ct.type_key = c.type_key GROUP BY c.customer_id, c.name, ct.label HAVING balance > 0.005 ORDER BY balance DESC`);
-  const [left] = await db.query(`SELECT source, SUM(remaining) AS amount, SUM(CASE WHEN expires_on IS NOT NULL AND expires_on <= ${IST_TODAY_DATE} + INTERVAL 30 DAY THEN remaining ELSE 0 END) AS soon
-      FROM wallet_entries WHERE remaining > 0.005 AND (expires_on IS NULL OR expires_on >= ${IST_TODAY_DATE}) GROUP BY source`);
-  const used = byCredit.find((x) => x.took === 'used'); const exp = byCredit.find((x) => x.took === 'expired');
-  return {
-    from, to,
-    coupons: coupons.map((c) => ({ ...c, orders: n(c.orders), customers: n(c.customers), amount: n(c.amount), kind_label: promotions.KINDS[c.kind] })),
-    offers: offers.map((o) => ({ ...o, orders: n(o.orders), discount: n(o.discount), free_packs: n(o.free_packs), free_value: n(o.free_value), kind_label: promotions.OFFER_KINDS[o.kind] })),
-    discounts: months.map((m) => ({ month: m.month, orders: n(m.orders), goods: n(m.goods), offers: n(m.offers), coupons: n(m.coupons), manual: n(m.manual), delivery: n(m.delivery), wallet: n(m.wallet) })),
-    cashback: { credited: n(cb.credited), credits: n(cb.credits), used: n(used && used.amount), expired: n(exp && exp.amount), reversed: n(cb.reversed) },
-    liability: { total: Math.round(owed.reduce((a, r) => a + n(r.balance), 0) * 100) / 100, customers: owed.length, top: owed.slice(0, 10).map((r) => ({ ...r, balance: n(r.balance) })),
-      bySource: left.map((l) => ({ source: l.source, label: wallet.SOURCES[l.source], amount: n(l.amount), soon: n(l.soon) })) },
-  };
+  if (to < from) throw new InputError('To: on or after From');
+  const pick = (k) => (typeof req.query[k] === 'string' ? req.query[k].trim().slice(0, 40) : '');
+  return { from, to, group: pick('group'), type: pick('type'), owner: pick('owner'), by: pick('by'), view: pick('view'), days: pick('days') };
+}
+function reportOf(req) {
+  const r = REPORTS[req.params.key];
+  if (!r || !r.run) throw new InputError('No such report', 404);
+  if (!r.can(req)) throw new InputError(`This report needs view on ${r.section}`, 403);
+  return r;
+}
+route('get', '/commerce/reports', 'any', async (req) => ({
+  reports: Object.entries(REPORTS).map(([key, r]) => ({ key, label: r.label, section: r.section, allowed: r.can(req) })),
+  groups: reports.SALES_GROUPS, marginBy: reports.MARGIN_BY, stockViews: reports.STOCK_VIEWS, types: await customers.types(db), owners: await adminPeople(db),
+  seesCosts: seesCosts(req), accounting: (await commerceSettings.read(db)).accounting_export,
+}));
+route('get', '/commerce/reports/:key', 'any', async (req) => {
+  const r = reportOf(req);
+  const p = reportParams(req);
+  return { key: req.params.key, label: r.label, ...p, ...(await r.run(db, p, req)) };
 });
-
-// Reports: returns by reason and by SKU for a period (dates in India time), return rate per SKU = packs returned /
-// packs delivered in the same period
-route('get', '/commerce/reports/returns', 'reports:view', async (req) => {
-  const today = pricing.istToday();
-  const from = pricing.isDate(String(req.query.from || '')) ? String(req.query.from) : `${today.slice(0, 8)}01`;
-  const to = pricing.isDate(String(req.query.to || '')) ? String(req.query.to) : today;
-  const span = [`${from} 00:00:00`, to];
-  const IN = `r.created_at >= CONVERT_TZ(?, '+05:30', '+00:00') AND r.created_at < CONVERT_TZ(DATE_ADD(?, INTERVAL 1 DAY), '+05:30', '+00:00') AND r.status <> 'rejected'`;
-  const [byReason] = await db.query(`SELECT rr.label AS reason, COUNT(DISTINCT r.return_id) AS returns, COALESCE(SUM(x.qty), 0) AS packs
-      FROM returns r JOIN return_reasons rr ON rr.reason_id = r.reason_id JOIN return_items x ON x.return_id = r.return_id WHERE ${IN} GROUP BY rr.reason_id, rr.label ORDER BY packs DESC`, span);
-  const [bySku] = await db.query(`SELECT x.sku_code, ${SKU_NAME} AS name, s.size_label, COUNT(DISTINCT r.return_id) AS returns, SUM(x.qty) AS packs,
-      COALESCE(SUM(x.qty_ok), 0) AS ok, COALESCE(SUM(x.qty_damaged), 0) AS damaged, COALESCE(SUM(x.qty_expired), 0) AS expired, COALESCE(SUM(x.qty_missing), 0) AS missing,
-      COALESCE(SUM(x.refund_qty), 0) AS refunded, COALESCE(SUM(x.replace_qty), 0) AS replaced
-      FROM returns r JOIN return_items x ON x.return_id = r.return_id JOIN skus s ON s.sku_code = x.sku_code ${SKU_JOIN} WHERE ${IN}
-      GROUP BY x.sku_code, t.name, pt.name, s.product_id, s.size_label ORDER BY packs DESC`, span);
-  const [sold] = await db.query(`SELECT i.sku_code, SUM(i.qty) AS packs FROM orders o JOIN order_items i ON i.order_id = o.order_id
-      WHERE o.delivered_at >= CONVERT_TZ(?, '+05:30', '+00:00') AND o.delivered_at < CONVERT_TZ(DATE_ADD(?, INTERVAL 1 DAY), '+05:30', '+00:00') AND o.status = 'delivered' GROUP BY i.sku_code`, span);
-  const del = new Map(sold.map((x) => [x.sku_code, Number(x.packs)]));
-  const num = (x) => Number(x) || 0;
-  return {
-    from, to,
-    byReason: byReason.map((x) => ({ reason: x.reason, returns: num(x.returns), packs: num(x.packs) })),
-    bySku: bySku.map((x) => {
-      const delivered = del.get(x.sku_code) || 0;
-      return { sku_code: x.sku_code, name: x.name, size_label: x.size_label, returns: num(x.returns), packs: num(x.packs), ok: num(x.ok), damaged: num(x.damaged), expired: num(x.expired),
-        missing: num(x.missing), refunded: num(x.refunded), replaced: num(x.replaced), delivered, rate: delivered ? Math.round((num(x.packs) / delivered) * 1000) / 10 : null };
-    }),
-  };
+const GST_DATE_TEXT = new Set(['date']);
+route('get', '/commerce/reports/:key/export.xlsx', 'any', async (req, res) => {
+  const r = reportOf(req);
+  const p = reportParams(req);
+  const data = await r.run(db, p, req);
+  const filters = [`${p.from} to ${p.to}`, ...['group', 'type', 'owner', 'by', 'view', 'days'].filter((k) => p[k]).map((k) => `${k}: ${p[k]}`)].join(', ');
+  const wb = theme.newWorkbook(`dFresh ${r.label}`);
+  const meta = { exportedBy: await exportedBy(req), filters };
+  theme.notesSheet(wb, 'Read_Me', { ...meta, title: `dFresh ${r.label}`, lines: [[`${r.label}: ${p.from} to ${p.to}`, true], [''], ...(data.notes || []).map((n) => [`• ${n}`]),
+    ...(data.checks || []).map((c) => [`• Check: ${c.label}: ${c.value} (${c.detail}) - ${c.ok ? 'OK' : 'DIFFERENT'}`])] });
+  for (const t of data.tables) {
+    if (req.params.key === 'gst' && t.portal) {
+      // the GST offline tool's layout: summary rows 1-3, its column names on row 4, the data from row 5
+      const ws = wb.addWorksheet(t.portal);
+      const cols = t.columns.slice(0, t.portalCols);
+      ws.getRow(1).values = [`Summary For ${t.portal.toUpperCase()}`];
+      ws.getRow(2).values = cols.map((c) => (t.totals[c.key] !== undefined ? 'Total' : ''));
+      ws.getRow(3).values = cols.map((c) => (t.totals[c.key] !== undefined ? t.totals[c.key] : ''));
+      ws.getRow(4).values = cols.map((c) => c.label);
+      ws.getRow(4).font = { bold: true };
+      t.rows.forEach((row, i) => { ws.getRow(5 + i).values = cols.map((c) => (row[c.key] === undefined || row[c.key] === null ? '' : row[c.key])); });
+      cols.forEach((c, i) => { ws.getColumn(i + 1).width = Math.max(12, c.label.length + 2); });
+      continue;
+    }
+    theme.tableSheet(wb, t.title.replace(/[^A-Za-z0-9 ]/g, '').slice(0, 31) || t.key, {
+      ...meta, title: `${r.label}: ${t.title}`,
+      columns: t.columns.map((c) => ({ header: c.label, type: ['num', 'money', 'pct'].includes(c.type) ? 'number' : GST_DATE_TEXT.has(c.type) ? 'text' : 'text' })),
+      rows: [...t.rows.map((row) => t.columns.map((c) => (row[c.key] === undefined ? null : row[c.key]))), ...(Object.keys(t.totals || {}).length ? [t.columns.map((c, i) => (i === 0 ? 'Total' : t.totals[c.key] ?? null))] : [])],
+    });
+  }
+  const bytes = await theme.send(res, wb, `dFresh_${r.label.replace(/[^A-Za-z0-9]+/g, '_')}_${p.from}_${p.to}.xlsx`);
+  await audit(null, { empId: by(req), action: 'export', entity: 'report', entityId: req.params.key, after: { ...p, bytes } });
+});
+// Accounting export: sales, receipts, credit notes (and refunds, wallet use) as a CSV journal; Tally / Zoho later (setting)
+route('get', '/commerce/reports/accounting/journal.csv', 'reports:view', async (req, res) => {
+  const p = reportParams(req);
+  const rows = await reports.journal(db, p);
+  const head = ['Date', 'Voucher type', 'Voucher no', 'Party', 'Party GSTIN', 'Ledger', 'Debit', 'Credit', 'Narration'];
+  const body = csv.stringify([head, ...rows.map((x) => [x.date, x.type, x.no, x.party, x.gstin, x.ledger, x.debit, x.credit, x.narration])]);
+  res.set({ 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="dfresh-journal-${p.from}-${p.to}.csv"`, 'Cache-Control': 'no-store' });
+  res.send(`\ufeff${body}`);
+  await audit(null, { empId: by(req), action: 'export', entity: 'report', entityId: 'journal', after: { ...p, lines: rows.length } });
+});
+route('get', '/commerce/reports/accounting/preview', 'reports:view', async (req) => {
+  const p = reportParams(req);
+  const rows = await reports.journal(db, p);
+  const dr = rows.reduce((a, x) => a + (Number(x.debit) || 0), 0); const cr = rows.reduce((a, x) => a + (Number(x.credit) || 0), 0);
+  const byType = {}; rows.forEach((x) => { byType[x.type] = byType[x.type] || new Set(); byType[x.type].add(x.no); });
+  return { ...p, lines: rows.slice(0, 200), count: rows.length, debit: Math.round(dr * 100) / 100, credit: Math.round(cr * 100) / 100,
+    vouchers: Object.entries(byType).map(([type, set]) => ({ type, n: set.size })), format: (await commerceSettings.read(db)).accounting_export };
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -2744,6 +2772,7 @@ route('get', '/commerce/ops', 'any', async (req) => {
     today: can.orders ? { n: Number(today.n), value: Number(today.value) } : null,
     toPack: can.pack ? Number(st.to_pack) || 0 : null, toDispatch: can.dispatch ? Number(st.to_dispatch) || 0 : null,
     returns: seeInspect ? { toCollect: can.returns ? dc.returnsToCollect : null, toInspect: dc.returnsToInspect, toDecide: can.returns ? dc.returnsToDecide : null } : null,
+    business: seesCosts(req) ? await reports.business(db) : null, // the Business view: Reports + Products and prices
     followUps: can.wallet ? { overdue: Number(fu.overdue) || 0, mine: Number(fu.mine) || 0 } : null,
     walletGiven: can.wallet ? { total: Number(w.total), cashback: Number(w.cashback), refunds: Number(w.refunds) } : null, // total = owed to customers now
     lowStock: can.stock ? low.map((r) => ({ sku_code: r.sku_code, name: r.name, available: r.available, reorder_level: r.reorder_level, suggested: r.suggested })) : null,
