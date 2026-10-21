@@ -13,6 +13,9 @@ import { api } from './adminApi';
 import { Drawer, InfoCard, Loading, Notice, fmtDate, useAction, useCan, useLoad, useUpload, UploadProgress } from './ui';
 import { barcodeSvg, esc, printPage, rs } from './printKit';
 
+/** street, town PIN without a dangling comma when a part is empty (a customer made from a lead has no street yet) */
+const placeLine = (x) => [x.ship_address, [x.ship_town, x.ship_pincode].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+
 const day = (d) => (d ? new Date(`${String(d).slice(0, 10)}T00:00:00Z`).toLocaleDateString('en-IN', { timeZone: 'UTC', weekday: 'short', day: 'numeric', month: 'short' }) : '');
 const TRIP = { planned: ['Planned', 'a-ap-pending'], out: ['Out for delivery', 'a-ostatus-dispatched'], ended: ['Ended', 'a-ap-approved'] };
 const STOP = { pending: ['To deliver', 'a-ap-pending'], delivered: ['Delivered', 'a-ap-approved'], failed: ['Failed', 'a-ap-rejected'], picked_up: ['Picked up', 'a-ap-approved'] };
@@ -20,7 +23,7 @@ const stopKey = (s) => (s.kind === 'pickup' ? s.return_no : s.order_no);
 
 function printTripSheet(t) {
   const rows = t.stops.map((s) => `<tr><td class="n"><b>${s.seq}</b></td><td>${barcodeSvg(stopKey(s), { height: 26, width: 1.1, fontSize: 10 })}</td>
-    <td>${s.kind === 'pickup' ? `<b>PICK UP (return)</b> ${esc(s.pickup_items || '')}<br>` : ''}<b>${esc(s.customer)}</b><br>${esc(s.ship_name)}<br>${esc(s.ship_address || '')}, ${esc(s.ship_town || '')} ${esc(s.ship_pincode || '')}<br>${esc(s.ship_phone || '')}</td>
+    <td>${s.kind === 'pickup' ? `<b>PICK UP (return)</b> ${esc(s.pickup_items || '')}<br>` : ''}<b>${esc(s.customer)}</b><br>${esc(s.ship_name)}<br>${esc(placeLine(s))}<br>${esc(s.ship_phone || '')}</td>
     <td class="n">${s.kind === 'pickup' ? '-' : s.cartons || '-'}</td><td class="n">${s.to_collect > 0 ? `<b>${rs(s.to_collect)}</b>` : '<span class="muted">-</span>'}</td>
     ${t.otpOn ? `<td>${esc(s.otp || '')}</td>` : ''}<td style="width:30mm"></td></tr>`).join('');
   return printPage({
@@ -88,7 +91,7 @@ export function TripView({ id, onChanged }) {
               <li key={s.stop_id} className={`a-stop a-stop-${s.status}${s.kind === 'pickup' ? ' a-stop-pickup' : ''}`}>
                 <div className="a-stop-head"><b>{i + 1}. {s.customer}</b><span className={`a-status ${STOP[s.status][1]}`}>{s.kind === 'pickup' && s.status === 'pending' ? 'To pick up' : STOP[s.status][0]}</span></div>
                 {s.kind === 'pickup' && <div className="a-pickup-what"><b>Return pickup</b> {s.pickup_items}</div>}
-                <div>{s.ship_name !== s.customer ? `${s.ship_name}, ` : ''}{s.ship_address}, {s.ship_town} {s.ship_pincode}</div>
+                <div>{s.ship_name !== s.customer ? `${s.ship_name}, ` : ''}{placeLine(s)}</div>
                 <div className="a-stop-meta">
                   {s.kind === 'pickup' ? <><code>{s.return_no}</code> (order {s.order_no})</> : <><code>{s.order_no}</code> · {s.cartons || '-'} carton(s)</>}
                   {s.ship_phone && <> · <a href={`tel:${s.ship_phone.replace(/\s/g, '')}`}>{s.ship_phone}</a></>}
@@ -219,7 +222,7 @@ export default function CommerceDelivery() {
                   <tr key={o.order_no}>
                     <td><input type="checkbox" aria-label={`Trip ${o.order_no}`} disabled={Boolean(o.trip_id)} checked={sel.includes(o.order_no)} onChange={() => setSel((s) => (s.includes(o.order_no) ? s.filter((x) => x !== o.order_no) : [...s, o.order_no]))} /></td>
                     <td><code>{o.order_no}</code>{o.trip_id && <small className="a-muted a-person-sub">on trip T-{o.trip_id} (planned)</small>}</td>
-                    <td>{o.customer}<small className="a-muted a-person-sub">{o.ship_address}, {o.ship_town} {o.ship_pincode}</small></td>
+                    <td>{o.customer}<small className="a-muted a-person-sub">{placeLine(o)}</small></td>
                     <td className="a-num">{o.cartons} carton(s)</td><td className="a-num">{o.payment_terms === 'cod' && o.amount_due > 0 ? `COD ${rs(o.amount_due)}` : ''}</td>
                   </tr>
                 ))}</tbody></table>
@@ -233,7 +236,7 @@ export default function CommerceDelivery() {
                   <tr key={r.return_no}>
                     <td><input type="checkbox" aria-label={`Trip ${r.return_no}`} disabled={Boolean(r.trip_id)} checked={selRet.includes(r.return_no)} onChange={() => setSelRet((s) => (s.includes(r.return_no) ? s.filter((x) => x !== r.return_no) : [...s, r.return_no]))} /></td>
                     <td><code>{r.return_no}</code>{r.trip_id && <small className="a-muted a-person-sub">on trip T-{r.trip_id}</small>}<small className="a-muted a-person-sub">order {r.order_no}</small></td>
-                    <td>{r.customer}<small className="a-muted a-person-sub">{r.ship_address}, {r.ship_town} {r.ship_pincode}{r.area ? ` · ${r.area}` : ''}</small></td>
+                    <td>{r.customer}<small className="a-muted a-person-sub">{placeLine(r)}{r.area ? ` · ${r.area}` : ''}</small></td>
                     <td>Pick up {r.items}</td>
                   </tr>
                 ))}</tbody></table>

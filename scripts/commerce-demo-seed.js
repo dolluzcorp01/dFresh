@@ -13,7 +13,8 @@
 //    one overdue invoice)
 // 4c. CRM (phase 8): two hotels with a second branch (a second GSTIN: Karnataka, Puducherry), timeline entries (calls,
 //    visits, WhatsApp), follow-ups (some overdue), one customer on hold, a duplicate pair to merge (the same lodge
-//    entered twice with another number), a lead converted to a customer, a saved segment
+//    entered twice with another number), a lead converted to a customer, a saved segment, and lead DFL-269001 (DEMO
+//    Saravana Bhavan) left new for docs/COMMERCE-DEMO.md
 // 4b. returns through src/backend_routes/returns.js, one in every status: outside the window waiting for approval, a
 //    courier reverse pickup still without AWB, a pickup on a planned trip, received (scanned), inspected, refunded to
 //    the wallet (credit note), a partial one (IGST order: refund less to pay + replacement, courier reverse pickup),
@@ -517,9 +518,13 @@ async function inTx(fn) {
     // a lead converted to a customer (its history shows on the customer)
     const [[lead]] = await q.query("SELECT lead_id FROM leads WHERE business_name = 'Test Hotel Pvt Ltd' LIMIT 1");
     if (lead) await customers.fromLead(q, lead.lead_id, { address: 'Ennaikaran Street', pincode: '631501' }, 'demo-seed');
+    // a fresh lead for the demo script (docs/COMMERCE-DEMO.md): converted to a customer in front of sir
+    await q.query(`INSERT INTO leads (lead_ref, form_type, full_name, business_name, business_type, town, phone, email, monthly_quantity, message, lang_code, source_page, consent_given, consent_text, consent_at, status, created_at)
+        VALUES ('DFL-269001', 'quote', 'DEMO Saravanan', 'DEMO Saravana Bhavan', 'hotel', 'Kanchipuram', '9800000099', 'demo.saravana@example.com', '20 cartons a month',
+          'DEMO - napkins and kitchen towels for our 3 branches', 'en', '/en/products', 1, 'DEMO consent', UTC_TIMESTAMP() - INTERVAL 2 HOUR, 'new', UTC_TIMESTAMP() - INTERVAL 2 HOUR)`);
     await q.query("INSERT INTO customer_segments (name, filters, created_by) VALUES ('DEMO Hotels owing money', ?, 'demo-seed')", [JSON.stringify({ type: 'hotel', outstanding_min: '1' })]);
   });
-  console.log('demo CRM: 2 hotels with a second branch (GSTIN 29 / 34), 6 timeline entries, 5 follow-ups (2 overdue), Demo Bank Branch on hold, a duplicate Demo Lodge Kamakshi, a lead converted, a segment');
+  console.log('demo CRM: 2 hotels with a second branch (GSTIN 29 / 34), 6 timeline entries, 5 follow-ups (2 overdue), Demo Bank Branch on hold, a duplicate Demo Lodge Kamakshi, a lead converted, a segment; lead DFL-269001 waits for the demo');
 
   // cashback of the delivered orders whose return window has passed (the hourly job does this on the live system)
   const cb = await inTx((q) => promotions.cashbackDue(q, 'system'));

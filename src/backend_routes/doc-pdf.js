@@ -47,7 +47,8 @@ async function invoiceData(q, id) {
   const s = await siteContact(q);
   const buyer = typeof inv.buyer_json === 'string' ? JSON.parse(inv.buyer_json) : inv.buyer_json;
   return { ...inv, buyer_json: undefined, buyer, lines, credit_notes: cns, is_demo: Number(inv.is_demo) === 1, seller_state: stateName(inv.seller_state_code),
-    pos_state: stateName(inv.place_of_supply), pos_reason: posReason(buyer.bill.gstin, inv.place_of_supply), bill_state: stateName(buyer.bill.state_code), ship_state: stateName(buyer.ship.state_code), cin: s.cin, phone: s.office_phone, email: s.public_email };
+    pos_state: stateName(inv.place_of_supply), pos_reason: posReason(buyer.bill.gstin, inv.place_of_supply), bill_state: stateName(buyer.bill.state_code), ship_state: stateName(buyer.ship.state_code), cin: s.cin, phone: s.office_phone, email: s.public_email,
+    bank: String((await commerceSettings.read(q)).invoice_bank_details || '').trim() || null }; // Commerce setting: printed when filled
 }
 
 /** a credit note with the invoice snapshot and its own lines (null when none) */
@@ -231,6 +232,7 @@ async function invoicePdf(q, id) {
     ...(walletPaid > 0.005 ? [['Paid from wallet', `- ${money(walletPaid)}`], ['To pay', `Rs ${money(Number(inv.total) - walletPaid)}`, true]] : []),
   ]);
   if (inv.credit_notes.length) d.para(`Credit notes against this invoice: ${inv.credit_notes.map((c) => `${c.credit_note_no} (${istDay(c.issued_at)}, Rs ${money(c.total)}${c.reason ? ` - ${c.reason}` : ''})`).join('; ')}`, { color: INK });
+  if (inv.bank) d.para(`Pay to: ${inv.bank}`, { color: INK });
   d.para('Marketed by dFresh. Prices per pack before GST. This is a computer-generated invoice.');
   return { filename: `${inv.invoice_no.replace(/\//g, '-')}.pdf`, buffer: await d.finish() };
 }

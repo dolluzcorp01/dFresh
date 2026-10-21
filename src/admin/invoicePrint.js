@@ -71,6 +71,7 @@ export function invoiceHtml(inv) {
       <tr class="grand"><td>To pay</td><td class="n">Rs ${(Number(inv.total) - (Number(inv.wallet_used) - Number(inv.wallet_discount))).toFixed(2)}</td></tr>` : ''}
     </tbody></table>
     ${cns.length ? `<p><b>Credit notes against this invoice:</b> ${cns.map((c) => `${esc(c.credit_note_no)} (${istDay(c.issued_at)}, Rs ${Number(c.total).toFixed(2)}${c.reason ? ` - ${esc(c.reason)}` : ''})`).join('; ')}</p>` : ''}
+    ${inv.bank ? `<p><b>Pay to:</b> ${esc(inv.bank)}</p>` : ''}
     <p><small>Marketed by dFresh. Prices per pack before GST. This is a computer-generated invoice.</small></p>`;
 }
 
