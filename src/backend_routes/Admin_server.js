@@ -1659,7 +1659,8 @@ route('get', '/commerce/order-form', 'orders:view', async (req) => {
   const stock = await commerce.availability(db, all.map((s) => s.sku_code), except);
   const skus = all.map((s) => ({ sku_code: s.sku_code, name: s.name, size_label: s.size_label, gst_rate: s.gst_rate, packs_per_carton: s.packs_per_carton,
     min_order_qty: s.min_order_qty, sell_unit: s.sell_unit, own: own.get(s.sku_code) || {}, ...stock.get(s.sku_code) }));
-  const [coupons] = await db.query('SELECT code, kind, value, min_order, expires_on, usage_limit, used, is_active FROM coupons ORDER BY code');
+  const [coupons] = await db.query(`SELECT code, description, kind, value, min_order, max_discount FROM coupons WHERE is_active = 1
+      AND (valid_from IS NULL OR valid_from <= ?) AND (valid_to IS NULL OR valid_to >= ?) ORDER BY code`, [pricing.istToday(), pricing.istToday()]);
   const cs = await commerceSettings.read(db);
   return {
     customers: customers.map((c) => ({ ...c, wallet: Number(c.wallet), outstanding: Number(c.outstanding), overdue: Number(c.overdue), credit_limit: Number(c.credit_limit) })),
@@ -1670,13 +1671,16 @@ route('get', '/commerce/order-form', 'orders:view', async (req) => {
       .map((a) => ({ ...a, charge: Number(a.charge), free_above: a.free_above === null ? null : Number(a.free_above) })),
     deliveryGstRate: Number(cs.delivery_charge_gst_rate) || 0,
     approval: { on: Boolean(cs.approve_price_below_on), pct: Number(cs.approve_price_below_pct) || 0, credit: cs.approve_credit_order !== false, stock: cs.approve_over_available !== false },
+    manualDiscount: Boolean(cs.manual_discount_allowed), walletMaxPct: Number(cs.wallet_max_use_pct), walletGst: cs.cashback_gst_treatment === 'payment' ? 'payment' : 'discount',
+    discountLimit: cs.approve_discount_on ? Number(cs.approve_discount_pct_above) : null,
   };
 });
 
-route('post', '/commerce/coupon-check', 'orders:view', async (req) => {
+// What the order would be as it is typed (totals, offers on the lines, free lines, coupon, wallet, approvals); nothing saved
+route('post', '/commerce/orders/preview', 'orders:view', async (req) => {
+  if (!canDo(req, 'orders', 'create') && !canDo(req, 'orders', 'edit')) throw new InputError('This needs create or edit on Orders', 403);
   try {
-    const discount = await commerce.couponDiscount(db, String(req.body.code || '').trim().toUpperCase(), Number(req.body.subtotal) || 0);
-    return { discount };
+    return await commerce.previewOrder(db, req.body || {}, by(req), { orderNo: req.body && req.body.order_no ? String(req.body.order_no) : null, canOverride: canDo(req, 'orders', 'approve') });
   } catch (e) { throw asInput(e); }
 });
 
@@ -1745,9 +1749,11 @@ route('get', '/commerce/orders/:no', 'orders:view', async (req) => {
        FROM orders o JOIN customers c ON c.customer_id = o.customer_id WHERE o.order_no = ?`, [req.params.no]
   );
   if (!o) throw new InputError('Order not found', 404);
-  const [items] = await db.query(`SELECT i.sku_code, i.qty, i.price, i.list_price, i.hsn, i.gst_rate, i.taxable, i.cgst, i.sgst, i.igst, i.line_total, ${SKU_NAME} AS name, s.size_label,
-       s.packs_per_carton, s.min_order_qty, s.sell_unit
-       FROM order_items i JOIN skus s ON s.sku_code = i.sku_code ${SKU_JOIN} WHERE i.order_id = ? ORDER BY i.sku_code`, [o.order_id]);
+  const [items] = await db.query(`SELECT i.sku_code, i.is_free, i.qty, i.price, i.list_price, i.offer_id, i.offer_discount, i.coupon_discount, i.wallet_discount, i.hsn, i.gst_rate, i.taxable, i.cgst, i.sgst, i.igst,
+       i.line_total, ${SKU_NAME} AS name, s.size_label, s.packs_per_carton, s.min_order_qty, s.sell_unit, f.name AS offer_name, f.kind AS offer_kind, f.pct AS offer_pct, f.min_qty AS offer_min_qty,
+       f.min_unit AS offer_min_unit, f.buy_qty AS offer_buy, f.get_qty AS offer_get, f.get_sku_code AS offer_get_sku
+       FROM order_items i JOIN skus s ON s.sku_code = i.sku_code ${SKU_JOIN} LEFT JOIN offers f ON f.offer_id = i.offer_id WHERE i.order_id = ? ORDER BY i.sku_code, i.is_free`, [o.order_id]);
+  const [walletRows] = await db.query("SELECT entry_id, source, amount, reason, created_at FROM wallet_entries WHERE order_id = ? ORDER BY entry_id", [o.order_id]);
   const [hist] = await db.query('SELECT from_status, to_status, note, emp_id, created_at FROM order_status_history WHERE order_id = ? ORDER BY id', [o.order_id]);
   const [pays] = await db.query("SELECT payment_id, kind, mode, amount, DATE_FORMAT(received_on, '%Y-%m-%d') AS received_on, reference, note, emp_id, created_at FROM payments WHERE order_id = ? ORDER BY payment_id", [o.order_id]);
   const [invs] = await db.query(`SELECT i.invoice_id, i.invoice_no, i.status, i.issued_at, DATE_FORMAT(i.due_on, '%Y-%m-%d') AS due_on, i.total, i.is_demo, i.cancelled_at, i.cancel_reason
@@ -1766,7 +1772,7 @@ route('get', '/commerce/orders/:no', 'orders:view', async (req) => {
   const live = invs.find((i) => i.status === 'issued');
   const overdue = Boolean(live && o.status !== 'cancelled' && Number(o.amount_due) > 0.005 && live.due_on < pricing.istToday() && (o.payment_terms !== 'cod' || o.status === 'delivered'));
   return {
-    ...o, items, history: hist, payments: pays, batches: batchesOut,
+    ...o, history: hist, payments: pays, batches: batchesOut,
     invoices: invs.map((i) => ({ ...i, is_demo: Number(i.is_demo) === 1, credit_notes: cnotes.filter((c) => c.invoice_id === i.invoice_id).map((c) => ({ ...c, total: Number(c.total) })) })),
     approvals: appr.map((a) => ({ ...a, kind_label: (approvals.KINDS[a.kind] || {}).label || a.kind })), reserved: res,
     status_label: commerce.STATUS_LABEL[o.status], pay_label: commerce.PAYMENT_STATUS[o.payment_status], terms_label: commerce.TERMS[o.payment_terms],
@@ -1777,6 +1783,11 @@ route('get', '/commerce/orders/:no', 'orders:view', async (req) => {
     modes: commerce.modesOffered(cs), modeLabels: commerce.MODES, cancelNeedsApproval: commerce.GONE.includes(o.status) && Boolean(cs.approve_cancel_after_dispatch),
     delivery_method: dl.method, delivery_area: dl.area, courier: dl.courier, tracking_link: dl.tracking_url && o.awb_no ? dl.tracking_url.replace('{awb}', encodeURIComponent(o.awb_no)) : null,
     trips: trips.map((x) => ({ ...x, has_photo: Number(x.has_photo) === 1, cash_collected: Number(x.cash_collected) })), gone: Boolean(o.dispatched_at),
+    items: items.map((i) => ({ ...i, is_free: Number(i.is_free) === 1, offer_label: i.offer_id ? `${i.offer_name}: ${i.offer_kind === 'slab' ? promotions.slabText({ pct: i.offer_pct, min_qty: i.offer_min_qty, min_unit: i.offer_min_unit })
+      : promotions.bxgyText({ buy_qty: i.offer_buy, get_qty: i.offer_get, get_sku_code: i.offer_get_sku })}` : null })),
+    walletEntries: walletRows.map((w) => ({ ...w, amount: Number(w.amount) })),
+    cashback: { amount: o.cashback_amount === null ? null : Number(o.cashback_amount), at: o.cashback_at, mode: cs.cashback_credit_at,
+      due_on: o.delivered_at && o.cashback_amount === null ? new Date(new Date(o.delivered_at).getTime() + 5.5 * 3600e3 + (cs.cashback_credit_at === 'delivery' ? 0 : (Number(cs.return_window_days) + 1)) * 86400e3).toISOString().slice(0, 10) : null },
   };
 });
 
@@ -1977,12 +1988,14 @@ route('get', '/commerce/invoices/:id', 'orders:view', async (req) => {
   const [[inv]] = await db.query(
     `SELECT i.invoice_id, i.invoice_no, i.fy, i.status, i.issued_at, DATE_FORMAT(i.due_on, '%Y-%m-%d') AS due_on, i.place_of_supply, i.gst_type, i.taxable, i.delivery_charge, i.delivery_gst, i.cgst, i.sgst, i.igst,
             i.round_off, i.total, i.seller_name, i.seller_gstin, i.seller_address, i.seller_state_code, i.buyer_json, i.is_demo, i.cancelled_at, i.cancel_reason,
-            o.order_no, o.order_id, o.subtotal, o.discount, o.coupon_code, o.wallet_used, o.payment_terms
+            o.order_no, o.order_id, o.subtotal, o.discount, o.offer_discount, o.manual_discount, o.manual_discount_reason, o.delivery_waived, o.coupon_code, o.wallet_used, o.wallet_discount,
+            o.wallet_gst, o.payment_terms
        FROM invoices i JOIN orders o ON o.order_id = i.order_id WHERE i.invoice_id = ?`, [Number(req.params.id)]
   );
   if (!inv) throw new InputError('Invoice not found', 404);
-  const [lines] = await db.query(`SELECT i.sku_code, i.qty, i.price, i.hsn, i.gst_rate, i.taxable, i.cgst, i.sgst, i.igst, i.line_total, ${SKU_NAME} AS name, s.size_label
-       FROM order_items i JOIN skus s ON s.sku_code = i.sku_code ${SKU_JOIN} WHERE i.order_id = ? ORDER BY i.sku_code`, [inv.order_id]);
+  const [lines] = await db.query(`SELECT i.sku_code, i.is_free, i.qty, i.price, i.list_price, i.offer_discount, i.coupon_discount, i.wallet_discount, i.hsn, i.gst_rate, i.taxable, i.cgst, i.sgst, i.igst,
+       i.line_total, ${SKU_NAME} AS name, s.size_label, f.name AS offer_name
+       FROM order_items i JOIN skus s ON s.sku_code = i.sku_code ${SKU_JOIN} LEFT JOIN offers f ON f.offer_id = i.offer_id WHERE i.order_id = ? ORDER BY i.sku_code, i.is_free`, [inv.order_id]);
   const [cns] = await db.query('SELECT credit_note_id, credit_note_no, reason, taxable, cgst, sgst, igst, round_off, total, issued_at FROM credit_notes WHERE invoice_id = ?', [inv.invoice_id]);
   const [site] = await db.query("SELECT setting_key, setting_value FROM site_settings WHERE setting_key IN ('cin', 'office_phone', 'public_email')");
   const s = Object.fromEntries(site.map((x) => [x.setting_key, x.setting_value]));
@@ -2052,7 +2065,7 @@ route('post', '/commerce/orders/:no/returns', 'returns:create', async (req) => {
 route('get', '/commerce/returns/:no', 'returns:view', async (req) => {
   const [[r]] = await db.query(
     `SELECT r.return_id, r.return_no, r.status, r.reason_id, r.reason_note, DATE_FORMAT(r.delivered_on, '%Y-%m-%d') AS delivered_on, r.window_days, r.outside_window, r.collection,
-            r.courier_id, r.awb_no, r.picked_up_at, r.picked_up_by, r.received_at, r.received_by, r.inspected_at, r.inspected_by, r.inspect_note, r.refund_method, r.no_refund_reason,
+            r.courier_id, r.awb_no, r.picked_up_at, r.picked_up_by, r.received_at, r.received_by, r.inspected_at, r.inspected_by, r.inspect_note, r.refund_method, r.no_refund_reason, r.cashback_reversed,
             r.requested_by, r.created_at, r.closed_at, rr.label AS reason, o.order_id, o.order_no, o.gst_type, o.payment_terms, o.payment_status, o.amount_paid, o.amount_due, o.total AS order_total,
             o.ship_name, o.ship_address, o.ship_town, o.ship_pincode, o.ship_phone, c.customer_id, c.name AS customer, c.phone, cr.name AS courier, cr.tracking_url,
             ro.order_no AS replacement_no, ro.status AS replacement_status
@@ -2078,7 +2091,7 @@ route('get', '/commerce/returns/:no', 'returns:view', async (req) => {
     amount_paid: amt(r.amount_paid), amount_due: amt(r.amount_due), order_total: amt(r.order_total),
     tracking_link: r.tracking_url && r.awb_no ? r.tracking_url.replace('{awb}', encodeURIComponent(r.awb_no)) : null,
     lines: lines.map((l) => ({ ...l, left: returns.leftOf(l) })), history: hist, photos, scans, couriers, trips: stops,
-    refunds: refunds.map((f) => ({ ...f, amount: Number(f.amount) })), credit_notes: cns.map((c) => ({ ...c, total: Number(c.total), taxable: Number(c.taxable), cgst: Number(c.cgst), sgst: Number(c.sgst), igst: Number(c.igst) })),
+    refunds: refunds.map((f) => ({ ...f, amount: Number(f.amount) })), credit_notes: cns.map((c) => ({ ...c, total: Number(c.total), taxable: Number(c.taxable), cgst: Number(c.cgst), sgst: Number(c.sgst), igst: Number(c.igst), round_off: Number(c.round_off) })),
     approvals: appr.map((a) => ({ ...a, kind_label: (approvals.KINDS[a.kind] || {}).label || a.kind })),
     waiting: appr.filter((a) => a.status === 'pending').map((a) => a.kind),
     methods: returns.METHODS, modes: commerce.modesOffered(cs), modeLabels: commerce.MODES,
@@ -2129,6 +2142,44 @@ route('get', '/commerce/credit-notes/:id', 'any', async (req) => {
   const buyer = typeof cn.buyer_json === 'string' ? JSON.parse(cn.buyer_json) : cn.buyer_json;
   return { ...cn, buyer_json: undefined, buyer, lines, is_demo: Number(cn.is_demo) === 1, seller_state: stateName(cn.seller_state_code), pos_state: stateName(cn.place_of_supply),
     bill_state: stateName(buyer.bill.state_code) };
+});
+
+// Reports: coupons and offers used, discounts given, cashback credited / used / expired / reversed in a period, and the
+// wallet balance owed to customers now (total liability, by source, the largest balances)
+route('get', '/commerce/reports/promotions', 'reports:view', async (req) => {
+  const today = pricing.istToday();
+  const from = pricing.isDate(String(req.query.from || '')) ? String(req.query.from) : `${today.slice(0, 8)}01`;
+  const to = pricing.isDate(String(req.query.to || '')) ? String(req.query.to) : today;
+  const span = [`${from} 00:00:00`, to];
+  const IN = (col) => `${col} >= CONVERT_TZ(?, '+05:30', '+00:00') AND ${col} < CONVERT_TZ(DATE_ADD(?, INTERVAL 1 DAY), '+05:30', '+00:00')`;
+  const n = (x) => Number(x) || 0;
+  const [coupons] = await db.query(`SELECT r.code, c.kind, COUNT(*) AS orders, COUNT(DISTINCT r.customer_id) AS customers, SUM(r.amount) AS amount
+      FROM coupon_redemptions r JOIN coupons c ON c.code = r.code WHERE r.status = 'active' AND ${IN('r.created_at')} GROUP BY r.code, c.kind ORDER BY amount DESC`, span);
+  const [offers] = await db.query(`SELECT f.offer_id, f.name, f.kind, COUNT(DISTINCT i.order_id) AS orders, SUM(i.offer_discount) AS discount,
+      SUM(CASE WHEN i.is_free = 1 THEN i.qty ELSE 0 END) AS free_packs, SUM(CASE WHEN i.is_free = 1 THEN i.qty * COALESCE(i.list_price, 0) ELSE 0 END) AS free_value
+      FROM order_items i JOIN offers f ON f.offer_id = i.offer_id JOIN orders o ON o.order_id = i.order_id WHERE o.status <> 'cancelled' AND ${IN('o.created_at')}
+      GROUP BY f.offer_id, f.name, f.kind ORDER BY orders DESC`, span);
+  const [months] = await db.query(`SELECT DATE_FORMAT(CONVERT_TZ(created_at, '+00:00', '+05:30'), '%Y-%m') AS month, COUNT(*) AS orders, SUM(subtotal) AS goods, SUM(offer_discount) AS offers,
+      SUM(discount) AS coupons, SUM(manual_discount) AS manual, SUM(delivery_waived) AS delivery, SUM(wallet_discount) AS wallet
+      FROM orders WHERE status <> 'cancelled' AND ${IN('created_at')} GROUP BY month ORDER BY month`, span);
+  const [[cb]] = await db.query(`SELECT COALESCE(SUM(CASE WHEN source = 'cashback' THEN amount END), 0) AS credited, COALESCE(-SUM(CASE WHEN source = 'reversed' THEN amount END), 0) AS reversed,
+      COUNT(CASE WHEN source = 'cashback' THEN 1 END) AS credits FROM wallet_entries WHERE ${IN('created_at')}`, span);
+  const [byCredit] = await db.query(`SELECT d.source AS took, SUM(a.amount) AS amount FROM wallet_allocations a JOIN wallet_entries d ON d.entry_id = a.debit_entry_id
+      JOIN wallet_entries c ON c.entry_id = a.credit_entry_id WHERE c.source = 'cashback' AND a.given_back = 0 AND d.source IN ('used', 'expired') AND ${IN('d.created_at')} GROUP BY d.source`, span);
+  const [owed] = await db.query(`SELECT c.customer_id, c.name, c.ctype, SUM(w.amount) AS balance FROM wallet_entries w JOIN customers c ON c.customer_id = w.customer_id
+      GROUP BY c.customer_id, c.name, c.ctype HAVING balance > 0.005 ORDER BY balance DESC`);
+  const [left] = await db.query(`SELECT source, SUM(remaining) AS amount, SUM(CASE WHEN expires_on IS NOT NULL AND expires_on <= ${IST_TODAY_DATE} + INTERVAL 30 DAY THEN remaining ELSE 0 END) AS soon
+      FROM wallet_entries WHERE remaining > 0.005 AND (expires_on IS NULL OR expires_on >= ${IST_TODAY_DATE}) GROUP BY source`);
+  const used = byCredit.find((x) => x.took === 'used'); const exp = byCredit.find((x) => x.took === 'expired');
+  return {
+    from, to,
+    coupons: coupons.map((c) => ({ ...c, orders: n(c.orders), customers: n(c.customers), amount: n(c.amount), kind_label: promotions.KINDS[c.kind] })),
+    offers: offers.map((o) => ({ ...o, orders: n(o.orders), discount: n(o.discount), free_packs: n(o.free_packs), free_value: n(o.free_value), kind_label: promotions.OFFER_KINDS[o.kind] })),
+    discounts: months.map((m) => ({ month: m.month, orders: n(m.orders), goods: n(m.goods), offers: n(m.offers), coupons: n(m.coupons), manual: n(m.manual), delivery: n(m.delivery), wallet: n(m.wallet) })),
+    cashback: { credited: n(cb.credited), credits: n(cb.credits), used: n(used && used.amount), expired: n(exp && exp.amount), reversed: n(cb.reversed) },
+    liability: { total: Math.round(owed.reduce((a, r) => a + n(r.balance), 0) * 100) / 100, customers: owed.length, top: owed.slice(0, 10).map((r) => ({ ...r, balance: n(r.balance) })),
+      bySource: left.map((l) => ({ source: l.source, label: wallet.SOURCES[l.source], amount: n(l.amount), soon: n(l.soon) })) },
+  };
 });
 
 // Reports: returns by reason and by SKU for a period (dates in India time), return rate per SKU = packs returned /
@@ -2221,11 +2272,11 @@ route('get', '/commerce/customers/:id', 'customers:view', async (req) => {
       (i.invoice_id IS NOT NULL AND ${commerce.OVERDUE_SQL}) AS overdue
       FROM orders o LEFT JOIN invoices i ON i.live_order_id = o.order_id WHERE o.customer_id = ? ORDER BY o.order_id DESC`, [c.customer_id]);
   const [[pendingCredit]] = await db.query("SELECT approval_id, summary FROM approvals WHERE kind = 'credit_raise' AND ref_type = 'customer' AND ref_id = ? AND status = 'pending' LIMIT 1", [String(c.customer_id)]);
-  const [wallet] = await db.query(`SELECT w.entry_id, w.amount, w.reason, w.created_at, w.emp_id, o.order_no
-      FROM wallet_entries w LEFT JOIN orders o ON o.order_id = w.order_id WHERE w.customer_id = ? ORDER BY w.entry_id DESC`, [c.customer_id]);
+  const st = await wallet.statement(db, c.customer_id);
+  const walletRows = [...st.entries].reverse();
   let lead = null;
   if (c.lead_id) [[lead]] = await db.query('SELECT lead_ref, form_type, created_at FROM leads WHERE lead_id = ?', [c.lead_id]);
-  return { ...c, credit_limit: Number(c.credit_limit), orders: orders.map((o) => ({ ...o, overdue: Number(o.overdue) === 1 })), wallet, balance: wallet.reduce((a, w) => a + Number(w.amount), 0),
+  return { ...c, credit_limit: Number(c.credit_limit), orders: orders.map((o) => ({ ...o, overdue: Number(o.overdue) === 1 })), wallet: walletRows, balance: st.balance, expiring: st.expiring,
     outstanding: orders.filter((o) => o.status !== 'cancelled' && Number(o.amount_due) > 0).reduce((a, o) => a + Number(o.amount_due), 0),
     pendingCredit: pendingCredit || null, lead: lead || null, ctypes: CTYPES, states: GST_STATES };
 });
@@ -2302,56 +2353,220 @@ route('post', '/commerce/customers/from-lead/:leadId', 'customers:create', async
   return { customer_id: ins.insertId, name, ctype, existed: false };
 });
 
-// Promotions (coupons: database/demo/commerce-demo-schema.sql, cashback rule: database/demo/commerce-demo-schema.sql)
-route('get', '/commerce/promotions', 'promotions:view', async () => {
-  const [coupons] = await db.query(`SELECT code, kind, value, min_order, DATE_FORMAT(expires_on, '%Y-%m-%d') AS expires_on, usage_limit, used, is_active,
-      expires_on IS NOT NULL AND expires_on < DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+05:30')) AS expired FROM coupons ORDER BY code`);
-  const [[rule]] = await db.query('SELECT pct, min_order, is_active FROM cashback_rule WHERE rule_id = 1');
-  const [[given]] = await db.query("SELECT COALESCE(SUM(amount), 0) AS total, COUNT(*) AS n FROM wallet_entries WHERE reason LIKE 'Cashback%'");
-  return { coupons: coupons.map((c) => ({ ...c, expired: Number(c.expired) === 1 })), cashback: rule, cashbackGiven: { total: Number(given.total), n: Number(given.n) } };
-});
-
-function couponValues(b) {
-  const code = String(b.code || '').trim().toUpperCase();
-  if (!/^[A-Z0-9]{3,20}$/.test(code)) throw new InputError('Code: 3 to 20 letters or digits');
-  if (!['percent', 'fixed'].includes(b.kind)) throw new InputError('Type: percent or fixed');
-  const value = Number(b.value);
-  if (!(value > 0) || (b.kind === 'percent' && value > 90)) throw new InputError(b.kind === 'percent' ? 'Percent: 1 to 90' : 'Amount: above 0');
-  const minOrder = Number(b.min_order) || 0;
-  const limit = b.usage_limit === '' || b.usage_limit === null || b.usage_limit === undefined ? null : Number(b.usage_limit);
-  if (limit !== null && !(Number.isInteger(limit) && limit > 0)) throw new InputError('Usage limit: a whole number, or empty for no limit');
-  const exp = b.expires_on ? String(b.expires_on) : null;
-  if (exp && !/^\d{4}-\d{2}-\d{2}$/.test(exp)) throw new InputError('Expiry: a date');
-  return { code, kind: b.kind, value, min_order: minOrder, expires_on: exp, usage_limit: limit, is_active: b.is_active === false || b.is_active === 0 ? 0 : 1 };
+// ---------------------------------------------------------------------------------------------
+// Promotions and the wallet (docs/COMMERCE-SPEC.md 3, 4.5; logic in promotions.js and wallet.js). Section "promotions":
+// view = coupons, offers, cashback rules, coupon usage; create = new coupon / offer / rule, manual wallet credit or
+// debit (through approval: setting); edit = change, switch on / off, Run now (expiry and due cashback). Applying a coupon
+// on an order needs only Orders (Sales). Every change is audited.
+// ---------------------------------------------------------------------------------------------
+const promotions = require('./promotions');
+const wallet = require('./wallet');
+const IST_TODAY_DATE = "DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+05:30'))";
+const asPromo = (e) => (e instanceof promotions.PromoError ? new InputError(e.message, e.status) : e);
+const dateOrNull = (v, label) => { if (v === '' || v === null || v === undefined) return null; const d = String(v); if (!pricing.isDate(d)) throw new InputError(`${label}: a date`); return d; };
+const intOrNull = (v, label) => { if (v === '' || v === null || v === undefined) return null; const n = Number(v); if (!Number.isInteger(n) || n < 1 || n > 1000000) throw new InputError(`${label}: a whole number from 1, or empty`); return n; };
+const moneyOf = (v, label, { allowNull = false, min = 0 } = {}) => {
+  if ((v === '' || v === null || v === undefined) && allowNull) return null;
+  const t = String(v ?? '').trim() || '0';
+  if (!/^\d{1,7}(\.\d{1,2})?$/.test(t) || Number(t) < min) throw new InputError(`${label}: an amount like 500 or 499.50`);
+  return Number(t);
+};
+async function promoLists(q) {
+  const [types] = await q.query('SELECT type_key, label FROM customer_types ORDER BY sort_order, label');
+  const [cats] = await q.query("SELECT DISTINCT category_key FROM products WHERE category_key IS NOT NULL AND category_key <> '' ORDER BY category_key");
+  const [skus] = await q.query(`SELECT s.sku_code, ${SKU_NAME} AS name, s.size_label FROM skus s ${SKU_JOIN} WHERE s.is_active = 1 ORDER BY s.sku_code`);
+  const [customers] = await q.query('SELECT customer_id, name, ctype FROM customers ORDER BY name');
+  return { types, categories: cats.map((c) => c.category_key), skus, customers };
 }
+const fixedDates = (from, to) => { if (from && to && to < from) throw new InputError('Valid to: on or after Valid from'); };
 
-route('post', '/commerce/coupons', 'promotions:create', async (req) => {
-  const v = couponValues(req.body);
-  const [[had]] = await db.query('SELECT code FROM coupons WHERE code = ?', [v.code]);
-  if (had) throw new InputError(`Coupon ${v.code} exists already`, 409);
-  await db.query('INSERT INTO coupons (code, kind, value, min_order, expires_on, usage_limit, is_active) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    [v.code, v.kind, v.value, v.min_order, v.expires_on, v.usage_limit, v.is_active]);
-  await audit(null, { empId: by(req), action: 'create', entity: 'coupon', entityId: v.code, after: v });
+route('get', '/commerce/promotions', 'promotions:view', async () => {
+  const [coupons] = await db.query(`SELECT c.code, c.description, c.kind, c.value, c.min_order, c.max_discount, DATE_FORMAT(c.valid_from, '%Y-%m-%d') AS valid_from,
+      DATE_FORMAT(c.valid_to, '%Y-%m-%d') AS valid_to, c.total_limit, c.per_customer_limit, c.is_active, c.created_by, c.updated_by,
+      (SELECT COUNT(*) FROM coupon_redemptions r WHERE r.code = c.code AND r.status = 'active') AS uses,
+      (SELECT COALESCE(SUM(r.amount), 0) FROM coupon_redemptions r WHERE r.code = c.code AND r.status = 'active') AS given
+      FROM coupons c ORDER BY c.is_active DESC, c.code`);
+  const [scope] = await db.query('SELECT code, scope, type_key, customer_id, sku_code, category_key FROM coupon_scope ORDER BY id');
+  const [offers] = await db.query(`SELECT offer_id, name, kind, sku_code, category_key, min_qty, min_unit, pct, buy_qty, get_qty, get_sku_code, DATE_FORMAT(valid_from, '%Y-%m-%d') AS valid_from,
+      DATE_FORMAT(valid_to, '%Y-%m-%d') AS valid_to, is_active, created_by, updated_by,
+      (SELECT COUNT(DISTINCT i.order_id) FROM order_items i JOIN orders o ON o.order_id = i.order_id WHERE i.offer_id = offers.offer_id AND o.status <> 'cancelled') AS orders
+      FROM offers ORDER BY is_active DESC, offer_id`);
+  const [otypes] = await db.query('SELECT offer_id, type_key FROM offer_customer_types');
+  const [rules] = await db.query(`SELECT rule_id, name, type_key, pct, min_order, max_per_order, DATE_FORMAT(valid_from, '%Y-%m-%d') AS valid_from, DATE_FORMAT(valid_to, '%Y-%m-%d') AS valid_to,
+      is_active, created_by, updated_by FROM cashback_rules ORDER BY is_active DESC, rule_id`);
+  const cs = await commerceSettings.read(db);
+  const num = (x) => (x === null ? null : Number(x));
+  return {
+    coupons: coupons.map((c) => ({ ...c, value: Number(c.value), min_order: Number(c.min_order), max_discount: num(c.max_discount), uses: Number(c.uses), given: Number(c.given), is_active: Number(c.is_active) === 1,
+      types: scope.filter((x) => x.code === c.code && x.scope === 'type').map((x) => x.type_key), customers: scope.filter((x) => x.code === c.code && x.scope === 'customer').map((x) => x.customer_id),
+      include: scope.filter((x) => x.code === c.code && x.scope === 'include').map((x) => x.sku_code || `cat:${x.category_key}`),
+      exclude: scope.filter((x) => x.code === c.code && x.scope === 'exclude').map((x) => x.sku_code || `cat:${x.category_key}`) })),
+    offers: offers.map((o) => ({ ...o, pct: Number(o.pct), orders: Number(o.orders), is_active: Number(o.is_active) === 1, types: otypes.filter((t) => t.offer_id === o.offer_id).map((t) => t.type_key),
+      text: o.kind === 'slab' ? promotions.slabText(o) : promotions.bxgyText(o) })),
+    rules: rules.map((r) => ({ ...r, pct: Number(r.pct), min_order: Number(r.min_order), max_per_order: num(r.max_per_order), is_active: Number(r.is_active) === 1 })),
+    kinds: promotions.KINDS, offerKinds: promotions.OFFER_KINDS, ...(await promoLists(db)),
+    settings: { offers_with_coupon: Boolean(cs.offers_with_coupon), cashback_credit_at: cs.cashback_credit_at, return_window_days: Number(cs.return_window_days), wallet_max_use_pct: Number(cs.wallet_max_use_pct),
+      expiry: { cashback: Number(cs.wallet_expiry_cashback_days), manual: Number(cs.wallet_expiry_manual_days), refund: Number(cs.wallet_expiry_refund_days) }, gst: cs.cashback_gst_treatment,
+      discount_limit: cs.approve_discount_on ? Number(cs.approve_discount_pct_above) : null, manual_wallet_approval: Boolean(cs.approve_goodwill_credit) },
+  };
+});
+
+/** a coupon from the form, checked -> { values, scope: [{ scope, type_key, customer_id, sku_code, category_key }] } */
+async function couponValues(q, b, code) {
+  if (!/^[A-Z0-9]{3,20}$/.test(code)) throw new InputError('Code: 3 to 20 letters or digits');
+  if (!promotions.KINDS[b.kind]) throw new InputError('Type: percent, fixed amount or free delivery');
+  const value = b.kind === 'free_delivery' ? 0 : moneyOf(b.value, b.kind === 'percent' ? 'Percent' : 'Amount', { min: 0.01 });
+  if (b.kind === 'percent' && value > 90) throw new InputError('Percent: 1 to 90');
+  const v = { description: String(b.description || '').trim().slice(0, 200) || null, kind: b.kind, value, min_order: moneyOf(b.min_order, 'Minimum order'),
+    max_discount: b.kind === 'percent' ? moneyOf(b.max_discount, 'Maximum discount', { allowNull: true, min: 0.01 }) : null,
+    valid_from: dateOrNull(b.valid_from, 'Valid from'), valid_to: dateOrNull(b.valid_to, 'Valid to'), total_limit: intOrNull(b.total_limit, 'Uses in all'),
+    per_customer_limit: intOrNull(b.per_customer_limit, 'Uses per customer'), is_active: b.is_active === false || b.is_active === 0 ? 0 : 1 };
+  fixedDates(v.valid_from, v.valid_to);
+  const lists = await promoLists(q);
+  const scope = [];
+  for (const t of Array.isArray(b.types) ? b.types : []) { if (!lists.types.some((x) => x.type_key === t)) throw new InputError(`Unknown customer type ${t}`); scope.push({ scope: 'type', type_key: t }); }
+  for (const c of Array.isArray(b.customers) ? b.customers : []) { if (!lists.customers.some((x) => x.customer_id === Number(c))) throw new InputError('Unknown customer'); scope.push({ scope: 'customer', customer_id: Number(c) }); }
+  for (const which of ['include', 'exclude']) {
+    for (const raw of Array.isArray(b[which]) ? b[which] : []) {
+      const x = String(raw).trim();
+      if (x.startsWith('cat:')) { if (!lists.categories.includes(x.slice(4))) throw new InputError(`Unknown category ${x.slice(4)}`); scope.push({ scope: which, category_key: x.slice(4) }); }
+      else { const sku = x.toUpperCase(); if (!lists.skus.some((k) => k.sku_code === sku)) throw new InputError(`Unknown SKU ${sku}`); scope.push({ scope: which, sku_code: sku }); }
+    }
+  }
+  if (v.kind === 'free_delivery' && scope.some((x) => x.scope === 'include' || x.scope === 'exclude')) throw new InputError('Free delivery covers the order: no SKUs to include or exclude');
+  return { values: v, scope };
+}
+async function saveScope(q, code, scope) {
+  await q.query('DELETE FROM coupon_scope WHERE code = ?', [code]);
+  for (const x of scope) {
+    await q.query('INSERT INTO coupon_scope (code, scope, type_key, customer_id, sku_code, category_key) VALUES (?, ?, ?, ?, ?, ?)', [code, x.scope, x.type_key || null, x.customer_id || null, x.sku_code || null, x.category_key || null]);
+  }
+}
+const COUPON_COLS = ['description', 'kind', 'value', 'min_order', 'max_discount', 'valid_from', 'valid_to', 'total_limit', 'per_customer_limit', 'is_active'];
+route('post', '/commerce/coupons', 'promotions:create', async (req) => tx(async (q) => {
+  const code = String(req.body.code || '').trim().toUpperCase();
+  const { values: v, scope } = await couponValues(q, req.body, code);
+  const [[had]] = await q.query('SELECT code FROM coupons WHERE code = ?', [code]);
+  if (had) throw new InputError(`Coupon ${code} exists already`, 409);
+  await q.query(`INSERT INTO coupons (code, ${COUPON_COLS.join(', ')}, created_by) VALUES (?, ${COUPON_COLS.map(() => '?').join(', ')}, ?)`, [code, ...COUPON_COLS.map((k) => v[k]), by(req)]);
+  await saveScope(q, code, scope);
+  await audit(q, { empId: by(req), action: 'create', entity: 'coupon', entityId: code, after: { ...v, scope } });
+  return { code };
+}), { status: 201 });
+route('put', '/commerce/coupons/:code', 'promotions:edit', async (req) => tx(async (q) => {
+  const code = String(req.params.code).toUpperCase();
+  const [[before]] = await q.query(`SELECT ${COUPON_COLS.join(', ')} FROM coupons WHERE code = ? FOR UPDATE`, [code]);
+  if (!before) throw new InputError('No such coupon', 404);
+  const { values: v, scope } = await couponValues(q, req.body, code);
+  await q.query(`UPDATE coupons SET ${COUPON_COLS.map((k) => `${k} = ?`).join(', ')}, updated_by = ?, updated_at = UTC_TIMESTAMP() WHERE code = ?`, [...COUPON_COLS.map((k) => v[k]), by(req), code]);
+  await saveScope(q, code, scope);
+  await audit(q, { empId: by(req), action: 'update', entity: 'coupon', entityId: code, before, after: { ...v, scope } });
+  return { code };
+}));
+route('get', '/commerce/coupons/:code/usage', 'promotions:view', async (req) => {
+  const [rows] = await db.query(`SELECT r.id, r.amount, r.status, r.created_at, r.released_at, o.order_no, o.status AS order_status, o.total, c.name AS customer, c.ctype
+      FROM coupon_redemptions r JOIN orders o ON o.order_id = r.order_id JOIN customers c ON c.customer_id = r.customer_id WHERE r.code = ? ORDER BY r.id DESC`, [String(req.params.code).toUpperCase()]);
+  return rows.map((r) => ({ ...r, amount: Number(r.amount), total: Number(r.total) }));
+});
+
+const OFFER_COLS = ['name', 'kind', 'sku_code', 'category_key', 'min_qty', 'min_unit', 'pct', 'buy_qty', 'get_qty', 'get_sku_code', 'valid_from', 'valid_to', 'is_active'];
+async function offerValues(q, b) {
+  const lists = await promoLists(q);
+  const name = String(b.name || '').trim().slice(0, 120);
+  if (!name) throw new InputError('Name the offer (it shows on the order line)');
+  if (!promotions.OFFER_KINDS[b.kind]) throw new InputError('Type: quantity slab or buy X get Y free');
+  const target = String(b.target || '').trim();
+  let sku = null; let cat = null;
+  if (target.startsWith('cat:')) { cat = target.slice(4); if (!lists.categories.includes(cat)) throw new InputError('Choose the SKU or category'); }
+  else { sku = target.toUpperCase(); if (!lists.skus.some((k) => k.sku_code === sku)) throw new InputError('Choose the SKU or category'); }
+  const v = { name, kind: b.kind, sku_code: sku, category_key: cat, min_qty: 1, min_unit: b.min_unit === 'carton' ? 'carton' : 'pack', pct: 0, buy_qty: 0, get_qty: 0, get_sku_code: null,
+    valid_from: dateOrNull(b.valid_from, 'Valid from'), valid_to: dateOrNull(b.valid_to, 'Valid to'), is_active: b.is_active === false || b.is_active === 0 ? 0 : 1 };
+  fixedDates(v.valid_from, v.valid_to);
+  if (v.kind === 'slab') {
+    v.min_qty = intOrNull(b.min_qty, 'From (quantity)') || 0;
+    if (!v.min_qty) throw new InputError('From (quantity): a whole number from 1');
+    v.pct = moneyOf(b.pct, 'Percent off', { min: 0.01 });
+    if (v.pct > 90) throw new InputError('Percent off: up to 90');
+  } else {
+    v.buy_qty = intOrNull(b.buy_qty, 'Buy (packs)') || 0; v.get_qty = intOrNull(b.get_qty, 'Get free (packs)') || 0;
+    if (!v.buy_qty || !v.get_qty) throw new InputError('Buy and Get free: whole numbers from 1');
+    const g = String(b.get_sku_code || '').trim().toUpperCase();
+    if (g) { if (!lists.skus.some((k) => k.sku_code === g)) throw new InputError(`Unknown free SKU ${g}`); v.get_sku_code = g; }
+    if (!g && cat) throw new InputError('On a category, name the free SKU');
+  }
+  const types = (Array.isArray(b.types) ? b.types : []).filter((t) => lists.types.some((x) => x.type_key === t));
+  return { values: v, types };
+}
+async function saveOfferTypes(q, id, types) {
+  await q.query('DELETE FROM offer_customer_types WHERE offer_id = ?', [id]);
+  for (const t of types) await q.query('INSERT INTO offer_customer_types (offer_id, type_key) VALUES (?, ?)', [id, t]);
+}
+route('post', '/commerce/offers', 'promotions:create', async (req) => tx(async (q) => {
+  const { values: v, types } = await offerValues(q, req.body);
+  const [ins] = await q.query(`INSERT INTO offers (${OFFER_COLS.join(', ')}, created_by) VALUES (${OFFER_COLS.map(() => '?').join(', ')}, ?)`, [...OFFER_COLS.map((k) => v[k]), by(req)]);
+  await saveOfferTypes(q, ins.insertId, types);
+  await audit(q, { empId: by(req), action: 'create', entity: 'offer', entityId: String(ins.insertId), after: { ...v, types } });
+  return { offer_id: ins.insertId };
+}), { status: 201 });
+route('put', '/commerce/offers/:id', 'promotions:edit', async (req) => tx(async (q) => {
+  const id = Number(req.params.id);
+  const [[before]] = await q.query(`SELECT ${OFFER_COLS.join(', ')} FROM offers WHERE offer_id = ? FOR UPDATE`, [id]);
+  if (!before) throw new InputError('No such offer', 404);
+  const { values: v, types } = await offerValues(q, req.body);
+  await q.query(`UPDATE offers SET ${OFFER_COLS.map((k) => `${k} = ?`).join(', ')}, updated_by = ?, updated_at = UTC_TIMESTAMP() WHERE offer_id = ?`, [...OFFER_COLS.map((k) => v[k]), by(req), id]);
+  await saveOfferTypes(q, id, types);
+  await audit(q, { empId: by(req), action: 'update', entity: 'offer', entityId: String(id), before, after: { ...v, types } });
+  return { offer_id: id };
+}));
+
+const RULE_COLS = ['name', 'type_key', 'pct', 'min_order', 'max_per_order', 'valid_from', 'valid_to', 'is_active'];
+async function ruleValues(q, b) {
+  const name = String(b.name || '').trim().slice(0, 120);
+  if (!name) throw new InputError('Name the rule');
+  const typeKey = b.type_key ? String(b.type_key) : null;
+  if (typeKey && !(await promoLists(q)).types.some((x) => x.type_key === typeKey)) throw new InputError('Unknown customer type');
+  const v = { name, type_key: typeKey, pct: moneyOf(b.pct, 'Cashback %', { min: 0.01 }), min_order: moneyOf(b.min_order, 'Minimum order'),
+    max_per_order: moneyOf(b.max_per_order, 'Maximum per order', { allowNull: true, min: 0.01 }), valid_from: dateOrNull(b.valid_from, 'Valid from'), valid_to: dateOrNull(b.valid_to, 'Valid to'),
+    is_active: b.is_active === false || b.is_active === 0 ? 0 : 1 };
+  if (v.pct > 50) throw new InputError('Cashback %: up to 50');
+  fixedDates(v.valid_from, v.valid_to);
   return v;
+}
+route('post', '/commerce/cashback-rules', 'promotions:create', async (req) => tx(async (q) => {
+  const v = await ruleValues(q, req.body);
+  const [ins] = await q.query(`INSERT INTO cashback_rules (${RULE_COLS.join(', ')}, created_by) VALUES (${RULE_COLS.map(() => '?').join(', ')}, ?)`, [...RULE_COLS.map((k) => v[k]), by(req)]);
+  await audit(q, { empId: by(req), action: 'create', entity: 'cashback_rule', entityId: String(ins.insertId), after: v });
+  return { rule_id: ins.insertId };
+}), { status: 201 });
+route('put', '/commerce/cashback-rules/:id', 'promotions:edit', async (req) => tx(async (q) => {
+  const id = Number(req.params.id);
+  const [[before]] = await q.query(`SELECT ${RULE_COLS.join(', ')} FROM cashback_rules WHERE rule_id = ? FOR UPDATE`, [id]);
+  if (!before) throw new InputError('No such rule', 404);
+  const v = await ruleValues(q, req.body);
+  await q.query(`UPDATE cashback_rules SET ${RULE_COLS.map((k) => `${k} = ?`).join(', ')}, updated_by = ?, updated_at = UTC_TIMESTAMP() WHERE rule_id = ?`, [...RULE_COLS.map((k) => v[k]), by(req), id]);
+  await audit(q, { empId: by(req), action: 'update', entity: 'cashback_rule', entityId: String(id), before, after: v });
+  return { rule_id: id };
+}));
+// the hourly job now: wallet expiry and cashback whose return window has passed
+route('post', '/commerce/promotions/run-jobs', 'promotions:edit', async (req) => {
+  const r = await tx((q) => promotions.runJobs(q, by(req)));
+  await audit(null, { empId: by(req), action: 'run_jobs', entity: 'promotions', after: { expired: r.expired.length, cashback: r.cashback } });
+  return r;
 });
 
-route('put', '/commerce/coupons/:code', 'promotions:edit', async (req) => {
-  const v = couponValues({ ...req.body, code: req.params.code });
-  const [r] = await db.query('UPDATE coupons SET kind = ?, value = ?, min_order = ?, expires_on = ?, usage_limit = ?, is_active = ? WHERE code = ?',
-    [v.kind, v.value, v.min_order, v.expires_on, v.usage_limit, v.is_active, v.code]);
-  if (!r.affectedRows) throw new InputError('No such coupon', 404);
-  await audit(null, { empId: by(req), action: 'update', entity: 'coupon', entityId: v.code, after: v });
-  return v;
+// Wallet: the statement (Customers or Promotions view); manual credit / debit (Promotions create; approval: setting)
+route('get', '/commerce/customers/:id/wallet', 'any', async (req) => {
+  if (!canDo(req, 'customers') && !canDo(req, 'promotions')) throw new InputError('The wallet needs "view" on Customers or Promotions', 403);
+  const [[c]] = await db.query('SELECT customer_id, name, business_name, phone, ctype, town, address FROM customers WHERE customer_id = ?', [Number(req.params.id)]);
+  if (!c) throw new InputError('Customer not found', 404);
+  const [pending] = await db.query("SELECT approval_id, kind, summary, requested_by, requested_at FROM approvals WHERE kind IN ('goodwill_credit', 'wallet_debit') AND ref_type = 'customer' AND ref_id = ? AND status = 'pending'", [String(c.customer_id)]);
+  const cs = await commerceSettings.read(db);
+  return { customer: c, ...(await wallet.statement(db, c.customer_id)), usable: (await wallet.plan(db, c.customer_id, 1e9)).total, pending, sources: wallet.SOURCES,
+    canManual: canDo(req, 'promotions', 'create'), approval: Boolean(cs.approve_goodwill_credit), expiryManual: Number(cs.wallet_expiry_manual_days) };
 });
-
-route('put', '/commerce/cashback', 'promotions:edit', async (req) => {
-  const pct = Number(req.body.pct);
-  const minOrder = Number(req.body.min_order) || 0;
-  if (!(pct >= 0 && pct <= 50)) throw new InputError('Cashback: 0 to 50 %');
-  await db.query('UPDATE cashback_rule SET pct = ?, min_order = ?, is_active = ? WHERE rule_id = 1', [pct, minOrder, req.body.is_active ? 1 : 0]);
-  await audit(null, { empId: by(req), action: 'update', entity: 'cashback', entityId: '1', after: { pct, minOrder, is_active: Boolean(req.body.is_active) } });
-  return { pct, min_order: minOrder, is_active: req.body.is_active ? 1 : 0 };
-});
+route('post', '/commerce/customers/:id/wallet', 'promotions:create', async (req) => {
+  try { return await tx((q) => promotions.manualWallet(q, Number(req.params.id), req.body || {}, by(req))); } catch (e) { throw asPromo(e); }
+}, { status: 201 });
 
 // Operations dashboard (commerce): today in India time
 // Open to every commerce user; each figure only for a role that can view its section (null otherwise).
@@ -2360,9 +2575,8 @@ route('get', '/commerce/ops', 'any', async (req) => {
     stock: canDo(req, 'inventory'), returns: canDo(req, 'returns'), wallet: canDo(req, 'customers') };
   const [[today]] = await db.query(`SELECT COUNT(*) AS n, COALESCE(SUM(total), 0) AS value FROM orders WHERE created_at >= ${IST_TODAY_UTC} AND status NOT IN ('cancelled', 'approval')`);
   const [[st]] = await db.query("SELECT SUM(status = 'new') AS to_pack, SUM(status = 'packed') AS to_dispatch FROM orders");
-  const [[w]] = await db.query(`SELECT COALESCE(SUM(CASE WHEN amount > 0 THEN amount END), 0) AS total,
-      COALESCE(SUM(CASE WHEN amount > 0 AND reason LIKE 'Cashback%' THEN amount END), 0) AS cashback,
-      COALESCE(SUM(CASE WHEN amount > 0 AND reason LIKE 'Refund%' THEN amount END), 0) AS refunds FROM wallet_entries`);
+  const [[w]] = await db.query(`SELECT COALESCE(SUM(amount), 0) AS total, COALESCE(SUM(CASE WHEN source = 'cashback' THEN amount END), 0) AS cashback,
+      COALESCE(SUM(CASE WHEN source = 'refund' THEN amount END), 0) AS refunds FROM wallet_entries`);
   const low = can.stock ? await stock.reorderList(db) : [];
   const dc = await delivery.opsCounts(db);
   const seeInspect = can.returns || canDo(req, 'inventory', 'edit');
@@ -2374,7 +2588,7 @@ route('get', '/commerce/ops', 'any', async (req) => {
     today: can.orders ? { n: Number(today.n), value: Number(today.value) } : null,
     toPack: can.pack ? Number(st.to_pack) || 0 : null, toDispatch: can.dispatch ? Number(st.to_dispatch) || 0 : null,
     returns: seeInspect ? { toCollect: can.returns ? dc.returnsToCollect : null, toInspect: dc.returnsToInspect, toDecide: can.returns ? dc.returnsToDecide : null } : null,
-    walletGiven: can.wallet ? { total: Number(w.total), cashback: Number(w.cashback), refunds: Number(w.refunds) } : null,
+    walletGiven: can.wallet ? { total: Number(w.total), cashback: Number(w.cashback), refunds: Number(w.refunds) } : null, // total = owed to customers now
     lowStock: can.stock ? low.map((r) => ({ sku_code: r.sku_code, name: r.name, available: r.available, reorder_level: r.reorder_level, suggested: r.suggested })) : null,
     expiry: can.stock ? { expired: exp.filter((b) => b.state === 'expired').length, near: exp.filter((b) => b.state === 'near').length } : null,
     nextToPack: can.pack ? next : null,

@@ -13,10 +13,15 @@
 // free above the area's amount, nothing for customer pickup; taxed at the Commerce setting rate, on the invoice.
 // Every edit sends the version it read: another change in between answers "This order changed, reload".
 //
-// Money (per line): taxable = qty x price less its share of the coupon; CGST + SGST (half the rate each) when the
-// shipping state is the seller's state, else IGST; total = taxable + GST + round-off (Commerce setting). Prices typed
-// or taken from the price list (pricing.js; split out of the price when the lists include GST). Wallet credit used
-// counts as paid; payments and refunds are recorded rows; amount_due = total - wallet - payments + refunds.
+// Money (per line): taxable = qty x price - the offer slab - its share of the coupon (the lines the coupon covers) and of
+// the manual discount - its share of the wallet discount; CGST + SGST (half the rate each) when the shipping state is
+// the seller's state, else IGST; total = taxable + GST + round-off (Commerce setting). Prices typed or taken from the
+// price list (pricing.js; split out of the price when the lists include GST). Promotions (phase 7, promotions.js):
+// automatic offers (slab % on the line, buy X get Y = a free line at Rs 0), one coupon (percent / fixed on its lines,
+// or free delivery), a manual discount with a reason; together above the setting % they wait for approval. Wallet
+// (wallet.js): at most the setting % of the order, taken oldest first; under the GST setting "Discount" the cashback /
+// manual part lowers the taxable value (GST-inclusive), a refund part and everything under "Payment method" counts as
+// paid. amount_due = total - wallet paid part - payments + refunds.
 //
 // Stock (stock.js): Available = good stock - expired batches - active reservations of other orders. Dispatch takes
 // batch-tracked SKUs earliest expiry first and never an expired batch. An order cannot ask for more than available,
@@ -33,7 +38,9 @@ const pricing = require('./pricing');
 const approvals = require('./approvals');
 const commerceSettings = require('./commerce-settings');
 const invoices = require('./invoices');
+const promotions = require('./promotions');
 const stock = require('./stock');
+const wallet = require('./wallet');
 const numbering = require('./numbering');
 const { audit } = require('./audit');
 const { checkSetting } = require('../shared/settingRules');
@@ -48,7 +55,7 @@ const HELD = { approval: 'is waiting for approval', cancelled: 'is cancelled' };
 const TERMS = { cod: 'Pay on delivery', advance: 'Paid in advance', credit: 'On credit' };
 const MODES = { cash: 'Cash', upi: 'UPI', bank: 'Bank transfer', cheque: 'Cheque', razorpay: 'Razorpay (manual)' };
 const PAYMENT_STATUS = { unpaid: 'Unpaid', partly_paid: 'Part paid', paid: 'Paid', part_refunded: 'Part refunded', refunded: 'Refunded' };
-const HOLD_KINDS = ['price_below_list', 'over_available', 'credit_order'];
+const HOLD_KINDS = ['price_below_list', 'over_available', 'credit_order', 'discount'];
 const EDITABLE = { approval: 'free', new: 'free', packing: 'reason', packed: 'reason' };
 const round2 = (n) => Math.round(n * 100) / 100;
 // An invoice is overdue when its order still owes money after the due date (issue day + the credit days); a pay-on-
@@ -64,41 +71,44 @@ class CommerceError extends Error {
 const istYear = () => Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', year: '2-digit' }).format(new Date()));
 const rs = (n) => `Rs ${Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-async function walletBalance(q, customerId) {
-  const [[r]] = await q.query('SELECT COALESCE(SUM(amount), 0) AS bal FROM wallet_entries WHERE customer_id = ?', [customerId]);
-  return Number(r.bal);
-}
+const walletBalance = (q, customerId) => wallet.balance(q, customerId);
 
 /** good stock, expired, reserved by other orders and available per SKU (stock.js) */
 const availability = (q, skuCodes, exceptOrderId = 0) => stock.availability(q, skuCodes, exceptOrderId);
 
-/** The coupon's discount for this subtotal, or a CommerceError saying why it does not apply. */
-async function couponDiscount(q, code, subtotal, { lock = false, ownUse = false } = {}) {
-  const [[c]] = await q.query(`SELECT code, kind, value, min_order, expires_on, usage_limit, used, is_active,
-      expires_on IS NOT NULL AND expires_on < DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+05:30')) AS expired
-      FROM coupons WHERE code = ?${lock ? ' FOR UPDATE' : ''}`, [code]);
-  if (!c) throw new CommerceError(`No coupon ${code}`);
-  if (!Number(c.is_active)) throw new CommerceError(`Coupon ${code} is switched off`);
-  if (Number(c.expired) && !ownUse) throw new CommerceError(`Coupon ${code} has expired`);
-  if (!ownUse && c.usage_limit !== null && c.used >= c.usage_limit) throw new CommerceError(`Coupon ${code} is used up (${c.used} of ${c.usage_limit})`);
-  if (subtotal < Number(c.min_order)) throw new CommerceError(`Coupon ${code} needs an order of at least Rs ${Number(c.min_order)}`);
-  const d = c.kind === 'percent' ? subtotal * (Number(c.value) / 100) : Number(c.value);
-  return round2(Math.min(d, subtotal));
+/** round2 parts of `total` in proportion to `weights`, adding up to `total` exactly (the last non-zero takes the cents) */
+function spread(total, weights) {
+  const sum = weights.reduce((a, w) => a + w, 0);
+  if (!(total > 0) || !(sum > 0)) return weights.map(() => 0);
+  const parts = weights.map((w) => round2((total * w) / sum));
+  const last = weights.map((w, i) => (w > 0 ? i : -1)).filter((i) => i >= 0).pop();
+  parts[last] = round2(parts[last] + round2(total - parts.reduce((a, x) => a + x, 0)));
+  return parts;
 }
 
 /**
- * Line tax and order totals. lines: [{ qty, price, gst_rate }] (price before GST). gstType 'intra' | 'inter'.
- * -> { lines (with taxable, cgst, sgst, igst, line_total), subtotal, discount, taxable, cgst, sgst, igst, gst, round_off, total }
+ * Line tax and order totals. lines: [{ sku_code, qty, price (before GST), gst_rate, offer_discount, is_free }];
+ * gstType 'intra' | 'inter'; disc = { coupon (Rs), couponSkus (Set, null = every paid line), manual (Rs), wallet (Rs incl. GST) }.
+ * -> { lines (with coupon_discount, wallet_discount, taxable, cgst, sgst, igst, line_total), subtotal, offer_discount, discount,
+ *      manual_discount, wallet_discount, delivery_charge, delivery_gst, taxable, cgst, sgst, igst, gst, round_off, total }
  */
-function taxTotals(lines, discount, gstType, roundOff, delivery = { charge: 0, rate: 18 }) {
-  const subtotal = round2(lines.reduce((a, i) => a + i.qty * i.price, 0));
-  const disc = round2(Math.min(discount || 0, subtotal));
-  const share = subtotal ? (subtotal - disc) / subtotal : 0;
-  const out = lines.map((i) => {
-    const taxable = round2(i.qty * i.price * share);
+function taxTotals(lines, gstType, roundOff, delivery = { charge: 0, rate: 18 }, disc = {}) {
+  const net = lines.map((i) => (i.is_free ? 0 : round2(i.qty * i.price - (i.offer_discount || 0))));
+  const coupon = round2(Math.min(disc.coupon || 0, net.reduce((a, x) => a + x, 0)));
+  const cParts = spread(coupon, lines.map((i, n) => (!i.is_free && (!disc.couponSkus || disc.couponSkus.has(i.sku_code)) ? net[n] : 0)));
+  const after = net.map((x, n) => round2(x - cParts[n]));
+  const manual = round2(Math.min(disc.manual || 0, after.reduce((a, x) => a + x, 0)));
+  const mParts = spread(manual, after);
+  const t1 = after.map((x, n) => round2(x - mParts[n]));
+  const incl = t1.map((x, n) => x * (1 + lines[n].gst_rate / 100));
+  const walletD = round2(Math.min(disc.wallet || 0, incl.reduce((a, x) => a + x, 0)));
+  const wParts = spread(walletD, incl);
+  const out = lines.map((i, n) => {
+    const wTax = round2(wParts[n] / (1 + i.gst_rate / 100));
+    const taxable = round2(t1[n] - wTax);
     const half = gstType === 'intra' ? round2((taxable * i.gst_rate) / 200) : 0;
     const igst = gstType === 'inter' ? round2((taxable * i.gst_rate) / 100) : 0;
-    return { ...i, taxable, cgst: half, sgst: half, igst, line_total: round2(taxable + 2 * half + igst) };
+    return { ...i, offer_discount: i.offer_discount || 0, coupon_discount: round2(cParts[n] + mParts[n]), wallet_discount: wTax, taxable, cgst: half, sgst: half, igst, line_total: round2(taxable + 2 * half + igst) };
   });
   const sum = (k) => round2(out.reduce((a, i) => a + i[k], 0));
   const dc = round2(Number(delivery.charge) || 0);
@@ -109,7 +119,8 @@ function taxTotals(lines, discount, gstType, roundOff, delivery = { charge: 0, r
   const gst = round2(cgst + sgst + igst);
   const before = round2(taxable + gst);
   const ro = roundOff ? round2(Math.round(before) - before) : 0;
-  return { lines: out, subtotal, discount: disc, delivery_charge: dc, delivery_gst: round2(2 * dHalf + dIgst), taxable, cgst, sgst, igst, gst, round_off: ro, total: round2(before + ro) };
+  return { lines: out, subtotal: round2(lines.reduce((a, i) => a + (i.is_free ? 0 : i.qty * i.price), 0)), offer_discount: sum('offer_discount'), discount: coupon, manual_discount: manual,
+    wallet_discount: walletD, delivery_charge: dc, delivery_gst: round2(2 * dHalf + dIgst), taxable, cgst, sgst, igst, gst, round_off: ro, total: round2(before + ro) };
 }
 
 /** an active delivery method (the first own-vehicle one when id is null) */
@@ -198,7 +209,7 @@ async function prepare(q, data, opts = {}) {
   if (!merged.size) throw new CommerceError('Add at least one SKU');
   const keys = [...merged.keys()];
   const [known] = await q.query(
-    `SELECT s.sku_code, s.is_active, s.packs_per_carton, s.min_order_qty, s.sell_unit, p.gst_rate, p.hsn_code
+    `SELECT s.sku_code, s.is_active, s.packs_per_carton, s.min_order_qty, s.sell_unit, p.gst_rate, p.hsn_code, p.category_key
        FROM skus s JOIN products p ON p.product_id = s.product_id WHERE s.sku_code IN (?)`, [keys]
   );
   const info = new Map(known.map((k) => [k.sku_code, k]));
@@ -223,15 +234,35 @@ async function prepare(q, data, opts = {}) {
       if (listPrice === null) problems.push(`${i.sku_code} has no price on the ${list.label} or Default list: set it in Products and prices`);
       entered = listPrice || 0;
     }
-    const st = stock.get(i.sku_code);
-    if (!opts.replacement && i.qty > st.available) short.push({ sku_code: i.sku_code, qty: i.qty, ...st });
     const rate = Number(s.gst_rate);
     const below = listPrice && entered < listPrice ? round2(((listPrice - entered) / listPrice) * 100) : 0;
-    return { sku_code: i.sku_code, qty: i.qty, entered, list_price: listPrice, below, gst_rate: rate, hsn: s.hsn_code,
-      price: inclusive ? round2(entered / (1 + rate / 100)) : entered };
+    return { sku_code: i.sku_code, qty: i.qty, entered, list_price: listPrice, below, gst_rate: rate, hsn: s.hsn_code, category_key: s.category_key,
+      packs_per_carton: Number(s.packs_per_carton) || 1, is_free: 0, price: inclusive ? round2(entered / (1 + rate / 100)) : entered };
   });
+  // automatic offers: slab % on the line, buy X get Y = free lines (their stock counts like any line)
+  const offers = opts.replacement ? { lines: lines.map((l) => ({ ...l, offer_id: null, offer_label: null, offer_discount: 0 })), free: [], applied: [] }
+    : await promotions.applyOffers(q, list.key, opts.priceDate || pricing.istToday(), lines);
+  const freeLines = [];
+  if (offers.free.length) {
+    const [fi] = await q.query(`SELECT s.sku_code, p.gst_rate, p.hsn_code, p.category_key FROM skus s JOIN products p ON p.product_id = s.product_id WHERE s.sku_code IN (?)`, [offers.free.map((f) => f.sku_code)]);
+    const fown = await pricing.ownPricesOn(q, opts.priceDate || pricing.istToday(), offers.free.map((f) => f.sku_code));
+    for (const f of offers.free) {
+      const s = fi.find((x) => x.sku_code === f.sku_code);
+      if (!s) continue;
+      freeLines.push({ sku_code: f.sku_code, qty: f.qty, entered: 0, list_price: pricing.resolve(fown.get(f.sku_code), list.key).price, below: 0, gst_rate: Number(s.gst_rate), hsn: s.hsn_code,
+        category_key: s.category_key, is_free: 1, price: 0, offer_id: f.offer_id, offer_label: f.offer_label, offer_discount: 0 });
+    }
+  }
+  const allLines = [...offers.lines, ...freeLines];
+  const allKeys = [...new Set(allLines.map((l) => l.sku_code))];
+  const stockAll = allKeys.some((k) => !stock.has(k)) ? await availability(q, allKeys, editing ? editing.order_id : 0) : stock;
+  for (const k of allKeys) {
+    const want = allLines.filter((l) => l.sku_code === k).reduce((a, l) => a + l.qty, 0);
+    const st = stockAll.get(k);
+    if (!opts.replacement && want > st.available) short.push({ sku_code: k, qty: want, ...st, free: freeLines.some((l) => l.sku_code === k) });
+  }
   if (short.length && !data.override_stock) {
-    short.forEach((x) => problems.push(`${x.sku_code}: only ${Math.max(x.available, 0)} available (${x.good} in stock${x.expired ? `, ${x.expired} expired` : ''}, ${x.reserved} reserved for other orders); ${x.qty} asked`));
+    short.forEach((x) => problems.push(`${x.sku_code}: only ${Math.max(x.available, 0)} available (${x.good} in stock${x.expired ? `, ${x.expired} expired` : ''}, ${x.reserved} reserved for other orders); ${x.qty} asked${x.free ? ' (with the free packs of an offer)' : ''}`));
   }
   if (short.length && data.override_stock && !opts.canOverride) problems.push('Ordering more than the available stock needs a role with "approve" on Orders');
   if (problems.length) throw new CommerceError(problems.join('. '));
@@ -247,29 +278,67 @@ async function prepare(q, data, opts = {}) {
   const pos = ship.values.state_code;
   const gstType = pos === String(settings.invoice_seller_state_code || '33') ? 'intra' : 'inter';
 
-  // coupon and wallet
-  const coupon = data.coupon_code ? String(data.coupon_code).trim().toUpperCase() : null;
-  const sub = round2(lines.reduce((a, i) => a + i.qty * i.price, 0));
-  const ownCoupon = Boolean(editing && coupon && editing.coupon_code === coupon);
-  const discount = coupon ? await couponDiscount(q, coupon, sub, { lock: true, ownUse: ownCoupon }) : 0;
-
-  // delivery method, area and charge
+  // delivery method, area and charge (a free-delivery coupon waives the charge)
   const methodId = data.delivery_method_id !== undefined && data.delivery_method_id !== '' ? Number(data.delivery_method_id) : editing ? editing.delivery_method_id : null;
   const method = await deliveryMethod(q, methodId);
   if (!method) throw new CommerceError('Choose the delivery method');
   const areaWanted = data.delivery_area_id !== undefined ? data.delivery_area_id : editing ? editing.delivery_area_id : '';
-  const delivery = method.kind === 'pickup' ? { area: null, charge: 0 } : await deliveryCharge(q, ship.values, round2(sub - discount), areaWanted === '' || areaWanted === null ? null : Number(areaWanted));
+  const goodsAfterOffers = round2(offers.lines.reduce((a, l) => a + l.qty * l.price - l.offer_discount, 0));
+  const delivery = method.kind === 'pickup' ? { area: null, charge: 0 } : await deliveryCharge(q, ship.values, goodsAfterOffers, areaWanted === '' || areaWanted === null ? null : Number(areaWanted));
   if (opts.replacement) delivery.charge = 0;
-  const t = taxTotals(lines, discount, gstType, settings.invoice_round_off, { charge: delivery.charge, rate: Number(settings.delivery_charge_gst_rate) || 0 });
-  const wantWallet = round2(Math.max(0, Number(data.wallet_use) || 0));
-  if (wantWallet > 0) {
-    const bal = (await walletBalance(q, customerId)) + (editing ? Number(editing.wallet_used) : 0);
-    if (wantWallet > bal + 0.001) throw new CommerceError(`The wallet has only ${rs(bal)}`);
+
+  // coupon (one per order)
+  const couponCode = data.coupon_code ? String(data.coupon_code).trim().toUpperCase() : null;
+  let coupon = null;
+  if (couponCode && !opts.replacement) {
+    try {
+      coupon = await promotions.evalCoupon(q, couponCode, { customerId, typeKey: list.key, lines: offers.lines.map((l) => ({ sku_code: l.sku_code, category_key: l.category_key, net: round2(l.qty * l.price - l.offer_discount) })),
+        goods: goodsAfterOffers, deliveryCharge: delivery.charge, orderId: editing ? editing.order_id : 0, hasOffers: offers.applied.length > 0, settings, lock: !opts.preview });
+    } catch (e) { if (e instanceof promotions.PromoError) throw new CommerceError(e.message, e.status); throw e; }
   }
-  const walletUsed = round2(Math.min(wantWallet, t.total));
+  const waived = coupon ? coupon.delivery_waived : 0;
+  const charge = round2(delivery.charge - waived);
+
+  // manual discount (Rs, with a reason)
+  const manualRaw = String(data.manual_discount ?? '').trim();
+  let manual = 0;
+  let manualReason = null;
+  if (manualRaw && Number(manualRaw) !== 0 && !opts.replacement) {
+    if (!settings.manual_discount_allowed) throw new CommerceError('Manual discounts are switched off (Commerce settings > Orders and pricing)');
+    if (!/^\d{1,7}(\.\d{1,2})?$/.test(manualRaw)) throw new CommerceError('Manual discount: an amount like 200 or 200.50');
+    manual = Number(manualRaw);
+    manualReason = String(data.manual_discount_reason || '').trim().slice(0, 255);
+    if (!manualReason) throw new CommerceError('Say why the manual discount is given');
+  }
+  const deliv = { charge, rate: Number(settings.delivery_charge_gst_rate) || 0 };
+  const disc = { coupon: coupon ? coupon.discount : 0, couponSkus: coupon ? coupon.eligible : null, manual };
+  const pre = taxTotals(allLines, gstType, settings.invoice_round_off, deliv, disc);
+
+  // wallet: at most the setting % of the order, oldest credits first; the GST setting decides the discount part
+  const wantWallet = round2(Math.max(0, Number(data.wallet_use) || 0));
+  let walletUsed = 0;
+  let walletDiscount = 0;
+  let walletPlan = null;
+  const walletGst = settings.cashback_gst_treatment === 'payment' ? 'payment' : 'discount';
+  const walletCap = round2((pre.total * (Number(settings.wallet_max_use_pct ?? 100) || 0)) / 100);
+  if (wantWallet > 0 && !opts.replacement) {
+    walletPlan = await wallet.plan(q, customerId, wantWallet, editing ? editing.order_id : 0);
+    if (walletPlan.total + 0.005 < wantWallet) throw new CommerceError(`The wallet has only ${rs(walletPlan.total)} that can be used`);
+    if (wantWallet > walletCap + 0.005) throw new CommerceError(`At most ${Number(settings.wallet_max_use_pct)}% of the order can be paid from the wallet: ${rs(walletCap)} on this order (Commerce settings > Promotions)`);
+    walletUsed = wantWallet;
+    if (walletGst === 'discount') walletDiscount = round2((walletPlan.bySource.cashback || 0) + (walletPlan.bySource.manual || 0));
+  }
+  const t = walletDiscount ? taxTotals(allLines, gstType, settings.invoice_round_off, deliv, { ...disc, wallet: walletDiscount }) : pre;
+  walletUsed = round2(Math.min(walletUsed, t.total + t.wallet_discount));
+  const discountTotal = round2(t.offer_discount + t.discount + t.manual_discount);
+  const discountPct = t.subtotal > 0 ? round2((discountTotal / t.subtotal) * 100) : 0;
 
   // what holds the order
   const holds = [];
+  if (!opts.replacement && discountTotal > 0 && await approvals.needed(q, 'discount', { pct: discountPct })) {
+    holds.push({ kind: 'discount', amount: discountTotal, what: `discounts ${rs(discountTotal)} = ${discountPct}% of the goods (${[t.offer_discount ? `offers ${rs(t.offer_discount)}` : null,
+      t.discount ? `coupon ${coupon.code} ${rs(t.discount)}` : null, t.manual_discount ? `manual ${rs(t.manual_discount)}: ${manualReason}` : null].filter(Boolean).join(', ')}); limit ${Number(settings.approve_discount_pct_above)}%` });
+  }
   if (!opts.replacement) {
     const maxBelow = Math.max(0, ...lines.map((i) => i.below));
     if (maxBelow > 0 && await approvals.needed(q, 'price_below_list', { pct: maxBelow })) {
@@ -284,7 +353,7 @@ async function prepare(q, data, opts = {}) {
     if (opts.isNew) {
       const over = await overdueOf(q, customerId);
       const outstanding = await outstandingOf(q, customerId);
-      const thisDue = round2(t.total - walletUsed);
+      const thisDue = round2(t.total - (walletUsed - t.wallet_discount));
       const reasons = [];
       if (over.n) reasons.push(`${over.n} overdue invoice${over.n === 1 ? '' : 's'} (${rs(over.amount)})`);
       if (terms === 'credit' && outstanding + thisDue > Number(cust.credit_limit) + 0.005) {
@@ -293,7 +362,9 @@ async function prepare(q, data, opts = {}) {
       if (reasons.length && await approvals.needed(q, 'credit_order')) holds.push({ kind: 'credit_order', amount: round2(outstanding + thisDue), what: reasons.join('; ') });
     }
   }
-  return { cust, list, terms, creditDays: Number(cust.credit_days) || 0, lines: t.lines, totals: t, coupon, walletUsed, bill: bill.values, ship: ship.values, pos, gstType, holds, settings, method, area: delivery.area };
+  return { cust, list, terms, creditDays: Number(cust.credit_days) || 0, lines: t.lines, totals: t, coupon: coupon ? coupon.code : null, couponInfo: coupon, offers: offers.applied,
+    manualReason, walletUsed, walletGst: walletUsed > 0 ? walletGst : null, walletCap, walletPlan, discountTotal, discountPct, deliveryWaived: waived,
+    bill: bill.values, ship: ship.values, pos, gstType, holds, settings, method, area: delivery.area };
 }
 
 async function history(q, orderId, from, to, note, empId) {
@@ -306,15 +377,16 @@ async function release(q, orderId) {
 }
 async function reserve(q, orderId) {
   await release(q, orderId);
-  const [items] = await q.query('SELECT sku_code, qty FROM order_items WHERE order_id = ? ORDER BY sku_code', [orderId]);
-  for (const i of items) await q.query('INSERT INTO stock_reservations (order_id, sku_code, qty) VALUES (?, ?, ?)', [orderId, i.sku_code, i.qty]);
+  const [items] = await q.query('SELECT sku_code, SUM(qty) AS qty FROM order_items WHERE order_id = ? GROUP BY sku_code ORDER BY sku_code', [orderId]);
+  for (const i of items) await q.query('INSERT INTO stock_reservations (order_id, sku_code, qty) VALUES (?, ?, ?)', [orderId, i.sku_code, Number(i.qty)]);
 }
 const reservesNow = (status, settings) => (status === 'new' && settings.stock_reserve_at !== 'packing') || status === 'packing' || status === 'packed';
 
 /** pick an order's SKUs: batch-tracked ones by batch, earliest expiry first, leaving out what other open orders picked */
 async function pickFor(q, orderId) {
   await q.query('DELETE FROM order_picks WHERE order_id = ?', [orderId]);
-  const [items] = await q.query('SELECT sku_code, qty FROM order_items WHERE order_id = ? ORDER BY sku_code', [orderId]);
+  const [sums] = await q.query('SELECT sku_code, SUM(qty) AS qty FROM order_items WHERE order_id = ? GROUP BY sku_code ORDER BY sku_code', [orderId]);
+  const items = sums.map((x) => ({ sku_code: x.sku_code, qty: Number(x.qty) }));
   const tr = await stock.tracked(q, items.map((i) => i.sku_code));
   const picks = [];
   for (const i of items) {
@@ -339,9 +411,9 @@ async function pickFor(q, orderId) {
 
 /** recompute amount_paid, amount_due and payment_status of an order */
 // Returns (phase 6): credit notes of returns lower what the order is worth; refunds to the wallet give money back.
-// due = total - returns credited - wallet used + wallet refunds - (payments - refund payments).
+// due = total - returns credited - wallet paid part + wallet refunds - (payments - refund payments).
 async function refreshPayment(q, orderId) {
-  const [[o]] = await q.query('SELECT status, total, wallet_used FROM orders WHERE order_id = ?', [orderId]);
+  const [[o]] = await q.query('SELECT status, total, wallet_used - wallet_discount AS wallet_paid FROM orders WHERE order_id = ?', [orderId]);
   const [[p]] = await q.query("SELECT COALESCE(SUM(CASE WHEN kind = 'payment' THEN amount END), 0) AS paid, COALESCE(SUM(CASE WHEN kind = 'refund' THEN amount END), 0) AS refunded FROM payments WHERE order_id = ?", [orderId]);
   const [[cr]] = await q.query(`SELECT COALESCE(SUM(cn.total), 0) AS credited FROM credit_notes cn JOIN invoices i ON i.invoice_id = cn.invoice_id
       WHERE i.order_id = ? AND cn.return_id IS NOT NULL`, [orderId]).catch(() => [[{ credited: 0 }]]);
@@ -349,12 +421,12 @@ async function refreshPayment(q, orderId) {
   const credited = Number(cr.credited);
   const paid = round2(Number(p.paid) - Number(p.refunded));
   const cancelled = o.status === 'cancelled';
-  const owed = cancelled ? 0 : round2(Number(o.total) - credited - Number(o.wallet_used) + Number(wr.back));
+  const owed = cancelled ? 0 : round2(Number(o.total) - credited - Number(o.wallet_paid) + Number(wr.back));
   const due = round2(owed - paid);
   let status = 'unpaid';
   if (credited > 0.005 && due <= 0.005) status = credited >= Number(o.total) - 0.005 ? 'refunded' : 'part_refunded';
   else if (Number(p.refunded) > 0 && paid <= 0.005) status = 'refunded';
-  else if (!cancelled && due <= 0.005 && (paid > 0 || Number(o.wallet_used) > 0 || owed <= 0.005)) status = 'paid';
+  else if (!cancelled && due <= 0.005 && (paid > 0 || Number(o.wallet_paid) > 0 || owed <= 0.005)) status = 'paid';
   else if (paid > 0.005) status = cancelled ? 'paid' : 'partly_paid';
   await q.query('UPDATE orders SET amount_paid = ?, amount_due = ?, payment_status = ? WHERE order_id = ?', [paid, due, status, orderId]);
   return { paid, due, status };
@@ -390,9 +462,9 @@ async function confirmed(q, orderId, empId, settings) {
 async function insertLines(q, orderId, lines) {
   for (const i of lines) {
     await q.query(
-      `INSERT INTO order_items (order_id, sku_code, qty, price, list_price, hsn, gst_rate, taxable, cgst, sgst, igst, line_total)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [orderId, i.sku_code, i.qty, i.price, i.list_price, i.hsn, i.gst_rate, i.taxable, i.cgst, i.sgst, i.igst, i.line_total]
+      `INSERT INTO order_items (order_id, sku_code, is_free, qty, price, list_price, offer_id, offer_discount, coupon_discount, wallet_discount, hsn, gst_rate, taxable, cgst, sgst, igst, line_total)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [orderId, i.sku_code, i.is_free ? 1 : 0, i.qty, i.price, i.list_price, i.offer_id || null, i.offer_discount || 0, i.coupon_discount || 0, i.wallet_discount || 0, i.hsn, i.gst_rate, i.taxable, i.cgst, i.sgst, i.igst, i.line_total]
     );
   }
 }
@@ -414,25 +486,62 @@ async function createOrder(q, data, empId, opts = {}) {
     `INSERT INTO orders (order_no, customer_id, price_list, status, payment_terms, credit_days, delivery_method_id, delivery_kind, delivery_area_id,
        bill_name, bill_gstin, bill_address, bill_town, bill_state_code, bill_pincode, bill_phone,
        ship_name, ship_address, ship_town, ship_state_code, ship_pincode, ship_phone, place_of_supply, gst_type,
-       coupon_code, subtotal, discount, delivery_charge, delivery_gst, taxable, cgst, sgst, igst, gst, round_off, total, wallet_used, amount_due, note, emp_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       coupon_code, subtotal, discount, offer_discount, manual_discount, manual_discount_reason, delivery_charge, delivery_gst, delivery_waived, taxable, cgst, sgst, igst, gst, round_off, total,
+       wallet_used, wallet_discount, wallet_gst, amount_due, note, emp_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [orderNo, p.cust.customer_id, p.list.key, status, p.terms, p.creditDays, p.method.method_id, p.method.kind, p.area ? p.area.area_id : null, ...addrCols(p), p.pos, p.gstType,
-      p.coupon, t.subtotal, t.discount, t.delivery_charge, t.delivery_gst, t.taxable, t.cgst, t.sgst, t.igst, t.gst, t.round_off, t.total, p.walletUsed, round2(t.total - p.walletUsed),
-      data.note ? String(data.note).slice(0, 255) : null, empId]
+      p.coupon, t.subtotal, t.discount, t.offer_discount, t.manual_discount, p.manualReason, t.delivery_charge, t.delivery_gst, p.deliveryWaived, t.taxable, t.cgst, t.sgst, t.igst, t.gst, t.round_off, t.total,
+      p.walletUsed, t.wallet_discount, p.walletGst, round2(t.total - (p.walletUsed - t.wallet_discount)), data.note ? String(data.note).slice(0, 255) : null, empId]
   );
   const orderId = ins.insertId;
   await insertLines(q, orderId, p.lines);
-  if (p.coupon) await q.query('UPDATE coupons SET used = used + 1 WHERE code = ?', [p.coupon]);
-  if (p.walletUsed > 0) {
-    await q.query('INSERT INTO wallet_entries (customer_id, amount, reason, order_id, emp_id) VALUES (?, ?, ?, ?, ?)', [p.cust.customer_id, -p.walletUsed, `Used on ${orderNo}`, orderId, empId]);
-  }
+  if (p.coupon) await promotions.redeem(q, orderId, p.cust.customer_id, p.coupon, p.couponInfo.discount || p.couponInfo.delivery_waived);
+  if (p.walletUsed > 0) await wallet.use(q, p.cust.customer_id, p.walletUsed, orderId, orderNo, empId);
   await history(q, orderId, null, status, p.holds.length ? `Waits for: ${p.holds.map((h) => approvals.KINDS[h.kind].label).join(', ')}` : null, empId);
   const ids = await requestHolds(q, orderNo, p.cust.name, p.holds, empId);
   if (status === 'new') await confirmed(q, orderId, empId, p.settings);
   await refreshPayment(q, orderId);
   await audit(q, { empId, action: 'create', entity: 'order', entityId: orderNo,
-    after: { customer: p.cust.name, status, total: t.total, price_list: p.list.key, gst_type: p.gstType, terms: p.terms, delivery: p.method.label, delivery_charge: t.delivery_charge, lines: p.lines.map((i) => `${i.qty} x ${i.sku_code} @ ${i.price}`), holds: p.holds.map((h) => h.kind) } });
+    after: { customer: p.cust.name, status, total: t.total, price_list: p.list.key, gst_type: p.gstType, terms: p.terms, delivery: p.method.label, delivery_charge: t.delivery_charge,
+      lines: p.lines.map((i) => `${i.qty} x ${i.sku_code} @ ${i.price}${i.is_free ? ' (free)' : ''}`), offers: p.offers.map((x) => x.name), coupon: p.coupon, manual_discount: t.manual_discount,
+      wallet_used: p.walletUsed, wallet_discount: t.wallet_discount, holds: p.holds.map((h) => h.kind) } });
   return { order_id: orderId, order_no: orderNo, status, held: status === 'approval', approvals: ids, price_list: p.list.label, gst_type: p.gstType, ...t, walletUsed: p.walletUsed };
+}
+
+/** what an order would be (the New / Edit order form, as you type): totals, lines with offers and free lines, coupon, wallet, holds */
+async function previewOrder(q, data, empId, opts = {}) {
+  let order = null;
+  if (opts.orderNo) {
+    [[order]] = await q.query(`SELECT ${ORDER_COLS} FROM orders WHERE order_no = ?`, [opts.orderNo]);
+    if (!order) throw new CommerceError(`No order ${opts.orderNo}`, 404);
+  }
+  // a coupon or wallet amount that cannot apply is said next to its field; the rest of the order is still shown
+  let couponError = null;
+  let walletError = null;
+  const tryPrepare = (d) => prepare(q, d, { ...opts, order, isNew: !order, preview: true });
+  let p;
+  try { p = await tryPrepare(data); } catch (e) {
+    if (!(e instanceof CommerceError)) throw e;
+    if (data.coupon_code && /coupon/i.test(e.message)) {
+      couponError = e.message;
+      try { p = await tryPrepare({ ...data, coupon_code: null }); } catch (e2) {
+        if (!(e2 instanceof CommerceError) || !data.wallet_use || !/wallet/i.test(e2.message)) throw e2;
+        walletError = e2.message; p = await tryPrepare({ ...data, coupon_code: null, wallet_use: 0 });
+      }
+    } else if (data.wallet_use && /wallet/i.test(e.message)) { walletError = e.message; p = await tryPrepare({ ...data, wallet_use: 0 }); } else throw e;
+  }
+  const t = p.totals;
+  return {
+    lines: p.lines.map((l) => ({ sku_code: l.sku_code, qty: l.qty, price: l.price, entered: l.entered, list_price: l.list_price, is_free: l.is_free, offer_id: l.offer_id || null, offer_label: l.offer_label || null,
+      offer_discount: l.offer_discount, coupon_discount: l.coupon_discount, wallet_discount: l.wallet_discount, taxable: l.taxable, line_total: l.line_total })),
+    totals: { ...t, lines: undefined, wallet_used: p.walletUsed, wallet_paid: round2(p.walletUsed - t.wallet_discount), due: round2(t.total - (p.walletUsed - t.wallet_discount)) },
+    gst_type: p.gstType, offers: p.offers, coupon: p.couponInfo ? { code: p.couponInfo.code, kind: p.couponInfo.kind, discount: p.couponInfo.discount, delivery_waived: p.couponInfo.delivery_waived,
+      excluded: p.couponInfo.excluded, capped: p.couponInfo.capped, cap: p.couponInfo.cap, description: p.couponInfo.description } : null,
+    wallet: { used: p.walletUsed, cap: p.walletCap, max_pct: Number(p.settings.wallet_max_use_pct), gst: p.settings.cashback_gst_treatment === 'payment' ? 'payment' : 'discount', by_source: p.walletPlan ? p.walletPlan.bySource : {},
+      usable: (await wallet.plan(q, p.cust.customer_id, 1e9, order ? order.order_id : 0)).total },
+    discount: { total: p.discountTotal, pct: p.discountPct, limit: p.settings.approve_discount_on ? Number(p.settings.approve_discount_pct_above) : null },
+    holds: p.holds.map((h) => ({ kind: h.kind, label: approvals.KINDS[h.kind].label, what: h.what })), delivery_area: p.area, coupon_error: couponError, wallet_error: walletError,
+  };
 }
 
 const ORDER_COLS = `order_id, order_no, customer_id, status, payment_terms, credit_days, delivery_method_id, delivery_area_id, coupon_code, wallet_used, version, total,
@@ -452,20 +561,18 @@ async function updateOrder(q, orderNo, data, empId, opts = {}) {
   if (Number(data.version) !== Number(o.version)) throw new CommerceError(`${orderNo} changed since you opened it: reload it and make your change again`, 409);
   const reason = String(data.reason || '').trim().slice(0, 255);
   if (mode === 'reason' && !reason) throw new CommerceError(`${orderNo} is packed: say why it is changed (the packer re-packs it)`);
-  const [beforeItems] = await q.query('SELECT sku_code, qty, price FROM order_items WHERE order_id = ? ORDER BY sku_code', [o.order_id]);
+  const [beforeItems] = await q.query('SELECT sku_code, qty, price, is_free FROM order_items WHERE order_id = ? ORDER BY sku_code, is_free', [o.order_id]);
   const p = await prepare(q, data, { ...opts, order: o, isNew: false });
   const t = p.totals;
   await q.query('DELETE FROM order_items WHERE order_id = ?', [o.order_id]);
   await insertLines(q, o.order_id, p.lines);
-  // coupon and wallet follow the edit
-  if (o.coupon_code !== p.coupon) {
-    if (o.coupon_code) await q.query('UPDATE coupons SET used = GREATEST(used - 1, 0) WHERE code = ?', [o.coupon_code]);
-    if (p.coupon) await q.query('UPDATE coupons SET used = used + 1 WHERE code = ?', [p.coupon]);
-  }
-  const walletDelta = round2(Number(o.wallet_used) - p.walletUsed);
-  if (Math.abs(walletDelta) > 0.005) {
-    await q.query('INSERT INTO wallet_entries (customer_id, amount, reason, order_id, emp_id) VALUES (?, ?, ?, ?, ?)',
-      [o.customer_id, walletDelta, walletDelta > 0 ? `Given back: ${orderNo} edited` : `Used on ${orderNo} (edited)`, o.order_id, empId]);
+  // coupon and wallet follow the edit: the old use goes back, the new one is taken (oldest credits first)
+  await promotions.redeem(q, o.order_id, o.customer_id, p.coupon, p.couponInfo ? p.couponInfo.discount || p.couponInfo.delivery_waived : 0);
+  if (Number(o.wallet_used) > 0 || p.walletUsed > 0) {
+    if (Math.abs(Number(o.wallet_used) - p.walletUsed) > 0.005 || Number(o.wallet_used) > 0) {
+      await wallet.giveBack(q, o.order_id, `Given back: ${orderNo} edited`, empId);
+      if (p.walletUsed > 0) await wallet.use(q, o.customer_id, p.walletUsed, o.order_id, `${orderNo} (edited)`, empId);
+    }
   }
   // approvals: the old requests are withdrawn, the edit asks again for what it still needs
   await withdrawHolds(q, orderNo, 'Order edited: asked again if still needed');
@@ -476,10 +583,11 @@ async function updateOrder(q, orderNo, data, empId, opts = {}) {
     `UPDATE orders SET status = ?, payment_terms = ?, delivery_method_id = ?, delivery_kind = ?, delivery_area_id = ?,
        bill_name = ?, bill_gstin = ?, bill_address = ?, bill_town = ?, bill_state_code = ?, bill_pincode = ?, bill_phone = ?,
        ship_name = ?, ship_address = ?, ship_town = ?, ship_state_code = ?, ship_pincode = ?, ship_phone = ?, place_of_supply = ?, gst_type = ?,
-       coupon_code = ?, subtotal = ?, discount = ?, delivery_charge = ?, delivery_gst = ?, taxable = ?, cgst = ?, sgst = ?, igst = ?, gst = ?, round_off = ?, total = ?, wallet_used = ?,
+       coupon_code = ?, subtotal = ?, discount = ?, offer_discount = ?, manual_discount = ?, manual_discount_reason = ?, delivery_charge = ?, delivery_gst = ?, delivery_waived = ?,
+       taxable = ?, cgst = ?, sgst = ?, igst = ?, gst = ?, round_off = ?, total = ?, wallet_used = ?, wallet_discount = ?, wallet_gst = ?,
        note = ?, version = version + 1, updated_by = ?, updated_at = UTC_TIMESTAMP() WHERE order_id = ?`,
-    [status, p.terms, p.method.method_id, p.method.kind, p.area ? p.area.area_id : null, ...addrCols(p), p.pos, p.gstType, p.coupon, t.subtotal, t.discount, t.delivery_charge, t.delivery_gst,
-      t.taxable, t.cgst, t.sgst, t.igst, t.gst, t.round_off, t.total, p.walletUsed,
+    [status, p.terms, p.method.method_id, p.method.kind, p.area ? p.area.area_id : null, ...addrCols(p), p.pos, p.gstType, p.coupon, t.subtotal, t.discount, t.offer_discount, t.manual_discount, p.manualReason,
+      t.delivery_charge, t.delivery_gst, p.deliveryWaived, t.taxable, t.cgst, t.sgst, t.igst, t.gst, t.round_off, t.total, p.walletUsed, t.wallet_discount, p.walletGst,
       String(data.note || '').trim().slice(0, 255) || null, empId, o.order_id]
   );
   await requestHolds(q, orderNo, p.cust.name, p.holds, empId);
@@ -494,8 +602,9 @@ async function updateOrder(q, orderNo, data, empId, opts = {}) {
   if (status !== o.status) await history(q, o.order_id, o.status, status, 'after the edit', empId);
   await refreshPayment(q, o.order_id);
   await audit(q, { empId, action: 'update', entity: 'order', entityId: orderNo,
-    before: { status: o.status, total: Number(o.total), lines: beforeItems.map((i) => `${i.qty} x ${i.sku_code} @ ${Number(i.price)}`) },
-    after: { status, total: t.total, lines: p.lines.map((i) => `${i.qty} x ${i.sku_code} @ ${i.price}`), reason: reason || null, gst_type: p.gstType, holds: p.holds.map((h) => h.kind) } });
+    before: { status: o.status, total: Number(o.total), lines: beforeItems.map((i) => `${i.qty} x ${i.sku_code} @ ${Number(i.price)}${Number(i.is_free) ? ' (free)' : ''}`) },
+    after: { status, total: t.total, lines: p.lines.map((i) => `${i.qty} x ${i.sku_code} @ ${i.price}${i.is_free ? ' (free)' : ''}`), coupon: p.coupon, manual_discount: t.manual_discount, wallet_used: p.walletUsed,
+      reason: reason || null, gst_type: p.gstType, holds: p.holds.map((h) => h.kind) } });
   return { order_no: orderNo, status, version: Number(o.version) + 1, holds: p.holds.map((h) => h.kind), total: t.total };
 }
 
@@ -509,11 +618,8 @@ async function doCancel(q, orderId, reason, empId) {
   const [[gone]] = await q.query('SELECT dispatched_at FROM orders WHERE order_id = ?', [orderId]);
   if (gone.dispatched_at) await stock.goodsBack(q, o.order_no, empId);
   const inv = await invoices.cancelForOrder(q, orderId, `Order ${o.order_no} cancelled: ${reason}`, empId);
-  if (o.coupon_code) await q.query('UPDATE coupons SET used = GREATEST(used - 1, 0) WHERE code = ?', [o.coupon_code]);
-  if (Number(o.wallet_used) > 0) {
-    await q.query('INSERT INTO wallet_entries (customer_id, amount, reason, order_id, emp_id) VALUES (?, ?, ?, ?, ?)',
-      [o.customer_id, Number(o.wallet_used), `Given back: ${o.order_no} cancelled`, orderId, empId]);
-  }
+  if (o.coupon_code) await promotions.redeem(q, orderId, o.customer_id, null, 0);
+  if (Number(o.wallet_used) > 0) await wallet.giveBack(q, orderId, `Given back: ${o.order_no} cancelled`, empId);
   await withdrawHolds(q, o.order_no, 'Order cancelled');
   await history(q, orderId, o.status, 'cancelled', reason, empId);
   await refreshPayment(q, orderId);
@@ -541,19 +647,6 @@ async function cancelOrder(q, orderNo, reason, empId) {
   return { order_no: orderNo, pending: false, status: 'cancelled' };
 }
 
-/** Delivered: the cashback rule (database/demo/commerce-demo-schema.sql) credits pct % of (subtotal - discount) to the wallet. */
-async function cashback(q, orderId, empId) {
-  const [[rule]] = await q.query('SELECT pct, min_order, is_active FROM cashback_rule WHERE rule_id = 1').catch(() => [[null]]);
-  if (!rule || !Number(rule.is_active)) return 0;
-  const [[o]] = await q.query('SELECT order_no, customer_id, subtotal, discount FROM orders WHERE order_id = ?', [orderId]);
-  const base = Number(o.subtotal) - Number(o.discount);
-  if (base <= 0 || base < Number(rule.min_order)) return 0;
-  const amount = round2(base * (Number(rule.pct) / 100));
-  await q.query('INSERT INTO wallet_entries (customer_id, amount, reason, order_id, emp_id) VALUES (?, ?, ?, ?, ?)',
-    [o.customer_id, amount, `Cashback ${Number(rule.pct)}% on ${o.order_no}`, orderId, empId]);
-  return amount;
-}
-
 /**
  * The goods leave the godown (trip started, courier hand-over, customer pickup): stock out by the picked batches,
  * reservations consumed, tax invoice issued, dispatched_at set. Only once per order. -> { invoice_no, batches }
@@ -577,7 +670,7 @@ async function setStatus(q, o, to, empId, note = null, extra = {}) {
     [to, ...Object.values(extra), empId, o.order_id]);
   await history(q, o.order_id, o.status, to, note, empId);
   await audit(q, { empId, action: 'status', entity: 'order', entityId: o.order_no, before: { status: o.status }, after: { status: to, note, ...extra } });
-  if (to === 'delivered') await cashback(q, o.order_id, empId);
+  if (to === 'delivered' && (await commerceSettings.read(q)).cashback_credit_at === 'delivery') await promotions.creditCashback(q, o.order_id, empId);
 }
 
 /** payment modes offered (Commerce setting payment_methods, names from MODES) -> { key: label } */
@@ -635,6 +728,6 @@ approvals.onApproved('cancel_after_dispatch', async (q, p, empId) => {
 
 module.exports = {
   STATUS_LABEL, GONE, HELD, TERMS, MODES, PAYMENT_STATUS, EDITABLE, CommerceError, deliveryCharge, deliveryMethod,
-  createOrder, updateOrder, cancelOrder, doCancel, leaveGodown, setStatus, pickFor, reserve, pendingHolds, recordPayment, couponDiscount, walletBalance, availability,
+  createOrder, updateOrder, previewOrder, cancelOrder, doCancel, leaveGodown, setStatus, pickFor, reserve, pendingHolds, recordPayment, walletBalance, availability, spread,
   overdueOf, outstandingOf, modesOffered, OVERDUE_SQL, taxTotals, istYear, refreshPayment,
 };

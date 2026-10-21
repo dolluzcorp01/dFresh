@@ -9,13 +9,16 @@
 // approvals, history. Edit: New / Waiting for approval freely, Packed with a reason (stock re-reserved),
 // never after dispatch. Cancel always asks for a reason; after dispatch it waits for approval.
 // New / Edit order: customer (price list, credit, overdue), payment terms, billing and shipping address, lines with
-// the available stock per SKU (an override above it waits for approval), prices from the list, coupon, wallet.
-import { useEffect, useMemo, useState } from 'react';
+// the available stock per SKU (an override above it waits for approval), prices from the list. Phase 7: the server
+// works the order out as it is typed (/commerce/orders/preview): automatic offers on the lines and free lines, one
+// coupon, a manual discount with a reason, the wallet (at most the setting % of the order, cashback as a discount or a
+// payment by the GST setting), the totals and what will wait for approval.
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { api } from './adminApi';
 import { Drawer, InfoCard, Loading, Notice, fmtDate, useAction, useCan, useConfirm, useLoad } from './ui';
 import { NewReturn, ReturnDrawer, ReturnsTable } from './CommerceReturns';
-import { addrLines, printCreditNote, printInvoice as printInvoiceDoc } from './invoicePrint';
+import { addrLines, printCreditNote, printInvoice as printInvoiceDoc, signed } from './invoicePrint';
 import { NewCustomerDrawer } from './CommerceCustomers';
 import { PriceBasis } from './Prices';
 import { GST_STATES, stateName } from '../shared/gstStates';
@@ -186,7 +189,11 @@ function OrderDrawer({ no, canEdit, onClose, onChanged }) {
                 <thead><tr><th>SKU</th><th>Item</th><th className="a-num">Qty</th><th className="a-num">Price</th><th className="a-num">Taxable</th>
                   {d.gst_type === 'intra' ? <><th className="a-num">CGST</th><th className="a-num">SGST</th></> : <th className="a-num">IGST</th>}<th className="a-num">Amount</th></tr></thead>
                 <tbody>{d.items.map((i) => (
-                  <tr key={i.sku_code}><td><code>{i.sku_code}</code></td><td>{i.name}<small className="a-muted a-person-sub">HSN {i.hsn} · GST {Number(i.gst_rate)}%{i.list_price != null && Number(i.list_price) !== Number(i.price) ? ` · list ${rs(i.list_price)}` : ''}</small></td>
+                  <tr key={`${i.sku_code}${i.is_free ? '-free' : ''}`} className={i.is_free ? 'a-freeline' : undefined}><td><code>{i.sku_code}</code>{i.is_free && <> <span className="a-status a-ap-approved">Free</span></>}</td>
+                    <td>{i.name}<small className="a-muted a-person-sub">HSN {i.hsn} · GST {Number(i.gst_rate)}%{!i.is_free && i.list_price != null && Number(i.list_price) !== Number(i.price) ? ` · list ${rs(i.list_price)}` : ''}</small>
+                      {i.offer_label && <small className="a-ok a-person-sub">{i.offer_label}{Number(i.offer_discount) > 0 ? `: - ${rs(i.offer_discount)}` : ''}</small>}
+                      {Number(i.coupon_discount) > 0 && <small className="a-muted a-person-sub">coupon / manual share - {rs(i.coupon_discount)}</small>}
+                      {Number(i.wallet_discount) > 0 && <small className="a-muted a-person-sub">wallet cashback share - {rs(i.wallet_discount)} (taxable)</small>}</td>
                     <td className="a-num">{i.qty}</td><td className="a-num">{rs(i.price)}</td><td className="a-num">{rs(i.taxable)}</td>
                     {d.gst_type === 'intra' ? <><td className="a-num">{rs(i.cgst)}</td><td className="a-num">{rs(i.sgst)}</td></> : <td className="a-num">{rs(i.igst)}</td>}
                     <td className="a-num">{rs(i.line_total)}</td></tr>
@@ -194,6 +201,13 @@ function OrderDrawer({ no, canEdit, onClose, onChanged }) {
               </table>
             </div>
             <Totals t={{ ...d, coupon: d.coupon_code }} paid={d.amount_paid} due={d.amount_due} cancelled={d.status === 'cancelled'} />
+            {Number(d.manual_discount) > 0 && <p className="a-muted">Manual discount: {d.manual_discount_reason}</p>}
+            {Number(d.wallet_used) > 0 && <p className="a-muted">Wallet {rs(d.wallet_used)}: {Number(d.wallet_discount) > 0 ? `${rs(d.wallet_discount)} as a discount (cashback / manual credit, GST setting "Discount")` : ''}{Number(d.wallet_discount) > 0 && Number(d.wallet_used) - Number(d.wallet_discount) > 0.005 ? ', ' : ''}{Number(d.wallet_used) - Number(d.wallet_discount) > 0.005 ? `${rs(Number(d.wallet_used) - Number(d.wallet_discount))} as a payment` : ''}.</p>}
+            {d.status === 'delivered' && d.cashback && (
+              <p className="a-cashback">{d.cashback.amount === null ? `Cashback: worked out on ${day(d.cashback.due_on)}, ${d.cashback.mode === 'delivery' ? 'on delivery' : 'once the return window has passed'}.`
+                : d.cashback.amount > 0 ? `Cashback ${rs(d.cashback.amount)} credited to the wallet on ${fmtDate(d.cashback.at)}.` : 'No cashback on this order (no rule for this customer type, or below its minimum).'}</p>
+            )}
+            {d.walletEntries.length > 0 && <ul className="a-hist">{d.walletEntries.map((w) => <li key={w.entry_id}>{fmtDate(w.created_at)} · wallet {w.amount > 0 ? '+' : '-'} {rs(Math.abs(w.amount))} - {w.reason}</li>)}</ul>}
             {d.reserved.length > 0 && <p className="a-muted">Stock reserved: {d.reserved.map((r) => `${r.qty} x ${r.sku_code}`).join(', ')}</p>}
             {d.batches && d.batches.length > 0 && <p className="a-batchesout">Batches sent (earliest expiry first): {d.batches.map((b) => `${b.qty} x ${b.sku_code} batch ${b.batch_no}, expires ${day(b.expiry_date)}`).join('; ')}</p>}
             <Payments order={d} canEdit={canEdit} onChanged={reload} />
@@ -305,16 +319,21 @@ function Payments({ order, canEdit, onChanged }) {
 
 function Totals({ t, paid = null, due = null, cancelled = false }) {
   const intra = t.gst_type === 'intra';
+  const walletPaid = Number(t.wallet_used || 0) - Number(t.wallet_discount || 0);
   return (
     <dl className="a-dl a-totals">
-      <div><dt>Subtotal</dt><dd>{rs(t.subtotal)}</dd></div>
-      {Number(t.discount) > 0 && <div><dt>Discount{t.coupon ? ` (${t.coupon})` : ''}</dt><dd>- {rs(t.discount)}</dd></div>}
+      <div><dt>Goods</dt><dd>{rs(t.subtotal)}</dd></div>
+      {Number(t.offer_discount) > 0 && <div><dt>Offers</dt><dd>- {rs(t.offer_discount)}</dd></div>}
+      {Number(t.discount) > 0 && <div><dt>Coupon{t.coupon ? ` ${t.coupon}` : ''}</dt><dd>- {rs(t.discount)}</dd></div>}
+      {Number(t.manual_discount) > 0 && <div><dt>Manual discount</dt><dd>- {rs(t.manual_discount)}</dd></div>}
+      {Number(t.wallet_discount) > 0 && <div><dt>Wallet cashback (discount)</dt><dd>- {rs(t.wallet_discount)}<small className="a-muted a-person-sub">incl. GST: lowers the taxable value</small></dd></div>}
       {Number(t.delivery_charge) > 0 && <div><dt>Delivery charge</dt><dd>{rs(t.delivery_charge)}</dd></div>}
+      {Number(t.delivery_waived) > 0 && <div><dt>Delivery charge</dt><dd>{rs(0)}<small className="a-muted a-person-sub">{rs(t.delivery_waived)} waived{t.coupon ? ` (${t.coupon})` : ''}</small></dd></div>}
       <div><dt>Taxable</dt><dd>{rs(t.taxable)}</dd></div>
       {intra ? <><div><dt>CGST</dt><dd>{rs(t.cgst)}</dd></div><div><dt>SGST</dt><dd>{rs(t.sgst)}</dd></div></> : <div><dt>IGST</dt><dd>{rs(t.igst)}</dd></div>}
-      {Number(t.round_off) !== 0 && <div><dt>Round off</dt><dd>{rs(t.round_off)}</dd></div>}
+      {Number(t.round_off) !== 0 && <div><dt>Round off</dt><dd>{signed(t.round_off)}</dd></div>}
       <div className="a-grand"><dt>Total</dt><dd>{rs(t.total)}</dd></div>
-      {Number(t.wallet_used) > 0 && <div><dt>Paid from wallet</dt><dd>- {rs(t.wallet_used)}</dd></div>}
+      {walletPaid > 0.005 && <div><dt>Paid from wallet</dt><dd>- {rs(walletPaid)}</dd></div>}
       {paid !== null && Number(paid) !== 0 && <div><dt>Paid</dt><dd>- {rs(paid)}</dd></div>}
       {due !== null && !cancelled && <div className="a-grand"><dt>Balance due</dt><dd>{rs(Math.max(Number(due), 0))}</dd></div>}
     </dl>
@@ -339,21 +358,6 @@ function qtyProblem(sku, packs) {
 }
 const unitsOf = (sku) => (!sku ? ['pack'] : sku.sell_unit === 'carton' ? ['carton'] : sku.sell_unit === 'both' && Number(sku.packs_per_carton) > 1 ? ['pack', 'carton'] : ['pack']);
 const blankLine = () => ({ sku_code: '', qty: 1, unit: 'pack', price: '', auto: true });
-// the same tax rules as commerce.js taxTotals(), for the live preview (the server recomputes on save)
-function previewTax(items, discount, gstType, roundOff, delivery = { charge: 0, rate: 0 }) {
-  const subtotal = round2(items.reduce((a, i) => a + i.qty * i.price, 0));
-  const disc = Math.min(discount, subtotal);
-  const share = subtotal ? (subtotal - disc) / subtotal : 0;
-  let taxable = 0; let cgst = 0; let igst = 0;
-  for (const i of [...items, ...(delivery.charge ? [{ qty: 1, price: delivery.charge, gst_rate: delivery.rate, delivery: true }] : [])]) {
-    const tx = i.delivery ? i.price : round2(i.qty * i.price * share);
-    taxable += tx;
-    if (gstType === 'intra') cgst += round2((tx * i.gst_rate) / 200); else igst += round2((tx * i.gst_rate) / 100);
-  }
-  const before = round2(taxable + 2 * cgst + igst);
-  const ro = roundOff ? round2(Math.round(before) - before) : 0;
-  return { subtotal, discount: disc, delivery_charge: delivery.charge, taxable: round2(taxable), cgst: round2(cgst), sgst: round2(cgst), igst: round2(igst), round_off: ro, total: round2(before + ro), gst_type: gstType };
-}
 const fromOrder = (o, which) => (which === 'bill'
   ? { name: o.bill_name, gstin: o.bill_gstin || '', address: o.bill_address || '', town: o.bill_town || '', state_code: o.bill_state_code, pincode: o.bill_pincode || '', phone: o.bill_phone || '' }
   : { name: o.ship_name, address: o.ship_address || '', town: o.ship_town || '', state_code: o.ship_state_code, pincode: o.ship_pincode || '', phone: o.ship_phone || '' });
@@ -371,8 +375,10 @@ function OrderForm({ order = null, onClose, onSaved }) {
   const [ship, setShip] = useState(editing ? fromOrder(order, 'ship') : null);
   const [sameShip, setSameShip] = useState(!editing);
   const [coupon, setCoupon] = useState(editing ? order.coupon_code || '' : '');
-  const [couponState, setCouponState] = useState(editing && order.coupon_code ? { discount: Number(order.discount) } : null);
+  const [couponApplied, setCouponApplied] = useState(editing ? order.coupon_code || '' : '');
+  const [manual, setManual] = useState(editing && Number(order.manual_discount) ? { amount: String(Number(order.manual_discount)), reason: order.manual_discount_reason || '' } : { amount: '', reason: '' });
   const [wallet, setWallet] = useState(editing && Number(order.wallet_used) ? String(Number(order.wallet_used)) : '');
+  const [pv, setPv] = useState(null); // the server's preview: { totals, lines, offers, coupon, wallet, holds, ... } or { error }
   const [note, setNote] = useState(editing ? order.note || '' : '');
   const [reason, setReason] = useState('');
   const [override, setOverride] = useState(false);
@@ -404,23 +410,40 @@ function OrderForm({ order = null, onClose, onSaved }) {
     price: r.price === null ? 0 : inclusive ? round2(r.price / (1 + r.sku.gst_rate / 100)) : r.price }));
   const anyShort = rows.some((r) => r.short);
   const blocked = rows.some((r) => r.problem || (r.sku && r.price === null)) || (anyShort && !override) || !bill || !bill.name || (editing && order.editable === 'reason' && !reason.trim());
-  const discount = couponState && couponState.discount ? couponState.discount : 0;
   // delivery: the method (own vehicle by default), the area from the shipping PIN code or town (or chosen), its charge
   const method = f ? (f.methods.find((m) => String(m.method_id) === methodId) || f.methods.find((m) => m.kind === 'own') || f.methods[0]) : null;
   const words = (a) => String(a.towns || '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
   const autoArea = f && shipTo ? (f.areas.find((a) => shipTo.pincode && words(a).includes(String(shipTo.pincode))) || f.areas.find((a) => shipTo.town && words(a).includes(String(shipTo.town).trim().toLowerCase())) || null) : null;
   const area = f && method && method.kind !== 'pickup' ? (areaId ? f.areas.find((a) => String(a.area_id) === areaId) : autoArea) : null;
-  const goods = round2(items.reduce((a, i) => a + i.qty * i.price, 0) - discount);
-  const freeDelivery = Boolean(area && area.free_above !== null && goods >= area.free_above);
-  const charge = area && !freeDelivery ? area.charge : 0;
-  const t = previewTax(items, discount, gstType, Boolean(f && f.roundOff), { charge, rate: f ? f.deliveryGstRate : 0 });
-  const maxWallet = customer ? customer.wallet + (editing ? Number(order.wallet_used) : 0) : 0;
-  const walletUse = Math.min(Number(wallet) || 0, maxWallet, t.total);
-  const thisDue = round2(t.total - walletUse);
+  const P = pv && pv.totals ? pv : null;
+  const t = P ? { ...P.totals, gst_type: P.gst_type } : null;
+  const freeDelivery = Boolean(P && P.delivery_area && P.delivery_area.free);
+  const thisDue = t ? t.due : 0;
   const creditOver = Boolean(customer && !editing && terms === 'credit' && customer.outstanding + thisDue > customer.credit_limit + 0.005);
   const overdueHold = Boolean(customer && !editing && customer.overdue > 0);
-  const held = rows.some((r) => r.needsApproval) || Boolean(anyShort && override && f && f.approval.stock) || Boolean(f && f.approval.credit && (creditOver || overdueHold));
+  const held = P ? P.holds.length > 0 : rows.some((r) => r.needsApproval);
+  const lineOf = (sku) => (P ? P.lines.find((x) => x.sku_code === sku && !x.is_free) : null);
+  const freeLines = P ? P.lines.filter((x) => x.is_free) : [];
   const dirty = Boolean(customerId || lines.some((l) => l.sku_code));
+  // what the server makes of it (offers, coupon, wallet, totals, approvals), shortly after each change
+  const body = () => ({
+    payment_terms: terms, note, coupon_code: couponApplied.trim().toUpperCase() || null, wallet_use: Number(wallet) || 0,
+    manual_discount: manual.amount, manual_discount_reason: manual.reason,
+    items: rows.filter((r) => r.l.sku_code && r.sku).map((r) => ({ sku_code: r.l.sku_code.trim().toUpperCase(), qty: r.packs, price: r.l.auto ? '' : r.l.price })),
+    bill, ship: sameShip ? { ...bill } : ship, override_stock: override, delivery_method_id: method ? method.method_id : '', delivery_area_id: areaId,
+  });
+  const ready = Boolean(customerId && bill && bill.name && rows.some((r) => r.sku) && !rows.some((r) => r.problem));
+  const key = ready ? JSON.stringify({ ...body(), customer_id: customerId }) : '';
+  const seq = useRef(0);
+  useEffect(() => {
+    if (!key) { setPv(null); return undefined; }
+    const n = ++seq.current;
+    const timer = setTimeout(() => {
+      api.send('POST', '/commerce/orders/preview', { ...JSON.parse(key), ...(editing ? { order_no: order.order_no } : {}) })
+        .then((r) => n === seq.current && setPv(r), (e) => n === seq.current && setPv({ error: e.message }));
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // a typed price stays; an empty one shows (and sends) the list price of the customer's type
   const setLine = (n, patch) => setLines((ls) => ls.map((l, i) => {
@@ -435,23 +458,11 @@ function OrderForm({ order = null, onClose, onSaved }) {
     }
     return nl;
   }));
-  const checkCoupon = () => act.run(async () => {
-    setCouponState(null);
-    if (!coupon.trim()) return;
-    try {
-      const r = await api.send('POST', '/commerce/coupon-check', { code: coupon, subtotal: t.subtotal });
-      setCouponState({ discount: r.discount });
-    } catch (e) { setCouponState({ error: e.message }); }
-  });
   const save = () => act.run(async () => {
-    const body = {
-      payment_terms: terms, note, coupon_code: couponState && couponState.discount ? coupon.trim().toUpperCase() : null, wallet_use: walletUse,
-      items: rows.filter((r) => r.l.sku_code).map((r) => ({ sku_code: r.l.sku_code.trim().toUpperCase(), qty: r.packs, price: r.l.auto ? '' : r.l.price })),
-      bill, ship: sameShip ? { ...bill } : ship, override_stock: override, delivery_method_id: method ? method.method_id : '', delivery_area_id: areaId,
-    };
+    const b = { ...body(), coupon_code: P && P.coupon ? P.coupon.code : null, wallet_use: P ? P.totals.wallet_used : 0 };
     const r = editing
-      ? await api.send('PUT', `/commerce/orders/${order.order_no}`, { ...body, version: order.version, reason })
-      : await api.send('POST', '/commerce/orders', { ...body, customer_id: customerId });
+      ? await api.send('PUT', `/commerce/orders/${order.order_no}`, { ...b, version: order.version, reason })
+      : await api.send('POST', '/commerce/orders', { ...b, customer_id: customerId });
     onSaved(r.order_no);
   });
   const addr = (a, setA, which) => a && (
@@ -472,8 +483,8 @@ function OrderForm({ order = null, onClose, onSaved }) {
   return (
     <Drawer title={editing ? `Edit ${order.order_no}` : 'New order'} onClose={onClose} dirty={dirty}
       footer={<>
-        <button type="button" className="a-btn" disabled={act.busy || !customerId || !items.length || blocked} onClick={save}>{held ? 'Save - send for approval' : editing ? 'Save changes' : 'Save order'}</button>
-        {held && <span className="a-muted">It waits for approval: {[rows.some((r) => r.needsApproval) && 'price below the list', anyShort && override && 'more than available', creditOver && 'over the credit limit', overdueHold && 'overdue invoices'].filter(Boolean).join(', ')}.</span>}
+        <button type="button" className="a-btn" disabled={act.busy || !customerId || !items.length || blocked || !P || Boolean(pv && pv.error)} onClick={save}>{held ? 'Save - send for approval' : editing ? 'Save changes' : 'Save order'}</button>
+        {held && P && <span className="a-muted">It waits for approval: {P.holds.map((h) => h.label.toLowerCase()).join(', ')}.</span>}
       </>}>
       <Loading state={form}>
         {f && (
@@ -520,7 +531,7 @@ function OrderForm({ order = null, onClose, onSaved }) {
                   )}
                 </div>
                 <p className="a-muted a-delivline">{method && method.kind === 'pickup' ? 'Customer pickup at the godown: no delivery charge.'
-                  : area ? `${area.label}: Rs ${area.charge}${area.free_above !== null ? `, free above Rs ${area.free_above}` : ''}${freeDelivery ? ' - free for this order' : charge ? ` + GST ${f.deliveryGstRate}%` : ''}` : 'No delivery area matches this address: no delivery charge.'}</p>
+                  : area ? `${area.label}: Rs ${area.charge}${area.free_above !== null ? `, free above Rs ${area.free_above}` : ''}${freeDelivery ? ' - free for this order' : area.charge > 0 ? ` + GST ${f.deliveryGstRate}%` : ''}` : 'No delivery area matches this address: no delivery charge.'}</p>
               </>
             )}
             <h3>Items</h3>
@@ -551,11 +562,19 @@ function OrderForm({ order = null, onClose, onSaved }) {
                         {sku && (lp == null ? <small className="a-bad a-ordernote" role="alert">No {list.label} or Default price: set it in Products and prices</small>
                           : <small className="a-muted a-ordernote">{list.label} list: {rs(lp)}{l.auto ? ' (used)' : ''}</small>)}
                         {below > 0 && <small className={`a-ordernote ${needsApproval ? 'a-bad' : 'a-muted'}`}>{below}% below the list{needsApproval ? ': needs approval' : ''}</small>}</td>
-                      <td className="a-num">{sku && price !== null ? rs(packs * price) : ''}</td>
+                      <td className="a-num">{sku && price !== null ? rs(packs * price) : ''}
+                        {lineOf(sku && sku.sku_code) && lineOf(sku.sku_code).offer_label && <small className="a-ok a-ordernote">{lineOf(sku.sku_code).offer_label}{lineOf(sku.sku_code).offer_discount > 0 ? `: - ${rs(lineOf(sku.sku_code).offer_discount)}` : ''}</small>}
+                        {P && P.coupon && P.coupon.excluded.includes(sku && sku.sku_code) && <small className="a-muted a-ordernote">not in coupon {P.coupon.code}</small>}</td>
                       <td>{lines.length > 1 && <button type="button" className="a-btn a-btn-sm a-btn-ghost" onClick={() => setLines((ls) => ls.filter((_, i) => i !== n))} aria-label="Remove line">x</button>}</td>
                     </tr>
                   );
                 })}
+                {freeLines.map((x) => (
+                  <tr key={`free-${x.sku_code}`} className="a-freeline">
+                    <td><code>{x.sku_code}</code> <span className="a-status a-ap-approved">Free</span><small className="a-ok a-ordernote">{x.offer_label}</small></td>
+                    <td className="a-num">{x.qty} pack{x.qty === 1 ? '' : 's'}</td><td className="a-num">{rs(0)}{x.list_price ? <small className="a-muted a-ordernote">list {rs(x.list_price)}</small> : null}</td><td className="a-num">{rs(0)}</td><td />
+                  </tr>
+                ))}
               </tbody>
             </table>
             <button type="button" className="a-btn a-btn-sm a-btn-ghost" onClick={() => setLines((ls) => [...ls, blankLine()])}>Add line</button>
@@ -563,21 +582,37 @@ function OrderForm({ order = null, onClose, onSaved }) {
               <label className="a-inline a-override"><input type="checkbox" checked={override} onChange={(e) => setOverride(e.target.checked)} /> Order more than available anyway{f.approval.stock ? ' (waits for approval by someone else)' : ''}</label>
             ) : <Notice kind="error">More than the available stock: lower the quantity (only a role with &quot;approve&quot; on Orders can ask for an override).</Notice>)}
             <div className="a-grid2">
-              <label className="a-field"><span>Coupon</span>
+              <label className="a-field"><span>Coupon (one per order)</span>
                 <span className="a-row">
-                  <input list="order-coupons" value={coupon} onChange={(e) => { setCoupon(e.target.value); setCouponState(null); }} placeholder="e.g. WELCOME10" />
-                  <button type="button" className="a-btn a-btn-sm" disabled={!coupon.trim() || !items.length || act.busy} onClick={checkCoupon}>Apply</button>
+                  <input list="order-coupons" value={coupon} aria-label="Coupon" onChange={(e) => setCoupon(e.target.value)} placeholder="e.g. WELCOME10" />
+                  <button type="button" className="a-btn a-btn-sm" disabled={!coupon.trim() || !items.length} onClick={() => setCouponApplied(coupon.trim().toUpperCase())}>Apply</button>
+                  {couponApplied && <button type="button" className="a-btn a-btn-sm a-btn-ghost" onClick={() => { setCoupon(''); setCouponApplied(''); }}>Remove</button>}
                 </span>
-                <datalist id="order-coupons">{f.coupons.filter((c) => Number(c.is_active)).map((c) => <option key={c.code} value={c.code}>{c.kind === 'percent' ? `${Number(c.value)}%` : rs(c.value)} off, min {rs(c.min_order)}</option>)}</datalist>
-                {couponState && couponState.error && <small className="a-bad" role="alert">{couponState.error}</small>}
-                {couponState && couponState.discount > 0 && <small className="a-ok">{coupon.toUpperCase()}: - {rs(couponState.discount)}</small>}
+                <datalist id="order-coupons">{f.coupons.map((c) => <option key={c.code} value={c.code}>{c.description || c.kind}</option>)}</datalist>
+                {pv && pv.coupon_error && <small className="a-bad" role="alert">{pv.coupon_error}</small>}
+                {P && P.coupon && <small className="a-ok" role="status">{P.coupon.code}: {P.coupon.kind === 'free_delivery' ? `delivery charge ${rs(P.coupon.delivery_waived)} waived` : `- ${rs(P.coupon.discount)}`}
+                  {P.coupon.capped ? ` (capped at ${rs(P.coupon.cap)})` : ''}{P.coupon.excluded.length ? `; not on ${P.coupon.excluded.join(', ')} (excluded)` : ''}</small>}
               </label>
-              <label className="a-field"><span>Use wallet {customer ? `(balance ${rs(maxWallet)})` : ''}</span>
-                <input type="number" min="0" step="1" value={wallet} disabled={!customer || maxWallet <= 0} onChange={(e) => setWallet(e.target.value)} placeholder={customer && maxWallet > 0 ? 'Amount' : 'No wallet balance'} />
+              <label className="a-field"><span>Use wallet {customer ? `(usable ${rs(P ? P.wallet.usable : customer.wallet)})` : ''}</span>
+                <input type="number" min="0" step="1" value={wallet} aria-label="Use wallet" disabled={!customer || (P ? P.wallet.usable <= 0 : customer.wallet <= 0)} onChange={(e) => setWallet(e.target.value)} placeholder={customer ? 'Amount' : 'Choose the customer'} />
+                {P && <small className="a-muted">At most {P.wallet.max_pct}% of the order: {rs(P.wallet.cap)}. Under GST: {P.wallet.gst === 'discount' ? 'cashback and manual credit lower the taxable value; refunds count as paid' : 'the wallet counts as a payment'}.</small>}
+                {pv && pv.wallet_error && <small className="a-bad" role="alert">{pv.wallet_error}</small>}
               </label>
             </div>
+            {f.manualDiscount && (
+              <div className="a-grid2">
+                <label className="a-field"><span>Manual discount (Rs, optional)</span><input inputMode="decimal" value={manual.amount} aria-label="Manual discount" onChange={(e) => setManual({ ...manual, amount: e.target.value })} /></label>
+                {Number(manual.amount) > 0 && <label className="a-field"><span>Why? (required)</span><input value={manual.reason} maxLength={255} aria-label="Manual discount reason" onChange={(e) => setManual({ ...manual, reason: e.target.value })} /></label>}
+              </div>
+            )}
+            {P && P.discount.total > 0 && (
+              <p className={P.holds.some((h) => h.kind === 'discount') ? 'a-bad' : 'a-muted'}>Discounts {rs(P.discount.total)} = {P.discount.pct}% of the goods
+                {P.discount.limit !== null ? (P.holds.some((h) => h.kind === 'discount') ? `: above ${P.discount.limit}%, it waits for approval` : ` (approval above ${P.discount.limit}%)`) : ''}.</p>
+            )}
+            {P && P.holds.length > 0 && <Notice kind="warn">Waits for approval: {P.holds.map((h) => `${h.label} - ${h.what}`).join('; ')}</Notice>}
+            {pv && pv.error && <Notice kind="error">{pv.error}</Notice>}
             {editing && <label className="a-field"><span>Why is it changed?{order.editable === 'reason' ? ' (required)' : ' (optional)'}</span><input value={reason} maxLength={255} aria-label="Reason for the change" onChange={(e) => setReason(e.target.value)} /></label>}
-            <Totals t={{ ...t, coupon: discount ? coupon.toUpperCase() : null, wallet_used: walletUse }} />
+            {t ? <Totals t={{ ...t, coupon: P.coupon ? P.coupon.code : null }} due={t.due} /> : <p className="a-muted">The totals show once the customer, the address and a line are in.</p>}
           </>
         )}
       </Loading>

@@ -1,6 +1,6 @@
 // dFresh Commerce (DEMO, database dfresh_commerce): operations dashboard. Each card opens the matching screen:
 // today's orders, to pack (New), to dispatch (Packed), low stock, returns to collect / inspect / decide,
-// wallet credit given (cashback + refunds). Plus the next orders to pack and the SKUs to reorder. A card or table is
+// the wallet balance owed to customers. Plus the next orders to pack and the SKUs to reorder. A card or table is
 // only there when the role can view its section (the API sends null for the others).
 import { Link } from 'react-router-dom';
 import { InfoCard, Loading, Notice, fmtDate, useLoad } from './ui';
@@ -47,7 +47,7 @@ export default function CommerceOps() {
               {d.returns && d.returns.toCollect !== null && <Card to="/admin/commerce/returns?status=collecting" value={d.returns.toCollect} label="returns to collect" sub="customer, trip pickup or courier" />}
               {d.returns && <Card to="/admin/commerce/returns?status=received" value={d.returns.toInspect} label="returns to inspect" sub="at the godown or picked up" bad={d.returns.toInspect > 0} />}
               {d.returns && d.returns.toDecide !== null && <Card to="/admin/commerce/returns?status=inspected" value={d.returns.toDecide} label="returns to decide" sub="refund, replace or no refund" />}
-              {d.walletGiven && <Card to="/admin/commerce/customers" value={rs(d.walletGiven.total)} label="wallet credit given" sub={`cashback ${rs(d.walletGiven.cashback)}, refunds ${rs(d.walletGiven.refunds)}`} />}
+              {d.walletGiven && <Card to="/admin/commerce/customers" value={rs(d.walletGiven.total)} label="wallet balance owed to customers" sub={`from cashback ${rs(d.walletGiven.cashback)}, refunds ${rs(d.walletGiven.refunds)}`} />}
             </div>
             <div className="a-grid2">
               {d.nextToPack && (

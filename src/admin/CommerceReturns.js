@@ -17,7 +17,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { api } from './adminApi';
 import { Drawer, InfoCard, Loading, Notice, fmtDate, useAction, useCan, useConfirm, useLoad, useUpload, UploadButton } from './ui';
-import { printCreditNote } from './invoicePrint';
+import { printCreditNote, signed } from './invoicePrint';
 
 export const rs = (n) => `Rs ${Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const day = (d) => (d ? new Date(`${String(d).slice(0, 10)}T00:00:00Z`).toLocaleDateString('en-IN', { timeZone: 'UTC', day: 'numeric', month: 'short', year: 'numeric' }) : '');
@@ -212,6 +212,7 @@ export function ReturnDrawer({ no, onClose }) {
               {d.inspected_at && <div><dt>Inspected</dt><dd>{fmtDate(d.inspected_at)} by {d.inspected_by}{d.inspect_note ? ` - ${d.inspect_note}` : ''}</dd></div>}
               {d.replacement_no && <div><dt>Replacement</dt><dd><code>{d.replacement_no}</code> (Rs 0) · {d.replacement_status.replace(/_/g, ' ')}</dd></div>}
               {d.no_refund_reason && <div><dt>No refund</dt><dd>{d.no_refund_reason}</dd></div>}
+              {Number(d.cashback_reversed) > 0 && <div><dt>Cashback</dt><dd className="a-bad">{rs(d.cashback_reversed)} taken back from the wallet (cashback already credited on {d.order_no})</dd></div>}
             </dl>
             <Lines d={d} />
             {!waitingWindow && <Collection d={d} onChanged={r.reload} />}
@@ -228,7 +229,7 @@ export function ReturnDrawer({ no, onClose }) {
                   ))}
                   {d.credit_notes.map((c) => (
                     <tr key={c.credit_note_id}><td>Credit note <b>{c.credit_note_no}</b><small className="a-muted a-person-sub">against {c.invoice_no} · {fmtDate(c.issued_at)}</small></td>
-                      <td className="a-num">{rs(c.total)}</td><td>{d.gst_type === 'intra' ? `CGST ${rs(c.cgst)} + SGST ${rs(c.sgst)}` : `IGST ${rs(c.igst)}`}</td>
+                      <td className="a-num">{rs(c.total)}</td><td>Taxable {rs(c.taxable)} + {d.gst_type === 'intra' ? `CGST ${rs(c.cgst)} + SGST ${rs(c.sgst)}` : `IGST ${rs(c.igst)}`}{c.round_off ? ` · round off ${signed(c.round_off)}` : ''}</td>
                       <td><button type="button" className="a-link" onClick={() => printCn(c.credit_note_id)}>Print / PDF</button></td></tr>
                   ))}
                 </tbody></table>

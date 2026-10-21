@@ -309,6 +309,39 @@ New return, Delivery (pickups), Inventory (Recheck), Reports. Numbers DFR-26nnnn
   returns by reason and by SKU for a period with the return rate (packs returned / packs delivered in the period).
   SKUs and labels prints pack (SKU), carton (SKU#C) and batch (SKU/BATCH) labels.
 
+### 5.5c Built in phase 7 (promotions and the wallet)
+Migration `20261021_commerce_wallet_promotions.sql`, logic `src/backend_routes/promotions.js` and `wallet.js`, screens
+Commerce > Promotions (Coupons, Offers, Cashback, Wallets), New order, Customers (wallet statement), Reports.
+- Coupons: percent (with a maximum discount) / fixed / free delivery; minimum order (goods after offers); valid from /
+  to; uses in all and per customer (`coupon_redemptions`, given back when the order is cancelled or the coupon taken
+  off); customer types or named customers (either matches; none = everyone); SKUs or categories included / excluded
+  (the discount is spread over the lines it covers only); on / off. One coupon per order; usage list per coupon.
+- Offers (no code; applied in New order and shown on the line): quantity slab (from N packs or cartons, n % off the
+  line; the best slab wins) and buy X get Y free (a free line at Rs 0, the same or another SKU; it is reserved, picked,
+  dispatched and moves stock like any line; `order_items` may now hold a SKU twice: paid and free). Per customer type,
+  with dates. Setting `offers_with_coupon` (default off): an order with an offer takes no coupon.
+- Discounts on an order = offers + coupon + manual discount (Rs, with a reason; setting `manual_discount_allowed`).
+  Above `approve_discount_pct_above` % of the goods value the order waits for the `discount` approval.
+- Cashback rules (`cashback_rules`): percent per customer type (or all types), minimum order, maximum per order, dates,
+  on / off. Worked out on the goods value before GST after every discount and the return credit notes. Credited when
+  the return window has passed (default) or on delivery (setting `cashback_credit_at`); the hourly job (and Run now on
+  Promotions > Cashback) credits what is due. A refund after it takes the matching share back (wallet `reversed`
+  entry, shown on the return).
+- Wallet (`wallet_entries` with source cashback / refund / manual / used / expired / reversed, `remaining` and
+  `expires_on` on credits; `wallet_allocations`): used oldest first; a cancelled or edited order gives back exactly
+  the credits it took; expiry days per source (`wallet_expiry_*_days`, refunds never by default); expired credit
+  leaves the wallet through the hourly job; at most `wallet_max_use_pct` % of an order (default 50); manual credit /
+  debit with a reason through the `goodwill_credit` / `wallet_debit` approval (setting `approve_goodwill_credit`);
+  printable statement with the running balance.
+- GST (`cashback_gst_treatment`): Discount on the next invoice (default) = the cashback / manual part of the wallet used
+  lowers the taxable value (spread over the lines, GST-inclusive); Payment method = the wallet counts as paid and the
+  taxable value stays. A refund to the wallet is always a payment. The invoice shows each discount line, "Wallet
+  cashback as a discount" and / or "Paid from wallet (a payment)", and To pay; the order keeps the setting it used
+  (`orders.wallet_gst`).
+- Reports > Promotions and wallet: coupon and offer usage, discounts by month (offers, coupons, manual, delivery
+  waived, wallet as discount), cashback credited / used / expired / reversed, wallet balance owed to customers now
+  (by source, what expires within 30 days, the largest balances).
+
 ### 5.6 Approval
 `pending` -> `approved` (the action runs) / `rejected` / `expired` / `withdrawn` (by the requester).
 

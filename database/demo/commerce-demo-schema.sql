@@ -8,7 +8,8 @@
 -- skus, sku_prices and price_changes come from the migration 20261020_commerce_pricing.sql (phase 2); orders,
 -- order_items, payments, invoices, credit notes and stock reservations from 20261020_commerce_sales.sql (phase 3);
 -- stock movements, levels, batches, stock-ins, suppliers, write-offs and counts from 20261020_commerce_stock.sql (phase 4);
--- returns, refunds and credit note lines from 20261021_commerce_returns.sql (phase 6).
+-- returns, refunds and credit note lines from 20261021_commerce_returns.sql (phase 6); coupons, offers, cashback rules
+-- and the wallet from 20261021_commerce_wallet_promotions.sql (phase 7).
 
 
 -- from commerce_02_inventory.sql
@@ -33,30 +34,7 @@ CREATE TABLE IF NOT EXISTS customers (
   PRIMARY KEY (customer_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE IF NOT EXISTS coupons (
-  code         VARCHAR(20)   NOT NULL,
-  kind         VARCHAR(10)   NOT NULL,              
-  value        DECIMAL(10,2) NOT NULL,
-  min_order    DECIMAL(10,2) NOT NULL DEFAULT 0,
-  expires_on   DATE          NULL,
-  usage_limit  INT           NULL,
-  used         INT           NOT NULL DEFAULT 0,
-  is_active    TINYINT(1)    NOT NULL DEFAULT 1,
-  PRIMARY KEY (code)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE IF NOT EXISTS wallet_entries (
-  entry_id     BIGINT        NOT NULL AUTO_INCREMENT,
-  customer_id  INT           NOT NULL,
-  amount       DECIMAL(10,2) NOT NULL,              
-  reason       VARCHAR(160)  NOT NULL,
-  order_id     BIGINT        NULL,
-  emp_id       VARCHAR(20)   NOT NULL,
-  created_at   DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (entry_id),
-  KEY idx_wallet_customer (customer_id),
-  CONSTRAINT fk_wallet_customer FOREIGN KEY (customer_id) REFERENCES customers (customer_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 
 
@@ -66,13 +44,6 @@ CREATE TABLE IF NOT EXISTS wallet_entries (
 
 -- from commerce_05_promotions.sql
 
-CREATE TABLE IF NOT EXISTS cashback_rule (
-  rule_id    TINYINT       NOT NULL,
-  pct        DECIMAL(5,2)  NOT NULL,
-  min_order  DECIMAL(10,2) NOT NULL DEFAULT 0,
-  is_active  TINYINT(1)    NOT NULL DEFAULT 1,
-  PRIMARY KEY (rule_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 
 

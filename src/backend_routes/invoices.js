@@ -76,7 +76,10 @@ async function cancelForOrder(q, orderId, reason, empId) {
 async function creditNoteForReturn(q, orderId, lines, reason, returnId, empId) {
   const [[inv]] = await q.query('SELECT invoice_id, invoice_no, gst_type FROM invoices WHERE live_order_id = ? FOR UPDATE', [orderId]);
   if (!inv) throw new InvoiceError('The order has no live tax invoice to credit', 409);
-  const [items] = await q.query('SELECT sku_code, qty, hsn, gst_rate, taxable, cgst, sgst, igst FROM order_items WHERE order_id = ?', [orderId]);
+  // per SKU over its paid and free lines (buy X get Y): a returned pack is worth its share of what was invoiced
+  const [items] = await q.query(`SELECT sku_code, SUM(qty) AS qty, MAX(hsn) AS hsn, MAX(gst_rate) AS gst_rate, SUM(taxable) AS taxable, SUM(cgst) AS cgst, SUM(sgst) AS sgst, SUM(igst) AS igst
+      FROM order_items WHERE order_id = ? GROUP BY sku_code`, [orderId]);
+  items.forEach((i) => { i.qty = Number(i.qty); });
   const r2 = (n) => Math.round(n * 100) / 100;
   const out = [];
   for (const l of lines.filter((x) => x.qty > 0)) {
@@ -108,7 +111,7 @@ async function creditNoteForReturn(q, orderId, lines, reason, returnId, empId) {
       [ins.insertId, x.sku_code, x.hsn, x.gst_rate, x.qty, x.taxable, x.cgst, x.sgst, x.igst, x.line_total]);
   }
   await audit(q, { empId, action: 'issue', entity: 'credit_note', entityId: cnNo, after: { invoice: inv.invoice_no, gst_type: inv.gst_type, total, taxable, cgst, sgst, igst, lines: out.map((x) => `${x.qty} x ${x.sku_code}`), reason: why } });
-  return { credit_note_id: ins.insertId, credit_note_no: cnNo, invoice_no: inv.invoice_no, gst_type: inv.gst_type, total, taxable, cgst, sgst, igst };
+  return { credit_note_id: ins.insertId, credit_note_no: cnNo, invoice_no: inv.invoice_no, gst_type: inv.gst_type, total, taxable, cgst, sgst, igst, round_off: ro };
 }
 
 module.exports = { InvoiceError, issue, cancelForOrder, creditNoteForReturn };

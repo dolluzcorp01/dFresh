@@ -6,6 +6,8 @@ import { api } from './adminApi';
 const esc = (v) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const day = (d) => (d ? new Date(`${String(d).slice(0, 10)}T00:00:00Z`).toLocaleDateString('en-IN', { timeZone: 'UTC', day: 'numeric', month: 'short', year: 'numeric' }) : '');
 const istDay = (v) => day(new Date(new Date(v).getTime() + 5.5 * 3600e3).toISOString());
+/** a round-off with its sign: +0.08, -0.34 (GST figures stay unrounded; only the total is rounded to the rupee) */
+export const signed = (n) => `${Number(n) > 0 ? '+' : Number(n) < 0 ? '-' : ''}${Math.abs(Number(n)).toFixed(2)}`;
 export const addrLines = (a, state) => [a.name, a.address, [a.town, a.pincode].filter(Boolean).join(' '), state, a.gstin ? `GSTIN ${a.gstin}` : null, a.phone].filter(Boolean);
 
 export function printDoc(title, body, demo) {
@@ -33,7 +35,8 @@ export function printDoc(title, body, demo) {
 
 export function invoiceHtml(inv) {
   const intra = inv.gst_type === 'intra';
-  const lines = inv.lines.map((i, n) => `<tr><td>${n + 1}</td><td>${esc(i.name)}<br><small>${esc(i.sku_code)} - ${esc(i.size_label)}</small></td><td>${esc(i.hsn)}</td>
+  const lines = inv.lines.map((i, n) => `<tr><td>${n + 1}</td><td>${esc(i.name)}<br><small>${esc(i.sku_code)} - ${esc(i.size_label)}</small>${Number(i.is_free) ? `<br><b>FREE</b> <small>(${esc(i.offer_name || 'offer')})</small>`
+    : Number(i.offer_discount) > 0 ? `<br><small>Offer ${esc(i.offer_name || '')}: - ${Number(i.offer_discount).toFixed(2)}</small>` : ''}</td><td>${esc(i.hsn)}</td>
     <td class="n">${i.qty}</td><td class="n">${Number(i.price).toFixed(2)}</td><td class="n">${Number(i.taxable).toFixed(2)}</td>
     ${intra ? `<td class="n">${(i.gst_rate / 2).toFixed(1)}% ${Number(i.cgst).toFixed(2)}</td><td class="n">${(i.gst_rate / 2).toFixed(1)}% ${Number(i.sgst).toFixed(2)}</td>`
     : `<td class="n">${Number(i.gst_rate).toFixed(1)}% ${Number(i.igst).toFixed(2)}</td>`}
@@ -53,14 +56,19 @@ export function invoiceHtml(inv) {
       ${intra ? `<td class="n">${(Number(inv.delivery_gst) / 2).toFixed(2)}</td><td class="n">${(Number(inv.delivery_gst) / 2).toFixed(2)}</td>` : `<td class="n">${Number(inv.delivery_gst).toFixed(2)}</td>`}
       <td class="n">${(Number(inv.delivery_charge) + Number(inv.delivery_gst)).toFixed(2)}</td></tr>` : ''}</tbody></table>
     <table class="tot"><tbody>
-    <tr><td>Subtotal</td><td class="n">${Number(inv.subtotal).toFixed(2)}</td></tr>
-    ${Number(inv.discount) > 0 ? `<tr><td>Discount${inv.coupon_code ? ` (${esc(inv.coupon_code)})` : ''}</td><td class="n">- ${Number(inv.discount).toFixed(2)}</td></tr>` : ''}
+    <tr><td>Goods</td><td class="n">${Number(inv.subtotal).toFixed(2)}</td></tr>
+    ${Number(inv.offer_discount) > 0 ? `<tr><td>Offers</td><td class="n">- ${Number(inv.offer_discount).toFixed(2)}</td></tr>` : ''}
+    ${Number(inv.discount) > 0 ? `<tr><td>Coupon${inv.coupon_code ? ` ${esc(inv.coupon_code)}` : ''}</td><td class="n">- ${Number(inv.discount).toFixed(2)}</td></tr>` : ''}
+    ${Number(inv.manual_discount) > 0 ? `<tr><td>Discount${inv.manual_discount_reason ? ` (${esc(inv.manual_discount_reason)})` : ''}</td><td class="n">- ${Number(inv.manual_discount).toFixed(2)}</td></tr>` : ''}
+    ${Number(inv.wallet_discount) > 0 ? `<tr><td>Wallet cashback as a discount<br><small>Rs ${Number(inv.wallet_discount).toFixed(2)} incl. GST from the wallet: the taxable value is lowered (GST setting)</small></td><td class="n">- ${inv.lines.reduce((a, l) => a + Number(l.wallet_discount || 0), 0).toFixed(2)}</td></tr>` : ''}
     ${Number(inv.delivery_charge) > 0 ? `<tr><td>Delivery charge</td><td class="n">${Number(inv.delivery_charge).toFixed(2)}</td></tr>` : ''}
+    ${Number(inv.delivery_waived) > 0 ? `<tr><td>Delivery charge ${Number(inv.delivery_waived).toFixed(2)} waived${inv.coupon_code ? ` (${esc(inv.coupon_code)})` : ''}</td><td class="n">0.00</td></tr>` : ''}
     <tr><td>Taxable value</td><td class="n">${Number(inv.taxable).toFixed(2)}</td></tr>
     ${intra ? `<tr><td>CGST</td><td class="n">${Number(inv.cgst).toFixed(2)}</td></tr><tr><td>SGST</td><td class="n">${Number(inv.sgst).toFixed(2)}</td></tr>` : `<tr><td>IGST</td><td class="n">${Number(inv.igst).toFixed(2)}</td></tr>`}
-    ${Number(inv.round_off) ? `<tr><td>Round off</td><td class="n">${Number(inv.round_off).toFixed(2)}</td></tr>` : ''}
+    ${Number(inv.round_off) ? `<tr><td>Total before round off</td><td class="n">${(Number(inv.total) - Number(inv.round_off)).toFixed(2)}</td></tr><tr><td>Round off</td><td class="n">${signed(inv.round_off)}</td></tr>` : ''}
     <tr class="grand"><td>Invoice total</td><td class="n">Rs ${Number(inv.total).toFixed(2)}</td></tr>
-    ${Number(inv.wallet_used) > 0 ? `<tr><td>Paid from wallet</td><td class="n">- ${Number(inv.wallet_used).toFixed(2)}</td></tr>` : ''}
+    ${Number(inv.wallet_used) - Number(inv.wallet_discount) > 0.005 ? `<tr><td>Paid from wallet (a payment, taxable value unchanged)</td><td class="n">- ${(Number(inv.wallet_used) - Number(inv.wallet_discount)).toFixed(2)}</td></tr>
+      <tr class="grand"><td>To pay</td><td class="n">Rs ${(Number(inv.total) - (Number(inv.wallet_used) - Number(inv.wallet_discount))).toFixed(2)}</td></tr>` : ''}
     </tbody></table>
     ${cns.length ? `<p><b>Credit notes against this invoice:</b> ${cns.map((c) => `${esc(c.credit_note_no)} (${istDay(c.issued_at)}, Rs ${Number(c.total).toFixed(2)}${c.reason ? ` - ${esc(c.reason)}` : ''})`).join('; ')}</p>` : ''}
     <p><small>Marketed by dFresh. Prices per pack before GST. This is a computer-generated invoice.</small></p>`;
@@ -82,7 +90,7 @@ export function creditNoteHtml(cn) {
     ${lines ? `<table><thead><tr><th>#</th><th>Item returned</th><th>HSN</th><th class="n">Qty</th><th class="n">Taxable</th>${intra ? '<th class="n">CGST</th><th class="n">SGST</th>' : '<th class="n">IGST</th>'}<th class="n">Amount</th></tr></thead><tbody>${lines}</tbody></table>` : ''}
     <table class="tot"><tbody><tr><td>Taxable value</td><td class="n">${Number(cn.taxable).toFixed(2)}</td></tr>
     ${intra ? `<tr><td>CGST</td><td class="n">${Number(cn.cgst).toFixed(2)}</td></tr><tr><td>SGST</td><td class="n">${Number(cn.sgst).toFixed(2)}</td></tr>` : `<tr><td>IGST</td><td class="n">${Number(cn.igst).toFixed(2)}</td></tr>`}
-    ${Number(cn.round_off) ? `<tr><td>Round off</td><td class="n">${Number(cn.round_off).toFixed(2)}</td></tr>` : ''}
+    ${Number(cn.round_off) ? `<tr><td>Total before round off</td><td class="n">${(Number(cn.total) - Number(cn.round_off)).toFixed(2)}</td></tr><tr><td>Round off</td><td class="n">${signed(cn.round_off)}</td></tr>` : ''}
     <tr class="grand"><td>Credit total</td><td class="n">Rs ${Number(cn.total).toFixed(2)}</td></tr></tbody></table>
     <p><small>Marketed by dFresh. This is a computer-generated credit note.</small></p>`;
 }

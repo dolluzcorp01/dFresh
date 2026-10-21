@@ -15,9 +15,10 @@ const db = getDBConnection(process.env.DB_NAME || 'dfresh').promise();
 const KINDS = {
   refund: { label: 'Refund', section: 'returns' },
   write_off: { label: 'Stock write-off', section: 'inventory' },
-  discount: { label: 'Manual discount', section: 'orders' },
+  discount: { label: 'Discount above the limit', section: 'orders' },
   cancel_after_dispatch: { label: 'Cancel after dispatch', section: 'orders' },
-  goodwill_credit: { label: 'Goodwill wallet credit', section: 'promotions' },
+  goodwill_credit: { label: 'Manual wallet credit', section: 'promotions' },
+  wallet_debit: { label: 'Manual wallet debit', section: 'promotions' },
   credit_raise: { label: 'Credit limit raise', section: 'customers' },
   price_below_list: { label: 'Price below the list', section: 'products' },
   over_available: { label: 'Order above the available stock', section: 'orders' },
@@ -51,7 +52,7 @@ async function needed(q, kind, facts = {}) {
     case 'write_off': return s.approve_writeoff_on && ((facts.amount || 0) > s.approve_writeoff_value_above || (facts.qty || 0) > s.approve_writeoff_qty_above);
     case 'discount': return s.approve_discount_on && (facts.pct || 0) > s.approve_discount_pct_above;
     case 'cancel_after_dispatch': return s.approve_cancel_after_dispatch;
-    case 'goodwill_credit': return s.approve_goodwill_credit;
+    case 'goodwill_credit': case 'wallet_debit': return s.approve_goodwill_credit;
     case 'credit_raise': return s.approve_credit_raise;
     case 'price_below_list': return s.approve_price_below_on && (facts.pct || 0) > s.approve_price_below_pct;
     case 'over_available': return s.approve_over_available !== false;

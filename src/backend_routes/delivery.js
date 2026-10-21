@@ -59,7 +59,8 @@ async function pickList(q, orderNos) {
   for (const o of orders) {
     const [picks] = await q.query('SELECT sku_code, batch_id, qty FROM order_picks WHERE order_id = ?', [o.order_id]);
     if (o.status === 'packing' && picks.length) { picks.forEach((p) => add(p.sku_code, p.batch_id, p.qty, o.order_no)); continue; }
-    const [items] = await q.query('SELECT sku_code, qty FROM order_items WHERE order_id = ? ORDER BY sku_code', [o.order_id]);
+    const [sums] = await q.query('SELECT sku_code, SUM(qty) AS qty FROM order_items WHERE order_id = ? GROUP BY sku_code ORDER BY sku_code', [o.order_id]); // a free line may repeat a SKU
+    const items = sums.map((x) => ({ sku_code: x.sku_code, qty: Number(x.qty) }));
     const tr = await stock.tracked(q, items.map((i) => i.sku_code));
     for (const i of items) {
       if (!tr.has(i.sku_code)) { add(i.sku_code, null, i.qty, o.order_no); continue; }

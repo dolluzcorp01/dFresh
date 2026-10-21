@@ -22,7 +22,12 @@
 //    through packing (pick list, scans, packed with cartons and weight) and delivery: past trips (delivered, cash
 //    collected), a customer pickup, couriers (one delivered, one on the way), a failed delivery, one trip out for
 //    delivery now, and orders still Packed, Packing and New
-// 7. demo approval requests (pending and decided) and Commerce switched ON
+// 7. promotions (phase 7, before the orders so they apply): coupons of each type (percent with a cap and once per
+//    Home customer, fixed for Hotels and Distributors, percent excluding wet wipes, free delivery), a quantity slab
+//    (napkins from 3 cartons, 5 % off), buy 10 get 1 free on wet wipes, cashback for Hotels (3 %, max Rs 500) and
+//    Distributors (2 % from Rs 5,000, max Rs 1,000); after the orders: cashback of the orders whose return window has
+//    passed, manual wallet credits (one through an approved request, one expiring in 10 days, one already expired)
+// 8. a demo approval decided, and Commerce switched ON
 // Migrations never contain any of this (docs/COMMERCE-SPEC.md 9). Running it twice does nothing the second time.
 require('dotenv').config({ quiet: true });
 const fs = require('fs');
@@ -38,6 +43,8 @@ const pricing = require('../src/backend_routes/pricing');
 const stock = require('../src/backend_routes/stock');
 const delivery = require('../src/backend_routes/delivery');
 const returns = require('../src/backend_routes/returns');
+const promotions = require('../src/backend_routes/promotions');
+const wallet = require('../src/backend_routes/wallet');
 
 const db = getDBConnection(DB).promise();
 const ROOT = path.join(__dirname, '..');
@@ -93,7 +100,7 @@ const ORDERS = [
   [15, 'packed', 'cod', 'FRESH5', 1, [['DF019-R10', 1], ['DF025-R1', 4]], 'pickup'],
   [3, 'packed', 'credit', null, 1, [['DF044-M100', 8]], 'own'],
   [2, 'packed', 'advance', null, 1, [['DF001-M100', 6], ['DF008LAV-M50', 4]], 'courier'],
-  [7, 'packing', 'credit', 'HOTEL500', 0, [['DF002-M100', 40], ['DF014-M100', 20], ['DF030-M200', 12], ['DF036-M250', 24], ['DF044-M100', 12]], 'own'],
+  [7, 'packing', 'credit', null, 0, [['DF002-M100', 40], ['DF014-M100', 20], ['DF030-M200', 12], ['DF036-M250', 24], ['DF044-M100', 12]], 'own'],
   [12, 'packing', 'cod', null, 0, [['DF001-M100', 10], ['DF008BUR-M50', 6]], 'own'],
   [9, 'new', 'advance', 'FRESH5', 0, [['DF017-R4', 2], ['DF026-R2', 2]], 'own'],
   [5, 'new', 'credit', null, 0, [['DF040-M100', 12], ['DF031-M200', 8]], 'own'],
@@ -134,7 +141,7 @@ async function inTx(fn) {
 
   const raw = await mysql.createConnection({ host: process.env.DB_HOST, port: process.env.DB_PORT, user: process.env.DB_USER, password: process.env.DB_PASSWORD, database: DB, multipleStatements: true, timezone: 'Z' });
   await raw.query("SET time_zone = '+00:00'");
-  const [[{ has }]] = await raw.query("SELECT COUNT(*) AS has FROM information_schema.tables WHERE table_schema = ? AND table_name = 'coupons'", [DB]);
+  const [[{ has }]] = await raw.query("SELECT COUNT(*) AS has FROM information_schema.tables WHERE table_schema = ? AND table_name = 'customers'", [DB]);
   if (!Number(has)) {
     await raw.query(fs.readFileSync(path.join(ROOT, 'database/demo/commerce-demo-schema.sql'), 'utf8'));
     await raw.query(fs.readFileSync(path.join(ROOT, 'database/demo/commerce-demo-data.sql'), 'utf8'));
@@ -215,6 +222,25 @@ async function inTx(fn) {
     [nm, `+91 ${phone.slice(0, 5)} ${phone.slice(5)}`, ctype, town, state, pin, address, gstin, days, limit]);
   }
   const [custRows] = await db.query('SELECT customer_id FROM customers ORDER BY customer_id LIMIT 15');
+  // DEMO promotions (the same tables the Promotions screen edits), valid from 30 days back so the back-dated orders get them
+  const dayAt = (n) => new Date(Date.now() + 5.5 * 3600e3 + n * 86400e3).toISOString().slice(0, 10);
+  await inTx(async (q) => {
+    const coupon = async (c, scope = []) => {
+      await q.query(`INSERT INTO coupons (code, description, kind, value, min_order, max_discount, valid_from, valid_to, total_limit, per_customer_limit, created_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'demo-seed')`, [c.code, c.description, c.kind, c.value, c.min_order, c.max_discount, dayAt(-30), c.valid_to, c.total_limit, c.per_customer_limit]);
+      for (const x of scope) await q.query('INSERT INTO coupon_scope (code, scope, type_key, sku_code, category_key) VALUES (?, ?, ?, ?, ?)', [c.code, x[0], x[1] || null, x[2] || null, x[3] || null]);
+    };
+    await coupon({ code: 'WELCOME10', description: 'DEMO - 10 % off the first order of a home customer, at most Rs 300', kind: 'percent', value: 10, min_order: 500, max_discount: 300, valid_to: dayAt(70), total_limit: 100, per_customer_limit: 1 }, [['type', 'home']]);
+    await coupon({ code: 'HOTEL500', description: 'DEMO - Rs 500 off for hotels and distributors from Rs 5,000', kind: 'fixed', value: 500, min_order: 5000, max_discount: null, valid_to: dayAt(70), total_limit: 20, per_customer_limit: 3 }, [['type', 'hotel'], ['type', 'distributor']]);
+    await coupon({ code: 'FRESH5', description: 'DEMO - 5 % off everything except wet wipes', kind: 'percent', value: 5, min_order: 0, max_discount: null, valid_to: dayAt(40), total_limit: null, per_customer_limit: null }, [['exclude', null, null, 'wipes']]);
+    await coupon({ code: 'FREESHIP', description: 'DEMO - free delivery from Rs 1,000', kind: 'free_delivery', value: 0, min_order: 1000, max_discount: null, valid_to: dayAt(40), total_limit: 50, per_customer_limit: 2 });
+    const [o1] = await q.query("INSERT INTO offers (name, kind, category_key, min_qty, min_unit, pct, valid_from, valid_to, created_by) VALUES ('DEMO Bulk napkins', 'slab', 'napkins', 3, 'carton', 5, ?, ?, 'demo-seed')", [dayAt(-30), dayAt(60)]);
+    for (const t of ['hotel', 'office', 'distributor']) await q.query('INSERT INTO offer_customer_types (offer_id, type_key) VALUES (?, ?)', [o1.insertId, t]);
+    await q.query("INSERT INTO offers (name, kind, sku_code, buy_qty, get_qty, valid_from, valid_to, created_by) VALUES ('DEMO Wet wipes 10 + 1', 'bxgy', 'DF044-M100', 10, 1, ?, ?, 'demo-seed')", [dayAt(-30), dayAt(30)]);
+    await q.query(`INSERT INTO cashback_rules (name, type_key, pct, min_order, max_per_order, valid_from, created_by) VALUES
+      ('DEMO Hotels 3 %', 'hotel', 3, 0, 500, ?, 'demo-seed'), ('DEMO Distributors 2 %', 'distributor', 2, 5000, 1000, ?, 'demo-seed')`, [dayAt(-30), dayAt(-30)]);
+  });
+  console.log('demo promotions: 4 coupons (percent capped, fixed, percent excluding wet wipes, free delivery), 2 offers (slab, buy 10 get 1), 2 cashback rules');
   let made = 0;
   const placed = []; // [order_no, terms, status, daysAgo, kind]
   for (const [ci, status, terms, coupon, daysAgo, lines, kind] of ORDERS) {
@@ -329,7 +355,6 @@ async function inTx(fn) {
     await db.query(`UPDATE invoices i JOIN orders o ON o.order_id = i.order_id
         SET i.issued_at = o.dispatched_at, i.due_on = DATE(CONVERT_TZ(o.dispatched_at, '+00:00', '+05:30')) + INTERVAL IF(o.payment_terms = 'credit', o.credit_days, 0) DAY
       WHERE o.order_no = ?`, [no]);
-    await db.query("UPDATE wallet_entries w JOIN orders o ON o.order_id = w.order_id SET w.created_at = o.delivered_at WHERE o.order_no = ? AND w.reason LIKE 'Cashback%'", [no]);
     await db.query("UPDATE payments p JOIN orders o ON o.order_id = p.order_id SET p.received_on = DATE(CONVERT_TZ(o.delivered_at, '+00:00', '+05:30')), p.created_at = o.delivered_at WHERE o.order_no = ? AND p.mode = 'cash' AND o.delivered_at IS NOT NULL", [no]);
     await db.query('UPDATE pack_scans p JOIN orders o ON o.order_id = p.order_id SET p.created_at = o.packed_at WHERE o.order_no = ? AND o.packed_at IS NOT NULL', [no]);
   }
@@ -356,7 +381,7 @@ async function inTx(fn) {
   const linesOf = async (no, want) => {
     const [[o]] = await db.query('SELECT order_id FROM orders WHERE order_no = ?', [no]);
     const can = await returns.returnable(db, o.order_id);
-    return want.map(([sku, qty]) => { const c = can.find((x) => x.sku_code === sku); return { sku_code: sku, batch_id: c.batch_id, qty }; });
+    return want.map(([sku, qty]) => { const c = can.filter((x) => x.sku_code === sku).sort((a, b) => b.qty - a.qty)[0]; return { sku_code: sku, batch_id: c.batch_id, qty }; });
   };
   const scanAll = async (q, no) => {
     const [[r]] = await q.query('SELECT return_id FROM returns WHERE return_no = ?', [no]);
@@ -437,13 +462,25 @@ async function inTx(fn) {
     await db.query("UPDATE customers SET notes = ?, follow_up = DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+05:30')) + INTERVAL ? DAY WHERE name = ?", [note, days, nm]);
   }
 
-  // demo approval requests: one raised by DZIND148, one already decided (the returns raised their own)
-  const [[ord]] = await db.query("SELECT order_no, subtotal FROM orders WHERE status = 'new' ORDER BY order_id LIMIT 1");
+  // cashback of the delivered orders whose return window has passed (the hourly job does this on the live system)
+  const cb = await inTx((q) => promotions.cashbackDue(q, 'system'));
+  console.log(`demo cashback: ${cb.filter((x) => x.amount > 0).map((x) => `${x.order_no} Rs ${x.amount}`).join(', ') || 'none'} (${cb.length} order(s) past the window)`);
+  // wallets: a manual credit through an approved request (Demo Cafe Thendral), one expiring in 10 days (Demo Home
+  // Priya), one that expired yesterday (Demo Lodge Kamakshi, taken out by the expiry job)
+  const cust = async (nm) => (await db.query('SELECT customer_id FROM customers WHERE name = ?', [nm]))[0][0].customer_id;
   await inTx(async (q) => {
-    await approvals.request(q, { kind: 'discount', refType: 'order', refId: ord.order_no, summary: `DEMO - 15 % manual discount on ${ord.order_no} (limit 10 %)`, amount: Math.round(Number(ord.subtotal) * 0.15), payload: { demo: true, pct: 15 } }, 'DZIND148');
-    const id = await approvals.request(q, { kind: 'goodwill_credit', refType: 'customer', refId: 'Demo Cafe Thendral', summary: 'DEMO - Rs 300 goodwill wallet credit for a late delivery', amount: 300, payload: { demo: true } }, 'DZIND148');
+    const cafe = await cust('Demo Cafe Thendral');
+    const id = await approvals.request(q, { kind: 'goodwill_credit', refType: 'customer', refId: String(cafe), summary: 'Wallet credit Rs 300.00 for Demo Cafe Thendral: DEMO - goodwill for a late delivery', amount: 300,
+      payload: { customer_id: cafe, direction: 'credit', amount: 300, reason: 'DEMO - goodwill for a late delivery' } }, 'DZIND148');
     await q.query("UPDATE approvals SET status = 'approved', decided_by = 'DZIND002', decided_at = UTC_TIMESTAMP() - INTERVAL 2 HOUR, note = 'DEMO - OK, regular customer', requested_at = UTC_TIMESTAMP() - INTERVAL 5 HOUR WHERE approval_id = ?", [id]);
+    await wallet.credit(q, { customerId: cafe, source: 'manual', amount: 300, reason: 'Manual credit: DEMO - goodwill for a late delivery', approvalId: id }, 'DZIND002');
+    await wallet.credit(q, { customerId: await cust('Demo Home Priya'), source: 'manual', amount: 150, reason: 'Manual credit: DEMO - festival offer, use within 10 days', expiresOn: dayAt(10) }, 'DZIND002');
+    const lodge = await cust('Demo Lodge Kamakshi');
+    const e = await wallet.credit(q, { customerId: lodge, source: 'manual', amount: 200, reason: 'Manual credit: DEMO - trial credit for 30 days', expiresOn: dayAt(-1) }, 'DZIND002');
+    await q.query('UPDATE wallet_entries SET created_at = UTC_TIMESTAMP() - INTERVAL 31 DAY WHERE entry_id = ?', [e]);
   });
+  const ex = await inTx((q) => wallet.expireDue(q, 'system'));
+  console.log(`demo wallets: Rs 300 manual credit (approved), Rs 150 expiring in 10 days, ${ex.length} expired credit taken out by the job`);
   // inventory after the orders: damaged in the godown, a small sample write-off (posts at once), the expired wet wipes
   // written off (above the threshold: waits for approval), a towels count with two differences (waits for approval)
   await inTx((q) => stock.recordMove(q, { sku_code: 'DF019-R10', qty: 3, move_type: 'damaged', note: 'DEMO carton crushed in the godown' }, 'DZIND002'));
@@ -458,6 +495,6 @@ async function inTx(fn) {
   console.log(`demo inventory: damaged 3 x DF019-R10, sample write-off posted, expired write-off #${wo.write_off_id} ${wo.status}, count #${cnt.count_id} ${sub.status} (${sub.differences} differences)`);
 
   await db.query("UPDATE commerce_settings SET value = '1', updated_by = 'demo-seed', updated_at = UTC_TIMESTAMP() WHERE setting_key = 'commerce_enabled'");
-  console.log(`demo: ${CUSTOMERS.length} customers, ${made} orders, ${madeRet.length} returns, ${NOTES.length} follow-ups, 2 approval requests + the returns', the write-off and count; Commerce switched on`);
+  console.log(`demo: ${CUSTOMERS.length} customers, ${made} orders, ${madeRet.length} returns, ${NOTES.length} follow-ups, approvals from the returns, wallet, write-off and count; Commerce switched on`);
   process.exit(0);
 })().catch((e) => { console.error('commerce-demo-seed failed:', e.message); process.exit(1); });

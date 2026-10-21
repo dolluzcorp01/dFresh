@@ -1,6 +1,6 @@
 -- dFresh Commerce DEMO data (SQL part) - NOT a migration. Run only by scripts/commerce-demo-seed.js on dfresh_commerce,
 -- after database/demo/commerce-demo-schema.sql: SKUs from the catalogue (with demo carton sizes, minimum orders and
--- HSN codes), reorder levels, a little returned stock, the 3 demo coupons and the 5 % cashback rule. Prices, customers, orders, returns and
+-- HSN codes), reorder levels and a little returned stock. Prices, customers, orders, returns and
 -- approvals are made by the script through the same code as the admin (pricing.js, commerce.js).
 
 
@@ -47,11 +47,4 @@ INSERT INTO stock_movements (sku_code, move_type, stock_kind, delta, ref_type, n
   ('DF037-M150', 'return', 'returned', 4, 'return', 'DEMO return from Demo Hotel Sangam - unopened', 'DZIND148', UTC_TIMESTAMP() - INTERVAL 5 HOUR),
   ('DF001-M100', 'return', 'returned', 2, 'return', 'DEMO return from Demo Cafe Thendral - wrong size', 'DZIND148', UTC_TIMESTAMP() - INTERVAL 4 HOUR);
 
-INSERT IGNORE INTO coupons (code, kind, value, min_order, expires_on, usage_limit, is_active) VALUES
-  ('WELCOME10', 'percent', 10, 500, '2026-12-31', 100, 1),
-  ('HOTEL500', 'fixed', 500, 5000, '2026-12-31', 20, 1),
-  ('FRESH5', 'percent', 5, 0, '2026-11-30', NULL, 1);
-
--- from commerce_05_promotions.sql
-
-INSERT IGNORE INTO cashback_rule (rule_id, pct, min_order, is_active) VALUES (1, 5, 0, 1);
+-- coupons, offers, cashback rules and wallets: phase 7 tables, filled by scripts/commerce-demo-seed.js

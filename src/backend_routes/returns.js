@@ -19,7 +19,9 @@ const commerce = require('./commerce');
 const commerceSettings = require('./commerce-settings');
 const invoices = require('./invoices');
 const numbering = require('./numbering');
+const promotions = require('./promotions');
 const stock = require('./stock');
+const wallet = require('./wallet');
 
 const STATUS_LABEL = { requested: 'Requested', collecting: 'Collecting', received: 'Received', inspected: 'Inspected', refunded: 'Refunded', replaced: 'Replaced', closed: 'Closed', rejected: 'Rejected' };
 const COLLECTION = { bring: 'Customer brings it', trip: 'Pickup on a delivery trip', courier: 'Courier reverse pickup' };
@@ -339,11 +341,12 @@ async function decide(q, returnNo, b, empId) {
 
 /** the credit note total (incl. GST, rounded as the invoice) for these packs: what the customer gets back */
 async function creditTotal(q, orderId, lines) {
-  const [items] = await q.query('SELECT sku_code, qty, taxable, cgst, sgst, igst FROM order_items WHERE order_id = ?', [orderId]);
+  const [items] = await q.query(`SELECT sku_code, SUM(qty) AS qty, SUM(taxable) AS taxable, SUM(cgst) AS cgst, SUM(sgst) AS sgst, SUM(igst) AS igst
+      FROM order_items WHERE order_id = ? GROUP BY sku_code`, [orderId]); // as invoices.creditNoteForReturn: per SKU
   let t = 0;
   for (const l of lines) {
     const it = items.find((i) => i.sku_code === l.sku_code);
-    const p = l.qty / it.qty;
+    const p = l.qty / Number(it.qty);
     t += round2(Number(it.taxable) * p) + round2(Number(it.cgst) * p) + round2(Number(it.sgst) * p) + round2(Number(it.igst) * p);
   }
   const s = await commerceSettings.read(q);
@@ -369,7 +372,7 @@ async function payRefund(q, refundId, empId) {
   let paymentId = null;
   if (f.method === 'wallet') {
     const [[o]] = await q.query('SELECT customer_id FROM orders WHERE order_id = ?', [f.order_id]);
-    await q.query('INSERT INTO wallet_entries (customer_id, amount, reason, order_id, emp_id) VALUES (?, ?, ?, ?, ?)', [o.customer_id, cn.total, `Refund ${f.return_no} (credit note ${cn.credit_note_no})`, f.order_id, empId]);
+    await wallet.credit(q, { customerId: o.customer_id, source: 'refund', amount: cn.total, reason: `Refund ${f.return_no} (credit note ${cn.credit_note_no})`, orderId: f.order_id, returnId: f.return_id }, empId);
   } else if (f.method === 'original') {
     const [[o]] = await q.query('SELECT order_no FROM orders WHERE order_id = ?', [f.order_id]);
     const pr = await wrap(() => commerce.recordPayment(q, o.order_no, { kind: 'refund', amount: cn.total.toFixed(2), mode: f.mode, reference: f.reference, note: `Refund ${f.return_no}, credit note ${cn.credit_note_no}` }, empId));
@@ -377,6 +380,9 @@ async function payRefund(q, refundId, empId) {
   }
   await q.query("UPDATE refunds SET status = 'paid', amount = ?, credit_note_id = ?, payment_id = ?, paid_at = UTC_TIMESTAMP() WHERE refund_id = ?", [cn.total, cn.credit_note_id, paymentId, refundId]);
   await commerce.refreshPayment(q, f.order_id);
+  // cashback already credited on this order: the share of the refunded goods is taken back (phase 7)
+  const back = await promotions.reverseCashback(q, f.order_id, cn.taxable, f.return_id, f.return_no, empId);
+  if (back > 0) await history(q, f.return_id, 'cashback_back', `Cashback taken back: Rs ${back.toFixed(2)} from the wallet`, empId);
   await history(q, f.return_id, 'refund_paid', `Credit note ${cn.credit_note_no} (${cn.gst_type === 'intra' ? `CGST ${cn.cgst.toFixed(2)} + SGST ${cn.sgst.toFixed(2)}` : `IGST ${cn.igst.toFixed(2)}`}); Rs ${cn.total.toFixed(2)} ${METHODS[f.method].toLowerCase()}`, empId);
   await audit(q, { empId, action: 'refund', entity: 'return', entityId: f.return_no, after: { amount: cn.total, method: f.method, credit_note: cn.credit_note_no, mode: f.mode, reference: f.reference } });
 }

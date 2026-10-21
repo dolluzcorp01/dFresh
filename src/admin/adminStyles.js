@@ -460,8 +460,10 @@ td.a-pending { background: #fff8e1; box-shadow: inset 3px 0 0 #e3b44f; }
 .a-rstatus-rejected { background: #fdf1f1; color: var(--a-bad); }
 .a-insp input { width: 6ch; }
 .a-insp td { vertical-align: middle; }
-.a-photos { display: flex; flex-wrap: wrap; gap: 8px; }
-.a-photos img { width: 96px; height: 96px; object-fit: cover; border-radius: 8px; border: 1px solid var(--a-line); }
+.a-freeline td { background: #f0f8f1; }
+.a-cashback { background: #fff8dc; border-radius: 8px; padding: 8px 10px; }
+.a-offrow td { color: var(--a-ink2); background: #faf9f5; }
+.a-wallet h3 { margin: 0; }
 .a-stop-head { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
 .a-stop-meta { font-size: 13px; }
 .a-collect { color: var(--a-bad); }
@@ -490,6 +492,7 @@ td.a-pending { background: #fff8e1; box-shadow: inset 3px 0 0 #e3b44f; }
 .a-pay-partly_paid { background: #fff3cd; color: #6b4e00; }
 .a-pay-paid { background: #e3f4e6; color: #1e5e2c; }
 .a-pay-refunded { background: #eee; color: #5b5850; }
+.a-pay-part_refunded { background: #eef0fb; color: #2d3a8a; }
 .a-addr { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin: 10px 0; }
 .a-addr .a-card { margin: 0; padding: 12px; }
 .a-addr h4 { margin: 0 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--a-ink2); }

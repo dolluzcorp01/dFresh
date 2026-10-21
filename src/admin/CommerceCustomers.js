@@ -1,6 +1,7 @@
 // dFresh Commerce (DEMO, database dfresh_commerce): customers (CRM). Made from an order's customer list, or from a
 // lead (Leads > open > Convert to customer). Type, notes, follow-up date (red when due), orders, wallet balance and
-// wallet history (cashback, refunds, wallet used on orders). ?open=<id> opens one (link from the lead drawer).
+// wallet statement (WalletPanel: every entry with its source, expiry, printable; manual credit / debit for Promotions).
+// ?open=<id> opens one (link from the lead drawer).
 // Phase 3: state and PIN (the state decides CGST + SGST or IGST on orders), credit days and limit (a higher limit waits
 // for approval), what the customer owes and an Overdue badge when an invoice is past its due date.
 import { useEffect, useMemo, useState } from 'react';
@@ -10,6 +11,7 @@ import { Drawer, InfoCard, Loading, fmtDate, useAction, useCan, useLoad } from '
 import { rs } from './CommerceReturns';
 import { CTYPES, SOURCES, checkCustomer } from '../shared/customerRules';
 import { GST_STATES } from '../shared/gstStates';
+import WalletPanel from './WalletPanel';
 
 const TYPES = ['Home', 'Hotel', 'Hospital', 'Office', 'Distributor'];
 const day = (d) => (d ? new Date(`${String(d).slice(0, 10)}T00:00:00`).toLocaleDateString('en-IN', { dateStyle: 'medium' }) : '');
@@ -127,11 +129,7 @@ function CustomerDrawer({ id, onClose, onChanged }) {
                 <small className="a-muted">0 days and Rs 0 = no credit. A higher limit waits for approval; an order over the limit or with an overdue invoice too.</small>
               </div>
             )}
-            <h3>Wallet: {rs(d.balance)}</h3>
-            {d.wallet.length ? (
-              <table className="a-table"><thead><tr><th>When</th><th>What</th><th className="a-num">Amount</th></tr></thead>
-                <tbody>{d.wallet.map((w) => <tr key={w.entry_id}><td>{fmtDate(w.created_at)}</td><td>{w.reason}</td><td className={`a-num ${Number(w.amount) < 0 ? 'a-bad' : 'a-ok'}`}>{Number(w.amount) > 0 ? '+' : ''}{rs(w.amount)}</td></tr>)}</tbody></table>
-            ) : <p className="a-muted">No wallet movements yet.</p>}
+            <WalletPanel customerId={d.customer_id} onChanged={onChanged} />
             <h3>Orders ({d.orders.length})</h3>
             {d.orders.length ? (
               <div className="a-scroll">

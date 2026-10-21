@@ -159,7 +159,8 @@ async function stockIn(q, data, empId, opts = {}) {
  * (order_picks) when there are any and they are still there and not expired; else earliest expiry first, never expired.
  */
 async function dispatchOut(q, orderId, orderNo, empId) {
-  const [items] = await q.query('SELECT sku_code, qty FROM order_items WHERE order_id = ? ORDER BY sku_code', [orderId]);
+  const [sums] = await q.query('SELECT sku_code, SUM(qty) AS qty FROM order_items WHERE order_id = ? GROUP BY sku_code ORDER BY sku_code', [orderId]); // a free line (buy X get Y) may repeat a SKU
+  const items = sums.map((x) => ({ sku_code: x.sku_code, qty: Number(x.qty) }));
   const tr = await tracked(q, items.map((i) => i.sku_code));
   const [picked] = await q.query('SELECT sku_code, batch_id, qty FROM order_picks WHERE order_id = ? ORDER BY pick_id', [orderId]);
   const plan = [];
