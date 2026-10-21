@@ -1,4 +1,4 @@
-// Customers (CRM, docs/COMMERCE-SPEC.md 4.5; migration 20261021_commerce_customers.sql). Shared by the admin routes,
+// Customers (CRM, docs/COMMERCE-SPEC.md 4.5; migration 20261021_commerce_06_customers.sql). Shared by the admin routes,
 // the order logic (default and chosen addresses, status, price list), the Excel import and the demo seed. Every change
 // is audited.
 // - CUS-0001 numbers (setting customer_prefix; never DFC, the credit note series). Status: active, on hold (a new order

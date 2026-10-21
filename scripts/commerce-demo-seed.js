@@ -1,5 +1,5 @@
 // Commerce DEMO seed - ONLY for the database dfresh_commerce (refuses DB_NAME or a connection to anything else).
-// Run after a fresh copy of dfresh + every migration (database/migrations, incl. 20261020_commerce_*):
+// Run after a fresh copy of dfresh + every migration (database/migrations, incl. 20261021_commerce_*):
 //   node scripts/commerce-demo-seed.js
 // 1. (the demo's interim tables are gone: phases 2-8 made every one of them a migration)
 // 2. SQL demo data (database/demo/commerce-demo-data.sql): SKUs with carton sizes, minimum orders and HSN codes,
@@ -142,7 +142,7 @@ async function inTx(fn) {
   const [[{ name }]] = await db.query('SELECT DATABASE() AS name');
   if (name !== DB) { console.error(`commerce-demo-seed refused: connected to ${name}, not ${DB}`); process.exit(1); }
   const [[{ roles }]] = await db.query("SELECT COUNT(*) AS roles FROM information_schema.tables WHERE table_schema = ? AND table_name IN ('roles', 'commerce_settings', 'approvals')", [DB]);
-  if (Number(roles) !== 3) { console.error('commerce-demo-seed: apply the 20261020_commerce_* migrations first'); process.exit(1); }
+  if (Number(roles) !== 3) { console.error('commerce-demo-seed: apply the 20261021_commerce_* migrations first'); process.exit(1); }
 
   const raw = await mysql.createConnection({ host: process.env.DB_HOST, port: process.env.DB_PORT, user: process.env.DB_USER, password: process.env.DB_PASSWORD, database: DB, multipleStatements: true, timezone: 'Z' });
   await raw.query("SET time_zone = '+00:00'");

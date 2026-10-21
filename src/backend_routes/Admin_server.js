@@ -1402,7 +1402,7 @@ route('get', '/audit', 'audit:view', async (req) => {
 
 // Errors from any admin route: input / upload problems and DB constraint errors get a plain message.
 // ---------------------------------------------------------------------------------------------
-// Commerce DEMO (branch `commerce`, database dfresh_commerce only): SKUs (migration 20261020_commerce_pricing.sql)
+// Commerce DEMO (branch `commerce`, database dfresh_commerce only): SKUs (migration 20261021_commerce_04_catalogue.sql)
 // ---------------------------------------------------------------------------------------------
 route('get', '/commerce/skus', 'inventory:view', async () => {
   const [rows] = await db.query(
@@ -1417,7 +1417,7 @@ route('get', '/commerce/skus', 'inventory:view', async () => {
   return rows.map((r) => ({ ...r, packs_per_carton: Number(r.packs_per_carton) || 1, track_batches: Number(r.track_batches) === 1 }));
 });
 
-// Inventory (migration 20261020_commerce_stock.sql, logic in stock.js). Section "inventory": view = stock, batches,
+// Inventory (migration 20261021_commerce_05_stock.sql, logic in stock.js). Section "inventory": view = stock, batches,
 // stock-ins, write-offs, counts, reorder list, movements; create = stock in, write-off request, start a count, record
 // damaged / returned; edit = reorder levels, suppliers, count quantities and submit, Excel export; approve = decide
 // write-offs and count differences (Setup > Approvals). Costs and stock value only for a role that can view Reports or
@@ -1606,7 +1606,7 @@ route('post', '/commerce/write-offs', 'inventory:create', async (req) => {
 route('get', '/commerce/write-offs/:id/photo', 'inventory:view', async (req, res) => {
   const [[w]] = await db.query('SELECT photo, photo_type FROM write_offs WHERE write_off_id = ?', [Number(req.params.id)]);
   if (!w || !w.photo) throw new InputError('No photo', 404);
-  res.set({ 'Content-Type': w.photo_type, 'Cache-Control': 'private, no-store' });
+  res.set({ 'Content-Type': w.photo_type, 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff', 'Content-Disposition': 'inline; filename="write-off-photo"' });
   res.send(w.photo);
 });
 
@@ -1637,7 +1637,7 @@ route('post', '/commerce/counts/:id/submit', 'inventory:edit', async (req) => {
 
 route('get', '/commerce/reorder', 'inventory:view', async () => stock.reorderList(db));
 
-// Orders (migration 20261020_commerce_sales.sql, logic in commerce.js, invoices in invoices.js): entered in the admin;
+// Orders (migration 20261021_commerce_07_orders.sql, logic in commerce.js, invoices in invoices.js): entered in the admin;
 // prices only here. Section "orders": view = list, order, invoice; create = New order; edit = edit, status, cancel,
 // payments, Excel export; approve = may ask to order above the available stock (the request waits for approval).
 const commerce = require('./commerce');
@@ -1693,7 +1693,11 @@ route('get', '/commerce/order-form', 'orders:view', async (req) => {
 // What the order would be as it is typed (totals, offers on the lines, free lines, coupon, wallet, approvals); nothing saved
 route('post', '/commerce/orders/preview', 'orders:view', async (req) => {
   if (!canDo(req, 'orders', 'create') && !canDo(req, 'orders', 'edit')) throw new InputError('This needs create or edit on Orders', 403);
-  await seeCustomer(req, (req.body || {}).customer_id || (await db.query('SELECT customer_id FROM orders WHERE order_no = ?', [String((req.body || {}).order_no || '')]))[0].map((x) => x.customer_id)[0]);
+  const b0 = req.body || {};
+  // the customer the preview is computed for: the order's when editing (its customer cannot change), else the chosen one
+  const [[po]] = b0.order_no ? await db.query('SELECT customer_id FROM orders WHERE order_no = ?', [String(b0.order_no)]) : [[null]];
+  if (b0.order_no && !po) throw new InputError('Order not found', 404);
+  await seeCustomer(req, po ? po.customer_id : b0.customer_id);
   try {
     return await commerce.previewOrder(db, req.body || {}, by(req), { orderNo: req.body && req.body.order_no ? String(req.body.order_no) : null, canOverride: canDo(req, 'orders', 'approve') });
   } catch (e) { throw asInput(e); }
@@ -1739,8 +1743,10 @@ async function orderRows(req, limit = 500) {
 
 route('get', '/commerce/orders', 'orders:view', async (req) => {
   const rows = await orderRows(req);
-  const [counts] = await db.query('SELECT status, COUNT(*) AS n FROM orders GROUP BY status');
-  const [[od]] = await db.query(`SELECT COUNT(*) AS n FROM orders o JOIN invoices i ON i.live_order_id = o.order_id WHERE ${commerce.OVERDUE_SQL}`);
+  const own = await ownOnly(req);
+  const mine = own ? ' AND o.customer_id IN (SELECT customer_id FROM customers WHERE owner_emp_id = ?)' : '';
+  const [counts] = await db.query(`SELECT o.status, COUNT(*) AS n FROM orders o WHERE 1 = 1${mine} GROUP BY o.status`, own ? [own] : []);
+  const [[od]] = await db.query(`SELECT COUNT(*) AS n FROM orders o JOIN invoices i ON i.live_order_id = o.order_id WHERE ${commerce.OVERDUE_SQL}${mine}`, own ? [own] : []);
   return { rows, counts: Object.fromEntries(counts.map((c) => [c.status, Number(c.n)])), overdue: Number(od.n), labels: commerce.STATUS_LABEL, payLabels: commerce.PAYMENT_STATUS, lists: await pricing.lists(db) };
 });
 
@@ -1835,7 +1841,7 @@ route('post', '/commerce/orders/:no/cancel', 'orders:edit', async (req) => {
 
 route('post', '/commerce/orders/:no/payments', 'orders:edit', async (req) => {
   try {
-    return await tx((q) => commerce.recordPayment(q, req.params.no, req.body || {}, by(req)));
+    return await tx((q) => commerce.recordPayment(q, req.params.no, req.body || {}, by(req), { canApprove: canDo(req, 'orders', 'approve') }));
   } catch (e) { throw asInput(e); }
 });
 
@@ -1962,7 +1968,10 @@ route('post', '/commerce/trips/:id/end', 'delivery:edit', async (req) => {
   try { return await tx((q) => delivery.endTrip(q, Number(req.params.id), req.body || {}, by(req), office(req))); } catch (e) { throw asDelivery(e); }
 });
 route('post', '/commerce/stops/:id/delivered', 'delivery:edit', async (req) => {
-  try { return await tx((q) => delivery.stopDelivered(q, Number(req.params.id), req.body || {}, req.file ? { buffer: req.file.buffer, mimetype: req.file.mimetype } : null, by(req), office(req))); } catch (e) { throw asDelivery(e); }
+  try { return await tx((q) => delivery.stopDelivered(q, Number(req.params.id), req.body || {}, req.file ? { buffer: req.file.buffer, mimetype: req.file.mimetype } : null, by(req), office(req))); } catch (e) {
+    if (e instanceof delivery.DeliveryError && e.otpWrong) throw asDelivery(await delivery.otpFailed(db, Number(req.params.id), e));
+    throw asDelivery(e);
+  }
 }, { before: [upload(8)] });
 route('post', '/commerce/stops/:id/picked-up', 'delivery:edit', async (req) => {
   try { return await tx((q) => delivery.stopPickedUp(q, Number(req.params.id), req.body || {}, req.file ? { buffer: req.file.buffer, mimetype: req.file.mimetype } : null, by(req), office(req))); } catch (e) { throw asDelivery(e); }
@@ -1977,7 +1986,7 @@ route('get', '/commerce/stops/:id/photo', 'delivery:view', async (req, res) => {
   const [[s]] = await db.query('SELECT trip_id, photo, photo_type FROM trip_stops WHERE stop_id = ?', [Number(req.params.id)]);
   if (!s || !s.photo) throw new InputError('No photo', 404);
   await tripDetail(req, s.trip_id);
-  res.set({ 'Content-Type': s.photo_type, 'Cache-Control': 'private, no-store' });
+  res.set({ 'Content-Type': s.photo_type, 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff', 'Content-Disposition': 'inline; filename="delivery-photo"' });
   res.send(s.photo);
 });
 // My trips (drivers): the trips of the driver linked to this admin user, open ones and today's ended ones
@@ -1990,20 +1999,27 @@ route('get', '/commerce/my-trips', 'delivery:view', async (req) => {
   const [[me]] = await db.query('SELECT name FROM drivers WHERE emp_id = ? LIMIT 1', [by(req)]);
   return { driver: me ? me.name : null, trips: rows.map((r) => ({ ...r, stops: Number(r.stops), done: Number(r.done) || 0, pickups: Number(r.pickups) || 0 })) };
 });
-// after a failed delivery; courier; customer pickup
+// after a failed delivery; courier; customer pickup. Office work: a driver (edit on Delivery without create) acts only
+// on the stops of their own trips, never on an order by its number.
+const officeOnly = (req) => { if (!office(req)) throw new InputError('This is office work: it needs "create" on Delivery', 403); };
 route('post', '/commerce/orders/:no/reattempt', 'delivery:edit', async (req) => {
+  officeOnly(req);
   try { return await tx((q) => delivery.reattempt(q, req.params.no, by(req))); } catch (e) { throw asDelivery(e); }
 });
 route('post', '/commerce/orders/:no/return-to-godown', 'delivery:edit', async (req) => {
+  officeOnly(req);
   try { return await tx((q) => delivery.returnToGodown(q, req.params.no, req.body.reason, by(req))); } catch (e) { throw asDelivery(e); }
 });
 route('post', '/commerce/orders/:no/courier', 'delivery:edit', async (req) => {
+  officeOnly(req);
   try { return await tx((q) => delivery.handToCourier(q, req.params.no, req.body || {}, by(req))); } catch (e) { throw asDelivery(e); }
 });
 route('post', '/commerce/orders/:no/courier-delivered', 'delivery:edit', async (req) => {
+  officeOnly(req);
   try { return await tx((q) => delivery.courierDelivered(q, req.params.no, req.body || {}, by(req))); } catch (e) { throw asDelivery(e); }
 });
 route('post', '/commerce/orders/:no/picked-up', 'delivery:edit', async (req) => {
+  officeOnly(req);
   try { return await tx((q) => delivery.pickedUp(q, req.params.no, req.body || {}, by(req))); } catch (e) { throw asDelivery(e); }
 });
 
@@ -2047,7 +2063,9 @@ route('get', '/commerce/returns', 'returns:view', async (req) => {
   if (qv('outcome') === 'none') where.push('EXISTS (SELECT 1 FROM return_items x WHERE x.return_id = r.return_id AND x.none_qty > 0)');
   if (pricing.isDate(qv('from'))) { where.push(`r.created_at >= CONVERT_TZ(?, '+05:30', '+00:00')`); args.push(`${qv('from')} 00:00:00`); }
   if (pricing.isDate(qv('to'))) { where.push(`r.created_at < CONVERT_TZ(DATE_ADD(?, INTERVAL 1 DAY), '+05:30', '+00:00')`); args.push(qv('to')); }
-  if (qv('q')) { where.push('(r.return_no LIKE ? OR o.order_no LIKE ? OR c.name LIKE ?)'); const like = `%${qv('q')}%`; args.push(like, like, like); }
+  if (qv('q')) { where.push('(r.return_no LIKE ? OR o.order_no LIKE ? OR c.name LIKE ?)'); const like = likeOf(qv('q').slice(0, 60)); args.push(like, like, like); }
+  const ownR = await ownOnly(req);
+  if (ownR) { where.push('c.owner_emp_id = ?'); args.push(ownR); }
   const [rows] = await db.query(
     `SELECT r.return_no, r.status, r.collection, r.outside_window, r.awb_no, r.created_at, r.picked_up_at, r.received_at, r.inspected_at, r.closed_at, r.requested_by,
             o.order_no, c.name AS customer, rr.label AS reason, ro.order_no AS replacement_no, ro.status AS replacement_status,
@@ -2060,7 +2078,8 @@ route('get', '/commerce/returns', 'returns:view', async (req) => {
        FROM returns r JOIN orders o ON o.order_id = r.order_id JOIN customers c ON c.customer_id = o.customer_id JOIN return_reasons rr ON rr.reason_id = r.reason_id
        LEFT JOIN orders ro ON ro.order_id = r.replacement_order_id
       ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY r.return_id DESC LIMIT 300`, args);
-  const [counts] = await db.query('SELECT status, COUNT(*) AS n FROM returns GROUP BY status');
+  const [counts] = ownR ? await db.query('SELECT r.status, COUNT(*) AS n FROM returns r JOIN orders o ON o.order_id = r.order_id JOIN customers c ON c.customer_id = o.customer_id WHERE c.owner_emp_id = ? GROUP BY r.status', [ownR])
+    : await db.query('SELECT status, COUNT(*) AS n FROM returns GROUP BY status');
   const [reasons] = await db.query('SELECT reason_id, label FROM return_reasons ORDER BY sort_order, reason_id');
   return {
     rows: rows.map((r) => ({ ...r, status_label: returns.STATUS_LABEL[r.status], collection_label: returns.COLLECTION[r.collection], refunded: Number(r.refunded),
@@ -2130,7 +2149,7 @@ route('post', '/commerce/returns/:no/photos', 'returns:view', async (req) => {
 route('get', '/commerce/return-photos/:id', 'returns:view', async (req, res) => {
   const [[p]] = await db.query('SELECT photo, photo_type FROM return_photos WHERE photo_id = ?', [Number(req.params.id)]);
   if (!p) throw new InputError('No photo', 404);
-  res.set({ 'Content-Type': p.photo_type, 'Cache-Control': 'private, no-store' });
+  res.set({ 'Content-Type': p.photo_type, 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff', 'Content-Disposition': 'inline; filename="return-photo"' });
   res.send(p.photo);
 });
 route('post', '/commerce/returns/:no/courier', 'returns:edit', async (req) => {
@@ -2152,12 +2171,14 @@ route('post', '/commerce/stock/recheck', 'inventory:edit', async (req) => {
 
 // A credit note for printing: the invoice snapshot (seller, buyer, GST type) and the credit note's own lines
 route('get', '/commerce/credit-notes/:id', 'any', async (req) => {
+  if (!await commerceOn()) throw new InputError('Commerce is switched off (Settings > Commerce settings)', 404);
   if (!canDo(req, 'orders') && !canDo(req, 'returns')) throw new InputError('Credit notes need "view" on Orders or Returns', 403);
   const cn = await docPdf.creditNoteData(db, req.params.id);
   if (!cn) throw new InputError('Credit note not found', 404);
   return cn;
 });
 route('get', '/commerce/credit-notes/:id/pdf', 'any', async (req, res) => {
+  if (!await commerceOn()) throw new InputError('Commerce is switched off (Settings > Commerce settings)', 404);
   if (!canDo(req, 'orders') && !canDo(req, 'returns')) throw new InputError('Credit notes need "view" on Orders or Returns', 403);
   const f = await docPdf.creditNotePdf(db, req.params.id);
   if (!f) throw new InputError('Credit note not found', 404);
@@ -2197,20 +2218,27 @@ function reportOf(req) {
   if (!r.can(req)) throw new InputError(`This report needs view on ${r.section}`, 403);
   return r;
 }
+/** own customers only (Commerce setting): Sales of their own customers; the other reports cover every customer */
+async function scopeReport(req, p) {
+  const own = await ownOnly(req);
+  if (!own) return p;
+  if (req.params.key !== 'sales') throw new InputError('Your role sees only its own customers: of the reports, only Sales (your customers)', 403);
+  return { ...p, owner: own };
+}
 route('get', '/commerce/reports', 'any', async (req) => ({
-  reports: Object.entries(REPORTS).map(([key, r]) => ({ key, label: r.label, section: r.section, allowed: r.can(req) })),
+  reports: await (async () => { const own = await ownOnly(req); return Object.entries(REPORTS).map(([key, r]) => ({ key, label: r.label, section: r.section, allowed: r.can(req) && (key === 'sales' || !own) })); })(),
   groups: reports.SALES_GROUPS, marginBy: reports.MARGIN_BY, stockViews: reports.STOCK_VIEWS, types: await customers.types(db), owners: await adminPeople(db),
   seesCosts: seesCosts(req), accounting: (await commerceSettings.read(db)).accounting_export,
-}));
+}), { before: [commerceGate] });
 route('get', '/commerce/reports/:key', 'any', async (req) => {
   const r = reportOf(req);
-  const p = reportParams(req);
+  const p = await scopeReport(req, reportParams(req));
   return { key: req.params.key, label: r.label, ...p, ...(await r.run(db, p, req)) };
-});
+}, { before: [commerceGate] });
 const GST_DATE_TEXT = new Set(['date']);
 route('get', '/commerce/reports/:key/export.xlsx', 'any', async (req, res) => {
   const r = reportOf(req);
-  const p = reportParams(req);
+  const p = await scopeReport(req, reportParams(req));
   const data = await r.run(db, p, req);
   const filters = [`${p.from} to ${p.to}`, ...['group', 'type', 'owner', 'by', 'view', 'days'].filter((k) => p[k]).map((k) => `${k}: ${p[k]}`)].join(', ');
   const wb = theme.newWorkbook(`dFresh ${r.label}`);
@@ -2285,6 +2313,29 @@ async function seeCustomer(req, id) {
   if (own && c.owner_emp_id !== own) throw new InputError('This customer belongs to another sales owner', 403);
   return c;
 }
+// Own customers only (Commerce setting): every route keyed by an order no., return no., invoice, credit note, return
+// photo or customer id checks that the record's customer is the user's, before the route runs (security review M1). The
+// path says what the id is; a record that does not exist is left to the route (its own 404).
+const SCOPED = [
+  [/^\/admin\/commerce\/(orders|packing)\/[^/]+/, 'no', 'SELECT customer_id FROM orders WHERE order_no = ?'],
+  [/^\/admin\/commerce\/returns\/[^/]+/, 'no', 'SELECT o.customer_id FROM returns r JOIN orders o ON o.order_id = r.order_id WHERE r.return_no = ?'],
+  [/^\/admin\/commerce\/invoices\/\d+/, 'id', 'SELECT o.customer_id FROM invoices i JOIN orders o ON o.order_id = i.order_id WHERE i.invoice_id = ?'],
+  [/^\/admin\/commerce\/credit-notes\/\d+/, 'id', 'SELECT o.customer_id FROM credit_notes cn JOIN invoices i ON i.invoice_id = cn.invoice_id JOIN orders o ON o.order_id = i.order_id WHERE cn.credit_note_id = ?'],
+  [/^\/admin\/commerce\/return-photos\/\d+/, 'id', 'SELECT o.customer_id FROM return_photos p JOIN returns r ON r.return_id = p.return_id JOIN orders o ON o.order_id = r.order_id WHERE p.photo_id = ?'],
+  [/^\/admin\/commerce\/customers\/\d+/, 'id', 'SELECT customer_id FROM customers WHERE customer_id = ?'],
+];
+for (const name of ['no', 'id']) {
+  router.param(name, async (req, res, next, value) => {
+    try {
+      const hit = SCOPED.find(([re, n]) => n === name && re.test(req.path));
+      if (!hit || !req.admin || !(await ownOnly(req))) return next();
+      const [[row]] = await db.query(hit[2], [value]);
+      if (row) await seeCustomer(req, row.customer_id);
+      return next();
+    } catch (e) { return next(e); }
+  });
+}
+const likeOf = (term) => `%${String(term).replace(/[%_\\]/g, (c) => `\\${c}`)}%`; // a LIKE pattern with % and _ typed as text
 /** admin users with their names (dAdmin employee: first and last name only) */
 async function adminPeople(q) {
   const [rows] = await q.query(`SELECT a.emp_id, TRIM(CONCAT(COALESCE(e.emp_first_name, ''), ' ', COALESCE(e.emp_last_name, ''))) AS name
@@ -2313,7 +2364,7 @@ async function customerRows(req, filters) {
   if (f.status === 'merged') where.push('c.merged_into IS NOT NULL');
   else { where.push('c.merged_into IS NULL'); if (customers.STATUS[f.status]) { where.push('c.status = ?'); args.push(f.status); } }
   if (f.q) {
-    const like = `%${String(f.q).trim()}%`; const digits = String(f.q).replace(/\D/g, '');
+    const like = likeOf(String(f.q).trim().slice(0, 60)); const digits = String(f.q).replace(/\D/g, '');
     where.push(`(c.customer_no LIKE ? OR c.name LIKE ? OR c.business_name LIKE ?${digits.length >= 4 ? ' OR c.phone_digits LIKE ?' : ''}
       OR EXISTS (SELECT 1 FROM customer_addresses a WHERE a.customer_id = c.customer_id AND a.gstin LIKE ?))`);
     args.push(like, like, like, ...(digits.length >= 4 ? [`%${digits}%`] : []), like);
@@ -2385,10 +2436,11 @@ route('post', '/commerce/customers/import', 'customers:create', async (req) => {
   if (!canDo(req, 'customers', 'edit')) throw new InputError('The import needs create and edit on Customers', 403);
   const fileHash = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
   try {
-    if (req.query.dryRun !== '0') { const { plan, ...report } = await customerExcel.diffWorkbook(db, req.file.buffer); return { dryRun: true, fileHash, ...report }; }
+    const own = await ownOnly(req); // own customers only: other owners' rows are refused, new ones are theirs
+    if (req.query.dryRun !== '0') { const { plan, ...report } = await customerExcel.diffWorkbook(db, req.file.buffer, { own }); return { dryRun: true, fileHash, ...report }; }
     if (req.query.hash !== fileHash) throw new InputError('This file is not the one that passed the dry run. Run the dry run again.');
     return await tx(async (q) => {
-      const { plan, ...report } = await customerExcel.diffWorkbook(q, req.file.buffer);
+      const { plan, ...report } = await customerExcel.diffWorkbook(q, req.file.buffer, { own });
       if (!report.ok) throw new InputError(`Fix the ${report.errors.length} error(s) first (run the dry run again): ${report.errors.slice(0, 3).join(' | ')}`);
       const applied = await customerExcel.applyPlan(q, plan, by(req));
       await audit(q, { empId: by(req), action: 'import', entity: 'customer', after: { ...report.summary, created: applied.created } });
@@ -2401,7 +2453,8 @@ route('post', '/commerce/customers/import', 'customers:create', async (req) => {
 // contacts, tags. Duplicate phone / e-mail / GSTIN answers 409 code 'duplicate' with that customer.
 route('post', '/commerce/customers', 'customers:create', async (req) => {
   const own = await ownOnly(req);
-  try { return await tx((q) => customers.createCustomer(q, { ...req.body, owner_emp_id: own || (req.body || {}).owner_emp_id }, by(req))); } catch (e) { throw asCustomer(e); }
+  const { lead_id: _lead, ...body } = req.body || {}; // eslint-disable-line no-unused-vars
+  try { return await tx((q) => customers.createCustomer(q, { ...body, owner_emp_id: own || body.owner_emp_id }, by(req))); } catch (e) { throw asCustomer(e); }
 }, { status: 201 });
 
 // duplicate pairs (same phone, e-mail, GSTIN or name) for the Merge tool
@@ -2417,6 +2470,8 @@ route('get', '/commerce/customers/duplicates', 'customers:edit', async () => {
   return rows;
 });
 route('post', '/commerce/customers/merge', 'customers:edit', async (req) => {
+  await seeCustomer(req, Number(req.body.keep_id));
+  await seeCustomer(req, Number(req.body.merge_id));
   try { return await tx((q) => customers.requestMerge(q, Number(req.body.keep_id), Number(req.body.merge_id), req.body.reason, by(req))); } catch (e) { throw asCustomer(e); }
 }, { status: 201 });
 
@@ -2453,7 +2508,7 @@ route('get', '/commerce/customers/:id', 'customers:view', async (req) => {
   const [pending] = await db.query("SELECT approval_id, kind, summary FROM approvals WHERE ref_type = 'customer' AND ref_id = ? AND status = 'pending'", [String(id)]);
   const list = await pricing.listOfCustomer(db, id);
   let lead = null;
-  if (c.lead_id) {
+  if (c.lead_id && canDo(req, 'leads')) {
     [[lead]] = await db.query(`SELECT lead_id, lead_ref, form_type, status, full_name, business_name, business_type, town, phone, email, monthly_quantity, message, staff_notes, source_page, created_at, updated_at
         FROM leads WHERE lead_id = ?`, [c.lead_id]);
     if (lead) lead.products = (await db.query('SELECT product_id FROM lead_products WHERE lead_id = ?', [c.lead_id]).catch(() => [[]]))[0].map((x) => x.product_id);
@@ -2751,6 +2806,7 @@ route('post', '/commerce/promotions/run-jobs', 'promotions:edit', async (req) =>
 
 // Wallet: the statement (Customers or Promotions view); manual credit / debit (Promotions create; approval: setting)
 route('get', '/commerce/customers/:id/wallet', 'any', async (req) => {
+  if (!await commerceOn()) throw new InputError('Commerce is switched off (Settings > Commerce settings)', 404);
   if (!canDo(req, 'customers') && !canDo(req, 'promotions')) throw new InputError('The wallet needs "view" on Customers or Promotions', 403);
   await seeCustomer(req, req.params.id);
   const [[c]] = await db.query(`SELECT c.customer_id, c.customer_no, c.name, c.business_name, c.phone, ct.label AS ctype, a.town, a.address FROM customers c JOIN customer_types ct ON ct.type_key = c.type_key
@@ -2767,6 +2823,7 @@ route('post', '/commerce/customers/:id/wallet', 'promotions:create', async (req)
 // Operations dashboard (commerce): today in India time
 // Open to every commerce user; each figure only for a role that can view its section (null otherwise).
 route('get', '/commerce/ops', 'any', async (req) => {
+  if (!await commerceOn()) throw new InputError('Commerce is switched off (Settings > Commerce settings)', 404);
   const can = { orders: canDo(req, 'orders'), pack: canDo(req, 'orders') || canDo(req, 'packing'), dispatch: canDo(req, 'orders') || canDo(req, 'delivery'),
     stock: canDo(req, 'inventory'), returns: canDo(req, 'returns'), wallet: canDo(req, 'customers') };
   const [[today]] = await db.query(`SELECT COUNT(*) AS n, COALESCE(SUM(total), 0) AS value FROM orders WHERE created_at >= ${IST_TODAY_UTC} AND status NOT IN ('cancelled', 'approval')`);
@@ -2918,7 +2975,7 @@ route('post', '/prices/import', 'products:edit', async (req) => {
 }, { before: [commerceGate, upload(5)] });
 
 // ---------------------------------------------------------------------------------------------
-// Roles and permissions (docs/COMMERCE-SPEC.md 1; migration 20261020_commerce_access.sql)
+// Roles and permissions (docs/COMMERCE-SPEC.md 1; migration 20261021_commerce_01_access.sql)
 // ---------------------------------------------------------------------------------------------
 /** a permission grid from the admin -> clean { section: { action: bool } } (create / edit / approve / delete imply view) */
 function cleanGrid(raw) {

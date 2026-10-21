@@ -1,4 +1,4 @@
-// Returns and refunds (docs/COMMERCE-SPEC.md 4.8, 5.5, 6.2; migration 20261021_commerce_returns.sql). Shared by the
+// Returns and refunds (docs/COMMERCE-SPEC.md 4.8, 5.5, 6.2; migration 20261021_commerce_09_returns.sql). Shared by the
 // admin routes, the delivery trips (pickup stops) and the demo seed. Every step writes return_history and the audit log.
 // 1. Request (a delivered order, entered when the customer calls): lines of SKU and batch as delivered (partial is
 //    fine, never more than delivered minus earlier returns), a reason from the list, photos optional. Outside the
@@ -18,6 +18,7 @@ const approvals = require('./approvals');
 const commerce = require('./commerce');
 const commerceSettings = require('./commerce-settings');
 const notifications = require('./notifications');
+const { imageType } = require('./photo-check');
 const invoices = require('./invoices');
 const numbering = require('./numbering');
 const promotions = require('./promotions');
@@ -130,8 +131,9 @@ async function createReturn(q, orderNo, data, empId) {
 async function addPhoto(q, returnNo, kind, file, empId) {
   const r = await lockReturn(q, returnNo);
   if (!['request', 'pickup', 'inspect'].includes(kind)) throw new ReturnError('Photo kind: request, pickup or inspect');
-  if (!file || !/^image\/(jpeg|png|webp)$/.test(file.mimetype)) throw new ReturnError('Photo: a JPEG, PNG or WebP picture');
-  const [ins] = await q.query('INSERT INTO return_photos (return_id, kind, photo, photo_type, emp_id) VALUES (?, ?, ?, ?, ?)', [r.return_id, kind, file.buffer, file.mimetype, empId]);
+  const type = imageType(file);
+  if (!type) throw new ReturnError('Photo: a JPEG, PNG or WebP picture');
+  const [ins] = await q.query('INSERT INTO return_photos (return_id, kind, photo, photo_type, emp_id) VALUES (?, ?, ?, ?, ?)', [r.return_id, kind, file.buffer, type, empId]);
   await history(q, r.return_id, 'photo', `${kind} photo added`, empId);
   return { photo_id: ins.insertId };
 }
@@ -234,7 +236,7 @@ async function receiveScan(q, returnNo, raw, empId) {
 
 /** inspection: per line ok / damaged / expired / missing (they add up to the line's packs); stock movements */
 async function inspect(q, returnNo, b, empId) {
-  const r = await lockReturn(q, returnNo, ['received', 'collecting', 'requested']);
+  const r = await lockReturn(q, returnNo, ['received']); // inspected = what was scanned in at the godown (security review L5)
   if ((await pendingOf(q, returnNo)).some((p) => p.kind === 'return_window')) throw new ReturnError(`${returnNo} waits for approval (outside the return window)`, 409);
   const lines = await receiveState(q, r.return_id);
   const given = new Map((Array.isArray(b.lines) ? b.lines : []).map((l) => [Number(l.line_id), l]));
@@ -244,6 +246,7 @@ async function inspect(q, returnNo, b, empId) {
     const v = ['ok', 'damaged', 'expired', 'missing'].map((k) => Number(g[k] || 0));
     if (v.some((x) => !Number.isInteger(x) || x < 0)) throw new ReturnError(`${l.sku_code}: whole numbers, 0 or more`);
     if (v.reduce((a, x) => a + x, 0) !== l.qty) throw new ReturnError(`${l.sku_code}${l.batch_no ? ` batch ${l.batch_no}` : ''}: OK + damaged + expired + not received must be ${l.qty}`);
+    if (v[0] + v[1] + v[2] > Number(l.qty_received)) throw new ReturnError(`${l.sku_code}${l.batch_no ? ` batch ${l.batch_no}` : ''}: only ${l.qty_received} scanned in at the godown; the rest is "not received"`);
     if (v[2] && !l.batch_id) throw new ReturnError(`${l.sku_code}: "Expired" is only for products tracked by batch`);
     plan.push({ l, ok: v[0], damaged: v[1], expired: v[2], missing: v[3] });
   }
@@ -381,7 +384,7 @@ async function payRefund(q, refundId, empId) {
     await wallet.credit(q, { customerId: o.customer_id, source: 'refund', amount: cn.total, reason: `Refund ${f.return_no} (credit note ${cn.credit_note_no})`, orderId: f.order_id, returnId: f.return_id }, empId);
   } else if (f.method === 'original') {
     const [[o]] = await q.query('SELECT order_no FROM orders WHERE order_id = ?', [f.order_id]);
-    const pr = await wrap(() => commerce.recordPayment(q, o.order_no, { kind: 'refund', amount: cn.total.toFixed(2), mode: f.mode, reference: f.reference, note: `Refund ${f.return_no}, credit note ${cn.credit_note_no}` }, empId));
+    const pr = await wrap(() => commerce.recordPayment(q, o.order_no, { kind: 'refund', amount: cn.total.toFixed(2), mode: f.mode, reference: f.reference, note: `Refund ${f.return_no}, credit note ${cn.credit_note_no}` }, empId, { internal: true })); // decided (and approved) in Returns
     paymentId = pr.payment_id;
   }
   await q.query("UPDATE refunds SET status = 'paid', amount = ?, credit_note_id = ?, payment_id = ?, paid_at = UTC_TIMESTAMP() WHERE refund_id = ?", [cn.total, cn.credit_note_id, paymentId, refundId]);

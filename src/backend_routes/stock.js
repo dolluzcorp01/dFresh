@@ -1,4 +1,4 @@
-// Inventory (docs/COMMERCE-SPEC.md 4.4; migration 20261020_commerce_stock.sql): shared by the admin routes, the order
+// Inventory (docs/COMMERCE-SPEC.md 4.4; migration 20261021_commerce_05_stock.sql): shared by the admin routes, the order
 // logic (commerce.js) and the demo seed, so every stock change is made the same way.
 // - Stock on hand = SUM(stock_movements.delta) per SKU, kind (good / returned / damaged / expired: returned packs found
 //   expired at inspection, blocked until written off) and batch. Nothing is typed in.
@@ -17,6 +17,7 @@ const { audit } = require('./audit');
 const approvals = require('./approvals');
 const commerceSettings = require('./commerce-settings');
 const pricing = require('./pricing');
+const { imageType } = require('./photo-check');
 
 const MOVE_LABEL = {
   production: 'Stock in (production)', purchase: 'Stock in (purchase)', out: 'Dispatched', return: 'Back in', damaged: 'Moved to damaged',
@@ -37,16 +38,21 @@ async function tracked(q, skuCodes) {
   return new Set(rows.map((r) => r.sku_code));
 }
 
-/** good stock, expired (batches past expiry), reserved by other orders, available -> Map sku -> {...} */
-async function availability(q, skuCodes, exceptOrderId = 0) {
+/**
+ * good stock, expired (batches past expiry), reserved by other orders, available -> Map sku -> {...}
+ * lock: the caller holds the SKUs' row locks (lockSkus); the sums then read the latest committed rows (FOR SHARE), not
+ * the transaction's older snapshot, so two orders at the same moment never both take the last packs (security review M4)
+ */
+async function availability(q, skuCodes, exceptOrderId = 0, { lock = false } = {}) {
   const out = new Map();
   if (!skuCodes.length) return out;
-  const [good] = await q.query("SELECT sku_code, COALESCE(SUM(delta), 0) AS n FROM stock_movements WHERE stock_kind = 'good' AND sku_code IN (?) GROUP BY sku_code", [skuCodes]);
+  const L = lock ? ' FOR SHARE' : '';
+  const [good] = await q.query(`SELECT sku_code, COALESCE(SUM(delta), 0) AS n FROM stock_movements WHERE stock_kind = 'good' AND sku_code IN (?) GROUP BY sku_code${L}`, [skuCodes]);
   const [exp] = await q.query(
     `SELECT m.sku_code, SUM(m.delta) AS n FROM stock_movements m JOIN batches b ON b.batch_id = m.batch_id
-      WHERE m.stock_kind = 'good' AND b.expiry_date < ${IST_TODAY} AND m.sku_code IN (?) GROUP BY m.sku_code, m.batch_id HAVING n > 0`, [skuCodes]
+      WHERE m.stock_kind = 'good' AND b.expiry_date < ${IST_TODAY} AND m.sku_code IN (?) GROUP BY m.sku_code, m.batch_id HAVING n > 0${L}`, [skuCodes]
   );
-  const [res] = await q.query("SELECT sku_code, COALESCE(SUM(qty), 0) AS n FROM stock_reservations WHERE status = 'active' AND sku_code IN (?) AND order_id <> ? GROUP BY sku_code", [skuCodes, exceptOrderId || 0]);
+  const [res] = await q.query(`SELECT sku_code, COALESCE(SUM(qty), 0) AS n FROM stock_reservations WHERE status = 'active' AND sku_code IN (?) AND order_id <> ? GROUP BY sku_code${L}`, [skuCodes, exceptOrderId || 0]);
   const g = new Map(good.map((r) => [r.sku_code, Number(r.n)]));
   const e = new Map();
   for (const r of exp) e.set(r.sku_code, (e.get(r.sku_code) || 0) + Number(r.n));
@@ -58,14 +64,19 @@ async function availability(q, skuCodes, exceptOrderId = 0) {
   return out;
 }
 
+/** the SKUs' row locks, in one order (no deadlock between two transactions): stock decisions on them wait for each other */
+async function lockSkus(q, skuCodes) {
+  if (skuCodes.length) await q.query('SELECT sku_code FROM skus WHERE sku_code IN (?) ORDER BY sku_code FOR UPDATE', [[...new Set(skuCodes)].sort()]);
+}
+
 /** stock of one SKU and kind per batch -> [{ batch_id, batch_no, mfg_date, expiry_date, qty, expired }] (batch_id null = no batch) */
-async function batchStock(q, sku, kind = 'good') {
+async function batchStock(q, sku, kind = 'good', { lock = false } = {}) {
   const [rows] = await q.query(
     `SELECT m.batch_id, b.batch_no, DATE_FORMAT(b.mfg_date, '%Y-%m-%d') AS mfg_date, DATE_FORMAT(b.expiry_date, '%Y-%m-%d') AS expiry_date,
             SUM(m.delta) AS qty, (b.expiry_date < ${IST_TODAY}) AS expired
        FROM stock_movements m LEFT JOIN batches b ON b.batch_id = m.batch_id
       WHERE m.sku_code = ? AND m.stock_kind = ? GROUP BY m.batch_id, b.batch_no, b.mfg_date, b.expiry_date HAVING qty <> 0
-      ORDER BY b.expiry_date IS NULL, b.expiry_date, m.batch_id`, [sku, kind]
+      ORDER BY b.expiry_date IS NULL, b.expiry_date, m.batch_id${lock ? ' FOR SHARE' : ''}`, [sku, kind]
   );
   return rows.map((r) => ({ ...r, qty: Number(r.qty), expired: Number(r.expired) === 1 }));
 }
@@ -177,13 +188,14 @@ async function costAt(q, sku, at) {
 async function dispatchOut(q, orderId, orderNo, empId) {
   const [sums] = await q.query('SELECT sku_code, SUM(qty) AS qty FROM order_items WHERE order_id = ? GROUP BY sku_code ORDER BY sku_code', [orderId]); // a free line (buy X get Y) may repeat a SKU
   const items = sums.map((x) => ({ sku_code: x.sku_code, qty: Number(x.qty) }));
+  await lockSkus(q, items.map((i) => i.sku_code)); // the stock sums below read the latest rows (FOR SHARE): two dispatches never both take the last packs
   const tr = await tracked(q, items.map((i) => i.sku_code));
   const [picked] = await q.query('SELECT sku_code, batch_id, qty FROM order_picks WHERE order_id = ? ORDER BY pick_id', [orderId]);
   const plan = [];
   if (picked.length) {
     let ok = true;
     for (const pk of picked.filter((x) => x.batch_id)) {
-      const b = (await batchStock(q, pk.sku_code)).find((x) => x.batch_id === pk.batch_id);
+      const b = (await batchStock(q, pk.sku_code, 'good', { lock: true })).find((x) => x.batch_id === pk.batch_id);
       if (!b || b.expired || b.qty < pk.qty) ok = false;
     }
     const sums = new Map();
@@ -192,7 +204,7 @@ async function dispatchOut(q, orderId, orderNo, empId) {
       for (const pk of picked) {
         await q.query('SELECT sku_code FROM skus WHERE sku_code = ? FOR UPDATE', [pk.sku_code]);
         if (!pk.batch_id) {
-          const [[st]] = await q.query("SELECT COALESCE(SUM(delta), 0) AS n FROM stock_movements WHERE sku_code = ? AND stock_kind = 'good'", [pk.sku_code]);
+          const [[st]] = await q.query("SELECT COALESCE(SUM(delta), 0) AS n FROM stock_movements WHERE sku_code = ? AND stock_kind = 'good' FOR SHARE", [pk.sku_code]);
           if (Number(st.n) < pk.qty) throw new StockError(`Not enough ${pk.sku_code} in the godown: ${Number(st.n)} good, ${pk.qty} needed`, 409);
         }
         const [[b]] = pk.batch_id ? await q.query("SELECT batch_no, DATE_FORMAT(expiry_date, '%Y-%m-%d') AS expiry_date FROM batches WHERE batch_id = ?", [pk.batch_id]) : [[{}]];
@@ -205,12 +217,12 @@ async function dispatchOut(q, orderId, orderNo, empId) {
   for (const i of items) {
     await q.query('SELECT sku_code FROM skus WHERE sku_code = ? FOR UPDATE', [i.sku_code]);
     if (!tr.has(i.sku_code)) {
-      const [[st]] = await q.query("SELECT COALESCE(SUM(delta), 0) AS n FROM stock_movements WHERE sku_code = ? AND stock_kind = 'good'", [i.sku_code]);
+      const [[st]] = await q.query("SELECT COALESCE(SUM(delta), 0) AS n FROM stock_movements WHERE sku_code = ? AND stock_kind = 'good' FOR SHARE", [i.sku_code]);
       if (Number(st.n) < i.qty) throw new StockError(`Not enough ${i.sku_code} in the godown: ${Number(st.n)} good, ${i.qty} needed`, 409);
       plan.push({ sku_code: i.sku_code, batch_id: null, qty: i.qty });
       continue;
     }
-    const batches = (await batchStock(q, i.sku_code)).filter((b) => b.qty > 0);
+    const batches = (await batchStock(q, i.sku_code, 'good', { lock: true })).filter((b) => b.qty > 0);
     const usable = batches.filter((b) => !b.expired); // FEFO: ordered by expiry, the ones without a batch last
     const total = usable.reduce((a, b) => a + b.qty, 0);
     if (total < i.qty) {
@@ -251,7 +263,7 @@ async function postWriteOff(q, id, empId) {
   const [[w]] = await q.query('SELECT write_off_id, sku_code, stock_kind, batch_id, qty, reason_type, reason, status FROM write_offs WHERE write_off_id = ? FOR UPDATE', [id]);
   if (!w || w.status !== 'pending') return false;
   await q.query('SELECT sku_code FROM skus WHERE sku_code = ? FOR UPDATE', [w.sku_code]);
-  const [[st]] = await q.query(`SELECT COALESCE(SUM(delta), 0) AS n FROM stock_movements WHERE sku_code = ? AND stock_kind = ? AND ${w.batch_id ? 'batch_id = ?' : '1 = 1'}`,
+  const [[st]] = await q.query(`SELECT COALESCE(SUM(delta), 0) AS n FROM stock_movements WHERE sku_code = ? AND stock_kind = ? AND ${w.batch_id ? 'batch_id = ?' : '1 = 1'} FOR SHARE`,
     w.batch_id ? [w.sku_code, w.stock_kind, w.batch_id] : [w.sku_code, w.stock_kind]);
   if (Number(st.n) < w.qty) throw new StockError(`Write-off #${id}: only ${Number(st.n)} ${KIND_LABEL[w.stock_kind].toLowerCase()} ${w.sku_code} left, ${w.qty} to write off`, 409);
   await move(q, { sku: w.sku_code, kind: w.stock_kind, type: 'write_off', delta: -w.qty, batchId: w.batch_id, refType: 'write_off', refId: id, note: `${WRITE_OFF_TYPES[w.reason_type]}: ${w.reason}` }, empId);
@@ -276,7 +288,8 @@ async function requestWriteOff(q, data, empId, photo = null) {
   if (!Number.isInteger(qty) || qty < 1) throw new StockError('Quantity: packs, a whole number from 1');
   if (!type) throw new StockError('Why: damaged, expired, lost or sample');
   if (!reason) throw new StockError('Say what happened');
-  if (photo && !/^image\/(jpeg|png|webp)$/.test(photo.mimetype)) throw new StockError('Photo: a JPEG, PNG or WebP picture');
+  const photoType = photo ? imageType(photo) : null;
+  if (photo && !photoType) throw new StockError('Photo: a JPEG, PNG or WebP picture');
   let batchId = data.batch_id ? Number(data.batch_id) : null;
   if (Number(s.track_batches) && kind === 'good' && !batchId) throw new StockError('This product is tracked by batch: choose the batch');
   if (batchId) {
@@ -289,7 +302,7 @@ async function requestWriteOff(q, data, empId, photo = null) {
   const needs = await approvals.needed(q, 'write_off', { amount: value || 0, qty });
   const [ins] = await q.query(
     'INSERT INTO write_offs (sku_code, stock_kind, batch_id, qty, reason_type, reason, value, photo, photo_type, status, emp_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    [sku, kind, batchId, qty, type, reason, value, photo ? photo.buffer : null, photo ? photo.mimetype : null, 'pending', empId]
+    [sku, kind, batchId, qty, type, reason, value, photo ? photo.buffer : null, photoType, 'pending', empId]
   );
   const id = ins.insertId;
   await audit(q, { empId, action: 'request', entity: 'write_off', entityId: String(id), after: { sku, qty, kind, batch_id: batchId, type, reason, value, needs_approval: needs, photo: Boolean(photo) } });
@@ -488,6 +501,6 @@ async function batchList(q) {
 }
 
 module.exports = {
-  MOVE_LABEL, KIND_LABEL, WRITE_OFF_TYPES, StockError, availability, batchStock, tracked, stockIn, dispatchOut, goodsBack, batchesOfOrder, costNow, costAt,
+  MOVE_LABEL, KIND_LABEL, WRITE_OFF_TYPES, StockError, availability, batchStock, tracked, lockSkus, stockIn, dispatchOut, goodsBack, batchesOfOrder, costNow, costAt,
   requestWriteOff, postWriteOff, recordMove, startCount, countDetail, saveCount, submitCount, reorderList, batchList, IST_TODAY,
 };

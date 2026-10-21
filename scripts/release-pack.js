@@ -25,7 +25,8 @@ const ALLOWED_DIRTY = ['src/i18n/fallbackText.json'];
 const FROM_GIT = [
   'server.js', 'package.json', 'package-lock.json', '.env.example',
   'config', 'src/backend_routes', 'src/shared', // API, SEO, mail, workers (src/shared is also used by the API)
-  'fonts/source', 'fonts/scripts.json', // script fonts, subset by the server at run time
+  'fonts/source', 'fonts/scripts.json', // script fonts, subset by the server at run time (and the print windows' fonts)
+  'fonts/pdf', // static fonts for the PDF documents (pdf-writer.js: invoices, credit notes, statements)
   'database', // schema, seed, migrations
   'deploy', // DEPLOY.md, nginx, pm2, backup
   'maintenance', // nginx maintenance page

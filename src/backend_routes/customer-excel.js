@@ -63,11 +63,12 @@ const addrOf = (r, p) => ({ label: txt(r[`${p}_label`]), name: txt(r[`${p}_name`
 const hasAddr = (r, p) => ['label', 'name', 'address', 'town', 'state', 'PIN'].some((k) => !blank(r[`${p}_${k}`])) || (p === 'Bill' && !blank(r.Bill_GSTIN));
 
 /** -> { ok, summary, errors, notes, unknownColumns, creates, changes, plan } (nothing is written) */
-async function diffWorkbook(q, buffer) {
+async function diffWorkbook(q, buffer, opts = {}) { // opts.own: a user limited to their own customers (security review H1)
   const wb = new ExcelJS.Workbook();
   try { await wb.xlsx.load(buffer); } catch { throw new InputError('This is not an Excel (.xlsx) file this tool can read'); }
   const ws = wb.getWorksheet(SHEET);
   if (!ws) throw new InputError(`The workbook has no "${SHEET}" sheet (use the exported customer list)`);
+  if (ws.rowCount > 5001) throw new InputError(`At most 5,000 rows in one import (this sheet has ${ws.rowCount - 1})`); // security review L3
   const { header, rows } = sheetRows(ws, 'Customer_no');
   if (!header.includes('Name') || !header.includes('Phone')) throw new InputError(`The ${SHEET} sheet needs at least the Name and Phone columns`);
   const unknownColumns = header.filter((h) => !COLS.includes(h)).map((h) => `${SHEET}!${h}`);
@@ -102,7 +103,7 @@ async function diffWorkbook(q, buffer) {
         if (d.length) errs.push(`already a customer: ${d[0].customer_no} ${d[0].name} (same ${d[0].by})`);
       }
       if (errs.length) { errors.push(`${at} (new ${txt(r.Name) || 'customer'}): ${errs.join('; ')}`); continue; }
-      plan.creates.push({ data: { ...core.values, phone: core.values.phone, bill: addrOf(r, 'Bill'), ship: ship ? addrOf(r, 'Ship') : null, tags }, status, reason: txt(r.Status_reason) });
+      plan.creates.push({ data: { ...core.values, ...(opts.own ? { owner_emp_id: opts.own } : {}), phone: core.values.phone, bill: addrOf(r, 'Bill'), ship: ship ? addrOf(r, 'Ship') : null, tags }, status, reason: txt(r.Status_reason) });
       creates.push({ row: r._row, name: core.values.name, type: core.values.type_key, phone: core.values.phone, gstin: bill.values.gstin, state: bill.values.state_code });
       continue;
     }
@@ -110,6 +111,7 @@ async function diffWorkbook(q, buffer) {
     seenNo.add(no);
     const [[c]] = await q.query('SELECT * FROM customers WHERE customer_no = ?', [no]);
     if (!c) { errors.push(`${at}: there is no customer ${no}`); continue; }
+    if (opts.own && c.owner_emp_id !== opts.own) { errors.push(`${at}: ${no} belongs to another sales owner`); continue; } // nothing of it is shown or changed
     if (c.merged_into) { errors.push(`${at}: ${no} was merged into another customer`); continue; }
     if (!errs.length) {
       const d = await customers.duplicates(q, { phone_digits: core.values.phone_digits, email: core.values.email, gstins: bill ? [bill.values.gstin] : [] }, c.customer_id);
@@ -117,6 +119,7 @@ async function diffWorkbook(q, buffer) {
     }
     if (errs.length) { errors.push(`${at} (${no}): ${errs.join('; ')}`); continue; }
     const u = { customer_id: c.customer_id, customer_no: no, core: {}, status: null, tags: null, addresses: [] };
+    if (opts.own) core.values.owner_emp_id = opts.own; // a user limited to their own customers keeps them (the Owner column is not theirs to change)
     const fields = { name: 'Name', business_name: 'Business_name', type_key: 'Type', phone: 'Phone', email: 'Email', owner_emp_id: 'Owner', source: 'Source' };
     for (const [k, h] of Object.entries(fields)) {
       if (!header.includes(h)) continue;

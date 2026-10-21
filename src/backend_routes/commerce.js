@@ -1,6 +1,6 @@
 // dFresh Commerce: order logic shared by the admin routes (Admin_server.js) and the demo seed
 // (scripts/commerce-demo-seed.js), so seeded orders behave exactly like entered ones. Tables: migration
-// 20261020_commerce_sales.sql (orders, lines, history, reservations, payments, invoices); customers, coupons, wallet,
+// 20261021_commerce_07_orders.sql (orders, lines, history, reservations, payments, invoices); customers, coupons, wallet,
 // stock movements and returns are still the demo tables (database/demo) until their phases.
 //
 // Status: approval (waiting for one or more approvals) -> new (confirmed) -> packing -> packed, then by the delivery
@@ -40,6 +40,7 @@ const commerceSettings = require('./commerce-settings');
 const invoices = require('./invoices');
 const promotions = require('./promotions');
 const stock = require('./stock');
+const stockLib = stock; // (prepare has a local named stock)
 const wallet = require('./wallet');
 const numbering = require('./numbering');
 const { audit } = require('./audit');
@@ -75,7 +76,7 @@ const rs = (n) => `Rs ${Number(n).toLocaleString('en-IN', { minimumFractionDigit
 const walletBalance = (q, customerId) => wallet.balance(q, customerId);
 
 /** good stock, expired, reserved by other orders and available per SKU (stock.js) */
-const availability = (q, skuCodes, exceptOrderId = 0) => stock.availability(q, skuCodes, exceptOrderId);
+const availability = (q, skuCodes, exceptOrderId = 0, opts = {}) => stock.availability(q, skuCodes, exceptOrderId, opts);
 
 /** round2 parts of `total` in proportion to `weights`, adding up to `total` exactly (the last non-zero takes the cents) */
 function spread(total, weights) {
@@ -190,8 +191,10 @@ async function outstandingOf(q, customerId, exceptOrderId = 0) {
 async function prepare(q, data, opts = {}) {
   const editing = opts.order || null;
   const customerId = editing ? editing.customer_id : Number(data.customer_id);
+  // the customer is locked first: two orders of one customer at the same moment are made one after the other, so the
+  // wallet, the credit limit and a coupon's per-customer limit are checked against the latest rows (security review H2)
   const [[cust]] = await q.query(`SELECT customer_id, customer_no, name, business_name, phone, type_key, status, hold_reason, credit_days, credit_limit, merged_into
-      FROM customers WHERE customer_id = ?`, [customerId]);
+      FROM customers WHERE customer_id = ? FOR UPDATE`, [customerId]);
   if (!cust) throw new CommerceError('Choose a customer');
   if (cust.merged_into) throw new CommerceError(`${cust.customer_no} was merged into another customer: choose that one`);
   if (cust.status === 'inactive' && !editing && !opts.replacement) throw new CommerceError(`${cust.name} is inactive: no new orders (Customers: make it active first)`);
@@ -226,7 +229,8 @@ async function prepare(q, data, opts = {}) {
   const own = await pricing.ownPricesOn(q, opts.priceDate || pricing.istToday(), keys);
   const settings = await commerceSettings.read(q);
   const inclusive = settings.prices_include_gst === 'inclusive';
-  const stock = await availability(q, keys, editing ? editing.order_id : 0);
+  await stockLib.lockSkus(q, keys);
+  const stock = await availability(q, keys, editing ? editing.order_id : 0, { lock: true });
   const problems = [];
   const short = [];
   const lines = [...merged.values()].map((i) => {
@@ -357,7 +361,7 @@ async function prepare(q, data, opts = {}) {
 
   // what holds the order
   const holds = [];
-  if (!opts.replacement && opts.isNew && cust.status === 'on_hold') {
+  if (!opts.replacement && cust.status === 'on_hold' && (opts.isNew || ['approval', 'new'].includes(editing && editing.status))) {
     holds.push({ kind: 'customer_hold', amount: null, what: `${cust.customer_no} is on hold${cust.hold_reason ? ` (${cust.hold_reason})` : ''}` });
   }
   if (!opts.replacement && discountTotal > 0 && await approvals.needed(q, 'discount', { pct: discountPct })) {
@@ -375,9 +379,9 @@ async function prepare(q, data, opts = {}) {
     if (short.length && await approvals.needed(q, 'over_available')) {
       holds.push({ kind: 'over_available', amount: null, what: short.map((x) => `${x.sku_code} ${x.qty} asked, ${Math.max(x.available, 0)} available`).join('; '), lines: short });
     }
-    if (opts.isNew) {
+    if (opts.isNew || ['approval', 'new', 'packing', 'packed'].includes(editing && editing.status)) { // an edit is checked too (security review M2)
       const over = await overdueOf(q, customerId);
-      const outstanding = await outstandingOf(q, customerId);
+      const outstanding = await outstandingOf(q, customerId, editing ? editing.order_id : 0);
       const thisDue = round2(t.total - (walletUsed - t.wallet_discount));
       const reasons = [];
       if (over.n) reasons.push(`${over.n} overdue invoice${over.n === 1 ? '' : 's'} (${rs(over.amount)})`);
@@ -719,8 +723,12 @@ function modesOffered(settings) {
   return Object.keys(out).length ? out : MODES;
 }
 
-/** record a payment or a refund. b = { kind, amount, mode, received_on, reference, note } */
-async function recordPayment(q, orderNo, b, empId) {
+/**
+ * record a payment or a refund. b = { kind, amount, mode, received_on, reference, note }. A refund up to what the
+ * customer overpaid (balance due below 0, e.g. after a cancellation) needs nothing more; a larger one needs "approve" on
+ * Orders (opts.canApprove), so the refund approval of Returns cannot be skipped through here (security review M6).
+ */
+async function recordPayment(q, orderNo, b, empId, opts = {}) {
   const [[o]] = await q.query('SELECT order_id, order_no, status, amount_due, amount_paid FROM orders WHERE order_no = ? FOR UPDATE', [orderNo]);
   if (!o) throw new CommerceError(`No order ${orderNo}`, 404);
   const kind = b.kind === 'refund' ? 'refund' : 'payment';
@@ -738,6 +746,9 @@ async function recordPayment(q, orderNo, b, empId) {
     if (o.status === 'cancelled') throw new CommerceError(`${orderNo} is cancelled: no payment can be recorded`, 409);
     if (amount > Number(o.amount_due) + 0.005) throw new CommerceError(`More than the balance due (${rs(Math.max(Number(o.amount_due), 0))})`);
   } else if (amount > Number(o.amount_paid) + 0.005) throw new CommerceError(`More than what was paid (${rs(o.amount_paid)})`);
+  else if (amount > Math.max(-Number(o.amount_due), 0) + 0.005 && !opts.canApprove && !opts.internal) {
+    throw new CommerceError(`Only the overpaid ${rs(Math.max(-Number(o.amount_due), 0))} can be refunded here; a larger refund goes through Returns (or a role with "approve" on Orders)`, 403);
+  }
   const [ins] = await q.query('INSERT INTO payments (order_id, kind, mode, amount, received_on, reference, note, emp_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
     [o.order_id, kind, b.mode, amount, day, reference, String(b.note || '').trim().slice(0, 255) || null, empId]);
   const st = await refreshPayment(q, o.order_id);

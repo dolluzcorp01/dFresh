@@ -1,4 +1,4 @@
-// Approvals (docs/COMMERCE-SPEC.md section 2; table approvals, migration 20261020_commerce_approvals.sql).
+// Approvals (docs/COMMERCE-SPEC.md section 2; table approvals, migration 20261021_commerce_03_approvals.sql).
 // A module that holds an action calls needed(q, kind, facts) and, when true, request(q, ...) instead of doing it; it
 // registers onApproved(kind, fn) so the action runs (in the same transaction) when someone approves, and optionally
 // onClosed(kind, fn) for a request that ends without approval (rejected, withdrawn, expired).

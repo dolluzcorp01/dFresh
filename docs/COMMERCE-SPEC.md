@@ -159,7 +159,7 @@ VARCHAR(20). "(c)" = changed existing table, "(n)" = new.
 | sku_prices (n) | sku_code, list_key ('default' = the base price, or a customer type key), effective_from DATE, price DECIMAL(10,2) NULL (NULL = no own price from that day), created_by, created_at | PK (sku_code, list_key, effective_from); FK sku |
 | price_changes (n) | change_id AI, sku_code, list_key, old_price, new_price, effective_from, source (grid / bulk / import / seed), emp_id, changed_at | INDEX (sku_code, changed_at) |
 
-Built in phase 2 (migration `20261020_commerce_pricing.sql`): the price on a day is the row with the latest
+Built in phase 2 (migration `20261021_commerce_04_catalogue.sql`): the price on a day is the row with the latest
 `effective_from` on or before it; a customer type without its own price uses the Default list (the "base price" above).
 Barcode labels stay on SKUs and labels (sku_code is the barcode for now). Commerce settings `prices_include_gst` and
 `gst_rates` (0, 5, 12, 18).
@@ -174,7 +174,7 @@ Barcode labels stay on SKUs and labels (sku_code is the barcode for now). Commer
 Stock on hand = SUM(delta) per sku, location, kind. **Available = good on hand - active reservations.** No stock
 column is ever typed in; a nightly check compares sums and logs a warning if a negative appears.
 
-Built in phase 4 (migration `20261020_commerce_stock.sql`, `src/backend_routes/stock.js`): stock in (production from the
+Built in phase 4 (migration `20261021_commerce_05_stock.sql`, `src/backend_routes/stock.js`): stock in (production from the
 Kanchipuram unit or purchase from a supplier, cost per pack, reference, scan to add lines); `skus.avg_cost` = weighted
 average cost updated by every stock in (stock value shown only to roles with view on Reports or Products and prices);
 batches for products with `track_batches` (wet wipes by default): batch no., manufacture and expiry date, dispatch
@@ -240,7 +240,7 @@ types: production, purchase, out, return, damaged, write_off, count. Not built y
 Every change writes `order_status_history` and the audit log; edits use the `version` column so two people cannot
 overwrite each other (the second gets "This order changed, reload").
 
-Built in phase 3 (migration `20261020_commerce_sales.sql`, `src/backend_routes/commerce.js`, `invoices.js`,
+Built in phase 3 (migration `20261021_commerce_07_orders.sql`, `src/backend_routes/commerce.js`, `invoices.js`,
 `numbering.js`), with these statuses: `approval` (waiting for one or more approvals: price below the list, more than
 the available stock, over the credit limit or with overdue invoices; any rejected / withdrawn / expired cancels the
 order) -> `new` (= confirmed; no separate draft) -> `packed` -> `dispatched` -> `delivered`, `cancelled`. Edit: approval
@@ -284,7 +284,7 @@ Stock: ok -> return_in to `returned` (R); damaged -> return_in to `damaged`; lat
 Replacement: a new order at Rs 0 linked to the return (stock reserved like any order).
 
 ### 5.5b Built in phase 6 (returns and refunds)
-Migration `20261021_commerce_returns.sql`, logic `src/backend_routes/returns.js`, screens Commerce > Returns, Orders >
+Migration `20261021_commerce_09_returns.sql`, logic `src/backend_routes/returns.js`, screens Commerce > Returns, Orders >
 New return, Delivery (pickups), Inventory (Recheck), Reports. Numbers DFR-26nnnn (setting `return_prefix`).
 - Request on a delivered order (entered when the customer calls): lines of SKU and batch as delivered (partial; never
   more than delivered minus earlier returns), a reason from the list, photos optional. The window (`return_window_days`)
@@ -310,7 +310,7 @@ New return, Delivery (pickups), Inventory (Recheck), Reports. Numbers DFR-26nnnn
   SKUs and labels prints pack (SKU), carton (SKU#C) and batch (SKU/BATCH) labels.
 
 ### 5.5c Built in phase 7 (promotions and the wallet)
-Migration `20261021_commerce_wallet_promotions.sql`, logic `src/backend_routes/promotions.js` and `wallet.js`, screens
+Migration `20261021_commerce_10_promotions_wallet.sql`, logic `src/backend_routes/promotions.js` and `wallet.js`, screens
 Commerce > Promotions (Coupons, Offers, Cashback, Wallets), New order, Customers (wallet statement), Reports.
 - Coupons: percent (with a maximum discount) / fixed / free delivery; minimum order (goods after offers); valid from /
   to; uses in all and per customer (`coupon_redemptions`, given back when the order is cancelled or the coupon taken
@@ -343,7 +343,7 @@ Commerce > Promotions (Coupons, Offers, Cashback, Wallets), New order, Customers
   (by source, what expires within 30 days, the largest balances).
 
 ### 5.5d Built in phase 8 (customers)
-Migration `20261021_commerce_customers.sql` (replaces the demo customers table), logic `src/backend_routes/customers.js`,
+Migration `20261021_commerce_06_customers.sql` (replaces the demo customers table), logic `src/backend_routes/customers.js`,
 Excel `customer-excel.js`, screens Commerce > Customers (list, drawer: `CustomerDrawer.js`), My follow-ups, New order.
 - CUS-0001 numbers (number series `CUS`, setting `customer_prefix`; never DFC, the credit note series). Type from the
   customer types; status Active / On hold (a new order waits for the `customer_hold` approval) / Inactive (no new
@@ -375,7 +375,7 @@ Excel `customer-excel.js`, screens Commerce > Customers (list, drawer: `Customer
 
 ### 5.5e Built in phase 9 (reports)
 `src/backend_routes/reports.js`, screens Commerce > Reports (`CommerceReports.js`, charts `ReportChart.js`) and the
-Business view on Operations; migration `20261021_commerce_reports.sql` (settings only).
+Business view on Operations; migration `20261021_commerce_02_settings.sql` (settings only).
 - One area with a period (India dates, presets), the report's filters, checks, a chart where useful, every table with
   totals, Excel (same numbers) and Print / PDF. Each report needs view on its own section: Sales = Orders, GST and the
   accounting export = Reports, Margin = Reports + Products and prices, Stock = Inventory (values only with Reports +
@@ -402,7 +402,7 @@ Business view on Operations; migration `20261021_commerce_reports.sql` (settings
 ### 5.5f Built in phase 10 (notifications)
 `src/backend_routes/notifications.js` (events, templates, recipients, log, daily jobs), `doc-pdf.js` + `pdf-writer.js`
 (invoice, credit note and statement as PDF, no package), screen Setup > Notifications (`Notifications.js`); migration
-`20261022_commerce_notifications.sql`.
+`20261021_commerce_11_notifications.sql`.
 - Channels: e-mail through the SendGrid outbox (sender = Settings mail_from; MAIL_TEST_TO redirects locally); WhatsApp
   and SMS "provider not set up", off and refused by the settings check until a provider is chosen.
 - A hook in the module that makes the change queues the mail and its log row in the same transaction: order confirmed

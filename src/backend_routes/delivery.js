@@ -1,4 +1,4 @@
-// Packing and delivery (docs/COMMERCE-SPEC.md 5.3, 5.4; migration 20261020_commerce_ship.sql). Shared by the admin
+// Packing and delivery (docs/COMMERCE-SPEC.md 5.3, 5.4; migration 20261021_commerce_08_delivery.sql). Shared by the admin
 // routes and the demo seed. Every step writes the order history and the audit log (commerce.setStatus).
 // Packing: New orders are picked (pick list: one or many orders grouped by SKU and batch, earliest expiry first, with
 // the SKU's bin) and become Packing; every pack or carton is scanned against the order (SKU, SKU/BATCH for batch-
@@ -20,6 +20,8 @@ const { audit } = require('./audit');
 const commerce = require('./commerce');
 const commerceSettings = require('./commerce-settings');
 const notifications = require('./notifications');
+const { imageType } = require('./photo-check');
+const crypto = require('crypto');
 const returns = require('./returns');
 const stock = require('./stock');
 
@@ -225,7 +227,14 @@ async function createTrip(q, b, empId) {
   if (!v) throw new DeliveryError('Choose the vehicle');
   const [[d]] = await q.query('SELECT driver_id FROM drivers WHERE driver_id = ? AND is_active = 1', [Number(b.driver_id)]);
   if (!d) throw new DeliveryError('Choose the driver');
-  const day = String(b.trip_date || new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10));
+  const today = new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10);
+  const day = String(b.trip_date || today);
+  const later = new Date(Date.now() + 5.5 * 3600e3 + 30 * 86400e3).toISOString().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || Number.isNaN(Date.parse(`${day}T00:00:00Z`)) || day < today || day > later) throw new DeliveryError('Trip date: today or a day in the next 30 days');
+  if (b.area_id) {
+    const [[a]] = await q.query('SELECT area_id FROM delivery_areas WHERE area_id = ?', [Number(b.area_id)]);
+    if (!a) throw new DeliveryError('Unknown delivery area');
+  }
   const [ins] = await q.query('INSERT INTO delivery_trips (trip_date, area_id, vehicle_id, driver_id, created_by) VALUES (?, ?, ?, ?, ?)', [day, b.area_id ? Number(b.area_id) : null, v.vehicle_id, d.driver_id, empId]);
   let seq = 0;
   for (const no of nos) {
@@ -273,8 +282,8 @@ async function startTrip(q, tripId, empId) {
     await commerce.setStatus(q, o, 'out_for_delivery', empId, [`Trip T-${tripId}`, out.invoice_no ? `invoice ${out.invoice_no}` : null, out.batches.length ? `from ${out.batches.map((x) => `${x.qty} x ${x.sku_code} batch ${x.batch_no}`).join(', ')}` : null].filter(Boolean).join('; '));
     const [[fresh]] = await q.query('SELECT amount_due, payment_terms FROM orders WHERE order_id = ?', [o.order_id]);
     if (fresh.payment_terms === 'cod') cash += Math.max(Number(fresh.amount_due), 0);
-    const otp = s.delivery_otp ? String(Math.floor(1000 + Math.random() * 9000)) : null;
-    await q.query('UPDATE trip_stops SET otp = ? WHERE stop_id = ?', [otp, st.stop_id]);
+    const otp = s.delivery_otp ? String(crypto.randomInt(1000, 10000)) : null;
+    await q.query('UPDATE trip_stops SET otp = ?, otp_fails = 0 WHERE stop_id = ?', [otp, st.stop_id]);
   }
   await q.query("UPDATE delivery_trips SET status = 'out', started_by = ?, started_at = UTC_TIMESTAMP(), cash_expected = ? WHERE trip_id = ?", [empId, round2(cash), tripId]);
   await audit(q, { empId, action: 'start', entity: 'trip', entityId: `T-${tripId}`, after: { stops: stops.length, cash_expected: round2(cash) } });
@@ -297,13 +306,25 @@ async function stopDelivered(q, stopId, b, photo, empId, office) {
   if (st.kind === 'pickup') throw new DeliveryError(`${st.return_no} is a return pickup: mark it Picked up`);
   const name = String(b.receiver_name || '').trim().slice(0, 120);
   if (!name) throw new DeliveryError('Who received it? (name)');
-  if (st.otp && String(b.otp || '').trim() !== st.otp) throw new DeliveryError('The OTP does not match: ask the customer for the 4-digit code');
-  if (photo && !/^image\/(jpeg|png|webp)$/.test(photo.mimetype)) throw new DeliveryError('Photo: a JPEG, PNG or WebP picture');
+  if (st.otp && String(b.otp || '').trim() !== st.otp) throw Object.assign(new DeliveryError('The OTP does not match: ask the customer for the 4-digit code'), { otpWrong: true });
+  const type = photo ? imageType(photo) : null;
+  if (photo && !type) throw new DeliveryError('Photo: a JPEG, PNG or WebP picture');
   await q.query("UPDATE trip_stops SET status = 'delivered', receiver_name = ?, photo = ?, photo_type = ?, done_by = ?, done_at = UTC_TIMESTAMP() WHERE stop_id = ?",
-    [name, photo ? photo.buffer : null, photo ? photo.mimetype : null, empId, stopId]);
+    [name, photo ? photo.buffer : null, type, empId, stopId]);
   const o = await lockOrder(q, st.order_no, ['out_for_delivery']);
   await commerce.setStatus(q, o, 'delivered', empId, `Received by ${name} (trip T-${t.trip_id})${photo ? ', photo' : ''}`, { received_by: name, delivery_attempts: (await attempts(q, o.order_id)) + 1 });
   return { stop_id: stopId, status: 'delivered' };
+}
+/**
+ * a wrong delivery OTP, counted outside the rolled-back transaction (security review L1): after 5 wrong codes the stop
+ * gets a new code (on the office's trip sheet), so the 4 digits cannot be guessed one by one. -> the error to answer
+ */
+async function otpFailed(q, stopId, err) {
+  await q.query('UPDATE trip_stops SET otp_fails = otp_fails + 1 WHERE stop_id = ? AND otp IS NOT NULL', [stopId]);
+  const [[st]] = await q.query('SELECT otp_fails FROM trip_stops WHERE stop_id = ?', [stopId]);
+  if (!st || Number(st.otp_fails) < 5) return new DeliveryError(`${err.message} (${5 - Number(st ? st.otp_fails : 0)} tries left)`);
+  await q.query('UPDATE trip_stops SET otp = ?, otp_fails = 0 WHERE stop_id = ?', [String(crypto.randomInt(1000, 10000)), stopId]);
+  return new DeliveryError('5 wrong codes: this stop has a NEW code now. The office reads it from the trip and gives it to the customer.', 409);
 }
 async function attempts(q, orderId) { const [[r]] = await q.query('SELECT delivery_attempts FROM orders WHERE order_id = ?', [orderId]); return Number(r.delivery_attempts) || 0; }
 
@@ -335,7 +356,9 @@ async function stopPickedUp(q, stopId, b, photo, empId, office) {
   if (st.status !== 'pending') throw new DeliveryError(`This stop is ${st.status} already`, 409);
   if (st.kind !== 'pickup') throw new DeliveryError(`${st.order_no} is a delivery, not a return pickup`);
   if (!photo) throw new DeliveryError('Take a photo of the packs picked up');
-  if (!/^image\/(jpeg|png|webp)$/.test(photo.mimetype)) throw new DeliveryError('Photo: a JPEG, PNG or WebP picture');
+  const type = imageType(photo);
+  if (!type) throw new DeliveryError('Photo: a JPEG, PNG or WebP picture');
+  photo = { ...photo, mimetype: type }; // eslint-disable-line no-param-reassign
   const name = String(b.receiver_name || '').trim().slice(0, 120) || null;
   await q.query("UPDATE trip_stops SET status = 'picked_up', receiver_name = ?, photo = ?, photo_type = ?, done_by = ?, done_at = UTC_TIMESTAMP() WHERE stop_id = ?",
     [name, photo.buffer, photo.mimetype, empId, stopId]);
@@ -349,8 +372,9 @@ async function stopCash(q, stopId, b, empId, office) {
   const t = await tripRow(q, st.trip_id);
   if (!canDrive(t, empId, office)) throw new DeliveryError('Only the driver of this trip (or the office) can record its cash', 403);
   if (t.status !== 'out') throw new DeliveryError(`Trip T-${t.trip_id} is ${t.status}`, 409);
+  if (st.kind !== 'delivery') throw new DeliveryError(`${st.return_no || 'This stop'} is a return pickup: no cash is collected there`);
   const amount = String(b.amount ?? '').trim();
-  const r = await wrap(() => commerce.recordPayment(q, st.order_no, { amount, mode: 'cash', received_on: b.received_on, note: `Collected on trip T-${t.trip_id}` }, empId));
+  const r = await wrap(() => commerce.recordPayment(q, st.order_no, { amount, mode: 'cash', note: `Collected on trip T-${t.trip_id}` }, empId)); // today: cash is counted when it is collected
   await q.query('UPDATE trip_stops SET cash_collected = cash_collected + ? WHERE stop_id = ?', [Number(amount), stopId]);
   return { stop_id: stopId, ...r };
 }
@@ -383,8 +407,8 @@ async function returnToGodown(q, orderNo, reason, empId) {
   const o = await lockOrder(q, orderNo, ['failed']);
   const why = String(reason || '').trim().slice(0, 200);
   if (!why) throw new DeliveryError('Why is it returned to the godown?');
-  await commerce.doCancel(q, o.order_id, `Delivery failed, returned to the godown: ${why}`, empId);
-  return { order_no: orderNo, status: 'cancelled' };
+  const r = await wrap(() => commerce.cancelOrder(q, o.order_no, `Delivery failed, returned to the godown: ${why}`, empId)); // cancel after dispatch: its approval when the setting asks for one
+  return { order_no: orderNo, status: r.pending ? o.status : 'cancelled', pending: Boolean(r.pending), approval_id: r.approval_id || null };
 }
 
 /** b = { courier_id, awb_no, eway_bill_no } */
@@ -436,6 +460,7 @@ async function opsCounts(q) {
 }
 
 module.exports = {
+  otpFailed,
   FAIL_REASONS, DeliveryError, pickList, startPacking, packState, packScan, resetScans, markPacked, createTrip, setStops, startTrip,
   stopDelivered, stopFailed, stopPickedUp, stopCash, endTrip, reattempt, returnToGodown, handToCourier, courierDelivered, pickedUp, opsCounts,
 };

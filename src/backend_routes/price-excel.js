@@ -71,6 +71,7 @@ async function diffWorkbook(q, buffer, effective) {
   }
   const ws = wb.getWorksheet(SHEET);
   if (!ws) throw new InputError(`The workbook has no "${SHEET}" sheet (use the exported price list)`);
+  if (ws.rowCount > 5001) throw new InputError(`At most 5,000 rows in one import (this sheet has ${ws.rowCount - 1})`); // security review L3
   const { header, rows } = sheetRows(ws, 'SKU');
   if (!header.includes('SKU')) throw new InputError(`The ${SHEET} sheet has no SKU column`);
   const lists = await pricing.lists(q);

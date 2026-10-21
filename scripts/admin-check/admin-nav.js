@@ -1,6 +1,8 @@
 // Admin navigation check for the grouped sidebar (Dashboard, Sales, Catalogue, Website content, Setup, divider,
 // User Interface). Exit code 1 on any failure.
-// 1. Expanded (admin, 1366 wide): every admin screen to every other screen (16 x 15 = 240 moves, one Euler circuit so
+// Runs with Commerce switched OFF (the state the live site starts in): the check switches commerce_enabled off and puts
+// it back at the end. The Commerce group and its screens are then not in the sidebar.
+// 1. Expanded (admin, 1366 wide): every admin screen to every other screen (20 x 19 = 380 moves, one Euler circuit so
 //    every ordered pair occurs once), each through its group: a closed group is opened by its header first (groups
 //    are closed again along the way, so this happens often). After each move: the screen's heading, no "could not
 //    load" panel, loading finished, list screens show their own first row (compared with the API), the item is the
@@ -9,12 +11,14 @@
 // 3. Desktop: no menu toggle in the header; the one pinned under the sidebar list collapses / expands ("Collapse menu"
 //    / "Expand menu", aria-expanded). Collapsed to icons: every screen through its icon (tooltip), survives a reload.
 // 4. 390 wide: the drawer (burger, groups, a link closes it, the backdrop and Esc close it), every screen through it.
-// 5. Roles: viewer and editor see exactly the items their role may open (Setup: Languages only), admin all 16.
+// 5. Roles: Sub-admin and Viewer (the roles the old editor and viewer users get) see exactly the items their role's
+//    permissions open (src/shared/permissions.js + role_permissions), and each of them loads; Admin sees all 20.
 // 6. Leads badge = the API's count of New leads. User Interface -> /en in a new tab, never active.
 // 7. Error boundary: one list answered (in the browser only) with a broken row shows "This screen could not load"
 //    inside the page, logs the error, and the sidebar keeps working.
-// Temporary admin users ZZU-NAV (admin), ZZU-NAV-E (editor), ZZU-NAV-V (viewer) get session cookies signed with
-// JWT_SECRET (no dAdmin row needed); they and their audit rows are removed at the end. Read-only otherwise.
+// Three active dAdmin employees who are not admin users yet become temporary admin users (Admin, Sub-admin, Viewer; a
+// session needs an active dAdmin employee) with session cookies signed with JWT_SECRET; they and their audit rows are
+// removed at the end. Read-only otherwise.
 // Setup like scripts/visual-check (puppeteer-core is NOT a project dependency; Chrome must be installed):
 //   npm i --prefix <scratch> puppeteer-core@24
 //   NODE_PATH=<scratch>/node_modules WEB_URL=http://localhost:3000 npm run test:admin-nav
@@ -29,35 +33,41 @@ if (process.env.NODE_ENV === 'production') {
 const puppeteer = require('puppeteer-core');
 const jwt = require('jsonwebtoken');
 const { getDBConnection } = require('../../config/db');
+const permissions = require('../../src/shared/permissions');
 
 const WEB = process.env.WEB_URL || 'http://localhost:3000';
 const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe';
-const USERS = { admin: 'ZZU-NAV', editor: 'ZZU-NAV-E', viewer: 'ZZU-NAV-V' };
+const USERS = {}; // admin / subadmin / viewer -> emp_id (picked in main)
+const ROLE_ID = { admin: permissions.ADMIN_ROLE_ID, subadmin: permissions.SUBADMIN_ROLE_ID, viewer: 3 };
+const DADMIN = /^[A-Za-z0-9_]{1,32}$/.test(process.env.DADMIN_DB_NAME || '') ? process.env.DADMIN_DB_NAME : 'dadmin';
 const COOKIE = process.env.ADMIN_COOKIE_NAME || 'dfresh_admin_token';
 const APP = process.env.ADMIN_APP_KEY || 'dFresh';
 const db = getDBConnection(process.env.DB_NAME || 'dfresh').promise();
 
-// path, heading, group ('' = no group), lowest role, API list to compare the first row with ([endpoint, keys]) or null.
-// Order = the sidebar order.
+// path, heading, group ('' = no group), the section whose "view" opens it (null = every signed-in user), API list to
+// compare the first row with ([endpoint, keys]) or null. Order = the sidebar order (Sidebar.js, Commerce off).
 const SCREENS = [
-  ['', 'Dashboard', '', 'viewer', null],
-  ['leads', 'Leads', 'sales', 'viewer', null],
-  ['categories', 'Categories', 'catalogue', 'viewer', ['/categories', ['category_key']]],
-  ['products', 'Products', 'catalogue', 'viewer', null],
-  ['kits', 'Business kits', 'catalogue', 'viewer', ['/kits', ['kit_key']]],
-  ['size-picker', 'Size picker', 'catalogue', 'viewer', ['/size-picker', ['size_label']]],
-  ['import-export', 'Excel import / export', 'catalogue', 'editor', null],
-  ['banners', 'Banners', 'content', 'viewer', ['/banners', ['banner_key']]],
-  ['translations', 'Translations', 'content', 'viewer', null],
-  ['towns', 'Towns', 'content', 'viewer', ['/towns', ['town_key']]],
-  ['form-options', 'Form options', 'content', 'viewer', ['/form-options', ['list_key', 'option_value']]],
-  ['brochures', 'Brochures', 'content', 'viewer', null],
-  ['languages', 'Languages', 'setup', 'viewer', null],
-  ['settings', 'Settings', 'setup', 'admin', null],
-  ['users', 'Admin users', 'setup', 'admin', null],
-  ['audit', 'Audit log', 'setup', 'admin', null],
+  ['', 'Dashboard', '', null, null],
+  ['leads', 'Leads', 'sales', 'leads', null],
+  ['categories', 'Categories', 'catalogue', 'products', ['/categories', ['category_key']]],
+  ['products', 'Products', 'catalogue', 'products', null],
+  ['kits', 'Business kits', 'catalogue', 'products', ['/kits', ['kit_key']]],
+  ['size-picker', 'Size picker', 'catalogue', 'products', ['/size-picker', ['size_label']]],
+  ['import-export', 'Excel import / export', 'catalogue', 'products', null],
+  ['banners', 'Banners', 'content', 'content', ['/banners', ['banner_key']]],
+  ['translations', 'Translations', 'content', 'content', null],
+  ['towns', 'Towns', 'content', 'content', ['/towns', ['town_key']]],
+  ['form-options', 'Form options', 'content', 'content', ['/form-options', ['option_value']]], // the list name is the group heading
+  ['brochures', 'Brochures', 'content', 'content', null],
+  ['approvals', 'Approvals', 'setup', null, null],
+  ['languages', 'Languages', 'setup', 'content', null],
+  ['settings', 'Settings', 'setup', 'settings', null],
+  ['commerce-settings', 'Commerce settings', 'setup', 'settings', null],
+  ['notifications', 'Notifications', 'setup', 'settings', null],
+  ['users', 'Admin users', 'setup', 'users', null],
+  ['roles', 'Roles', 'setup', 'users', null],
+  ['audit', 'Audit log', 'setup', 'audit', null],
 ];
-const RANK = { viewer: 1, editor: 2, admin: 3 };
 const href = (path) => `/admin/${path}`;
 const linkSel = (path) => `.a-nav a[href="${href(path)}"]`;
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -76,10 +86,19 @@ function circuit(n) {
 }
 
 async function main() {
+  const [free] = await db.query(`SELECT e.emp_id FROM \`${DADMIN}\`.employee e WHERE e.active = 1 AND e.deleted_time IS NULL
+      AND NOT EXISTS (SELECT 1 FROM admin_users a WHERE a.emp_id = e.emp_id) ORDER BY e.emp_id LIMIT 3`);
+  if (free.length < 3) throw new Error('needs 3 active dAdmin employees who are not admin users');
+  ['admin', 'subadmin', 'viewer'].forEach((r, i) => { USERS[r] = free[i].emp_id; });
   for (const [role, emp] of Object.entries(USERS)) {
-    await db.query('DELETE FROM admin_users WHERE emp_id = ?', [emp]);
-    await db.query("INSERT INTO admin_users (emp_id, role, is_active, created_by) VALUES (?, ?, 1, 'admin-nav check')", [emp, role]);
+    await db.query("INSERT INTO admin_users (emp_id, role, role_id, is_active, created_by) VALUES (?, 'viewer', ?, 1, 'admin-nav check')", [emp, ROLE_ID[role]]);
   }
+  const [[cs]] = await db.query("SELECT value FROM commerce_settings WHERE setting_key = 'commerce_enabled'");
+  const commerceWas = cs ? cs.value : null;
+  await db.query("UPDATE commerce_settings SET value = '0' WHERE setting_key = 'commerce_enabled'");
+  const [permRows] = await db.query('SELECT role_id, section, can_view, can_create, can_edit, can_approve, can_delete FROM role_permissions');
+  const permsOf = (role) => permissions.permsFor(ROLE_ID[role], permRows.filter((r) => Number(r.role_id) === ROLE_ID[role]));
+  const opens = (role, s) => !s[3] || permissions.can(permsOf(role), s[3], 'view');
   const token = (emp) => jwt.sign({ sub: emp, app: APP, stage: 'session' }, process.env.JWT_SECRET, { expiresIn: '30m' });
   const browser = await puppeteer.launch({ executablePath: CHROME, headless: 'new' });
   let failures = 0;
@@ -128,7 +147,7 @@ async function main() {
       h1: (document.querySelector('.a-main h1') || {}).textContent || null,
       broken: !!document.querySelector('.a-main .a-crash'),
       url: window.location.pathname,
-      first: [...document.querySelectorAll('.a-main table.a-table tbody tr:first-child td')].map((td) => td.textContent.trim()),
+      first: [...(([...document.querySelectorAll('.a-main table.a-table tbody tr')].find((tr) => tr.querySelector('td')) || { querySelectorAll: () => [] }).querySelectorAll('td'))].map((td) => td.textContent.trim()), // grouped lists start with a header row
       active: [...document.querySelectorAll('.a-nav a.active')].map((a) => a.getAttribute('href')),
       current: [...document.querySelectorAll('.a-nav a[aria-current="page"]')].map((a) => a.getAttribute('href')),
       groupOpen: g ? (document.querySelector(`#a-grp-${g}`) || {}).hidden === false : true,
@@ -168,7 +187,7 @@ async function main() {
     if (JSON.stringify(sidebar.groups.map((g) => g.replace(/\d+\s*new$/, '').trim())) !== JSON.stringify(['Sales', 'Catalogue', 'Website content', 'Setup'])) fail(`groups ${sidebar.groups.join(' | ')}`);
     const ui = sidebar.ext.find((x) => x.href === '/en');
     if (!ui || ui.target !== '_blank' || ui.rel !== 'noopener noreferrer' || ui.label !== 'User Interface - opens the website in a new tab') fail(`User Interface link: ${JSON.stringify(sidebar.ext)}`);
-    else console.log('admin sidebar: Dashboard + 4 groups (16 screens) + User Interface -> /en (new tab, noopener noreferrer)');
+    else console.log(`admin sidebar: Dashboard + 4 groups (${SCREENS.length} screens, no Commerce group while it is off) + User Interface -> /en (new tab, noopener noreferrer)`);
 
     // Leads badge = API count of New leads
     const counts = await apiCall(page, '/nav-counts');
@@ -195,7 +214,7 @@ async function main() {
       await check(page, order[m], `move ${m} ${SCREENS[order[m - 1]][0] || 'dashboard'} -> ${to || 'dashboard'}`, firstRow);
     }
     console.log(`expanded: ${order.length - 1} moves (every ordered pair once), groups closed ${reopened} times along the way and reopened by their headers`);
-    const tail = order.slice(-16);
+    const tail = order.slice(-SCREENS.length);
     for (let k = tail.length - 2; k >= 0; k -= 1) { await page.goBack(); await check(page, tail[k], `back to ${SCREENS[tail[k]][0] || 'dashboard'}`, firstRow); }
     for (let k = 1; k < tail.length; k += 1) { await page.goForward(); await check(page, tail[k], `forward to ${SCREENS[tail[k]][0] || 'dashboard'}`, firstRow); }
     console.log(`back / forward: ${tail.length - 1} + ${tail.length - 1}`);
@@ -273,14 +292,13 @@ async function main() {
     if (errors.length) { fail(`drawer: ${errors.join(' || ').slice(0, 300)}`); errors.length = 0; }
 
     // ---- 5. roles ------------------------------------------------------------------------------------
-    for (const role of ['viewer', 'editor']) {
+    for (const role of ['viewer', 'subadmin']) {
       const p = await newPage(role);
       const shown = await p.$$eval('.a-nav a', (as) => as.filter((a) => !a.target).map((a) => a.getAttribute('href')));
-      const want = SCREENS.filter((s) => RANK[role] >= RANK[s[3]]).map(([path]) => href(path));
+      const want = SCREENS.filter((s) => opens(role, s)).map(([path]) => href(path));
       const setup = await p.$$eval('#a-grp-setup a', (as) => as.map((a) => a.textContent.trim()));
       if (JSON.stringify(shown) !== JSON.stringify(want)) fail(`${role}: sidebar ${shown.join(' ')} (expected ${want.join(' ')})`);
-      else if (JSON.stringify(setup) !== JSON.stringify(['Languages'])) fail(`${role}: Setup shows ${setup.join(', ')}`);
-      else console.log(`${role}: ${shown.length} items, Setup = Languages only${role === 'editor' ? ', Excel import / export shown' : ', no Excel import / export'}`);
+      else console.log(`${role}: ${shown.length} items, Setup = ${setup.join(', ')}`);
       for (const path of want.map((h) => h.replace('/admin/', ''))) {
         await go(p, path);
         await check(p, SCREENS.findIndex((s) => s[0] === path), `${role} -> ${path || 'dashboard'}`);
@@ -311,8 +329,11 @@ async function main() {
   } finally {
     await browser.close();
     const emps = Object.values(USERS);
-    await db.query(`DELETE FROM audit_log WHERE emp_id IN (${emps.map(() => '?').join(', ')})`, emps);
-    await db.query(`DELETE FROM admin_users WHERE emp_id IN (${emps.map(() => '?').join(', ')})`, emps);
+    if (emps.length) {
+      await db.query(`DELETE FROM audit_log WHERE emp_id IN (${emps.map(() => '?').join(', ')})`, emps);
+      await db.query(`DELETE FROM admin_users WHERE emp_id IN (${emps.map(() => '?').join(', ')})`, emps);
+    }
+    if (commerceWas !== null) await db.query("UPDATE commerce_settings SET value = ? WHERE setting_key = 'commerce_enabled'", [commerceWas]);
     await db.end();
   }
   process.exit(failures ? 1 : 0);

@@ -1,4 +1,4 @@
-// The customer wallet (docs/COMMERCE-SPEC.md 4.5; migration 20261021_commerce_wallet_promotions.sql). Shared by the
+// The customer wallet (docs/COMMERCE-SPEC.md 4.5; migration 20261021_commerce_10_promotions_wallet.sql). Shared by the
 // orders (use, give back), returns (refund to the wallet, cashback taken back), promotions (cashback, manual credit /
 // debit, expiry) and the demo seed.
 // - Balance = SUM(amount). A credit (cashback, refund, manual) keeps `remaining` and its expiry date (Commerce settings:
@@ -18,7 +18,7 @@ const round2 = (n) => Math.round(n * 100) / 100;
 const IST_TODAY = "DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+05:30'))";
 
 async function balance(q, customerId) {
-  const [[r]] = await q.query('SELECT COALESCE(SUM(amount), 0) AS bal FROM wallet_entries WHERE customer_id = ?', [customerId]);
+  const [[r]] = await q.query('SELECT COALESCE(SUM(amount), 0) AS bal FROM wallet_entries WHERE customer_id = ? FOR SHARE', [customerId]);
   return round2(Number(r.bal));
 }
 
@@ -29,7 +29,7 @@ async function usable(q, customerId, orderId = 0) {
               WHERE a.credit_entry_id = e.entry_id AND a.given_back = 0 AND u.source = 'used' AND u.order_id = ?), 0) AS left_amt
        FROM wallet_entries e
       WHERE e.customer_id = ? AND e.source IN ('cashback', 'refund', 'manual') AND (e.expires_on IS NULL OR e.expires_on >= ${IST_TODAY})
-      ORDER BY e.created_at, e.entry_id`, [orderId || 0, customerId]);
+      ORDER BY e.created_at, e.entry_id FOR SHARE`, [orderId || 0, customerId]); // the latest rows, not an older snapshot
   return rows.map((r) => ({ entry_id: r.entry_id, source: r.source, left: round2(Number(r.left_amt)) })).filter((r) => r.left > 0.005);
 }
 
@@ -71,6 +71,7 @@ async function credit(q, { customerId, source, amount, reason, orderId = null, r
 
 /** a debit (used on an order, cashback reversed, manual): takes from the credits oldest first; may leave a negative balance */
 async function debit(q, { customerId, source, amount, reason, orderId = null, returnId = null, approvalId = null }, empId) {
+  await q.query('SELECT customer_id FROM customers WHERE customer_id = ? FOR UPDATE', [customerId]); // one wallet change at a time per customer
   const amt = round2(amount);
   if (amt <= 0) return null;
   const p = await plan(q, customerId, amt);
@@ -86,6 +87,7 @@ async function debit(q, { customerId, source, amount, reason, orderId = null, re
 
 /** an order uses the wallet -> { bySource } (what each source gave) */
 async function use(q, customerId, amount, orderId, orderNo, empId) {
+  await q.query('SELECT customer_id FROM customers WHERE customer_id = ? FOR UPDATE', [customerId]); // one wallet change at a time per customer
   const bal = await balance(q, customerId);
   if (round2(amount) > bal + 0.005) throw Object.assign(new Error(`The wallet has only Rs ${bal.toFixed(2)}`), { status: 400 });
   return debit(q, { customerId, source: 'used', amount, reason: `Used on ${orderNo}`, orderId }, empId);

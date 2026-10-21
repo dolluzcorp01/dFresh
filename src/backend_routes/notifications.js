@@ -1,4 +1,4 @@
-// Notifications (docs/COMMERCE-SPEC.md 5.5f; migration 20261022_commerce_notifications.sql). What happens in the back
+// Notifications (docs/COMMERCE-SPEC.md 5.5f; migration 20261021_commerce_11_notifications.sql). What happens in the back
 // office is told to customers and staff by e-mail, always through the mail outbox (CLAUDE.md rule 7): a hook renders the
 // message and inserts the mail row and its notification_log row in the SAME transaction as the change, so a rolled back
 // change sends nothing and a SendGrid outage only delays the mail (outbox-worker.js retries; documents are attached as
@@ -63,10 +63,11 @@ let muted = false;
 /** the demo seed builds months of history: no mail for any of it */
 function setMuted(on) { muted = Boolean(on); }
 
-/** is this event switched on (and e-mail on)? */
+/** is this event switched on (and e-mail on)? Nothing at all while Commerce is switched off (go-live: the site runs
+ *  with Commerce off first, and no daily mail may go out before it is switched on) */
 async function isOn(q, event) {
   const cs = await commerceSettings.read(q);
-  return Boolean(cs.notify_email) && cs[settingKey(event)] !== false;
+  return Boolean(cs.commerce_enabled) && Boolean(cs.notify_email) && cs[settingKey(event)] !== false;
 }
 
 // ---------------------------------------------------------------- templates
@@ -459,6 +460,7 @@ const JOBS = { overdue: jobOverdue, wallet_expiring: jobWalletExpiring, stock_da
 async function runDaily({ force = false, by = 'system' } = {}) {
   if (muted) return [];
   const cs = await commerceSettings.read(db);
+  if (!cs.commerce_enabled) return [{ job: 'all', result: 'Commerce is switched off: no daily mails' }];
   const hour = Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', hour: 'numeric', hourCycle: 'h23' }).format(new Date()));
   if (!force && hour < (Number(cs.notify_daily_hour) || 0)) return [];
   const today = istToday();
@@ -500,9 +502,10 @@ async function sampleFor(q, event, me, lang = null) {
   const pick = async (sql) => { const [[r]] = await q.query(sql); return r || null; };
   const ord = async (where) => {
     // a customer in the language being edited, with an e-mail address, when there is one
-    const pref = `(SELECT COALESCE(c.lang_code, '') = ${q.escape(lang || '')} FROM customers c WHERE c.customer_id = o.customer_id) DESC,
+    const pref = `(SELECT COALESCE(c.lang_code, '') = ? FROM customers c WHERE c.customer_id = o.customer_id) DESC,
       EXISTS (SELECT 1 FROM customer_contacts x WHERE x.customer_id = o.customer_id AND x.is_active = 1 AND x.email IS NOT NULL) DESC`;
-    const r = await pick(`SELECT order_id FROM orders o WHERE ${where} ORDER BY ${pref}, order_id DESC LIMIT 1`) || await pick('SELECT order_id FROM orders ORDER BY order_id DESC LIMIT 1');
+    const [[r0]] = await q.query(`SELECT order_id FROM orders o WHERE ${where} ORDER BY ${pref}, order_id DESC LIMIT 1`, [lang || '']);
+    const r = r0 || await pick('SELECT order_id FROM orders ORDER BY order_id DESC LIMIT 1');
     if (!r) return null;
     const f = await orderFacts(q, r.order_id);
     return { ...f, sample: `order ${f.order.order_no}` };

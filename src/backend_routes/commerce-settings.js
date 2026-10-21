@@ -1,4 +1,4 @@
-// Commerce settings (docs/COMMERCE-SPEC.md section 3; table commerce_settings, migration 20261020_commerce_settings.sql).
+// Commerce settings (docs/COMMERCE-SPEC.md section 3; table commerce_settings, migration 20261021_commerce_02_settings.sql).
 // read(q) -> { key: typed value }; check(row, raw) -> { value, error } (the stored text) for the admin PUT.
 // The lists (customer types, return reasons, delivery methods and areas, locations) are described in LISTS and edited
 // through the generic list routes in Admin_server.js.

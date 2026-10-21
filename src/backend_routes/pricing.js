@@ -1,4 +1,4 @@
-// Prices (docs/COMMERCE-SPEC.md 4.3; migration 20261020_commerce_pricing.sql), shared by the admin routes, the
+// Prices (docs/COMMERCE-SPEC.md 4.3; migration 20261021_commerce_04_catalogue.sql), shared by the admin routes, the
 // order logic (commerce.js), the price Excel (price-excel.js) and the demo seed, so every change is the same change.
 // - Price lists: 'default' plus one per customer type (Commerce settings > Customer types).
 // - sku_prices holds one row per SKU, list and "effective from" date (India date). The price on a day is the row with

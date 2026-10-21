@@ -1,4 +1,4 @@
-// Promotions (docs/COMMERCE-SPEC.md 3, 4.8; migration 20261021_commerce_wallet_promotions.sql): coupons, automatic
+// Promotions (docs/COMMERCE-SPEC.md 3, 4.8; migration 20261021_commerce_10_promotions_wallet.sql): coupons, automatic
 // offers, cashback and manual wallet credit / debit. Shared by the order logic (commerce.js prepare), returns.js, the
 // admin routes and the demo seed. Every change is audited.
 // - Coupons: one per order. Checked: on, dates, who (customer types or specific customers), uses in all and per
@@ -108,11 +108,11 @@ async function evalCoupon(q, rawCode, ctx) {
     throw new PromoError(`Coupon ${code} is not for this customer (only ${[types.length ? `types: ${types.join(', ')}` : null, custs.length ? `${custs.length} named customer(s)` : null].filter(Boolean).join('; ')})`);
   }
   if (!mine && c.total_limit !== null) {
-    const [[u]] = await q.query("SELECT COUNT(*) AS n FROM coupon_redemptions WHERE code = ? AND status = 'active'", [code]);
+    const [[u]] = await q.query(`SELECT COUNT(*) AS n FROM coupon_redemptions WHERE code = ? AND status = 'active'${ctx.lock ? ' FOR SHARE' : ''}`, [code]); // after the coupon lock: the latest uses
     if (Number(u.n) >= c.total_limit) throw new PromoError(`Coupon ${code} is used up (${u.n} of ${c.total_limit} uses)`);
   }
   if (!mine && c.per_customer_limit !== null) {
-    const [[u]] = await q.query("SELECT COUNT(*) AS n FROM coupon_redemptions WHERE code = ? AND customer_id = ? AND status = 'active'", [code, ctx.customerId]);
+    const [[u]] = await q.query(`SELECT COUNT(*) AS n FROM coupon_redemptions WHERE code = ? AND customer_id = ? AND status = 'active'${ctx.lock ? ' FOR SHARE' : ''}`, [code, ctx.customerId]);
     if (Number(u.n) >= c.per_customer_limit) throw new PromoError(`Coupon ${code}: this customer has used it ${u.n} time${Number(u.n) === 1 ? '' : 's'} already (limit ${c.per_customer_limit} per customer)`);
   }
   if (ctx.goods < c.min_order) throw new PromoError(`Coupon ${code} needs goods of at least ${rs(c.min_order)} (this order: ${rs(ctx.goods)})`);
@@ -192,7 +192,7 @@ async function cashbackDue(q, empId) {
 async function reverseCashback(q, orderId, taxableBack, returnId, returnNo, empId) {
   const [[o]] = await q.query('SELECT order_no, customer_id, cashback_base, cashback_amount FROM orders WHERE order_id = ? FOR UPDATE', [orderId]);
   if (!o || !(Number(o.cashback_amount) > 0) || !(Number(o.cashback_base) > 0)) return 0;
-  const [[done]] = await q.query("SELECT COALESCE(-SUM(amount), 0) AS n FROM wallet_entries WHERE order_id = ? AND source = 'reversed'", [orderId]);
+  const [[done]] = await q.query("SELECT COALESCE(-SUM(amount), 0) AS n FROM wallet_entries WHERE order_id = ? AND source = 'reversed' FOR SHARE", [orderId]);
   const amt = round2(Math.min(Number(o.cashback_amount) * (taxableBack / Number(o.cashback_base)), Number(o.cashback_amount) - Number(done.n)));
   if (amt <= 0.005) return 0;
   await wallet.debit(q, { customerId: o.customer_id, source: 'reversed', amount: amt, reason: `Cashback on ${o.order_no} taken back: return ${returnNo}`, orderId, returnId }, empId);
@@ -247,6 +247,7 @@ function startJobs() {
     try {
       const [[has]] = await conn.query("SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'wallet_allocations'");
       if (!Number(has.n)) return;
+      if (!(await commerceSettings.read(conn)).commerce_enabled) return; // nothing runs while Commerce is switched off
       await conn.beginTransaction();
       const r = await runJobs(conn, 'system');
       await conn.commit();
