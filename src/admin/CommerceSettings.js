@@ -8,7 +8,7 @@ import { api } from './adminApi';
 import { Drawer, InfoCard, Loading, Notice, fmtDate, useAction, useCan, useConfirm, useLeaveGuard, useLoad } from './ui';
 
 // groups in this order; a list is shown after the group named next to it
-const ORDER = ['General', 'Orders and pricing', 'Inventory', 'Returns', 'Delivery', 'Invoice', 'Numbering', 'GST and compliance', 'Payments', 'Notifications', 'Accounting', 'Approvals'];
+const ORDER = ['General', 'Orders and pricing', 'Inventory', 'Returns', 'Delivery', 'Invoice', 'Numbering', 'GST and compliance', 'Payments', 'Notifications', 'Staff notifications', 'Accounting', 'Approvals'];
 const LISTS_AFTER = { 'Orders and pricing': ['customer_types'], Inventory: ['locations'], Returns: ['return_reasons'], Delivery: ['delivery_methods', 'delivery_areas', 'vehicles', 'drivers', 'couriers'] };
 
 export default function CommerceSettings() {

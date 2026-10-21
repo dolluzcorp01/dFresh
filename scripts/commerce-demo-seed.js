@@ -32,6 +32,8 @@
 //    Distributors (2 % from Rs 5,000, max Rs 1,000); after the orders: cashback of the orders whose return window has
 //    passed, manual wallet credits (one through an approved request, one expiring in 10 days, one already expired)
 // 8. a demo approval decided, and Commerce switched ON
+// 9. notifications (phase 10): MUTED while all of the above is built (months of demo history must not mail anyone);
+//    then Demo Hotel Sangam gets its mails in Tamil and Demo Distributor Vellore opts out of reminders
 // Migrations never contain any of this (docs/COMMERCE-SPEC.md 9). Running it twice does nothing the second time.
 require('dotenv').config({ quiet: true });
 const fs = require('fs');
@@ -50,6 +52,9 @@ const returns = require('../src/backend_routes/returns');
 const promotions = require('../src/backend_routes/promotions');
 const wallet = require('../src/backend_routes/wallet');
 const customers = require('../src/backend_routes/customers');
+const notifications = require('../src/backend_routes/notifications');
+
+notifications.setMuted(true); // the demo history sends no mail (the hooks still run, they just do nothing)
 
 const db = getDBConnection(DB).promise();
 const ROOT = path.join(__dirname, '..');
@@ -62,7 +67,7 @@ const CUSTOMERS = [
   ['Demo Care Clinic', '9800000004', 'Hospital', 'Kanchipuram', 'Railway Road', null, '33', '631502', 15, 15000],
   ['Demo Tech Park Office', '9800000005', 'Office', 'Chennai', 'OMR, Padur', '33AAACD0005A1Z7', '33', '603103', 15, 20000],
   ['Demo Bank Branch', '9800000006', 'Office', 'Sriperumbudur', 'Main Road', null, '33', '602105', 15, 10000],
-  ['Demo Distributor Vellore', '9800000007', 'Distributor', 'Vellore', 'Katpadi Road', '33AAACD0007A1Z3', '33', '632007', 30, 150000],
+  ['Demo Distributor Vellore', '9800000007', 'Distributor', 'Vellore', 'Katpadi Road', '33AAACD0007A1Z3', '33', '632007', 7, 150000], // 7 days: overdue (opted out of reminders)
   ['Demo Distributor Bengaluru', '9800000008', 'Distributor', 'Bengaluru', 'Peenya Industrial Area', '29AAACD0008A1Z1', '29', '560058', 30, 150000],
   ['Demo Home Priya', '9800000009', 'Home', 'Kanchipuram', 'Vaikunta Perumal Koil St', null, '33', '631502', 0, 0],
   ['Demo Home Arun', '9800000010', 'Home', 'Chennai', 'Tambaram West', null, '33', '600045', 0, 0],
@@ -367,6 +372,10 @@ async function inTx(fn) {
     await db.query("UPDATE payments p JOIN orders o ON o.order_id = p.order_id SET p.received_on = DATE(CONVERT_TZ(o.delivered_at, '+00:00', '+05:30')), p.created_at = o.delivered_at WHERE o.order_no = ? AND p.mode = 'cash' AND o.delivered_at IS NOT NULL", [no]);
     await db.query('UPDATE pack_scans p JOIN orders o ON o.order_id = p.order_id SET p.created_at = o.packed_at WHERE o.order_no = ? AND o.packed_at IS NOT NULL', [no]);
   }
+  // the cost kept on each stock-out = the average cost valid on its (moved back) dispatch day
+  const [outs] = await db.query("SELECT move_id, sku_code, created_at FROM stock_movements WHERE move_type = 'out'");
+  for (const o of outs) await db.query('UPDATE stock_movements SET unit_cost = ? WHERE move_id = ?', [await stock.costAt(db, o.sku_code, o.created_at), o.move_id]);
+  console.log(`demo costs: ${outs.length} stock-out movements carry the average cost of their dispatch day`);
   for (const [tripId, daysAgo] of trips) {
     await db.query(`UPDATE delivery_trips SET trip_date = DATE(CONVERT_TZ(UTC_TIMESTAMP() - INTERVAL ? HOUR, '+00:00', '+05:30')), created_at = UTC_TIMESTAMP() - INTERVAL ? HOUR,
         started_at = UTC_TIMESTAMP() - INTERVAL ? HOUR, ended_at = UTC_TIMESTAMP() - INTERVAL ? HOUR WHERE trip_id = ?`, [daysAgo * 24 + 2, daysAgo * 24 + 3, daysAgo * 24 + 2, Math.max(daysAgo * 24 - 21, 1), tripId]);
@@ -543,6 +552,12 @@ async function inTx(fn) {
   await inTx((q) => stock.saveCount(q, cnt.count_id, det.lines.map((l) => ({ line_id: l.line_id, counted: l.system_qty + (DIFF[l.sku_code] || 0) })), 'DZIND002'));
   const sub = await inTx((q) => stock.submitCount(q, cnt.count_id, 'DZIND002'));
   console.log(`demo inventory: damaged 3 x DF019-R10, sample write-off posted, expired write-off #${wo.write_off_id} ${wo.status}, count #${cnt.count_id} ${sub.status} (${sub.differences} differences)`);
+
+  // notifications: a Tamil customer and one that opted out of reminders (both have overdue invoices for the tests)
+  await db.query("UPDATE customers SET lang_code = 'ta' WHERE name = 'Demo Hotel Sangam' AND merged_into IS NULL");
+  await db.query("UPDATE customers SET opt_out_reminders = 1 WHERE name = 'Demo Distributor Vellore'");
+  const [[nm]] = await db.query('SELECT COUNT(*) AS n FROM notification_log');
+  console.log(`demo notifications: Demo Hotel Sangam mails in Tamil, Demo Distributor Vellore opted out of reminders; ${nm.n} notification(s) during the seed (muted)`);
 
   await db.query("UPDATE commerce_settings SET value = '1', updated_by = 'demo-seed', updated_at = UTC_TIMESTAMP() WHERE setting_key = 'commerce_enabled'");
   console.log(`demo: ${CUSTOMERS.length} customers (+ a duplicate to merge and a converted lead), ${made} orders, ${madeRet.length} returns, approvals from the returns, wallet, write-off and count; Commerce switched on`);

@@ -52,7 +52,8 @@ export default function CustomerDrawer({ id, onClose, onChanged }) {
 function Overview({ d, reload }) {
   const canEdit = useCan('customers', 'edit') && !d.merged_into;
   const act = useAction();
-  const [f, setF] = useState({ name: d.name, business_name: d.business_name || '', type_key: d.type_key, phone: d.phone, email: d.email || '', owner_emp_id: d.owner_emp_id || '', source: d.source || '', tags: d.tags.join(', ') });
+  const [f, setF] = useState({ name: d.name, business_name: d.business_name || '', type_key: d.type_key, phone: d.phone, email: d.email || '', owner_emp_id: d.owner_emp_id || '', source: d.source || '', tags: d.tags.join(', '),
+    lang_code: d.lang_code || '', opt_out_reminders: Number(d.opt_out_reminders) === 1, opt_out_offers: Number(d.opt_out_offers) === 1 });
   const [st, setSt] = useState({ status: d.status, reason: '' });
   const [credit, setCredit] = useState({ credit_days: String(d.credit_days), credit_limit: String(d.credit_limit) });
   const [pl, setPl] = useState(d.price_list || '');
@@ -73,6 +74,12 @@ function Overview({ d, reload }) {
         <label className="a-field"><span>Sales owner</span><select value={f.owner_emp_id} disabled={!canEdit} aria-label="Sales owner" onChange={(e) => setF({ ...f, owner_emp_id: e.target.value })}><option value="">None</option>{d.owners.map((o) => <option key={o.emp_id} value={o.emp_id}>{o.name}</option>)}</select></label>
         <label className="a-field"><span>Source</span><select value={f.source} disabled={!canEdit} onChange={(e) => setF({ ...f, source: e.target.value })}><option value="">-</option>{[...d.sources, 'Lead', 'Import'].map((x) => <option key={x}>{x}</option>)}</select></label>
         <label className="a-field"><span>Tags (comma separated)</span><input value={f.tags} disabled={!canEdit} aria-label="Tags" onChange={(e) => setF({ ...f, tags: e.target.value })} /></label>
+        <label className="a-field"><span>Mails in</span><select value={f.lang_code} disabled={!canEdit} aria-label="Mail language" onChange={(e) => setF({ ...f, lang_code: e.target.value })}>
+          {d.languages.map((l) => <option key={l.lang_code} value={Number(l.is_default) === 1 ? '' : l.lang_code}>{l.name_en}{Number(l.is_default) === 1 ? ' (default)' : ''}</option>)}</select></label>
+        <div className="a-field"><span>Notifications</span>
+          <label className="a-check"><input type="checkbox" checked={f.opt_out_reminders} disabled={!canEdit} aria-label="No reminders" onChange={(e) => setF({ ...f, opt_out_reminders: e.target.checked })} /> No reminders (overdue, wallet expiry)</label>
+          <label className="a-check"><input type="checkbox" checked={f.opt_out_offers} disabled={!canEdit} aria-label="No offers" onChange={(e) => setF({ ...f, opt_out_offers: e.target.checked })} /> No offers</label>
+          <small className="a-muted">Invoices, receipts and delivery mails always go.</small></div>
       </div>
       {canEdit && <button type="button" className="a-btn" disabled={act.busy} onClick={save}>Save</button>}
       <p className="a-muted">{d.customer_no} · since {day(d.created_at)} by {d.created_by}{d.owner_emp_id ? ` · owner ${owner(d.owner_emp_id)}` : ''}</p>
@@ -205,7 +212,7 @@ function Timeline({ d }) {
   const act = useAction();
   const [f, setF] = useState({ kind: 'call', happened_at: '', note: '' });
   const add = () => act.run(async () => { await api.send('POST', `/commerce/customers/${d.customer_id}/activity`, f); setF({ kind: 'call', happened_at: '', note: '' }); t.reload(); }, 'Added to the timeline');
-  const label = (r) => (r.src === 'activity' ? KIND_LABEL[r.kind] : r.src === 'return' ? 'Return' : r.src === 'wallet' ? 'Wallet' : r.src === 'follow_up' ? 'Follow-up' : KIND_LABEL[r.kind] || r.kind);
+  const label = (r) => (r.src === 'activity' ? KIND_LABEL[r.kind] : r.src === 'return' ? 'Return' : r.src === 'wallet' ? 'Wallet' : r.src === 'follow_up' ? 'Follow-up' : r.src === 'notification' ? 'Notification' : KIND_LABEL[r.kind] || r.kind);
   return (
     <>
       {act.note}

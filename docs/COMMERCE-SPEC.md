@@ -399,6 +399,33 @@ Business view on Operations; migration `20261021_commerce_reports.sql` (settings
 - Accounting export: a CSV journal (date, voucher type, number, party, GSTIN, ledger, debit, credit, narration) of
   sales, credit notes, receipts, refunds and wallet use, every voucher balanced; Tally / Zoho stays "To be confirmed".
 
+### 5.5f Built in phase 10 (notifications)
+`src/backend_routes/notifications.js` (events, templates, recipients, log, daily jobs), `doc-pdf.js` + `pdf-writer.js`
+(invoice, credit note and statement as PDF, no package), screen Setup > Notifications (`Notifications.js`); migration
+`20261022_commerce_notifications.sql`.
+- Channels: e-mail through the SendGrid outbox (sender = Settings mail_from; MAIL_TEST_TO redirects locally); WhatsApp
+  and SMS "provider not set up", off and refused by the settings check until a provider is chosen.
+- A hook in the module that makes the change queues the mail and its log row in the same transaction: order confirmed
+  (first confirmation only; an order waiting for approval is silent), packed (not the re-pack after a failed
+  delivery), out for delivery, handed to the courier (AWB + tracking link), delivered, invoice (PDF), payment received
+  (receipt), return accepted (inside the window, or when approved) / picked up (driver, or received at the godown) /
+  refunded (credit note PDF), wallet credited (cashback, manual; a refund to the wallet is in the refund mail). Staff:
+  approval waiting (approver roles with approve on the section, not the requester), failed delivery and cash handover
+  difference (users with create on Delivery). A hook never breaks the change; the demo seed mutes them.
+- Daily (notify_daily_hour, India time, once per day per job, or Run daily mails now): overdue reminder with the
+  statement PDF every N days at most M times since the oldest overdue invoice fell due; wallet credit expiring within
+  N days (once per credit); low stock and near expiry (users with edit on Inventory); follow-ups due today or overdue
+  (each owner); yesterday's summary (Admin users). Each event has its own on / off (Commerce settings).
+- Recipients: delivery messages to the order contact (orders.contact_id chosen on the order form, else the contact with
+  the shipping phone, else the first contact with an e-mail, else the customer's e-mail); invoices, receipts, refunds
+  and statements to the contacts with "gets invoices" (else the customer's e-mail); wallet mails to the customer's
+  e-mail; staff to admin_users.notify_email (Admin users), else the dAdmin e-mail. Opt-outs per customer: reminders
+  (overdue, wallet expiry) and offers; never invoices. A skipped message is logged with its reason.
+- Templates per event and language (rows; a missing language uses the default one), placeholders checked on save, live
+  preview with real demo data, Send test to me (to the signed-in user, sent at once). Every template and setting change
+  is audited. The log (Setup > Notifications > Log) shows queued / sent / failed / not sent with the order or customer;
+  a failed mail can be sent again (audited). The order drawer (Messages) and the customer timeline show them too.
+
 ### 5.6 Approval
 `pending` -> `approved` (the action runs) / `rejected` / `expired` / `withdrawn` (by the requester).
 

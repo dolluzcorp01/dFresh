@@ -66,6 +66,15 @@ async function checkCore(q, raw, { partial = false } = {}) {
     values.owner_emp_id = t(raw, 'owner_emp_id').toUpperCase() || null;
     if (values.owner_emp_id && !(await adminUsers(q)).includes(values.owner_emp_id)) errors.owner_emp_id = 'The sales owner must be an admin user (emp id).';
   }
+  // notifications (phase 10): the language of their mails (empty = the default language) and the opt-outs
+  if (has('lang_code')) {
+    values.lang_code = t(raw, 'lang_code').toLowerCase() || null;
+    if (values.lang_code) {
+      const [[l]] = await q.query('SELECT lang_code FROM languages WHERE lang_code = ? AND is_active = 1', [values.lang_code]);
+      if (!l) errors.lang_code = 'One of the active languages.';
+    }
+  }
+  for (const k of ['opt_out_reminders', 'opt_out_offers']) if (has(k)) values[k] = raw[k] === true || raw[k] === 1 || raw[k] === '1' || raw[k] === 'true' ? 1 : 0;
   return { values, errors };
 }
 
@@ -170,7 +179,7 @@ async function lockCustomer(q, id) {
   if (c.merged_into) throw new CustomerError(`${c.customer_no} was merged into another customer: open that one`, 409);
   return c;
 }
-const CORE_COLS = ['name', 'business_name', 'type_key', 'phone', 'phone_digits', 'email', 'source', 'owner_emp_id'];
+const CORE_COLS = ['name', 'business_name', 'type_key', 'phone', 'phone_digits', 'email', 'source', 'owner_emp_id', 'lang_code', 'opt_out_reminders', 'opt_out_offers'];
 
 /** edit the customer itself (duplicates checked against the others) */
 async function updateCore(q, id, raw, empId) {
@@ -400,7 +409,10 @@ async function timeline(q, id) {
      UNION ALL SELECT 'wallet', w.source, w.created_at, CONCAT('Wallet ', IF(w.amount >= 0, '+', '-'), ' Rs ', FORMAT(ABS(w.amount), 2), ': ', w.reason), w.emp_id, NULL FROM wallet_entries w WHERE w.customer_id = ?
      UNION ALL SELECT 'follow_up', f.status, f.created_at, CONCAT('Follow-up for ', f.assignee, ' due ', DATE_FORMAT(f.due_on, '%d %b %Y'), ': ', f.note, IF(f.status = 'done', CONCAT(' - done', IF(f.done_note IS NULL, '', CONCAT(': ', f.done_note))), '')), f.created_by, NULL
        FROM follow_ups f WHERE f.customer_id = ?
-     ORDER BY at DESC LIMIT 300`, [id, id, id, id, id, id, id, id]);
+     UNION ALL SELECT 'notification', n.event_key, n.created_at, CONCAT('E-mail "', COALESCE(n.subject, n.event_key), '" to ', COALESCE(n.recipient, '(no address)'), ': ',
+         CASE WHEN n.status = 'skipped' THEN CONCAT('not sent - ', n.skip_reason) WHEN m.status IN ('pending', 'sending') THEN 'queued' ELSE COALESCE(m.status, 'queued') END), n.created_by, n.ref
+       FROM notification_log n LEFT JOIN mail_outbox m ON m.mail_id = n.mail_id WHERE n.customer_id = ? AND n.audience = 'customer' AND n.is_test = 0
+     ORDER BY at DESC LIMIT 300`, [id, id, id, id, id, id, id, id, id]);
   return rows;
 }
 

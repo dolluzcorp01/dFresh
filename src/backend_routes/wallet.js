@@ -10,6 +10,7 @@
 // Every entry is audited.
 const { audit } = require('./audit');
 const commerceSettings = require('./commerce-settings');
+const notifications = require('./notifications');
 
 const SOURCES = { cashback: 'Cashback', refund: 'Refund', manual: 'Manual', used: 'Used on an order', expired: 'Expired', reversed: 'Cashback taken back' };
 const CREDITS = ['cashback', 'refund', 'manual'];
@@ -64,6 +65,7 @@ async function credit(q, { customerId, source, amount, reason, orderId = null, r
     'INSERT INTO wallet_entries (customer_id, source, amount, remaining, expires_on, reason, order_id, return_id, approval_id, emp_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     [customerId, source, amt, amt, exp, String(reason).slice(0, 200), orderId, returnId, approvalId, empId]);
   await audit(q, { empId, action: 'credit', entity: 'wallet', entityId: String(customerId), after: { entry: ins.insertId, source, amount: amt, expires_on: exp, reason } });
+  await notifications.walletCredited(q, ins.insertId);
   return ins.insertId;
 }
 

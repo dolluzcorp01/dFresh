@@ -1270,7 +1270,7 @@ route('post', '/mail-logo/test-mail', 'settings:edit', async (req) => {
 
 // dAdmin employee (read only; named columns only, never the rest of that table): name, e-mail, active, photo, and
 // job_position / emp_department, which are ids into dadmin.job_position_config / department_config.
-const USER_SELECT = `SELECT a.emp_id, a.role_id, r.name AS role_name, r.is_builtin, a.is_active, a.created_by, a.created_at,
+const USER_SELECT = `SELECT a.emp_id, a.role_id, r.name AS role_name, r.is_builtin, a.is_active, a.notify_email, a.created_by, a.created_at,
   TRIM(CONCAT(COALESCE(e.emp_first_name, ''), ' ', COALESCE(e.emp_last_name, ''))) AS name, e.emp_mail_id AS email,
   e.job_position, e.emp_department, e.emp_profile_img AS photo,
   (e.emp_id IS NOT NULL AND (e.deleted_time IS NOT NULL OR e.active <> 1)) AS left_company,
@@ -1359,6 +1359,11 @@ route('put', '/users/:empId', 'users:edit', async (req) => tx(async (q) => {
     set.role_id = role.role_id;
   }
   if ('is_active' in req.body) set.is_active = entities.coerce('is_active', { type: 'bool' }, req.body.is_active);
+  if ('notify_email' in req.body) { // staff notification mails go here; empty = their dAdmin e-mail
+    const m = String(req.body.notify_email || '').trim().toLowerCase();
+    if (m && (!/^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]{2,}$/.test(m) || m.length > 150)) throw new InputError('A plain e-mail address, or empty for the dAdmin e-mail');
+    set.notify_email = m || null;
+  }
   if (!Object.keys(set).length) throw new InputError('Nothing to change');
   // nobody changes their own role or switches themselves off (ask another Admin)
   if (before.emp_id === by(req) && (set.is_active === 0 || (set.role_id && set.role_id !== before.role_id))) {
@@ -1373,7 +1378,8 @@ route('put', '/users/:empId', 'users:edit', async (req) => tx(async (q) => {
   await q.query(`UPDATE admin_users SET ${Object.keys(set).map((c) => `${c} = ?`).join(', ')} WHERE emp_id = ?`, [...Object.values(set), before.emp_id]);
   const [[after]] = await q.query(`${USER_SELECT} WHERE a.emp_id = ?`, [before.emp_id]);
   const action = set.role_id && set.role_id !== before.role_id ? 'role_change' : set.is_active === 0 ? 'deactivate' : set.is_active === 1 ? 'reactivate' : 'update';
-  await audit(q, { empId: by(req), action, entity: 'admin_user', entityId: before.emp_id, before: { role: before.role_name, is_active: before.is_active }, after: { role: after.role_name, is_active: after.is_active } });
+  await audit(q, { empId: by(req), action, entity: 'admin_user', entityId: before.emp_id, before: { role: before.role_name, is_active: before.is_active, notify_email: before.notify_email },
+    after: { role: after.role_name, is_active: after.is_active, notify_email: after.notify_email } });
   return withNames([after], await dadminNames(q))[0];
 }));
 
@@ -1658,7 +1664,9 @@ route('get', '/commerce/order-form', 'orders:view', async (req) => {
   );
   const [addrRows] = custRows.length ? await db.query(`SELECT address_id, customer_id, kind, label, name, gstin, contact_person, phone, address, town, state_code, pincode, delivery_area_id, is_default
       FROM customer_addresses WHERE is_active = 1 AND customer_id IN (?) ORDER BY is_default DESC, address_id`, [custRows.map((c) => c.customer_id)]) : [[]];
-  const customers = custRows.map((c) => ({ ...c, own_list: Number(c.own_list) === 1, addresses: addrRows.filter((a) => a.customer_id === c.customer_id).map((a) => ({ ...a, is_default: Number(a.is_default) === 1 })) }));
+  const [contactRows] = custRows.length ? await db.query('SELECT contact_id, customer_id, name, role, phone, email FROM customer_contacts WHERE is_active = 1 AND customer_id IN (?) ORDER BY contact_id', [custRows.map((c) => c.customer_id)]) : [[]];
+  const customers = custRows.map((c) => ({ ...c, own_list: Number(c.own_list) === 1, addresses: addrRows.filter((a) => a.customer_id === c.customer_id).map((a) => ({ ...a, is_default: Number(a.is_default) === 1 })),
+    contacts: contactRows.filter((x) => x.customer_id === c.customer_id) }));
   const today = pricing.istToday();
   const own = await pricing.ownPricesOn(db, today);
   const all = (await pricing.skuRows(db)).filter((s) => s.is_active);
@@ -1781,6 +1789,8 @@ route('get', '/commerce/orders/:no', 'orders:view', async (req) => {
   const listLabel = (await pricing.lists(db)).find((l) => l.key === o.price_list);
   const cs = await commerceSettings.read(db);
   const live = invs.find((i) => i.status === 'issued');
+  const msgs = await notificationRows('n.order_id = ?', [o.order_id], 100);
+  const [[contact]] = o.contact_id ? await db.query('SELECT name, email FROM customer_contacts WHERE contact_id = ?', [o.contact_id]) : [[null]];
   const overdue = Boolean(live && o.status !== 'cancelled' && Number(o.amount_due) > 0.005 && live.due_on < pricing.istToday() && (o.payment_terms !== 'cod' || o.status === 'delivered'));
   return {
     ...o, history: hist, payments: pays, batches: batchesOut,
@@ -1796,7 +1806,7 @@ route('get', '/commerce/orders/:no', 'orders:view', async (req) => {
     trips: trips.map((x) => ({ ...x, has_photo: Number(x.has_photo) === 1, cash_collected: Number(x.cash_collected) })), gone: Boolean(o.dispatched_at),
     items: items.map((i) => ({ ...i, is_free: Number(i.is_free) === 1, offer_label: i.offer_id ? `${i.offer_name}: ${i.offer_kind === 'slab' ? promotions.slabText({ pct: i.offer_pct, min_qty: i.offer_min_qty, min_unit: i.offer_min_unit })
       : promotions.bxgyText({ buy_qty: i.offer_buy, get_qty: i.offer_get, get_sku_code: i.offer_get_sku })}` : null })),
-    walletEntries: walletRows.map((w) => ({ ...w, amount: Number(w.amount) })),
+    walletEntries: walletRows.map((w) => ({ ...w, amount: Number(w.amount) })), notifications: msgs, contact: contact || null,
     cashback: { amount: o.cashback_amount === null ? null : Number(o.cashback_amount), at: o.cashback_at, mode: cs.cashback_credit_at,
       due_on: o.delivered_at && o.cashback_amount === null ? new Date(new Date(o.delivered_at).getTime() + 5.5 * 3600e3 + (cs.cashback_credit_at === 'delivery' ? 0 : (Number(cs.return_window_days) + 1)) * 86400e3).toISOString().slice(0, 10) : null },
   };
@@ -1997,25 +2007,22 @@ route('post', '/commerce/orders/:no/picked-up', 'delivery:edit', async (req) => 
   try { return await tx((q) => delivery.pickedUp(q, req.params.no, req.body || {}, by(req))); } catch (e) { throw asDelivery(e); }
 });
 
-// An invoice or a credit note for printing (PDF from the browser's print dialog): the snapshot, the order's lines.
+// An invoice or a credit note for printing (PDF from the browser's print dialog): the snapshot, the order's lines. The data
+// comes from doc-pdf.js, which also builds the same document as a PDF (the mail attachments and the downloads below).
+const docPdf = require('./doc-pdf');
 route('get', '/commerce/invoices/:id', 'orders:view', async (req) => {
-  const [[inv]] = await db.query(
-    `SELECT i.invoice_id, i.invoice_no, i.fy, i.status, i.issued_at, DATE_FORMAT(i.due_on, '%Y-%m-%d') AS due_on, i.place_of_supply, i.gst_type, i.taxable, i.delivery_charge, i.delivery_gst, i.cgst, i.sgst, i.igst,
-            i.round_off, i.total, i.seller_name, i.seller_gstin, i.seller_address, i.seller_state_code, i.buyer_json, i.is_demo, i.cancelled_at, i.cancel_reason,
-            o.order_no, o.order_id, o.subtotal, o.discount, o.offer_discount, o.manual_discount, o.manual_discount_reason, o.delivery_waived, o.coupon_code, o.wallet_used, o.wallet_discount,
-            o.wallet_gst, o.payment_terms
-       FROM invoices i JOIN orders o ON o.order_id = i.order_id WHERE i.invoice_id = ?`, [Number(req.params.id)]
-  );
+  const inv = await docPdf.invoiceData(db, req.params.id);
   if (!inv) throw new InputError('Invoice not found', 404);
-  const [lines] = await db.query(`SELECT i.sku_code, i.is_free, i.qty, i.price, i.list_price, i.offer_discount, i.coupon_discount, i.wallet_discount, i.hsn, i.gst_rate, i.taxable, i.cgst, i.sgst, i.igst,
-       i.line_total, ${SKU_NAME} AS name, s.size_label, f.name AS offer_name
-       FROM order_items i JOIN skus s ON s.sku_code = i.sku_code ${SKU_JOIN} LEFT JOIN offers f ON f.offer_id = i.offer_id WHERE i.order_id = ? ORDER BY i.sku_code, i.is_free`, [inv.order_id]);
-  const [cns] = await db.query('SELECT credit_note_id, credit_note_no, reason, taxable, cgst, sgst, igst, round_off, total, issued_at FROM credit_notes WHERE invoice_id = ?', [inv.invoice_id]);
-  const [site] = await db.query("SELECT setting_key, setting_value FROM site_settings WHERE setting_key IN ('cin', 'office_phone', 'public_email')");
-  const s = Object.fromEntries(site.map((x) => [x.setting_key, x.setting_value]));
-  const buyer = typeof inv.buyer_json === 'string' ? JSON.parse(inv.buyer_json) : inv.buyer_json;
-  return { ...inv, buyer_json: undefined, buyer, lines, credit_notes: cns, is_demo: Number(inv.is_demo) === 1, seller_state: stateName(inv.seller_state_code),
-    pos_state: stateName(inv.place_of_supply), pos_reason: posReason(buyer.bill.gstin, inv.place_of_supply), bill_state: stateName(buyer.bill.state_code), ship_state: stateName(buyer.ship.state_code), cin: s.cin, phone: s.office_phone, email: s.public_email };
+  return inv;
+});
+const sendPdf = (res, f) => {
+  res.set({ 'Content-Type': 'application/pdf', 'Content-Disposition': `inline; filename="${f.filename}"`, 'Cache-Control': 'private, no-store' });
+  res.send(f.buffer);
+};
+route('get', '/commerce/invoices/:id/pdf', 'orders:view', async (req, res) => {
+  const f = await docPdf.invoicePdf(db, req.params.id);
+  if (!f) throw new InputError('Invoice not found', 404);
+  sendPdf(res, f);
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -2146,17 +2153,15 @@ route('post', '/commerce/stock/recheck', 'inventory:edit', async (req) => {
 // A credit note for printing: the invoice snapshot (seller, buyer, GST type) and the credit note's own lines
 route('get', '/commerce/credit-notes/:id', 'any', async (req) => {
   if (!canDo(req, 'orders') && !canDo(req, 'returns')) throw new InputError('Credit notes need "view" on Orders or Returns', 403);
-  const [[cn]] = await db.query(`SELECT cn.credit_note_id, cn.credit_note_no, cn.reason, cn.taxable, cn.cgst, cn.sgst, cn.igst, cn.round_off, cn.total, cn.issued_at, cn.return_id, r.return_no,
-      i.invoice_no, i.issued_at AS invoice_date, i.gst_type, i.place_of_supply, i.seller_name, i.seller_gstin, i.seller_address, i.seller_state_code, i.buyer_json, i.is_demo, o.order_no
-      FROM credit_notes cn JOIN invoices i ON i.invoice_id = cn.invoice_id JOIN orders o ON o.order_id = i.order_id LEFT JOIN returns r ON r.return_id = cn.return_id
-      WHERE cn.credit_note_id = ?`, [Number(req.params.id)]);
+  const cn = await docPdf.creditNoteData(db, req.params.id);
   if (!cn) throw new InputError('Credit note not found', 404);
-  const [lines] = await db.query(`SELECT l.sku_code, l.hsn, l.gst_rate, l.qty, l.taxable, l.cgst, l.sgst, l.igst, l.line_total, ${SKU_NAME} AS name, s.size_label
-      FROM credit_note_lines l JOIN skus s ON s.sku_code = l.sku_code ${SKU_JOIN} WHERE l.credit_note_id = ? ORDER BY l.id`, [cn.credit_note_id]);
-  const buyer = typeof cn.buyer_json === 'string' ? JSON.parse(cn.buyer_json) : cn.buyer_json;
-  return { ...cn, buyer_json: undefined, buyer, lines, is_demo: Number(cn.is_demo) === 1, seller_state: stateName(cn.seller_state_code), pos_state: stateName(cn.place_of_supply),
-    pos_reason: posReason(buyer.bill.gstin, cn.place_of_supply),
-    bill_state: stateName(buyer.bill.state_code) };
+  return cn;
+});
+route('get', '/commerce/credit-notes/:id/pdf', 'any', async (req, res) => {
+  if (!canDo(req, 'orders') && !canDo(req, 'returns')) throw new InputError('Credit notes need "view" on Orders or Returns', 403);
+  const f = await docPdf.creditNotePdf(db, req.params.id);
+  if (!f) throw new InputError('Credit note not found', 404);
+  sendPdf(res, f);
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -2462,6 +2467,7 @@ route('get', '/commerce/customers/:id', 'customers:view', async (req) => {
     priceList: list, lists, pending, pendingCredit: pending.find((x) => x.kind === 'credit_raise') || null, lead: lead || null,
     types: await customers.types(db), owners: await adminPeople(db), statuses: customers.STATUS, activityKinds: customers.ACTIVITY, states: GST_STATES, sources: customerRules.SOURCES,
     areas: (await db.query('SELECT area_id, label FROM delivery_areas WHERE is_active = 1 ORDER BY sort_order, area_id'))[0],
+    languages: (await db.query('SELECT lang_code, name_en, is_default FROM languages WHERE is_active = 1 ORDER BY sort_order, lang_code'))[0],
   };
 });
 route('get', '/commerce/customers/:id/timeline', 'customers:view', async (req) => {
@@ -2476,6 +2482,13 @@ route('get', '/commerce/customers/:id/statement', 'customers:view', async (req) 
   const addr = (await customers.addressesOf(db, c.customer_id)).find((a) => a.kind === 'billing' && a.is_default) || null;
   const cs = await commerceSettings.read(db);
   return { customer: { ...c, credit_limit: Number(c.credit_limit) }, bill: addr, from, to, seller: { name: cs.invoice_seller_name, address: cs.invoice_seller_address }, ...(await customers.statement(db, c.customer_id, { from, to })) };
+});
+
+route('get', '/commerce/customers/:id/statement.pdf', 'customers:view', async (req, res) => {
+  await seeCustomer(req, req.params.id);
+  const from = pricing.isDate(String(req.query.from || '')) ? String(req.query.from) : null;
+  const to = pricing.isDate(String(req.query.to || '')) ? String(req.query.to) : null;
+  sendPdf(res, await docPdf.statementPdf(db, Number(req.params.id), { from, to }));
 });
 
 // changes (each audited in customers.js)
@@ -2999,6 +3012,114 @@ route('post', '/approvals/:id/decide', 'any', async (req) => {
 });
 route('post', '/approvals/:id/withdraw', 'any', async (req) => {
   try { return await tx((q) => approvals.withdraw(q, Number(req.params.id), req.admin)); } catch (e) { throw asApproval(e); }
+});
+
+// ---------------------------------------------------------------------------------------------
+// Notifications (docs/COMMERCE-SPEC.md 5.5f; notifications.js). Settings section (Setup > Notifications): view = events,
+// templates, preview, the log; edit = templates, "Send test to me", retry, "Run daily mails now". The on / off of each
+// event and the numbers are Commerce settings (PUT /commerce-settings/:key, audited). Every change is audited.
+// ---------------------------------------------------------------------------------------------
+const notifications = require('./notifications');
+const NOTE_STATUS = `CASE WHEN n.status = 'skipped' THEN 'skipped' WHEN m.status IN ('pending', 'sending') THEN 'queued' ELSE COALESCE(m.status, 'queued') END`;
+/** notification_log rows with the state of their mail row */
+async function notificationRows(where, args, limit = 200) {
+  const [rows] = await db.query(`SELECT n.log_id, n.event_key, n.audience, n.channel, n.recipient, n.recipient_name, n.emp_id, n.lang_code, n.subject, ${NOTE_STATUS} AS status, n.skip_reason,
+      n.mail_id, n.customer_id, n.order_id, n.return_id, n.ref, n.is_test, n.created_by, n.created_at, m.attempts, m.last_error, m.sent_at, m.attachments, c.customer_no, c.name AS customer, o.order_no
+      FROM notification_log n LEFT JOIN mail_outbox m ON m.mail_id = n.mail_id LEFT JOIN customers c ON c.customer_id = n.customer_id LEFT JOIN orders o ON o.order_id = n.order_id
+      WHERE ${where} ORDER BY n.log_id DESC LIMIT ?`, [...args, limit]);
+  return rows.map((r) => ({ ...r, is_test: Number(r.is_test) === 1, event_label: (notifications.EVENTS[r.event_key] || {}).label || r.event_key,
+    attachments: r.attachments ? JSON.parse(r.attachments).map((x) => x.kind) : [] }));
+}
+const meFor = async (req) => {
+  const [[u]] = await db.query(`SELECT a.emp_id, COALESCE(a.notify_email, e.emp_mail_id) AS email, TRIM(CONCAT(COALESCE(e.emp_first_name, ''), ' ', COALESCE(e.emp_last_name, ''))) AS name
+      FROM admin_users a LEFT JOIN \`${auth.DADMIN}\`.employee e ON e.emp_id = a.emp_id WHERE a.emp_id = ?`, [by(req)]);
+  return { emp_id: by(req), email: u ? u.email : null, name: (u && u.name) || by(req) };
+};
+const asNote = (e) => (e && e.status && !(e instanceof InputError) ? new InputError(e.message, e.status) : e);
+
+route('get', '/notifications', 'settings:view', async (req) => {
+  const [settings] = await db.query("SELECT setting_key, grp, label, help, value, value_type, tbc, sort_order, updated_by, updated_at FROM commerce_settings WHERE grp IN ('Notifications', 'Staff notifications') ORDER BY grp, sort_order");
+  const [tpls] = await db.query('SELECT event_key, lang_code, subject, body, needs_review, updated_by, updated_at FROM notification_templates');
+  const [langs] = await db.query('SELECT lang_code, name_en, native_name, is_default FROM languages WHERE is_active = 1 ORDER BY is_default DESC, sort_order, lang_code');
+  const [runs] = await db.query(`SELECT job_key, DATE_FORMAT(run_day, '%Y-%m-%d') AS run_day, ran_at, result FROM notification_runs ORDER BY run_day DESC, job_key LIMIT 20`);
+  const [counts] = await db.query(`SELECT ${NOTE_STATUS} AS status, COUNT(*) AS n FROM notification_log n LEFT JOIN mail_outbox m ON m.mail_id = n.mail_id
+      WHERE n.created_at > UTC_TIMESTAMP() - INTERVAL 7 DAY AND n.is_test = 0 GROUP BY 1`);
+  const byKey = Object.fromEntries(settings.map((x) => [x.setting_key, x]));
+  return {
+    events: Object.entries(notifications.EVENTS).map(([key, ev]) => ({ key, ...ev, daily: notifications.DAILY.includes(key), setting: byKey[notifications.settingKey(key)] || null,
+      templates: Object.fromEntries(tpls.filter((t) => t.event_key === key).map((t) => [t.lang_code, { ...t, needs_review: Number(t.needs_review) === 1 }])) })),
+    settings: settings.map((x) => ({ ...x, tbc: Number(x.tbc) === 1 })), languages: langs, runs, me: await meFor(req),
+    week: Object.fromEntries(counts.map((x) => [x.status, Number(x.n)])),
+  };
+});
+
+route('put', '/notifications/templates/:event/:lang', 'settings:edit', async (req) => tx(async (q) => {
+  const ev = notifications.EVENTS[req.params.event];
+  if (!ev) throw new InputError('Unknown event', 404);
+  const [[lang]] = await q.query('SELECT lang_code, is_default FROM languages WHERE lang_code = ?', [req.params.lang]);
+  if (!lang) throw new InputError('Unknown language', 404);
+  const subject = String(req.body.subject ?? '').trim();
+  const body = String(req.body.body ?? '').replace(/\r\n/g, '\n').trim();
+  const [[before]] = await q.query('SELECT subject, body, needs_review FROM notification_templates WHERE event_key = ? AND lang_code = ? FOR UPDATE', [req.params.event, lang.lang_code]);
+  if (!subject && !body) { // empty = this language falls back to the default one
+    if (Number(lang.is_default) === 1) throw new InputError('The default language needs a subject and a text');
+    if (before) {
+      await q.query('DELETE FROM notification_templates WHERE event_key = ? AND lang_code = ?', [req.params.event, lang.lang_code]);
+      await audit(q, { empId: by(req), action: 'delete', entity: 'notification_template', entityId: `${req.params.event}/${lang.lang_code}`, before });
+    }
+    return { removed: true };
+  }
+  if (!subject || subject.length > 200) throw new InputError('Subject: 1 to 200 characters');
+  if (!body || body.length > 5000) throw new InputError('Text: 1 to 5000 characters');
+  const bad = notifications.unknownVars(req.params.event, subject, body);
+  if (bad.length) throw new InputError(`Unknown placeholder${bad.length > 1 ? 's' : ''} ${bad.map((v) => `{${v}}`).join(', ')}: use ${ev.vars.map((v) => `{${v}}`).join(' ')}`);
+  if (before && before.subject === subject && before.body === body && !Number(before.needs_review)) return { changed: false };
+  await q.query(`INSERT INTO notification_templates (event_key, lang_code, subject, body, needs_review, updated_by, updated_at) VALUES (?, ?, ?, ?, 0, ?, UTC_TIMESTAMP())
+      ON DUPLICATE KEY UPDATE subject = VALUES(subject), body = VALUES(body), needs_review = 0, updated_by = VALUES(updated_by), updated_at = VALUES(updated_at)`, [req.params.event, lang.lang_code, subject, body, by(req)]);
+  await audit(q, { empId: by(req), action: before ? 'update' : 'create', entity: 'notification_template', entityId: `${req.params.event}/${lang.lang_code}`, before: before || null, after: { subject, body } });
+  return { changed: true };
+}));
+
+route('post', '/notifications/preview', 'settings:view', async (req) => {
+  const b = req.body || {};
+  try { return await notifications.preview(db, String(b.event || ''), String(b.lang || ''), { subject: b.subject, body: b.body }, await meFor(req)); } catch (e) { throw asNote(e); }
+});
+
+route('post', '/notifications/test', 'settings:edit', async (req) => {
+  const b = req.body || {};
+  const me = await meFor(req);
+  let r;
+  try { r = await tx((q) => notifications.sendTest(q, String(b.event || ''), String(b.lang || ''), { subject: b.subject, body: b.body }, me)); } catch (e) { throw asNote(e); }
+  const sent = await outboxWorker.sendMailNow(r.mail_id); // at once, like a sign-in code: the answer says what happened
+  return { ...r, outcome: sent.status, reason: sent.reason || sent.error || null };
+});
+
+route('get', '/notifications/log', 'settings:view', async (req) => {
+  const where = ['1 = 1']; const args = [];
+  const f = (k) => (typeof req.query[k] === 'string' && req.query[k].trim() ? req.query[k].trim().slice(0, 60) : null);
+  if (f('event')) { where.push('n.event_key = ?'); args.push(f('event')); }
+  if (f('audience')) { where.push('n.audience = ?'); args.push(f('audience')); }
+  if (f('status')) { where.push(`${NOTE_STATUS} = ?`); args.push(f('status')); }
+  if (f('order')) { where.push('o.order_no = ?'); args.push(f('order')); }
+  if (f('customer')) { where.push('c.customer_no = ?'); args.push(f('customer')); }
+  if (f('q')) { where.push('(n.recipient LIKE ? OR n.subject LIKE ? OR n.ref LIKE ?)'); const like = `%${f('q').replace(/[%_\\]/g, (x) => `\\${x}`)}%`; args.push(like, like, like); }
+  if (req.query.tests !== '1') where.push('n.is_test = 0');
+  return { rows: await notificationRows(where.join(' AND '), args, 300) };
+});
+
+route('post', '/notifications/log/:id/retry', 'settings:edit', async (req) => tx(async (q) => {
+  const [[n]] = await q.query('SELECT n.log_id, n.mail_id, m.status, m.attempts, m.last_error FROM notification_log n LEFT JOIN mail_outbox m ON m.mail_id = n.mail_id WHERE n.log_id = ?', [Number(req.params.id)]);
+  if (!n) throw new InputError('Not found', 404);
+  if (!n.mail_id || n.status !== 'failed') throw new InputError(`Only a failed mail can be sent again (this one is ${n.mail_id ? n.status : 'not sent: skipped'})`, 409);
+  await q.query("UPDATE mail_outbox SET status = 'pending', attempts = 0, next_attempt_at = NOW() WHERE mail_id = ?", [n.mail_id]);
+  await audit(q, { empId: by(req), action: 'retry', entity: 'notification', entityId: String(n.log_id), before: { status: n.status, attempts: n.attempts, last_error: n.last_error }, after: { status: 'pending', attempts: 0 } });
+  return { log_id: n.log_id, status: 'queued' };
+}));
+
+route('post', '/notifications/run-daily', 'settings:edit', async (req) => {
+  const out = await notifications.runDaily({ force: true, by: by(req) });
+  await audit(db, { empId: by(req), action: 'run', entity: 'notification_jobs', entityId: pricing.istToday(), after: Object.fromEntries(out.map((x) => [x.job, x.result])) });
+  return out;
 });
 
 // ---------------------------------------------------------------------------------------------

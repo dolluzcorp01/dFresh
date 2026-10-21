@@ -21,6 +21,7 @@ import { NewReturn, ReturnDrawer, ReturnsTable } from './CommerceReturns';
 import { addrLines, printCreditNote, printInvoice as printInvoiceDoc, signed } from './invoicePrint';
 import { NewCustomerDrawer } from './CommerceCustomers';
 import { PriceBasis } from './Prices';
+import { NoteStatus } from './Notifications';
 import { GST_STATES, placeOfSupply, stateName } from '../shared/gstStates';
 
 const FLOWS = {
@@ -169,6 +170,7 @@ function OrderDrawer({ no, canEdit, onClose, onChanged }) {
               <div><dt>Customer</dt><dd>{d.customer} ({d.ctype}) - {d.phone}</dd></div>
               <div><dt>Terms</dt><dd>{d.terms_label}{d.payment_terms === 'credit' ? `, ${d.credit_days} days` : ''}</dd></div>
               <div><dt>Price list</dt><dd>{d.price_list_label} (list prices {d.prices_basis})</dd></div>
+              <div><dt>Delivery messages to</dt><dd>{d.contact ? `${d.contact.name}${d.contact.email ? ` <${d.contact.email}>` : ' (no e-mail)'}` : 'The contact with the shipping phone, else the first contact with an e-mail'}</dd></div>
               {d.note && <div><dt>Note</dt><dd>{d.note}</dd></div>}
             </dl>
             <div className="a-addr">
@@ -238,6 +240,15 @@ function OrderDrawer({ no, canEdit, onClose, onChanged }) {
             )}
             {rets.data && rets.data.rows.length > 0 && <><h3>Returns</h3><ReturnsTable rows={rets.data.rows} compact onOpen={setOpenReturn} /></>}
             {openReturn && <ReturnDrawer no={openReturn} onClose={() => { setOpenReturn(null); rets.reload(); reload(); }} />}
+            {d.notifications.length > 0 && (
+              <>
+                <h3>Messages</h3>
+                <ul className="a-hist">{d.notifications.map((m) => (
+                  <li key={m.log_id}>{fmtDate(m.created_at)} · <b>{m.event_label}</b> to {m.recipient || m.recipient_name || '-'}{m.attachments.length ? ` (${m.attachments.join(', ').replace('_', ' ')} PDF)` : ''} <NoteStatus row={m} />
+                    {m.status === 'skipped' && <small className="a-muted"> {m.skip_reason}</small>}{m.status === 'failed' && <small className="a-bad"> {m.last_error}</small>}</li>
+                ))}</ul>
+              </>
+            )}
             <h3>History</h3>
             <ul className="a-hist">{d.history.map((h, n) => (
               <li key={n}>{fmtDate(h.created_at)} · <b>{h.to_status === 'edited' ? 'Edited' : LABEL[h.to_status] || h.to_status}</b>{h.note ? ` - ${h.note}` : ''} <small className="a-muted">({h.emp_id})</small></li>
@@ -377,6 +388,7 @@ function OrderForm({ order = null, onClose, onSaved }) {
   const [ship, setShip] = useState(editing ? fromOrder(order, 'ship') : null);
   const [billId, setBillId] = useState(editing && order.bill_address_id ? String(order.bill_address_id) : '');
   const [shipId, setShipId] = useState(editing && order.ship_address_id ? String(order.ship_address_id) : '');
+  const [contactId, setContactId] = useState(editing && order.contact_id ? String(order.contact_id) : ''); // '' = the rule (shipping phone)
   const [coupon, setCoupon] = useState(editing ? order.coupon_code || '' : '');
   const [couponApplied, setCouponApplied] = useState(editing ? order.coupon_code || '' : '');
   const [manual, setManual] = useState(editing && Number(order.manual_discount) ? { amount: String(Number(order.manual_discount)), reason: order.manual_discount_reason || '' } : { amount: '', reason: '' });
@@ -447,7 +459,7 @@ function OrderForm({ order = null, onClose, onSaved }) {
     payment_terms: terms, note, coupon_code: couponApplied.trim().toUpperCase() || null, wallet_use: Number(wallet) || 0,
     manual_discount: manual.amount, manual_discount_reason: manual.reason,
     items: rows.filter((r) => r.l.sku_code && r.sku).map((r) => ({ sku_code: r.l.sku_code.trim().toUpperCase(), qty: r.packs, price: r.l.auto ? '' : r.l.price })),
-    bill, ship: ship || { ...bill }, bill_address_id: billId, ship_address_id: shipId, override_stock: override, delivery_method_id: method ? method.method_id : '', delivery_area_id: areaId,
+    bill, ship: ship || { ...bill }, bill_address_id: billId, ship_address_id: shipId, contact_id: contactId, override_stock: override, delivery_method_id: method ? method.method_id : '', delivery_area_id: areaId,
   });
   const ready = Boolean(customerId && bill && bill.name && rows.some((r) => r.sku) && !rows.some((r) => r.problem));
   const key = ready ? JSON.stringify({ ...body(), customer_id: customerId }) : '';
@@ -541,6 +553,11 @@ function OrderForm({ order = null, onClose, onSaved }) {
                       <select value={billId} aria-label="Billing address" onChange={(e) => chooseAddr('billing', e.target.value)}>{billAddrs.map((a) => <option key={a.address_id} value={a.address_id}>{addrLabel(a)}</option>)}</select></label>
                     <label className="a-field"><span>Ship to (the GST follows this state)</span>
                       <select value={shipId} aria-label="Shipping address" onChange={(e) => chooseAddr('shipping', e.target.value)}>{shipAddrs.map((a) => <option key={a.address_id} value={a.address_id}>{addrLabel(a)}</option>)}</select></label>
+                    <label className="a-field"><span>Delivery messages to (e-mail)</span>
+                      <select value={contactId} aria-label="Order contact" onChange={(e) => setContactId(e.target.value)}>
+                        <option value="">The contact with the shipping phone</option>
+                        {(customer.contacts || []).map((c) => <option key={c.contact_id} value={c.contact_id}>{c.name}{c.role ? ` (${c.role})` : ''} - {c.email || 'no e-mail'}</option>)}
+                      </select></label>
                   </div>
                 )}
                 <div className="a-addr">{addr(bill, setBill, 'bill')}{ship && addr(ship, setShip, 'ship')}</div>

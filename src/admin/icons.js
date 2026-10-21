@@ -21,6 +21,7 @@ const P = {
   settings: <><circle cx="12" cy="12" r="3" /><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1" /></>,
   users: <><circle cx="9" cy="8" r="3.2" /><path d="M3 20c0-3.4 2.7-6 6-6s6 2.6 6 6" /><path d="M16 4.6a3.2 3.2 0 010 6.3M18 14.3c1.9.7 3 2.6 3 5.7" /></>,
   audit: <><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></>,
+  mail: <><rect x="3" y="5" width="18" height="14" rx="1.5" /><path d="M3.5 6.5l8.5 6.5 8.5-6.5" /></>,
   external: <><path d="M14 4h6v6M20 4l-9 9" /><path d="M18 13.5V19a1 1 0 01-1 1H5a1 1 0 01-1-1V7a1 1 0 011-1h5.5" /></>,
   menu: <path d="M4 6.5h16M4 12h16M4 17.5h16" />,
   chevron: <path d="M9 6l6 6-6 6" />,

@@ -53,6 +53,7 @@ export const GROUPS = [
       item('approvals', 'Approvals', null, 'audit'),
       item('languages', 'Languages', 'content', 'languages'), item('settings', 'Settings', 'settings', 'settings'),
       item('commerce-settings', 'Commerce settings', 'settings', 'settings'),
+      item('notifications', 'Notifications', 'settings', 'mail'),
       item('users', 'Admin users', 'users', 'users'), item('roles', 'Roles', 'users', 'users'), item('audit', 'Audit log', 'audit', 'audit'),
     ],
   },

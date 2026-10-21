@@ -9,6 +9,7 @@ const { getDBConnection } = require('../../config/db');
 const { audit } = require('./audit');
 const permissions = require('../shared/permissions');
 const commerceSettings = require('./commerce-settings');
+const notifications = require('./notifications');
 
 const db = getDBConnection(process.env.DB_NAME || 'dfresh').promise();
 
@@ -78,6 +79,7 @@ async function request(q, { kind, refType = null, refId = null, summary, amount 
     [kind, k.section, refType, refId === null ? null : String(refId), String(summary).slice(0, 255), amount, payload ? JSON.stringify(payload) : null, empId]
   );
   await audit(q, { empId, action: 'request', entity: 'approval', entityId: String(ins.insertId), after: { kind, refType, refId, summary, amount } });
+  await notifications.approvalWaiting(q, ins.insertId); // to the users who may decide it
   return ins.insertId;
 }
 

@@ -17,6 +17,7 @@ const { audit } = require('./audit');
 const approvals = require('./approvals');
 const commerce = require('./commerce');
 const commerceSettings = require('./commerce-settings');
+const notifications = require('./notifications');
 const invoices = require('./invoices');
 const numbering = require('./numbering');
 const promotions = require('./promotions');
@@ -122,6 +123,7 @@ async function createReturn(q, orderNo, data, empId) {
       payload: { return_no: returnNo } }, empId);
   }
   await audit(q, { empId, action: 'create', entity: 'return', entityId: returnNo, after: { order: orderNo, reason: reason.label, collection: data.collection, outside_window: outside, lines: lines.map((l) => `${l.qty} x ${l.sku_code}`) } });
+  if (!outside) await notifications.returnAccepted(q, ins.insertId); // outside the window: when it is approved
   return { return_id: ins.insertId, return_no: returnNo, status, outside_window: outside, approval_id: approvalId };
 }
 
@@ -163,6 +165,7 @@ async function pickedUp(q, returnNo, tripId, empId, photo, from) {
   if (photo) await q.query("INSERT INTO return_photos (return_id, kind, photo, photo_type, emp_id) VALUES (?, 'pickup', ?, ?, ?)", [r.return_id, photo.buffer, photo.mimetype, empId]);
   await history(q, r.return_id, 'picked_up', `Picked up by the driver (trip T-${tripId})${from ? ` from ${from}` : ''}${photo ? ', photo' : ''}`, empId);
   await audit(q, { empId, action: 'picked_up', entity: 'return', entityId: returnNo, after: { trip: `T-${tripId}`, from, photo: Boolean(photo) } });
+  await notifications.returnPicked(q, r.return_id);
   return r;
 }
 async function pickupFailed(q, returnNo, tripId, reason, empId) {
@@ -222,7 +225,10 @@ async function receiveScan(q, returnNo, raw, empId) {
   await q.query('INSERT INTO return_scans (return_id, code, sku_code, batch_id, qty, result, message, emp_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
     [r.return_id, code, sku, lineId ? lines.find((l) => l.line_id === lineId).batch_id : null, qty, result, message.slice(0, 255), empId]);
   if (lineId) await q.query('UPDATE return_items SET qty_received = qty_received + ? WHERE line_id = ?', [qty, lineId]);
-  if (lineId && r.status !== 'received') await setStatus(q, r, 'received', empId, 'At the godown (first pack scanned)', { received_at: new Date(), received_by: empId });
+  if (lineId && r.status !== 'received') {
+    await setStatus(q, r, 'received', empId, 'At the godown (first pack scanned)', { received_at: new Date(), received_by: empId });
+    await notifications.returnPicked(q, r.return_id); // courier or brought in (a trip pickup was told when picked up)
+  }
   return { result, message, lines: await receiveState(q, r.return_id) };
 }
 
@@ -385,6 +391,7 @@ async function payRefund(q, refundId, empId) {
   if (back > 0) await history(q, f.return_id, 'cashback_back', `Cashback taken back: Rs ${back.toFixed(2)} from the wallet`, empId);
   await history(q, f.return_id, 'refund_paid', `Credit note ${cn.credit_note_no} (${cn.gst_type === 'intra' ? `CGST ${cn.cgst.toFixed(2)} + SGST ${cn.sgst.toFixed(2)}` : `IGST ${cn.igst.toFixed(2)}`}); Rs ${cn.total.toFixed(2)} ${METHODS[f.method].toLowerCase()}`, empId);
   await audit(q, { empId, action: 'refund', entity: 'return', entityId: f.return_no, after: { amount: cn.total, method: f.method, credit_note: cn.credit_note_no, mode: f.mode, reference: f.reference } });
+  await notifications.returnRefunded(q, refundId); // with the credit note PDF
 }
 
 /** every pack decided and no approval pending: Refunded, Replaced or Closed */
@@ -410,6 +417,7 @@ approvals.onApproved('return_window', async (q, p, empId) => {
   const r = await lockReturn(q, p.return_no);
   if (r.status === 'requested' && r.collection === 'bring') await setStatus(q, r, 'collecting', empId, 'Approved outside the window: the customer brings it');
   else await history(q, r.return_id, 'approved', 'Approved outside the window', empId);
+  await notifications.returnAccepted(q, r.return_id);
 });
 approvals.onClosed('return_window', async (q, p, status, empId) => {
   const r = await lockReturn(q, p.return_no);

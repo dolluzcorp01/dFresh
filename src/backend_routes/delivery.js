@@ -19,6 +19,7 @@
 const { audit } = require('./audit');
 const commerce = require('./commerce');
 const commerceSettings = require('./commerce-settings');
+const notifications = require('./notifications');
 const returns = require('./returns');
 const stock = require('./stock');
 
@@ -368,6 +369,7 @@ async function endTrip(q, tripId, b, empId, office) {
   if (Math.abs(diff) > 0.005 && !note) throw new DeliveryError(`The cash handed over differs from the cash collected (Rs ${Number(p.cash).toFixed(2)}) by Rs ${diff.toFixed(2)}: add a note`);
   await q.query("UPDATE delivery_trips SET status = 'ended', ended_by = ?, ended_at = UTC_TIMESTAMP(), cash_collected = ?, cash_handed = ?, end_note = ? WHERE trip_id = ?", [empId, Number(p.cash), Number(handed), note, tripId]);
   await audit(q, { empId, action: 'end', entity: 'trip', entityId: `T-${tripId}`, after: { cash_collected: Number(p.cash), cash_handed: Number(handed), difference: diff, note } });
+  if (Math.abs(diff) > 0.005) await notifications.cashDifference(q, tripId);
   return { trip_id: tripId, status: 'ended', cash_collected: Number(p.cash), cash_handed: Number(handed), difference: diff };
 }
 

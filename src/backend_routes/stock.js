@@ -3,6 +3,7 @@
 // - Stock on hand = SUM(stock_movements.delta) per SKU, kind (good / returned / damaged / expired: returned packs found
 //   expired at inspection, blocked until written off) and batch. Nothing is typed in.
 // - Available = good stock - expired batches - active reservations of other orders (phase 3).
+// - Every stock-out (dispatch) keeps the average cost at that moment (unit_cost): the margin uses it, never today's cost.
 // - Stock in (production from the Kanchipuram unit, or purchase from a supplier): lines in packs with a cost per pack;
 //   each line updates the SKU's weighted average cost: (on hand x old average + qty x cost) / (on hand + qty).
 // - Batches (products.track_batches): a stock in of such a SKU needs batch no., manufacture and expiry date; dispatch
@@ -154,6 +155,21 @@ async function stockIn(q, data, empId, opts = {}) {
 }
 
 // ---------------------------------------------------------------- dispatch (FEFO) and goods back
+/** the SKU's weighted average cost now: kept on every stock-out movement (the cost of what was sold, for the margin) */
+async function costNow(q, sku) {
+  const [[s]] = await q.query('SELECT avg_cost FROM skus WHERE sku_code = ?', [sku]);
+  return s && s.avg_cost !== null ? Number(s.avg_cost) : null;
+}
+
+/**
+ * the average cost valid at `at` (the last stock-in of the SKU up to then: its avg_after) - for the demo seed, whose
+ * dispatches are dated back after they are made
+ */
+async function costAt(q, sku, at) {
+  const [[r]] = await q.query(`SELECT l.avg_after FROM stock_in_lines l JOIN stock_movements m ON m.ref_type = 'stock_in' AND m.ref_id = l.stock_in_id AND m.sku_code = l.sku_code
+      WHERE l.sku_code = ? AND m.created_at <= ? ORDER BY m.created_at DESC, l.stock_in_id DESC LIMIT 1`, [sku, at]);
+  return r ? Number(r.avg_after) : null;
+}
 /**
  * take an order's packs out of good stock -> [{ sku_code, batch_no, expiry_date, qty }]. The batches picked at packing
  * (order_picks) when there are any and they are still there and not expired; else earliest expiry first, never expired.
@@ -182,7 +198,7 @@ async function dispatchOut(q, orderId, orderNo, empId) {
         const [[b]] = pk.batch_id ? await q.query("SELECT batch_no, DATE_FORMAT(expiry_date, '%Y-%m-%d') AS expiry_date FROM batches WHERE batch_id = ?", [pk.batch_id]) : [[{}]];
         plan.push({ sku_code: pk.sku_code, batch_id: pk.batch_id, batch_no: b.batch_no, expiry_date: b.expiry_date, qty: pk.qty });
       }
-      for (const p of plan) await move(q, { sku: p.sku_code, type: 'out', delta: -p.qty, batchId: p.batch_id, refType: 'order', refId: orderNo, note: `Dispatched ${orderNo}` }, empId);
+      for (const p of plan) await move(q, { sku: p.sku_code, type: 'out', delta: -p.qty, batchId: p.batch_id, unitCost: await costNow(q, p.sku_code), refType: 'order', refId: orderNo, note: `Dispatched ${orderNo}` }, empId);
       return plan.map((p) => ({ sku_code: p.sku_code, batch_no: p.batch_no || null, expiry_date: p.expiry_date || null, qty: p.qty }));
     }
   }
@@ -209,7 +225,7 @@ async function dispatchOut(q, orderId, orderNo, empId) {
       left -= take;
     }
   }
-  for (const p of plan) await move(q, { sku: p.sku_code, type: 'out', delta: -p.qty, batchId: p.batch_id, refType: 'order', refId: orderNo, note: `Dispatched ${orderNo}` }, empId);
+  for (const p of plan) await move(q, { sku: p.sku_code, type: 'out', delta: -p.qty, batchId: p.batch_id, unitCost: await costNow(q, p.sku_code), refType: 'order', refId: orderNo, note: `Dispatched ${orderNo}` }, empId);
   return plan.map((p) => ({ sku_code: p.sku_code, batch_no: p.batch_no || null, expiry_date: p.expiry_date || null, qty: p.qty }));
 }
 
@@ -472,6 +488,6 @@ async function batchList(q) {
 }
 
 module.exports = {
-  MOVE_LABEL, KIND_LABEL, WRITE_OFF_TYPES, StockError, availability, batchStock, tracked, stockIn, dispatchOut, goodsBack, batchesOfOrder,
+  MOVE_LABEL, KIND_LABEL, WRITE_OFF_TYPES, StockError, availability, batchStock, tracked, stockIn, dispatchOut, goodsBack, batchesOfOrder, costNow, costAt,
   requestWriteOff, postWriteOff, recordMove, startCount, countDetail, saveCount, submitCount, reorderList, batchList, IST_TODAY,
 };

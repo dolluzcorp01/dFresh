@@ -1,7 +1,8 @@
 // Admin users (spec F 11, admin): pick an active dAdmin employee (search by name or emp_id), give a role, Add; change a
 // role (asked first, audited); deactivate / reactivate (asked first). The server keeps the rules: nobody can lock
 // themselves out, there is always at least one active admin, and someone inactive in dAdmin cannot sign in.
-// emp_id is a string like DZIND148 (never a number).
+// emp_id is a string like DZIND148 (never a number). Staff notification mails (phase 10) go to the dAdmin e-mail, or to
+// the notification e-mail set here (Change, then Save; empty = back to the dAdmin e-mail; audited).
 import { useEffect, useRef, useState } from 'react';
 import { api } from './adminApi';
 import { Link } from 'react-router-dom';
@@ -100,7 +101,7 @@ export default function Users() {
                       </span>
                     </td>
                     <td><code>{u.emp_id}</code></td>
-                    <td>{u.email}</td>
+                    <td>{u.email}<NotifyMail u={u} canEdit={canEdit} act={act} onSaved={list.reload} /></td>
                     <td>
                       <select aria-label={`Role of ${u.name || u.emp_id}`} value={next || u.role_id || ''} disabled={self || !canEdit || act.busy} title={self ? 'You cannot change your own role' : undefined}
                         onChange={(e) => pickRole(u, e.target.value)}>
@@ -130,6 +131,28 @@ export default function Users() {
         </div>
       </Loading>
     </section>
+  );
+}
+
+/** the address staff notifications go to: the dAdmin e-mail unless another one is set */
+function NotifyMail({ u, canEdit, act, onSaved }) {
+  const [v, setV] = useState(null); // null = not editing
+  const save = () => act.run(async () => {
+    await api.send('PUT', `/users/${encodeURIComponent(u.emp_id)}`, { notify_email: v });
+    setV(null); onSaved();
+  }, `${u.name || u.emp_id}: notifications to ${v.trim() || 'the dAdmin e-mail'}`);
+  if (v === null) {
+    return (
+      <small className="a-muted a-person-sub">Notifications: {u.notify_email || 'this e-mail'}
+        {canEdit && <> <button type="button" className="a-link" onClick={() => setV(u.notify_email || '')}>Change</button></>}</small>
+    );
+  }
+  return (
+    <span className="a-inline a-person-sub">
+      <input type="email" value={v} placeholder={u.email || 'e-mail'} aria-label={`Notification e-mail of ${u.name || u.emp_id}`} onChange={(e) => setV(e.target.value)} />
+      <button type="button" className="a-btn a-btn-sm" disabled={act.busy} onClick={save}>Save</button>
+      <button type="button" className="a-btn a-btn-sm a-btn-ghost" onClick={() => setV(null)}>Cancel</button>
+    </span>
   );
 }
 

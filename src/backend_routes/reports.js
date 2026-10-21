@@ -154,7 +154,9 @@ async function sales(q, p) {
   const [[chk]] = await q.query(`SELECT (SELECT COALESCE(SUM(total), 0) FROM invoices WHERE ${IN('issued_at')}) AS inv, (SELECT COALESCE(SUM(total), 0) FROM credit_notes WHERE ${IN('issued_at')}) AS cn`, [...span(p), ...span(p)]);
   const checks = (!p.type && !p.owner) ? [{ label: 'Invoices issued - credit notes issued in the period', value: round2(chk.inv - chk.cn), ok: Math.abs(round2(chk.inv - chk.cn) - totals.total) < 0.01,
     detail: `invoices Rs ${round2(chk.inv)} - credit notes Rs ${round2(chk.cn)}` }] : [];
-  return { tables: [{ key: 'sales', title: `Sales by ${SALES_GROUPS[group].toLowerCase()}`, columns, rows, totals }], chart, checks,
+  const rec = reconcile(filter(await salesFacts(q, p)));
+  checks.push({ label: 'Taxable value - delivery charges = Margin\'s selling value', value: rec.goods, ok: Math.abs(rec.taxable - totals.taxable) < 0.01, detail: `Rs ${rec.taxable} - delivery charges Rs ${rec.delivery} = Rs ${rec.goods}` });
+  return { tables: [{ key: 'sales', title: `Sales by ${SALES_GROUPS[group].toLowerCase()}`, columns, rows, totals }, recTable(rec)], chart, checks,
     notes: [`Previous period: ${prevP.from} to ${prevP.to} (total Rs ${prevTotal.toLocaleString('en-IN')}).`, 'Sales = invoices issued in the period minus credit notes issued in it (returns and cancellations); delivery charges and round-off are part of the total.'] };
 }
 
@@ -239,31 +241,56 @@ async function gst(q, p) {
   };
 }
 
+// ---------------------------------------------------------------- Sales and Margin reconcile: taxable value - delivery charges = goods value
+function reconcile(facts) {
+  const taxable = round2(facts.reduce((a, f) => a + f.taxable, 0));
+  const delivery = round2(facts.filter((f) => f.sku_code === '(delivery)').reduce((a, f) => a + f.taxable, 0));
+  return { taxable, delivery, goods: round2(taxable - delivery) };
+}
+const recTable = (rec) => ({ key: 'reconcile', title: 'Sales and Margin reconcile', columns: [col('what', 'What'), col('amount', 'Taxable value', 'money')],
+  rows: [{ what: 'Sales: taxable value (goods + delivery charges)', amount: rec.taxable }, { what: 'less delivery charges (a service, no goods cost)', amount: -rec.delivery },
+    { what: 'Margin: selling value of the goods', amount: rec.goods }], totals: {} });
+
 // ---------------------------------------------------------------- margin
 const MARGIN_BY = { sku: 'SKU', customer: 'Customer', order: 'Order' };
+/** the cost per pack of what each order sent: the average cost kept on its stock-out movements -> Map 'order_no|sku' -> cost */
+async function dispatchCosts(q, orderNos) {
+  if (!orderNos.length) return new Map();
+  const [rows] = await q.query(`SELECT ref_id AS order_no, sku_code, SUM(-delta * unit_cost) / NULLIF(SUM(CASE WHEN unit_cost IS NOT NULL THEN -delta END), 0) AS cost
+      FROM stock_movements WHERE ref_type = 'order' AND move_type = 'out' AND ref_id IN (?) GROUP BY ref_id, sku_code`, [orderNos]);
+  return new Map(rows.filter((r) => r.cost !== null).map((r) => [`${r.order_no}|${r.sku_code}`, Number(r.cost)]));
+}
+
 async function margin(q, p) {
   const by = MARGIN_BY[p.by] ? p.by : 'sku';
   const info = await skuInfo(q);
-  const facts = (await salesFacts(q, p)).filter((r) => !r.sku_code.startsWith('('));
+  const allFacts = await salesFacts(q, p);
+  const facts = allFacts.filter((r) => !r.sku_code.startsWith('('));
+  const costs = await dispatchCosts(q, [...new Set(facts.map((f) => f.order_no))]);
   const m = new Map();
-  let noCost = 0;
+  let fallback = 0;
   for (const f of facts) {
     const s = info.get(f.sku_code);
     const key = by === 'sku' ? f.sku_code : by === 'customer' ? String(f.customer_id) : f.order_no;
     const label = by === 'sku' ? `${f.sku_code} ${s ? `${s.name} ${s.size_label}` : ''}` : by === 'customer' ? `${f.customer_no} ${f.customer}` : `${f.order_no} (${f.customer})`;
     const g = m.get(key) || { key, label, qty: 0, value: 0, cost: 0 };
-    const c = s && s.avg_cost !== null ? Number(s.avg_cost) : null;
-    if (c === null) noCost += 1;
-    g.qty += f.qty; g.value = round2(g.value + f.taxable); g.cost = round2(g.cost + f.qty * (c || 0));
+    // the cost kept when the goods left; an invoice issued before dispatch (setting) has none yet: today's average
+    let c = costs.get(`${f.order_no}|${f.sku_code}`);
+    if (c === undefined) { c = s && s.avg_cost !== null ? Number(s.avg_cost) : 0; if (f.qty) fallback += 1; }
+    g.qty += f.qty; g.value = round2(g.value + f.taxable); g.cost = round2(g.cost + f.qty * c);
     m.set(key, g);
   }
   const rows = [...m.values()].map((g) => ({ ...g, margin: round2(g.value - g.cost), pct: g.value ? round2(((g.value - g.cost) / g.value) * 100) : null })).sort((a, b) => b.margin - a.margin);
   const totals = sumRows(rows, ['qty', 'value', 'cost', 'margin']);
   totals.pct = totals.value ? round2((totals.margin / totals.value) * 100) : null;
   const top = rows.slice(0, 10);
-  return { tables: [{ key: 'margin', title: `Margin by ${MARGIN_BY[by].toLowerCase()}`, columns: [col('label', MARGIN_BY[by]), col('qty', 'Packs', 'num'), col('value', 'Selling value (taxable)', 'money'), col('cost', 'Cost (average)', 'money'), col('margin', 'Margin', 'money'), col('pct', 'Margin %', 'pct')], rows, totals }],
+  const rec = reconcile(allFacts);
+  return { tables: [{ key: 'margin', title: `Margin by ${MARGIN_BY[by].toLowerCase()}`, columns: [col('label', MARGIN_BY[by]), col('qty', 'Packs', 'num'), col('value', 'Selling value (taxable)', 'money'), col('cost', 'Cost at dispatch', 'money'), col('margin', 'Margin', 'money'), col('pct', 'Margin %', 'pct')], rows, totals },
+    recTable(rec)],
     chart: { kind: 'hbar', x: top.map((r) => r.label), series: [{ name: 'Margin', values: top.map((r) => r.margin) }], title: `Top ${top.length} by margin` },
-    notes: ['Selling value = taxable value after every discount, less returns (credit notes); free packs count at Rs 0 with their cost.', 'Cost = packs x the SKU\'s weighted average cost now (Inventory).', ...(noCost ? [`${noCost} line(s) of SKUs without an average cost count at Rs 0 cost.`] : [])], checks: [] };
+    notes: ['Selling value = taxable value of the goods after every discount, less returns (credit notes); free packs count at Rs 0 with their cost. Delivery charges are a service with no goods cost: they are in Sales, not here (see the reconciliation).',
+      'Cost = packs x the average cost kept on the stock-out when the goods left the godown (never today\'s cost); a returned pack takes back the cost it left with.', ...(fallback ? [`${fallback} line(s) were invoiced before dispatch: their cost is today's average until the goods leave.`] : [])],
+    checks: [{ label: 'Sales taxable value - delivery charges = margin selling value', value: rec.goods, ok: Math.abs(rec.goods - totals.value) < 0.01, detail: `Rs ${rec.taxable} - Rs ${rec.delivery} = Rs ${rec.goods}; margin selling value Rs ${totals.value}` }] };
 }
 
 // ---------------------------------------------------------------- stock

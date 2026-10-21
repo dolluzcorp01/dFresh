@@ -43,6 +43,7 @@ const stock = require('./stock');
 const wallet = require('./wallet');
 const numbering = require('./numbering');
 const { audit } = require('./audit');
+const notifications = require('./notifications');
 const { checkSetting } = require('../shared/settingRules');
 const { isStateCode, stateName, placeOfSupply } = require('../shared/gstStates');
 
@@ -386,7 +387,17 @@ async function prepare(q, data, opts = {}) {
       if (reasons.length && await approvals.needed(q, 'credit_order')) holds.push({ kind: 'credit_order', amount: round2(outstanding + thisDue), what: reasons.join('; ') });
     }
   }
-  return { cust, list, terms, creditDays: Number(cust.credit_days) || 0, lines: t.lines, totals: t, coupon: coupon ? coupon.code : null, couponInfo: coupon, offers: offers.applied,
+  // the contact who gets the delivery messages (phase 10): one of the customer's contacts; none = the order contact rule
+  // of notifications.js (the contact with the shipping phone, else the first with an e-mail)
+  let contactId = editing ? editing.contact_id || null : null;
+  if (data.contact_id !== undefined) {
+    contactId = data.contact_id === '' || data.contact_id === null ? null : Number(data.contact_id);
+    if (contactId) {
+      const [[ct]] = await q.query('SELECT contact_id FROM customer_contacts WHERE contact_id = ? AND customer_id = ? AND is_active = 1', [contactId, customerId]);
+      if (!ct) throw new CommerceError(`That contact is not one of ${cust.name}'s`);
+    }
+  }
+  return { cust, list, terms, creditDays: Number(cust.credit_days) || 0, lines: t.lines, contactId, totals: t, coupon: coupon ? coupon.code : null, couponInfo: coupon, offers: offers.applied,
     manualReason, walletUsed, walletGst: walletUsed > 0 ? walletGst : null, walletCap, walletPlan, discountTotal, discountPct, deliveryWaived: waived,
     billAddressId: chose('bill') || !editing ? (billAddr ? billAddr.address_id : null) : editing.bill_address_id, shipAddressId: chose('ship') || !editing ? (shipAddr ? shipAddr.address_id : null) : editing.ship_address_id,
     bill: bill.values, ship: ship.values, pos, posReason: posInfo.reason, gstType, holds, settings, method, area: delivery.area };
@@ -477,10 +488,12 @@ async function requestHolds(q, orderNo, custName, holds, empId) {
   return ids;
 }
 
-/** an order became confirmed: time stamp, reservation (setting), invoice (setting) */
+/** an order became confirmed: time stamp, reservation (setting), invoice (setting), the customer told (the first time) */
 async function confirmed(q, orderId, empId, settings) {
+  const [[was]] = await q.query('SELECT confirmed_at FROM orders WHERE order_id = ?', [orderId]);
   await q.query('UPDATE orders SET confirmed_at = COALESCE(confirmed_at, UTC_TIMESTAMP()) WHERE order_id = ?', [orderId]);
   if (reservesNow('new', settings)) await reserve(q, orderId);
+  if (!was.confirmed_at) await notifications.orderConfirmed(q, orderId);
   if (settings.invoice_issue_at === 'confirm') await invoices.issue(q, orderId, empId);
 }
 
@@ -494,7 +507,7 @@ async function insertLines(q, orderId, lines) {
   }
 }
 const addrCols = (p) => [p.bill.name, p.bill.gstin, p.bill.address, p.bill.town, p.bill.state_code, p.bill.pincode, p.bill.phone, p.billAddressId,
-  p.ship.name, p.ship.address, p.ship.town, p.ship.state_code, p.ship.pincode, p.ship.phone, p.shipAddressId];
+  p.ship.name, p.ship.address, p.ship.town, p.ship.state_code, p.ship.pincode, p.ship.phone, p.shipAddressId, p.contactId];
 
 /**
  * New order (q inside a transaction). opts.replacement: a free replacement (no quantity / stock / approval rules);
@@ -510,10 +523,10 @@ async function createOrder(q, data, empId, opts = {}) {
   const [ins] = await q.query(
     `INSERT INTO orders (order_no, customer_id, price_list, status, payment_terms, credit_days, delivery_method_id, delivery_kind, delivery_area_id,
        bill_name, bill_gstin, bill_address, bill_town, bill_state_code, bill_pincode, bill_phone, bill_address_id,
-       ship_name, ship_address, ship_town, ship_state_code, ship_pincode, ship_phone, ship_address_id, place_of_supply, gst_type,
+       ship_name, ship_address, ship_town, ship_state_code, ship_pincode, ship_phone, ship_address_id, contact_id, place_of_supply, gst_type,
        coupon_code, subtotal, discount, offer_discount, manual_discount, manual_discount_reason, delivery_charge, delivery_gst, delivery_waived, taxable, cgst, sgst, igst, gst, round_off, total,
        wallet_used, wallet_discount, wallet_gst, amount_due, note, emp_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [orderNo, p.cust.customer_id, p.list.key, status, p.terms, p.creditDays, p.method.method_id, p.method.kind, p.area ? p.area.area_id : null, ...addrCols(p), p.pos, p.gstType,
       p.coupon, t.subtotal, t.discount, t.offer_discount, t.manual_discount, p.manualReason, t.delivery_charge, t.delivery_gst, p.deliveryWaived, t.taxable, t.cgst, t.sgst, t.igst, t.gst, t.round_off, t.total,
       p.walletUsed, t.wallet_discount, p.walletGst, round2(t.total - (p.walletUsed - t.wallet_discount)), data.note ? String(data.note).slice(0, 255) : null, empId]
@@ -571,7 +584,7 @@ async function previewOrder(q, data, empId, opts = {}) {
 
 const ORDER_COLS = `order_id, order_no, customer_id, status, payment_terms, credit_days, delivery_method_id, delivery_area_id, coupon_code, wallet_used, version, total,
   bill_name, bill_gstin, bill_address, bill_town, bill_state_code, bill_pincode, bill_phone, bill_address_id,
-  ship_name, ship_address, ship_town, ship_state_code, ship_pincode, ship_phone, ship_address_id`;
+  ship_name, ship_address, ship_town, ship_state_code, ship_pincode, ship_phone, ship_address_id, contact_id`;
 
 /**
  * Edit an order (q inside a transaction). data as createOrder + { version, reason }. Packed needs a reason; the stock is
@@ -607,7 +620,7 @@ async function updateOrder(q, orderNo, data, empId, opts = {}) {
   await q.query(
     `UPDATE orders SET status = ?, payment_terms = ?, delivery_method_id = ?, delivery_kind = ?, delivery_area_id = ?,
        bill_name = ?, bill_gstin = ?, bill_address = ?, bill_town = ?, bill_state_code = ?, bill_pincode = ?, bill_phone = ?, bill_address_id = ?,
-       ship_name = ?, ship_address = ?, ship_town = ?, ship_state_code = ?, ship_pincode = ?, ship_phone = ?, ship_address_id = ?, place_of_supply = ?, gst_type = ?,
+       ship_name = ?, ship_address = ?, ship_town = ?, ship_state_code = ?, ship_pincode = ?, ship_phone = ?, ship_address_id = ?, contact_id = ?, place_of_supply = ?, gst_type = ?,
        coupon_code = ?, subtotal = ?, discount = ?, offer_discount = ?, manual_discount = ?, manual_discount_reason = ?, delivery_charge = ?, delivery_gst = ?, delivery_waived = ?,
        taxable = ?, cgst = ?, sgst = ?, igst = ?, gst = ?, round_off = ?, total = ?, wallet_used = ?, wallet_discount = ?, wallet_gst = ?,
        note = ?, version = version + 1, updated_by = ?, updated_at = UTC_TIMESTAMP() WHERE order_id = ?`,
@@ -695,6 +708,7 @@ async function setStatus(q, o, to, empId, note = null, extra = {}) {
     [to, ...Object.values(extra), empId, o.order_id]);
   await history(q, o.order_id, o.status, to, note, empId);
   await audit(q, { empId, action: 'status', entity: 'order', entityId: o.order_no, before: { status: o.status }, after: { status: to, note, ...extra } });
+  await notifications.orderStatus(q, o.order_id, o.status, to, note);
   if (to === 'delivered' && (await commerceSettings.read(q)).cashback_credit_at === 'delivery') await promotions.creditCashback(q, o.order_id, empId);
 }
 
@@ -727,6 +741,7 @@ async function recordPayment(q, orderNo, b, empId) {
   const [ins] = await q.query('INSERT INTO payments (order_id, kind, mode, amount, received_on, reference, note, emp_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
     [o.order_id, kind, b.mode, amount, day, reference, String(b.note || '').trim().slice(0, 255) || null, empId]);
   const st = await refreshPayment(q, o.order_id);
+  if (kind === 'payment') await notifications.paymentReceived(q, ins.insertId);
   await audit(q, { empId, action: kind === 'refund' ? 'refund' : 'record', entity: 'payment', entityId: `${orderNo}/${ins.insertId}`, after: { amount, mode: b.mode, received_on: day, reference, payment_status: st.status, due: st.due } });
   return { payment_id: ins.insertId, ...st };
 }

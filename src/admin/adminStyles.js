@@ -736,6 +736,17 @@ td.a-pending { background: #fff8e1; box-shadow: inset 3px 0 0 #e3b44f; }
   .a-dl div { grid-template-columns: 1fr; gap: 0; }
 }
 @media (prefers-reduced-motion: reduce) { .adm * { transition: none !important; animation: none !important; } }
+/* Setup > Notifications: channels, the template editor with its live preview, the log; the order / customer messages */
+.a-channels .a-tile { gap: 8px; }
+.a-events td:last-child { white-space: nowrap; }
+.a-tpl { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; align-items: start; }
+.a-tpl textarea { width: 100%; font: 14px/1.5 inherit; }
+.a-tpl-prev { position: sticky; top: 12px; min-width: 0; }
+.a-mailprev { width: 100%; height: 640px; border: 1px solid var(--a-line); border-radius: 12px; background: #F6F1E4; }
+.a-mailsubj { margin: 0 0 8px; overflow-wrap: anywhere; }
+.a-nlog td { overflow-wrap: anywhere; }
+.a-timeline .a-tl-notification { border-color: #2a78d6; }
+@media (max-width: 1100px) { .a-tpl { grid-template-columns: minmax(0, 1fr); } .a-tpl-prev { position: static; } .a-mailprev { height: 520px; } }
 `;
 
 export default css;

@@ -9,6 +9,8 @@
 // - A row left in 'sending' by a crash is released back to 'pending' after 10 minutes.
 // - Every mail gets one terminal line per outcome (mailer.logMail): sent, queued (mail off) or failed.
 // - sendMailNow(id) sends one row at once and returns the outcome (the sign-in code step must know it).
+// - Attachments (notifications, phase 10): a row's `attachments` names documents ({ kind, id }); doc-pdf.js builds them as
+//   PDF right before the send, so the mail carries the document as it is then (a missing document fails the row).
 // - Sign-in codes (purpose 'admin_otp') are wiped from the row once sent: the outbox must not keep a code.
 //   One still pending after the code's 10 minutes is cancelled and wiped instead (a late code is useless).
 // - A row whose lead no longer exists is never sent: every pass marks such pending rows 'cancelled', and each
@@ -18,6 +20,7 @@ const { getDBConnection } = require('../../config/db');
 const mailer = require('./mailer');
 const logoCheck = require('./mail-logo-check');
 const gsheet = require('./gsheet');
+const docPdf = require('./doc-pdf');
 
 const db = getDBConnection(process.env.DB_NAME || 'dfresh').promise();
 
@@ -30,14 +33,14 @@ const STUCK_MIN = 10;
 const OUTBOXES = {
   mail: {
     table: 'mail_outbox', id: 'mail_id', doneStatus: 'sent', doneAt: 'sent_at',
-    cols: 'mail_id, lead_id, purpose, to_email, subject, html_body, text_body',
+    cols: 'mail_id, lead_id, purpose, to_email, subject, html_body, text_body, attachments',
     ready: async () => mailer.readiness(),
     cleanup: () => db.query(
       `UPDATE mail_outbox SET status = 'cancelled', subject = 'dFresh admin sign-in code (expired, removed)',
               html_body = '-', text_body = '-', last_error = 'sign-in code expired before it was sent'
         WHERE purpose = 'admin_otp' AND status = 'pending' AND created_at < NOW() - INTERVAL 10 MINUTE`
     ),
-    run: (r) => mailer.send({ to: r.to_email, subject: r.subject, html: r.html_body, text: r.text_body }),
+    run: async (r) => mailer.send({ to: r.to_email, subject: r.subject, html: r.html_body, text: r.text_body, files: await attachmentsOf(r) }),
     doneCols: (sent, r) => ({
       provider_msg_id: sent.providerId,
       ...(r.purpose === 'admin_otp' ? { subject: 'dFresh admin sign-in code (removed after sending)', html_body: '-', text_body: '-' } : {}),
@@ -56,6 +59,18 @@ const OUTBOXES = {
     },
   },
 };
+
+/** the documents of a mail row as PDF files */
+async function attachmentsOf(r) {
+  if (!r.attachments) return [];
+  const files = [];
+  for (const a of JSON.parse(r.attachments)) {
+    const f = await docPdf.build(db, a);
+    if (!f) throw new Error(`attachment ${a.kind} ${a.id} no longer exists`);
+    files.push(f);
+  }
+  return files;
+}
 
 const lastReason = {}; // outbox -> last logged "not ready" reason
 const mailLine = (r, from) => ({ id: r.mail_id, purpose: r.purpose, from, to: r.to_email });

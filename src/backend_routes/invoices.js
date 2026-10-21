@@ -8,6 +8,7 @@
 const { audit } = require('./audit');
 const commerceSettings = require('./commerce-settings');
 const numbering = require('./numbering');
+const notifications = require('./notifications');
 
 class InvoiceError extends Error {
   constructor(message, status = 400) { super(message); this.status = status; }
@@ -44,6 +45,7 @@ async function issue(q, orderId, empId, { at = null } = {}) {
       JSON.stringify(buyer), commerceSettings.invoiceIsDemo(cs) ? 1 : 0, empId]
   );
   await audit(q, { empId, action: 'issue', entity: 'invoice', entityId: invoiceNo, after: { order: o.order_no, total: Number(o.total), gst_type: o.gst_type, due_in_days: dueDays } });
+  await notifications.invoiceIssued(q, ins.insertId); // the invoice PDF to the invoice contacts
   return { invoice_id: ins.insertId, invoice_no: invoiceNo };
 }
 

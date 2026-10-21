@@ -12,6 +12,8 @@
 //   mail_logo_url set AND its last check passed (mail-logo-check.js) -> that URL replaces LOGO_SRC and nothing is
 //   attached; otherwise (empty, unchecked or failing) -> the inline CID attachment mail-logo.png (built by
 //   scripts/mail-logo.js). Never SVG. Already queued mails follow the setting.
+// - Documents (phase 10 notifications): send() takes files [{ filename, buffer }] (PDFs built by doc-pdf.js when the
+//   outbox row is sent) and attaches them next to the logo.
 // - Log: logMail() prints one "[mail] #id purpose from .. to .. -> outcome" line per mail and outcome (the
 //   outbox worker calls it); the subject and body are never printed, so a sign-in code never reaches the log.
 // - Size: Gmail clips html over 102 KB. Rendered templates stay far below MAX_HTML_BYTES (60 KB) because every
@@ -109,11 +111,11 @@ function logMail({ id, purpose, from, to }, outcome) {
 const queuedOutcome = (reason) => (process.env.MAIL_ENABLED !== 'true' ? 'queued (mail off)' : `queued (not sending: ${reason})`);
 
 /**
- * Sends one message. { to, subject, html, text } - text is mandatory.
+ * Sends one message. { to, subject, html, text, files } - text is mandatory; files = [{ filename, buffer }] (PDF).
  * Returns the message as handed to the transport (from / to after the MAIL_TEST_TO redirect) plus providerId
  * (SendGrid's x-message-id; a test transport may return { id }).
  */
-async function send({ to, subject, html, text }) {
+async function send({ to, subject, html, text, files = [] }) {
   if (!text || !String(text).trim()) throw new Error('mailer: plain-text part is mandatory');
   if (!html) throw new Error('mailer: html part missing');
   if (!EMAIL.test(to || '')) throw new Error('mailer: bad recipient');
@@ -127,7 +129,10 @@ async function send({ to, subject, html, text }) {
     subject: redirect ? `[TEST for ${to}] ${subject}` : subject,
     html: hasLogo && logoUrl ? html.split(LOGO_SRC).join(esc(logoUrl)) : html,
     text,
-    ...(hasLogo && !logoUrl ? { attachments: [logo()] } : {}),
+    ...(hasLogo && !logoUrl) || files.length ? { attachments: [
+      ...(hasLogo && !logoUrl ? [logo()] : []),
+      ...files.map((f) => ({ content: f.buffer.toString('base64'), filename: f.filename, type: 'application/pdf', disposition: 'attachment' })),
+    ] } : {},
     trackingSettings: { clickTracking: { enable: false, enableText: false } },
   };
   let providerId = null;
@@ -362,6 +367,6 @@ function renderLogoTest({ logo, url, companyName }) {
 
 module.exports = {
   send, readiness, setTransport, fromAddress, logMail, queuedOutcome, renderLeadAlert, renderBrochureCopy, renderLeadAck, renderLoginCode,
-  staffText, STAFF_GROUP,
+  staffText, STAFF_GROUP, shell,
   renderLogoTest, esc, LOGO_SRC, LOGO_URL: logoCheck.LOGO_URL, MAX_HTML_BYTES,
 };

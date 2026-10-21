@@ -28,8 +28,18 @@ function check(row, raw, roleIds = []) {
   const s = String(raw ?? '').trim();
   const bad = (error) => ({ value: s, error });
   switch (row.value_type) {
-    case 'bool': return s === '1' || s === '0' || s === 'true' || s === 'false' ? { value: s === '1' || s === 'true' ? '1' : '0', error: null } : bad('On or off');
-    case 'int': return /^\d{1,7}$/.test(s) ? { value: String(Number(s)), error: null } : bad('A whole number, 0 or more');
+    case 'bool': {
+      if (!(s === '1' || s === '0' || s === 'true' || s === 'false')) return bad('On or off');
+      const on = s === '1' || s === 'true';
+      // WhatsApp and SMS need a provider (phase 10: none is set up yet), so they cannot be switched on
+      if (on && (row.setting_key === 'notify_whatsapp' || row.setting_key === 'notify_sms')) return bad('Provider not set up: this channel stays off until a provider is chosen');
+      return { value: on ? '1' : '0', error: null };
+    }
+    case 'int':
+      if (!/^\d{1,7}$/.test(s)) return bad('A whole number, 0 or more');
+      if (row.setting_key === 'notify_daily_hour' && Number(s) > 23) return bad('An hour from 0 to 23 (India time)');
+      if (['notify_overdue_every_days', 'notify_overdue_max', 'notify_wallet_expiry_days'].includes(row.setting_key) && Number(s) < 1) return bad('1 or more');
+      return { value: String(Number(s)), error: null };
     case 'decimal': return /^\d{1,9}(\.\d{1,2})?$/.test(s) ? { value: String(Number(s)), error: null } : bad('A number, 0 or more (2 decimals at most)');
     case 'select': {
       const opts = JSON.parse(row.options || '[]').map((o) => o[0]);
