@@ -35,6 +35,7 @@ INSERT IGNORE INTO commerce_settings (setting_key, grp, label, help, value, valu
   ('expiry_warn_days', 'Inventory', 'Near-expiry warning (days before the expiry date)', 'Batches expiring within these days are on the Near expiry list. Expired stock cannot be ordered.', '60', 'int', NULL, 0, 40),
   ('return_window_days', 'Returns', 'Return window (days after delivery)', 'A later return needs approval or is refused (next setting).', '7', 'int', NULL, 0, 10),
   ('return_outside_window', 'Returns', 'A return after the window', NULL, 'approval', 'select', '[["approval","needs approval"],["refuse","is refused"]]', 0, 20),
+  ('returned_resell', 'Returns', 'Returned stock can be sold again', 'Off: returned packs stay in Returned (R) stock until written off. On: a Recheck (with approval) moves them back to good stock.', '0', 'bool', NULL, 0, 30),
   ('delivery_charge_gst_rate', 'Delivery', 'GST rate on delivery charges (%)', NULL, '18', 'decimal', NULL, 0, 10),
   ('delivery_otp', 'Delivery', 'Ask the customer for a delivery OTP', 'Off by default. On: each stop gets a 4-digit code when the trip starts (on the trip sheet until SMS / WhatsApp sending is chosen, Notifications); the driver types it to mark the stop delivered.', '0', 'bool', NULL, 0, 20),
   ('invoice_seller_name', 'Invoice', 'Seller (legal entity) on the invoice', 'To be confirmed by sir.', 'Dolluz Corporation (OPC) Pvt Ltd', 'text', NULL, 1, 10),
@@ -75,6 +76,7 @@ INSERT IGNORE INTO commerce_settings (setting_key, grp, label, help, value, valu
   ('approve_price_below_on', 'Approvals', 'A price below the price list needs approval', NULL, '1', 'bool', NULL, 0, 90),
   ('approve_price_below_pct', 'Approvals', 'Below the list by more than (%)', NULL, '5', 'decimal', NULL, 0, 91),
   ('approve_over_available', 'Approvals', 'Ordering more than the available stock (override) needs approval', 'Only a role with "approve" on Orders can ask for the override; off = the override is saved at once.', '1', 'bool', NULL, 0, 100),
+  ('approve_no_refund', 'Approvals', 'A "No refund" decision on a return needs approval', NULL, '1', 'bool', NULL, 0, 120),
   ('approve_credit_order', 'Approvals', 'A new order for a customer over the credit limit or with overdue invoices needs approval', NULL, '1', 'bool', NULL, 0, 110);
 
 CREATE TABLE IF NOT EXISTS customer_types (

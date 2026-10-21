@@ -1,6 +1,7 @@
 // Inventory (docs/COMMERCE-SPEC.md 4.4; migration 20261020_commerce_stock.sql): shared by the admin routes, the order
 // logic (commerce.js) and the demo seed, so every stock change is made the same way.
-// - Stock on hand = SUM(stock_movements.delta) per SKU, kind (good / returned / damaged) and batch. Nothing is typed in.
+// - Stock on hand = SUM(stock_movements.delta) per SKU, kind (good / returned / damaged / expired: returned packs found
+//   expired at inspection, blocked until written off) and batch. Nothing is typed in.
 // - Available = good stock - expired batches - active reservations of other orders (phase 3).
 // - Stock in (production from the Kanchipuram unit, or purchase from a supplier): lines in packs with a cost per pack;
 //   each line updates the SKU's weighted average cost: (on hand x old average + qty x cost) / (on hand + qty).
@@ -18,9 +19,9 @@ const pricing = require('./pricing');
 
 const MOVE_LABEL = {
   production: 'Stock in (production)', purchase: 'Stock in (purchase)', out: 'Dispatched', return: 'Back in', damaged: 'Moved to damaged',
-  write_off: 'Write-off', count: 'Count difference', in: 'In', adjust: 'Adjust',
+  write_off: 'Write-off', count: 'Count difference', in: 'In', adjust: 'Adjust', recheck: 'Recheck (R) to good',
 };
-const KIND_LABEL = { good: 'Good', returned: 'Returned (R)', damaged: 'Damaged' };
+const KIND_LABEL = { good: 'Good', returned: 'Returned (R)', damaged: 'Damaged', expired: 'Expired (blocked)' };
 const WRITE_OFF_TYPES = { damaged: 'Damaged', expired: 'Expired', lost: 'Lost', sample: 'Sample' };
 const round2 = (n) => Math.round(n * 100) / 100;
 const IST_TODAY = "DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+05:30'))";
@@ -254,7 +255,7 @@ async function requestWriteOff(q, data, empId, photo = null) {
   const reason = String(data.reason || '').trim().slice(0, 255);
   const [[s]] = await q.query('SELECT s.sku_code, s.avg_cost, p.track_batches FROM skus s JOIN products p ON p.product_id = s.product_id WHERE s.sku_code = ?', [sku]);
   if (!s) throw new StockError('Choose the SKU');
-  if (!kind) throw new StockError('From: good, damaged or returned stock');
+  if (!kind) throw new StockError('From: good, damaged, returned or expired stock');
   if (!Number.isInteger(qty) || qty < 1) throw new StockError('Quantity: packs, a whole number from 1');
   if (!type) throw new StockError('Why: damaged, expired, lost or sample');
   if (!reason) throw new StockError('Say what happened');

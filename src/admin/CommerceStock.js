@@ -2,7 +2,9 @@
 // one location, the Kanchipuram godown. Tabs (?tab=):
 // - Stock: per SKU good, expired (batches past expiry, blocked from orders), reserved by confirmed orders, available,
 //   returned (R), damaged; reorder level and quantity (edit); average cost and stock value (only for a role that can
-//   view Reports or Products and prices). Record: good -> damaged, or packs back into Returned (R).
+//   view Reports or Products and prices). Record: good -> damaged, or packs back into Returned (R). Returned packs
+//   found expired at a return inspection are their own kind (blocked until written off). Recheck (phase 6): Returned
+//   (R) packs back to good stock, only when Commerce settings allow resale, always through approval.
 // - Stock in, Write-offs, Counts, Suppliers: InventoryWork.js.
 // - Batches: every batch with good stock, Expired / Near expiry (Commerce setting days) / OK.
 // - Reorder: SKUs whose available stock is below the reorder level, with a suggested quantity in full cartons.
@@ -13,8 +15,8 @@ import { api } from './adminApi';
 import { InfoCard, Loading, fmtDate, useAction, useCan, useLoad } from './ui';
 import { StockIns, WriteOffs, Counts, Suppliers } from './InventoryWork';
 
+const KIND = { good: 'Good', returned: 'Returned (R)', damaged: 'Damaged', expired: 'Expired (returns)' };
 const TABS = [['stock', 'Stock'], ['in', 'Stock in'], ['batches', 'Batches'], ['writeoffs', 'Write-offs'], ['counts', 'Counts'], ['reorder', 'Reorder'], ['moves', 'Movements'], ['suppliers', 'Suppliers']];
-const KIND = { good: 'Good', returned: 'Returned (R)', damaged: 'Damaged' };
 const rs = (n) => (n === null || n === undefined ? '-' : `Rs ${Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
 const day = (d) => (d ? new Date(`${String(d).slice(0, 10)}T00:00:00Z`).toLocaleDateString('en-IN', { timeZone: 'UTC', day: 'numeric', month: 'short', year: 'numeric' }) : '');
 
@@ -102,7 +104,8 @@ function StockTab({ stock }) {
             <table className="a-table a-stocktable">
               <thead><tr>
                 <th>SKU</th><th>Product</th><th className="a-num">Good</th><th className="a-num" title="Batches past their expiry date">Expired</th><th className="a-num" title="Held by confirmed orders">Reserved</th>
-                <th className="a-num" title="Good - expired - reserved">Available</th><th className="a-num">(R)</th><th className="a-num">Damaged</th><th>Bin · reorder level / qty</th>
+                <th className="a-num" title="Good - expired - reserved">Available</th><th className="a-num">(R)</th><th className="a-num">Damaged</th>
+                <th className="a-num" title="Returned packs found expired at inspection: blocked until written off">Ret. expired</th><th>Bin · reorder level / qty</th>
                 {d.seesCost && <><th className="a-num">Avg cost</th><th className="a-num">Value</th></>}<th>Last movement</th>
               </tr></thead>
               <tbody>
@@ -116,6 +119,7 @@ function StockTab({ stock }) {
                     <td className={`a-num${r.available < 0 ? ' a-bad' : ''}`}><b>{r.available}</b> {r.low && <span className="a-status a-status-bad">Low</span>}</td>
                     <td className="a-num">{r.returned || ''}</td>
                     <td className="a-num">{r.damaged || ''}</td>
+                    <td className={`a-num${r.expired_back ? ' a-bad' : ''}`}>{r.expired_back || ''}</td>
                     <td>
                       {canEdit ? (
                         <span className="a-row">
@@ -133,6 +137,7 @@ function StockTab({ stock }) {
               </tbody>
             </table>
           </div>
+          {canEdit && rows.some((r) => r.returned > 0) && <Recheck rows={rows.filter((r) => r.returned > 0)} resell={d.resell} />}
           {canRecord && (
             <form className="a-card a-moveform" onSubmit={record}>
               <h2>Record damaged or returned packs</h2>
@@ -150,6 +155,44 @@ function StockTab({ stock }) {
         </>
       )}
     </Loading>
+  );
+}
+
+/** Recheck: Returned (R) packs back to good stock (approval); only when the setting allows resale */
+function Recheck({ rows, resell }) {
+  const act = useAction();
+  const [f, setF] = useState({ sku_code: '', batch_id: '', qty: '', note: '' });
+  const row = rows.find((r) => r.sku_code === f.sku_code);
+  const batches = useLoad(row && row.track_batches ? `/commerce/batches?sku=${encodeURIComponent(row.sku_code)}&kind=returned` : null);
+  const save = (e) => {
+    e.preventDefault();
+    act.run(async () => {
+      const r = await api.send('POST', '/commerce/stock/recheck', { ...f, qty: Number(f.qty) });
+      setF({ sku_code: '', batch_id: '', qty: '', note: '' });
+      act.setMsg({ kind: 'info', text: `Recheck of ${f.qty} x ${f.sku_code} sent for approval (request #${r.approval_id}): the packs move to good stock when it is approved.` });
+    });
+  };
+  return (
+    <form className="a-card a-moveform" onSubmit={save}>
+      <h2>Recheck Returned (R) packs</h2>
+      {act.note}
+      {!resell ? <p className="a-muted">Returned stock cannot be sold again (Commerce settings &gt; Returns): it stays in (R) until written off.</p> : (
+        <>
+          <p className="a-muted">Packs checked again and fit to sell move from (R) to good stock after approval (Setup &gt; Approvals).</p>
+          <div className="a-toolbar">
+            <label className="a-field"><span>SKU</span><select value={f.sku_code} aria-label="Recheck SKU" onChange={(e) => setF({ ...f, sku_code: e.target.value, batch_id: '' })} required>
+              <option value="">Choose...</option>{rows.map((r) => <option key={r.sku_code} value={r.sku_code}>{r.sku_code} ({r.returned} in (R))</option>)}</select></label>
+            {row && row.track_batches && (
+              <label className="a-field"><span>Batch</span><select value={f.batch_id} aria-label="Recheck batch" onChange={(e) => setF({ ...f, batch_id: e.target.value })}>
+                <option value="">Choose...</option>{(batches.data ? batches.data.rows : []).map((b) => <option key={b.batch_id || 'none'} value={b.batch_id || ''}>{b.batch_no || 'no batch'} ({b.qty}){b.expired ? ' expired' : ''}</option>)}</select></label>
+            )}
+            <label className="a-field"><span>Packs</span><input className="a-qty" type="number" min="1" step="1" value={f.qty} aria-label="Recheck packs" onChange={(e) => setF({ ...f, qty: e.target.value })} required /></label>
+            <label className="a-field"><span>What did the check find?</span><input value={f.note} maxLength={200} aria-label="Recheck note" placeholder="sealed, clean, sellable" onChange={(e) => setF({ ...f, note: e.target.value })} required /></label>
+            <button type="submit" className="a-btn" disabled={act.busy}>Ask to move to good stock</button>
+          </div>
+        </>
+      )}
+    </form>
   );
 }
 

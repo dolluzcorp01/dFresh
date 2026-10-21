@@ -68,4 +68,47 @@ async function cancelForOrder(q, orderId, reason, empId) {
   return { invoice_no: inv.invoice_no, credit_note_no: cnNo };
 }
 
-module.exports = { InvoiceError, issue, cancelForOrder };
+/**
+ * Credit note for returned packs (phase 6): lines = [{ sku_code, qty }] of the order's live invoice; each line at the
+ * invoice's own tax (taxable, CGST + SGST or IGST of that order line, in proportion to the packs). Round-off as the
+ * invoice (Commerce setting). -> { credit_note_id, credit_note_no, total, taxable, cgst, sgst, igst }
+ */
+async function creditNoteForReturn(q, orderId, lines, reason, returnId, empId) {
+  const [[inv]] = await q.query('SELECT invoice_id, invoice_no, gst_type FROM invoices WHERE live_order_id = ? FOR UPDATE', [orderId]);
+  if (!inv) throw new InvoiceError('The order has no live tax invoice to credit', 409);
+  const [items] = await q.query('SELECT sku_code, qty, hsn, gst_rate, taxable, cgst, sgst, igst FROM order_items WHERE order_id = ?', [orderId]);
+  const r2 = (n) => Math.round(n * 100) / 100;
+  const out = [];
+  for (const l of lines.filter((x) => x.qty > 0)) {
+    const it = items.find((i) => i.sku_code === l.sku_code);
+    if (!it || l.qty > it.qty) throw new InvoiceError(`${l.sku_code}: ${l.qty} packs is more than invoiced`, 409);
+    const p = l.qty / it.qty;
+    const row = { sku_code: l.sku_code, hsn: it.hsn, gst_rate: Number(it.gst_rate), qty: l.qty, taxable: r2(Number(it.taxable) * p), cgst: r2(Number(it.cgst) * p), sgst: r2(Number(it.sgst) * p), igst: r2(Number(it.igst) * p) };
+    row.line_total = r2(row.taxable + row.cgst + row.sgst + row.igst);
+    out.push(row);
+  }
+  if (!out.length) throw new InvoiceError('Nothing to credit');
+  const sum = (k) => r2(out.reduce((a, x) => a + x[k], 0));
+  const [taxable, cgst, sgst, igst] = [sum('taxable'), sum('cgst'), sum('sgst'), sum('igst')];
+  const before = r2(taxable + cgst + sgst + igst);
+  const cs = await commerceSettings.read(q);
+  const ro = cs.invoice_round_off ? r2(Math.round(before) - before) : 0;
+  const total = r2(before + ro);
+  const fy = numbering.fyOf(new Date());
+  const seq = await numbering.next(q, `${cs.credit_note_prefix}-${fy.fy}`, 1);
+  const cnNo = `${cs.credit_note_prefix}/${fy.short}/${numbering.pad(seq)}`;
+  const why = String(reason || '').trim().slice(0, 255) || 'Goods returned';
+  const [ins] = await q.query(
+    `INSERT INTO credit_notes (credit_note_no, fy, seq, invoice_id, return_id, reason, taxable, cgst, sgst, igst, round_off, total, issued_at, emp_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(), ?)`,
+    [cnNo, fy.fy, seq, inv.invoice_id, returnId, why, taxable, cgst, sgst, igst, ro, total, empId]
+  );
+  for (const x of out) {
+    await q.query('INSERT INTO credit_note_lines (credit_note_id, sku_code, hsn, gst_rate, qty, taxable, cgst, sgst, igst, line_total) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [ins.insertId, x.sku_code, x.hsn, x.gst_rate, x.qty, x.taxable, x.cgst, x.sgst, x.igst, x.line_total]);
+  }
+  await audit(q, { empId, action: 'issue', entity: 'credit_note', entityId: cnNo, after: { invoice: inv.invoice_no, gst_type: inv.gst_type, total, taxable, cgst, sgst, igst, lines: out.map((x) => `${x.qty} x ${x.sku_code}`), reason: why } });
+  return { credit_note_id: ins.insertId, credit_note_no: cnNo, invoice_no: inv.invoice_no, gst_type: inv.gst_type, total, taxable, cgst, sgst, igst };
+}
+
+module.exports = { InvoiceError, issue, cancelForOrder, creditNoteForReturn };

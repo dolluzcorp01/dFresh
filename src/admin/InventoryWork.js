@@ -14,7 +14,7 @@ import { Drawer, Loading, Notice, UploadProgress, fmtDate, useAction, useCan, us
 const rs = (n) => (n === null || n === undefined ? '-' : `Rs ${Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
 const day = (d) => (d ? new Date(`${String(d).slice(0, 10)}T00:00:00Z`).toLocaleDateString('en-IN', { timeZone: 'UTC', day: 'numeric', month: 'short', year: 'numeric' }) : '');
 const today = () => new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10);
-const KIND = { good: 'Good', damaged: 'Damaged', returned: 'Returned (R)' };
+const KIND = { good: 'Good', damaged: 'Damaged', returned: 'Returned (R)', expired: 'Expired (returns)' };
 
 /** a scan box: a barcode scanner types the code and Enter; onCode(code) */
 function ScanBox({ onCode, label = 'Scan a barcode or type a SKU and press Enter' }) {
@@ -200,7 +200,7 @@ function WriteOffDrawer({ stock, types, onClose, onSaved }) {
     if (s && s.track_batches) api.get(`/commerce/batches?sku=${encodeURIComponent(s.sku_code)}&kind=${f.stock_kind}`).then((r) => { if (alive) setBatches(r.rows.filter((b) => b.batch_id)); }, () => {});
     return () => { alive = false; };
   }, [s && s.sku_code, f.stock_kind]); // eslint-disable-line react-hooks/exhaustive-deps
-  const have = s ? (f.stock_kind === 'good' ? s.good : f.stock_kind === 'damaged' ? s.damaged : s.returned) : null;
+  const have = s ? { good: s.good, damaged: s.damaged, returned: s.returned, expired: s.expired_back }[f.stock_kind] : null;
   const save = () => act.run(async () => {
     const body = { ...f, sku_code: f.sku_code.trim().toUpperCase() };
     const r = photo ? await up.send('photo', '/commerce/write-offs', photo, body) : await api.send('POST', '/commerce/write-offs', body);

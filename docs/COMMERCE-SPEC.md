@@ -283,6 +283,32 @@ Stock: ok -> return_in to `returned` (R); damaged -> return_in to `damaged`; lat
 *write-off* (approval) removes damaged stock. Refund: credit note first (if invoiced), then wallet / original / bank.
 Replacement: a new order at Rs 0 linked to the return (stock reserved like any order).
 
+### 5.5b Built in phase 6 (returns and refunds)
+Migration `20261021_commerce_returns.sql`, logic `src/backend_routes/returns.js`, screens Commerce > Returns, Orders >
+New return, Delivery (pickups), Inventory (Recheck), Reports. Numbers DFR-26nnnn (setting `return_prefix`).
+- Request on a delivered order (entered when the customer calls): lines of SKU and batch as delivered (partial; never
+  more than delivered minus earlier returns), a reason from the list, photos optional. The window (`return_window_days`)
+  counts from the delivery day; outside it the return is refused or waits for the `return_window` approval (setting).
+- Statuses: `requested` -> `collecting` -> `received` -> `inspected` -> `refunded` / `replaced` / `closed` (`rejected`
+  when the window approval is refused). Collection: the customer brings it; a pickup stop on a delivery trip
+  (`trip_stops.kind = pickup`, nothing leaves the godown at Start trip, the driver marks Picked up with a photo); a
+  courier reverse pickup (courier and AWB).
+- Receive: every pack scanned with the pack check rules (SKU, SKU/BATCH, SKU#C). Inspect per line: OK -> `returned`
+  (R), Damaged -> `damaged`, Expired -> `expired` (a stock kind of its own, blocked until written off), Not received;
+  `return` movements keep the batch. Receive and inspect need "edit" on Inventory (Warehouse); deciding needs "edit" on
+  Returns.
+- Decide per line: refund, replacement or no refund (partial mixes allowed). A refund always issues the credit note
+  DFC/26-27/nnnn first (`credit_note_lines` at the invoice's own taxable and CGST + SGST or IGST, rounded as the
+  invoice), then: to the wallet, to the original payment (a refund payment row: mode and reference typed), or less to
+  pay on an unpaid order. Above `approve_refund_above` the refund waits for approval (the credit note is issued when it
+  is approved); "No refund" waits for the `no_refund` approval (`approve_no_refund`). A rejected approval makes those
+  packs undecided again. A replacement is a Rs 0 order (same addresses and delivery method) through pick-pack-deliver.
+- The order's payment status becomes `refunded` or `part_refunded` once nothing is due after its return credit notes;
+  the invoice lists its credit notes. Recheck (R) -> good: only when `returned_resell` is on, always through the
+  `restock` approval (`recheck` movements). Operations cards: returns to collect, to inspect, to decide. Reports:
+  returns by reason and by SKU for a period with the return rate (packs returned / packs delivered in the period).
+  SKUs and labels prints pack (SKU), carton (SKU#C) and batch (SKU/BATCH) labels.
+
 ### 5.6 Approval
 `pending` -> `approved` (the action runs) / `rejected` / `expired` / `withdrawn` (by the requester).
 

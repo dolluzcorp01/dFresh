@@ -31,7 +31,7 @@ export default function Approvals({ onChanged }) {
       <h1>Approvals</h1>
       <InfoCard title="Actions that wait for a second person">
         <ul>
-          <li>Large refunds, stock write-offs, big discounts, cancelling after dispatch, goodwill wallet credit, credit limit raises and prices below the list can need approval.</li>
+          <li>Large refunds, returns outside the window, "No refund" decisions, rechecks of returned stock, stock write-offs, big discounts, cancelling after dispatch, goodwill wallet credit, credit limit raises and prices below the list can need approval.</li>
           <li>The approver needs an approver role and &quot;approve&quot; on the section. Nobody approves their own request. A reject needs a note.</li>
           <li>Thresholds and approver roles: <Link to="/admin/commerce-settings#group-Approvals">Commerce settings &gt; Approvals</Link>. Requests expire after the days set there.</li>
         </ul>

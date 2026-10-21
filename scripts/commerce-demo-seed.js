@@ -6,10 +6,14 @@
 //    reorder levels, a little returned stock, coupons, cashback rule
 // 3. DEMO prices on all 6 lists (Default + 5 customer types) for every SKU, through src/backend_routes/pricing.js:
 //    effective 30 days ago, a +5 % change on the toilet rolls 5 days ago and one scheduled for the 1st of next month
-// 4. 15 demo customers (addresses with state and PIN, credit terms by type; one in Karnataka for IGST) and 25 orders
+// 4. 15 demo customers (addresses with state and PIN, credit terms by type; one in Karnataka for IGST) and 26 orders
 //    across all statuses, through src/backend_routes/commerce.js (list prices of the customer's type, coupons, stock
 //    reserved, stock out and invoice at dispatch, cashback on delivery); then the dates are moved back to the demo
-//    days, payments recorded (paid, part paid, one overdue invoice), 2 returns, notes and follow-ups
+//    days, payments recorded (paid, part paid, one overdue invoice), notes and follow-ups
+// 4b. returns through src/backend_routes/returns.js, one in every status: outside the window waiting for approval, a
+//    courier reverse pickup still without AWB, a pickup on a planned trip, received (scanned), inspected, refunded to
+//    the wallet (credit note), a partial one (IGST order: refund less to pay + replacement, courier reverse pickup),
+//    replaced, closed with no refund (approved)
 // 5. stock through src/backend_routes/stock.js: 2 suppliers, production stock-ins for every SKU 12 days ago and a
 //    purchase of napkins 6 days ago (costs, so the average cost moves), wet wipes in 3 batches (one expired, one near
 //    expiry, one fresh); after the orders: write-offs (one waiting for approval), a towels count with differences
@@ -33,6 +37,7 @@ const approvals = require('../src/backend_routes/approvals');
 const pricing = require('../src/backend_routes/pricing');
 const stock = require('../src/backend_routes/stock');
 const delivery = require('../src/backend_routes/delivery');
+const returns = require('../src/backend_routes/returns');
 
 const db = getDBConnection(DB).promise();
 const ROOT = path.join(__dirname, '..');
@@ -95,6 +100,7 @@ const ORDERS = [
   [10, 'new', 'cod', null, 0, [['DF023-R1', 6], ['DF035-M10', 2]], 'own'],
   [4, 'new', 'credit', null, 0, [['DF044-M100', 4], ['DF038-M150', 6]], 'own'],
   [14, 'new', 'cod', null, 0, [['DF006-PKT', 10], ['DF001-M100', 6]], 'own'],
+  [8, 'delivered', 'credit', null, 4, [['DF044-M100', 6], ['DF002-M100', 20]], 'courier'], // IGST (Karnataka): its returns
 ];
 const METHOD = { own: 1, courier: 2, pickup: 3 };
 // what each demo order has paid after the loop: order index (1-based) -> 'full' | fraction | 0 (credit orders
@@ -345,26 +351,95 @@ async function inTx(fn) {
     if (amount > 0) await inTx((q) => commerce.recordPayment(q, no, { amount: String(amount), mode, received_on: day, reference: ref, note: 'DEMO payment' }, 'DZIND002'));
   }
 
-  const [del] = await db.query("SELECT o.order_no, (SELECT sku_code FROM order_items i WHERE i.order_id = o.order_id ORDER BY qty DESC LIMIT 1) AS sku FROM orders o WHERE status = 'delivered' ORDER BY order_id LIMIT 2");
-  const plans = [
-    { items: [{ sku_code: del[0].sku, qty: 4, item_check: 'ok' }], reason: 'DEMO - wrong size ordered, packs unopened', outcome: 'wallet' },
-    { items: [{ sku_code: del[1].sku, qty: 2, item_check: 'damaged' }], reason: 'DEMO - cartons wet on arrival', outcome: 'replacement' },
-  ];
-  for (let i = 0; i < 2; i += 1) {
-    await inTx(async (conn) => {
-      const r = await commerce.createReturn(conn, del[i].order_no, plans[i], 'DZIND148');
-      await conn.query('UPDATE returns SET created_at = UTC_TIMESTAMP() - INTERVAL ? HOUR WHERE return_no = ?', [30 - i * 20, r.return_no]);
-    });
+  // returns (after the demo days, so the return window counts from the real delivery day)
+  const nth = (i) => placed[i - 1][0]; // the i-th demo order (1-based, as in ORDERS)
+  const linesOf = async (no, want) => {
+    const [[o]] = await db.query('SELECT order_id FROM orders WHERE order_no = ?', [no]);
+    const can = await returns.returnable(db, o.order_id);
+    return want.map(([sku, qty]) => { const c = can.find((x) => x.sku_code === sku); return { sku_code: sku, batch_id: c.batch_id, qty }; });
+  };
+  const scanAll = async (q, no) => {
+    const [[r]] = await q.query('SELECT return_id FROM returns WHERE return_no = ?', [no]);
+    for (const l of await returns.receiveState(q, r.return_id)) {
+      for (let i = 0; i < l.qty; i += 1) await returns.receiveScan(q, no, l.batch_no ? `${l.sku_code}/${l.batch_no}` : l.sku_code, 'DZIND002');
+    }
+    return returns.receiveState(q, r.return_id);
+  };
+  const inspectAs = (q, no, lines, per, note) => returns.inspect(q, no, { lines: lines.map((l) => ({ line_id: l.line_id, ...per(l) })), note }, 'DZIND002');
+  const decideAs = (q, no, lines, per, extra) => returns.decide(q, no, { lines: lines.map((l) => ({ line_id: l.line_id, ...per(l) })), ...extra }, 'DZIND148');
+  const madeRet = [];
+  const newReturn = async (q, orderNo, want, reason, collection, note) => {
+    const r = await returns.createReturn(q, orderNo, { lines: await linesOf(orderNo, want), reason_id: reason, reason_note: note, collection }, 'DZIND148');
+    madeRet.push(r.return_no);
+    return r.return_no;
+  };
+  const [[courier]] = await db.query('SELECT courier_id FROM couriers ORDER BY courier_id LIMIT 1');
+  // refunded to the wallet (credit note, CGST + SGST)
+  await inTx(async (q) => {
+    const no = await newReturn(q, nth(5), [['DF008-M50', 2]], 4, 'bring', 'DEMO - ordered the wrong napkin, packs unopened');
+    const lines = await scanAll(q, no);
+    await inspectAs(q, no, lines, (l) => ({ ok: l.qty }), 'DEMO - sealed, clean');
+    await decideAs(q, no, lines, (l) => ({ refund: l.qty }), { method: 'wallet' });
+  });
+  // partial on the IGST order: courier reverse pickup, 1 pack refunded (less to pay on the credit order), 2 replaced
+  await inTx(async (q) => {
+    const no = await newReturn(q, nth(26), [['DF044-M100', 3]], 2, 'courier', 'DEMO - lids cracked in transit');
+    await returns.setCourier(q, no, { courier_id: courier.courier_id, awb_no: 'RV7051001IN' }, 'DZIND148');
+    const lines = await scanAll(q, no);
+    await inspectAs(q, no, lines, () => ({ ok: 1, damaged: 2 }), 'DEMO - two packs with cracked lids, one fine');
+    await decideAs(q, no, lines, () => ({ refund: 1, replace: 2 }), { method: 'balance' });
+  });
+  // replaced (damaged pack, a Rs 0 replacement order)
+  await inTx(async (q) => {
+    const no = await newReturn(q, nth(8), [['DF017-R4', 1]], 3, 'bring', 'DEMO - rolls torn inside the pack');
+    const lines = await scanAll(q, no);
+    await inspectAs(q, no, lines, (l) => ({ damaged: l.qty }), 'DEMO - torn wrapper, not sellable');
+    await decideAs(q, no, lines, (l) => ({ replace: l.qty }), {});
+  });
+  // closed with no refund (approved)
+  const noRefund = await inTx(async (q) => {
+    const no = await newReturn(q, nth(7), [['DF014-M100', 1]], 5, 'bring', 'DEMO - customer changed their mind after opening');
+    const lines = await scanAll(q, no);
+    await inspectAs(q, no, lines, (l) => ({ ok: l.qty }), 'DEMO - opened, half used');
+    await decideAs(q, no, lines, (l) => ({ none: l.qty }), { no_refund_reason: 'DEMO - opened and used: not returnable' });
+    return no;
+  });
+  await inTx(async (q) => {
+    await q.query("UPDATE approvals SET status = 'approved', decided_by = 'DZIND002', decided_at = UTC_TIMESTAMP() - INTERVAL 3 HOUR, note = 'DEMO - agreed, the pack was used' WHERE ref_type = 'return' AND ref_id = ? AND kind = 'no_refund'", [noRefund]);
+    await returns.finalize(q, noRefund, 'DZIND002');
+  });
+  // inspected (waits for the decision), received (scanned, waits for inspection)
+  await inTx(async (q) => {
+    const no = await newReturn(q, nth(6), [['DF040-M100', 2]], 1, 'bring', 'DEMO - asked for the 2-ply towel');
+    await inspectAs(q, no, await scanAll(q, no), (l) => ({ ok: l.qty }), 'DEMO - unopened');
+  });
+  await inTx(async (q) => { const no = await newReturn(q, nth(8), [['DF023-R1', 1]], 2, 'bring', 'DEMO - roll crushed'); await scanAll(q, no); });
+  // a pickup on a planned trip (the driver marks it Picked up), a courier reverse pickup without AWB yet, one outside
+  // the window (waits for approval)
+  const pickupTrip = await inTx(async (q) => {
+    const no = await newReturn(q, nth(4), [['DF018-R6', 2]], 3, 'trip', 'DEMO - rolls too thin, customer wants them collected');
+    return (await delivery.createTrip(q, { return_nos: [no], vehicle_id: veh[1].vehicle_id, driver_id: drv[2].driver_id, area_id: 1 }, 'DZIND002')).trip_id;
+  });
+  await inTx((q) => newReturn(q, nth(26), [['DF002-M100', 4]], 1, 'courier', 'DEMO - 1-ply sent, 2-ply ordered'));
+  await inTx((q) => newReturn(q, nth(1), [['DF013-M50', 2]], 3, 'bring', 'DEMO - customer found it late, outside the window'));
+  // demo times: the returns over the last 2 days
+  for (let i = 0; i < madeRet.length; i += 1) {
+    const hours = 48 - i * 5;
+    await db.query(`UPDATE returns SET created_at = UTC_TIMESTAMP() - INTERVAL ? HOUR, received_at = IF(received_at IS NULL, NULL, UTC_TIMESTAMP() - INTERVAL ? HOUR),
+        inspected_at = IF(inspected_at IS NULL, NULL, UTC_TIMESTAMP() - INTERVAL ? HOUR), closed_at = IF(closed_at IS NULL, NULL, UTC_TIMESTAMP() - INTERVAL ? HOUR) WHERE return_no = ?`,
+    [hours, hours - 2, hours - 3, hours - 4, madeRet[i]]);
+    await db.query(`UPDATE return_history h JOIN returns r ON r.return_id = h.return_id SET h.created_at = CASE
+        WHEN h.status IN ('requested', 'collecting') THEN r.created_at WHEN h.status = 'received' THEN r.received_at WHEN h.status = 'inspected' THEN r.inspected_at
+        ELSE COALESCE(r.closed_at, r.inspected_at, r.created_at) END WHERE r.return_no = ?`, [madeRet[i]]);
   }
+  console.log(`demo returns: ${madeRet.join(', ')}; pickup on trip T-${pickupTrip} (planned)`);
   for (const [nm, note, days] of NOTES) {
     await db.query("UPDATE customers SET notes = ?, follow_up = DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+05:30')) + INTERVAL ? DAY WHERE name = ?", [note, days, nm]);
   }
 
-  // demo approval requests: two raised by DZIND002, one by DZIND148, one already decided
-  const [[ret]] = await db.query("SELECT return_no, amount FROM returns WHERE outcome = 'wallet' LIMIT 1");
+  // demo approval requests: one raised by DZIND148, one already decided (the returns raised their own)
   const [[ord]] = await db.query("SELECT order_no, subtotal FROM orders WHERE status = 'new' ORDER BY order_id LIMIT 1");
   await inTx(async (q) => {
-    await approvals.request(q, { kind: 'refund', refType: 'return', refId: ret.return_no, summary: `DEMO - refund Rs 2,400 to the bank for ${ret.return_no} (above the Rs 2,000 limit)`, amount: 2400, payload: { demo: true } }, 'DZIND002');
     await approvals.request(q, { kind: 'discount', refType: 'order', refId: ord.order_no, summary: `DEMO - 15 % manual discount on ${ord.order_no} (limit 10 %)`, amount: Math.round(Number(ord.subtotal) * 0.15), payload: { demo: true, pct: 15 } }, 'DZIND148');
     const id = await approvals.request(q, { kind: 'goodwill_credit', refType: 'customer', refId: 'Demo Cafe Thendral', summary: 'DEMO - Rs 300 goodwill wallet credit for a late delivery', amount: 300, payload: { demo: true } }, 'DZIND148');
     await q.query("UPDATE approvals SET status = 'approved', decided_by = 'DZIND002', decided_at = UTC_TIMESTAMP() - INTERVAL 2 HOUR, note = 'DEMO - OK, regular customer', requested_at = UTC_TIMESTAMP() - INTERVAL 5 HOUR WHERE approval_id = ?", [id]);
@@ -383,6 +458,6 @@ async function inTx(fn) {
   console.log(`demo inventory: damaged 3 x DF019-R10, sample write-off posted, expired write-off #${wo.write_off_id} ${wo.status}, count #${cnt.count_id} ${sub.status} (${sub.differences} differences)`);
 
   await db.query("UPDATE commerce_settings SET value = '1', updated_by = 'demo-seed', updated_at = UTC_TIMESTAMP() WHERE setting_key = 'commerce_enabled'");
-  console.log(`demo: ${CUSTOMERS.length} customers, ${made} orders, 2 returns, ${NOTES.length} follow-ups, 3 approval requests + the write-off and count; Commerce switched on`);
+  console.log(`demo: ${CUSTOMERS.length} customers, ${made} orders, ${madeRet.length} returns, ${NOTES.length} follow-ups, 2 approval requests + the returns', the write-off and count; Commerce switched on`);
   process.exit(0);
 })().catch((e) => { console.error('commerce-demo-seed failed:', e.message); process.exit(1); });

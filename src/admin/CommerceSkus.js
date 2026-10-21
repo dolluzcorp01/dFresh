@@ -1,7 +1,9 @@
 // dFresh Commerce (DEMO, branch `commerce`, database dfresh_commerce): SKU and barcode.
 // One SKU per product / colour version and pack size (database/demo/commerce-demo-schema.sql). The barcode is the
 // SKU printed as Code 128 (JsBarcode). "Scan / search SKU": a USB scanner types the code and Enter, like a keyboard.
-// Print labels: a label sheet (A4, 3 x 8) in a new window, printed or saved as PDF from the browser.
+// Print labels: a label sheet (A4, 3 x 8) in a new window, printed or saved as PDF from the browser. Three kinds, the
+// scan formats of the pack check and the return receiving (phase 5 / 6): pack labels (SKU), carton labels (SKU#C =
+// one full carton) and batch labels (SKU/BATCH, with the manufacture and expiry dates) for batch-tracked products.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import JsBarcode from 'jsbarcode';
 import { InfoCard, Loading, Notice, useLoad } from './ui';
@@ -25,12 +27,20 @@ function barcodeSvg(value) {
 
 const esc = (v) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-function printLabels(skus, copies) {
-  const labels = skus.flatMap((s) => Array(copies).fill(s)).map((s) => `
-    <div class="label"><div class="name">${esc(s.name)}</div>${barcodeSvg(s.sku_code)}<div class="size">${esc(s.size_label)}</div></div>`).join('');
+const day = (d) => (d ? new Date(`${String(d).slice(0, 10)}T00:00:00Z`).toLocaleDateString('en-IN', { timeZone: 'UTC', day: 'numeric', month: 'short', year: 'numeric' }) : '');
+const KINDS = { pack: 'Pack labels (SKU)', carton: 'Carton labels (SKU#C)' };
+/** the label of a SKU in a kind -> { code, name, sub } */
+const labelOf = (s, kind) => (kind === 'carton'
+  ? { code: `${s.sku_code}#C`, name: s.name, sub: `CARTON of ${s.packs_per_carton} x ${s.size_label}` }
+  : { code: s.sku_code, name: s.name, sub: s.size_label });
+
+/** items = [{ code, name, sub }] */
+function printLabels(items, copies, what) {
+  const labels = items.flatMap((s) => Array(copies).fill(s)).map((s) => `
+    <div class="label"><div class="name">${esc(s.name)}</div>${barcodeSvg(s.code)}<div class="size">${esc(s.sub)}</div></div>`).join('');
   const w = window.open('', '_blank');
   if (!w) return false;
-  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>dFresh labels - ${skus.length} SKU</title>
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>dFresh ${esc(what)} - ${items.length}</title>
 <style>
   @page { size: A4; margin: 8mm; }
   body { margin: 0; font-family: Arial, sans-serif; color: #121214; }
@@ -41,7 +51,7 @@ function printLabels(skus, copies) {
   .size { font-size: 8pt; color: #4a4840; }
   .label svg { max-width: 100%; height: auto; }
   .bar { padding: 8px 0 12px; font-size: 13px; } @media print { .bar { display: none; } .label { border-color: #e2dccb; } }
-</style></head><body><div class="bar">dFresh label sheet - ${skus.length} SKU, ${copies} each. Print, or choose "Save as PDF".</div>
+</style></head><body><div class="bar">dFresh ${esc(what)} - ${items.length} label(s), ${copies} each. Print, or choose "Save as PDF".</div>
 <div class="sheet">${labels}</div></body></html>`);
   w.document.close();
   w.focus();
@@ -57,6 +67,7 @@ export default function CommerceSkus() {
   const [selected, setSelected] = useState(() => new Set());
   const [copies, setCopies] = useState(1);
   const [printMsg, setPrintMsg] = useState(null);
+  const [kind, setKind] = useState('pack');
   const scanRef = useRef(null);
   const rows = useMemo(() => list.data || [], [list.data]);
   const shown = useMemo(() => {
@@ -78,7 +89,7 @@ export default function CommerceSkus() {
   const toggleAll = () => setSelected((s) => { const n = new Set(s); shown.forEach((r) => (allShown ? n.delete(r.sku_code) : n.add(r.sku_code))); return n; });
   const print = () => {
     const skus = rows.filter((r) => selected.has(r.sku_code));
-    const ok = printLabels(skus.length ? skus : shown, copies);
+    const ok = printLabels((skus.length ? skus : shown).map((s) => labelOf(s, kind)), copies, KINDS[kind]);
     setPrintMsg(ok ? null : { kind: 'error', text: 'The label window was blocked: allow pop-ups for this site and try again.' });
   };
 
@@ -90,6 +101,7 @@ export default function CommerceSkus() {
           <li>One SKU per product and pack size, e.g. <code>DF037-M150</code> = DF037, pack of 150. Colour versions get their own (<code>DF008BLK-M100</code>).</li>
           <li>The barcode is the SKU as Code 128: any USB or phone scanner reads it.</li>
           <li>Scan into the box (or type and press Enter) to find a SKU. Tick rows and Print labels for an A4 label sheet.</li>
+          <li>Carton labels (<code>SKU#C</code>) count a full carton in one scan; batch labels (<code>SKU/BATCH</code>) are for products tracked by batch, at packing and when returns come back.</li>
         </ul>
       </InfoCard>
       <div className="a-card a-scanbox">
@@ -114,11 +126,14 @@ export default function CommerceSkus() {
       <Loading state={list}>
         <div className="a-toolbar">
           <span className="a-muted">{shown.length} of {rows.length} SKUs{selected.size ? ` - ${selected.size} ticked` : ''}</span>
+          <label className="a-inline">Kind
+            <select value={kind} aria-label="Label kind" onChange={(e) => setKind(e.target.value)}>{Object.entries(KINDS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
+          </label>
           <label className="a-inline">Labels per SKU
             <select value={copies} onChange={(e) => setCopies(Number(e.target.value))}>{[1, 2, 3, 6, 12, 24].map((n) => <option key={n}>{n}</option>)}</select>
           </label>
           <button type="button" className="a-btn" onClick={print} disabled={!shown.length}>
-            Print labels ({selected.size || shown.length} SKU)
+            Print {kind === 'carton' ? 'carton' : 'pack'} labels ({selected.size || shown.length} SKU)
           </button>
         </div>
         {printMsg && <Notice kind={printMsg.kind} onClose={() => setPrintMsg(null)}>{printMsg.text}</Notice>}
@@ -142,6 +157,53 @@ export default function CommerceSkus() {
           </table>
         </div>
       </Loading>
+      <BatchLabels />
     </section>
+  );
+}
+
+/** batch labels SKU/BATCH: every batch with stock (good, returned or damaged) or ticked ones */
+function BatchLabels() {
+  const data = useLoad('/commerce/batches');
+  const [sel, setSel] = useState(() => new Set());
+  const [copies, setCopies] = useState(1);
+  const [msg, setMsg] = useState(null);
+  const rows = data.data ? data.data.rows.filter((b) => b.good > 0 || b.damaged > 0) : [];
+  const print = () => {
+    const chosen = rows.filter((b) => !sel.size || sel.has(b.batch_id));
+    const ok = printLabels(chosen.map((b) => ({ code: `${b.sku_code}/${b.batch_no}`, name: b.name, sub: `${b.size_label} · batch ${b.batch_no} · mfd ${day(b.mfg_date)} · exp ${day(b.expiry_date)}` })), copies, 'batch labels');
+    setMsg(ok ? null : { kind: 'error', text: 'The label window was blocked: allow pop-ups for this site and try again.' });
+  };
+  const toggle = (id) => setSel((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  return (
+    <div className="a-card">
+      <h2>Batch labels</h2>
+      <Loading state={data}>
+        {rows.length ? (
+          <>
+            <div className="a-toolbar">
+              <label className="a-inline">Labels per batch
+                <select value={copies} aria-label="Labels per batch" onChange={(e) => setCopies(Number(e.target.value))}>{[1, 2, 6, 12, 24, 48].map((n) => <option key={n}>{n}</option>)}</select>
+              </label>
+              <button type="button" className="a-btn" onClick={print}>Print batch labels ({sel.size || rows.length})</button>
+            </div>
+            {msg && <Notice kind={msg.kind} onClose={() => setMsg(null)}>{msg.text}</Notice>}
+            <div className="a-scroll">
+              <table className="a-table">
+                <thead><tr><th /><th>Code</th><th>Product</th><th>Made</th><th>Expires</th><th className="a-num">Good</th><th>Barcode</th></tr></thead>
+                <tbody>{rows.map((b) => (
+                  <tr key={b.batch_id}>
+                    <td><input type="checkbox" aria-label={`Tick ${b.sku_code}/${b.batch_no}`} checked={sel.has(b.batch_id)} onChange={() => toggle(b.batch_id)} /></td>
+                    <td><code>{b.sku_code}/{b.batch_no}</code></td><td>{b.name} <small className="a-muted">{b.size_label}</small></td>
+                    <td>{day(b.mfg_date)}</td><td className={b.state === 'expired' ? 'a-bad' : undefined}>{day(b.expiry_date)}</td><td className="a-num">{b.good}</td>
+                    <td><Barcode value={`${b.sku_code}/${b.batch_no}`} height={30} width={1} fontSize={10} /></td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+          </>
+        ) : <p className="a-muted">No batch with stock.</p>}
+      </Loading>
+    </div>
   );
 }

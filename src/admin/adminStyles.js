@@ -448,6 +448,20 @@ td.a-pending { background: #fff8e1; box-shadow: inset 3px 0 0 #e3b44f; }
 .a-stop { background: var(--a-card); border: 1px solid var(--a-line); border-inline-start: 5px solid var(--a-gold); border-radius: 12px; padding: 12px; display: grid; gap: 6px; }
 .a-stop-delivered { border-inline-start-color: var(--a-ok); }
 .a-stop-failed { border-inline-start-color: var(--a-bad); }
+.a-stop-pickup { border-inline-start-color: #0b4f8a; }
+.a-stop-picked_up { border-inline-start-color: var(--a-ok); }
+.a-pickup-what { background: #e6f2ff; color: #0b4f8a; border-radius: 8px; padding: 6px 8px; font-size: 14px; }
+/* Commerce: returns */
+.a-rstatus { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; background: #eee; color: var(--a-ink); white-space: nowrap; }
+.a-rstatus-requested { background: #fff3cd; color: #6b4e00; }
+.a-rstatus-collecting, .a-rstatus-received { background: #e6f2ff; color: #0b4f8a; }
+.a-rstatus-inspected { background: #e7eefb; color: #1d3f8a; }
+.a-rstatus-refunded, .a-rstatus-replaced { background: #e3f4e6; color: #1e5e2c; }
+.a-rstatus-rejected { background: #fdf1f1; color: var(--a-bad); }
+.a-insp input { width: 6ch; }
+.a-insp td { vertical-align: middle; }
+.a-photos { display: flex; flex-wrap: wrap; gap: 8px; }
+.a-photos img { width: 96px; height: 96px; object-fit: cover; border-radius: 8px; border: 1px solid var(--a-line); }
 .a-stop-head { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
 .a-stop-meta { font-size: 13px; }
 .a-collect { color: var(--a-bad); }
@@ -481,7 +495,8 @@ td.a-pending { background: #fff8e1; box-shadow: inset 3px 0 0 #e3b44f; }
 .a-addr h4 { margin: 0 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--a-ink2); }
 .a-gst { margin: 6px 0 12px; font-weight: 600; }
 .a-filters { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin-bottom: 12px; }
-.a-filters label { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; }
+.a-filters label { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; max-width: 100%; min-width: 0; }
+.a-filters select { max-width: 100%; min-width: 0; text-overflow: ellipsis; }
 .a-hist { list-style: none; padding: 0; margin: 0; }
 .a-hist li { padding: 4px 0; border-bottom: 1px dashed var(--a-line); font-size: 13px; }
 .a-avail { display: block; font-size: 12px; }

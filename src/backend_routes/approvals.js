@@ -23,6 +23,9 @@ const KINDS = {
   over_available: { label: 'Order above the available stock', section: 'orders' },
   credit_order: { label: 'Order over the credit limit or with overdue invoices', section: 'customers' },
   stock_count: { label: 'Stock count differences', section: 'inventory' },
+  return_window: { label: 'Return outside the window', section: 'returns' },
+  no_refund: { label: 'Return with no refund', section: 'returns' },
+  restock: { label: 'Recheck: returned (R) to good stock', section: 'inventory' },
 };
 const handlers = {};
 const closers = {};
@@ -54,6 +57,8 @@ async function needed(q, kind, facts = {}) {
     case 'over_available': return s.approve_over_available !== false;
     case 'credit_order': return s.approve_credit_order !== false;
     case 'stock_count': return true;
+    case 'return_window': case 'restock': return true;
+    case 'no_refund': return s.approve_no_refund !== false;
     default: throw new Error(`unknown approval kind ${kind}`);
   }
 }

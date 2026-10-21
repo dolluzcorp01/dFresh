@@ -4,8 +4,9 @@
 // List: status chips (with Overdue), payment status, customer type, date range, search by DFO / invoice / customer /
 // phone, Excel export (edit on Orders). Order drawer: status steps, addresses with the GST type (CGST + SGST in the
 // seller's state, IGST elsewhere), lines with their tax, totals, payments (record a payment or a refund, receipts
-// list, balance due), invoices and credit notes (print / save as PDF; DEMO watermark while the seller GSTIN is a
-// placeholder), approvals, history. Edit: New / Waiting for approval freely, Packed with a reason (stock re-reserved),
+// list, balance due), invoices and every credit note against them (print / save as PDF, invoicePrint.js; DEMO
+// watermark while the seller GSTIN is a placeholder), returns of the order (New return on a delivered order, phase 6),
+// approvals, history. Edit: New / Waiting for approval freely, Packed with a reason (stock re-reserved),
 // never after dispatch. Cancel always asks for a reason; after dispatch it waits for approval.
 // New / Edit order: customer (price list, credit, overdue), payment terms, billing and shipping address, lines with
 // the available stock per SKU (an override above it waits for approval), prices from the list, coupon, wallet.
@@ -13,7 +14,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { api } from './adminApi';
 import { Drawer, InfoCard, Loading, Notice, fmtDate, useAction, useCan, useConfirm, useLoad } from './ui';
-import { ReturnForm, ReturnsTable } from './CommerceReturns';
+import { NewReturn, ReturnDrawer, ReturnsTable } from './CommerceReturns';
+import { addrLines, printCreditNote, printInvoice as printInvoiceDoc } from './invoicePrint';
 import { NewCustomerDrawer } from './CommerceCustomers';
 import { PriceBasis } from './Prices';
 import { GST_STATES, stateName } from '../shared/gstStates';
@@ -26,79 +28,10 @@ const MAIN = ['new', 'packing', 'packed', 'out_for_delivery', 'delivered'];
 const GONE = ['out_for_delivery', 'with_courier', 'failed'];
 const LABEL = { approval: 'Waiting for approval', new: 'New', packing: 'Packing', packed: 'Packed', out_for_delivery: 'Out for delivery', with_courier: 'Handed to courier', failed: 'Delivery failed', delivered: 'Delivered', cancelled: 'Cancelled' };
 const STAMP = { new: 'confirmed_at', packing: 'packing_at', packed: 'packed_at', out_for_delivery: 'out_at', with_courier: 'courier_at', delivered: 'delivered_at' };
-const PAY = { unpaid: 'Unpaid', partly_paid: 'Part paid', paid: 'Paid', refunded: 'Refunded' };
+const PAY = { unpaid: 'Unpaid', partly_paid: 'Part paid', paid: 'Paid', refunded: 'Refunded', part_refunded: 'Part refunded' };
 const rs = (n) => `Rs ${Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-const esc = (v) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const day = (d) => (d ? new Date(`${String(d).slice(0, 10)}T00:00:00Z`).toLocaleDateString('en-IN', { timeZone: 'UTC', day: 'numeric', month: 'short', year: 'numeric' }) : '');
 const round2 = (n) => Math.round(n * 100) / 100;
-const addrLines = (a, state) => [a.name, a.address, [a.town, a.pincode].filter(Boolean).join(' '), state, a.gstin ? `GSTIN ${a.gstin}` : null, a.phone].filter(Boolean);
-
-// ---------------------------------------------------------------- printing (new window; print or save as PDF)
-function printDoc(title, body, demo) {
-  const w = window.open('', '_blank');
-  if (!w) return false;
-  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>
-  @page { size: A4; margin: 12mm; } body { font-family: Arial, sans-serif; color: #121214; font-size: 12px; margin: 0; }
-  .demo { background: #fdf1f1; color: #9b1c1c; padding: 6px 10px; font-weight: 700; margin-bottom: 10px; }
-  .wm { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; z-index: 0; }
-  .wm span { transform: rotate(-30deg); font-size: 56px; font-weight: 800; color: rgba(155, 28, 28, .13); white-space: nowrap; }
-  body > *:not(.wm) { position: relative; z-index: 1; }
-  h1 { font-size: 18px; margin: 0 0 4px; } .row { display: flex; justify-content: space-between; gap: 20px; margin-bottom: 12px; }
-  table { width: 100%; border-collapse: collapse; } th, td { border: 1px solid #ccc; padding: 5px 6px; text-align: left; vertical-align: top; }
-  th { background: #f6f3ea; } .n { text-align: right; white-space: nowrap; } small { color: #555; }
-  .tot { width: 340px; margin-left: auto; margin-top: 10px; } .tot td { border: none; padding: 3px 6px; } .grand td { font-weight: 700; font-size: 14px; border-top: 2px solid #121214; }
-  .cancelled { border: 3px solid #b3261e; color: #b3261e; display: inline-block; padding: 4px 10px; font-weight: 800; margin: 6px 0; }
-  .bar { padding: 8px 0; } @media print { .bar { display: none; } }
-  </style></head><body>${demo ? '<div class="wm"><span>DEMO - not a tax invoice</span></div><div class="demo">DEMO - not a tax invoice (the seller GSTIN is still to be confirmed)</div>' : ''}
-  <div class="bar"><button onclick="window.print()">Print / Save as PDF</button></div>${body}</body></html>`);
-  w.document.close();
-  w.focus();
-  setTimeout(() => w.print(), 300);
-  return true;
-}
-
-function invoiceHtml(inv) {
-  const intra = inv.gst_type === 'intra';
-  const lines = inv.lines.map((i, n) => `<tr><td>${n + 1}</td><td>${esc(i.name)}<br><small>${esc(i.sku_code)} - ${esc(i.size_label)}</small></td><td>${esc(i.hsn)}</td>
-    <td class="n">${i.qty}</td><td class="n">${Number(i.price).toFixed(2)}</td><td class="n">${Number(i.taxable).toFixed(2)}</td>
-    ${intra ? `<td class="n">${(i.gst_rate / 2).toFixed(1)}% ${Number(i.cgst).toFixed(2)}</td><td class="n">${(i.gst_rate / 2).toFixed(1)}% ${Number(i.sgst).toFixed(2)}</td>`
-    : `<td class="n">${Number(i.gst_rate).toFixed(1)}% ${Number(i.igst).toFixed(2)}</td>`}
-    <td class="n">${Number(i.line_total).toFixed(2)}</td></tr>`).join('');
-  const b = inv.buyer.bill;
-  const s = inv.buyer.ship;
-  return `<div class="row"><div><h1>Tax invoice</h1><b>${esc(inv.seller_name)}</b><br>${esc(inv.seller_address)}<br>
-    GSTIN: ${esc(inv.is_demo ? 'to be confirmed' : inv.seller_gstin)} &middot; State: ${esc(inv.seller_state)} (${esc(inv.seller_state_code)})${inv.cin ? ` &middot; CIN: ${esc(inv.cin)}` : ''}<br>${esc(inv.phone)} &middot; ${esc(inv.email)}</div>
-    <div><b>Invoice ${esc(inv.invoice_no)}</b><br>Date: ${day(new Date(inv.issued_at).toISOString())}<br>Order: ${esc(inv.order_no)}<br>Due on: ${day(inv.due_on)}<br>
-    Place of supply: ${esc(inv.pos_state)} (${esc(inv.place_of_supply)})<br>${intra ? 'CGST + SGST (same state)' : 'IGST (inter-state)'}</div></div>
-    ${inv.status === 'cancelled' ? `<div class="cancelled">CANCELLED ${inv.cancel_reason ? `- ${esc(inv.cancel_reason)}` : ''}</div>` : ''}
-    <div class="row"><div><b>Bill to</b><br>${addrLines(b, `${inv.bill_state} (${b.state_code})`).map(esc).join('<br>')}</div>
-    <div><b>Ship to</b><br>${addrLines(s, `${inv.ship_state} (${s.state_code})`).map(esc).join('<br>')}</div></div>
-    <table><thead><tr><th>#</th><th>Item</th><th>HSN</th><th class="n">Qty</th><th class="n">Rate</th><th class="n">Taxable</th>${intra ? '<th class="n">CGST</th><th class="n">SGST</th>' : '<th class="n">IGST</th>'}<th class="n">Amount</th></tr></thead>
-    <tbody>${lines}${Number(inv.delivery_charge) > 0 ? `<tr><td></td><td>Delivery charge</td><td>SAC 9965</td><td class="n"></td><td class="n"></td><td class="n">${Number(inv.delivery_charge).toFixed(2)}</td>
-      ${intra ? `<td class="n">${(Number(inv.delivery_gst) / 2).toFixed(2)}</td><td class="n">${(Number(inv.delivery_gst) / 2).toFixed(2)}</td>` : `<td class="n">${Number(inv.delivery_gst).toFixed(2)}</td>`}
-      <td class="n">${(Number(inv.delivery_charge) + Number(inv.delivery_gst)).toFixed(2)}</td></tr>` : ''}</tbody></table>
-    <table class="tot"><tbody>
-    <tr><td>Subtotal</td><td class="n">${Number(inv.subtotal).toFixed(2)}</td></tr>
-    ${Number(inv.discount) > 0 ? `<tr><td>Discount${inv.coupon_code ? ` (${esc(inv.coupon_code)})` : ''}</td><td class="n">- ${Number(inv.discount).toFixed(2)}</td></tr>` : ''}
-    ${Number(inv.delivery_charge) > 0 ? `<tr><td>Delivery charge</td><td class="n">${Number(inv.delivery_charge).toFixed(2)}</td></tr>` : ''}
-    <tr><td>Taxable value</td><td class="n">${Number(inv.taxable).toFixed(2)}</td></tr>
-    ${intra ? `<tr><td>CGST</td><td class="n">${Number(inv.cgst).toFixed(2)}</td></tr><tr><td>SGST</td><td class="n">${Number(inv.sgst).toFixed(2)}</td></tr>` : `<tr><td>IGST</td><td class="n">${Number(inv.igst).toFixed(2)}</td></tr>`}
-    ${Number(inv.round_off) ? `<tr><td>Round off</td><td class="n">${Number(inv.round_off).toFixed(2)}</td></tr>` : ''}
-    <tr class="grand"><td>Invoice total</td><td class="n">Rs ${Number(inv.total).toFixed(2)}</td></tr>
-    ${Number(inv.wallet_used) > 0 ? `<tr><td>Paid from wallet</td><td class="n">- ${Number(inv.wallet_used).toFixed(2)}</td></tr>` : ''}
-    </tbody></table><p><small>Marketed by dFresh. Prices per pack before GST. This is a computer-generated invoice.</small></p>`;
-}
-
-function creditNoteHtml(inv, cn) {
-  const intra = inv.gst_type === 'intra';
-  return `<h1>Credit note ${esc(cn.credit_note_no)}</h1><p>Date: ${day(new Date(cn.issued_at).toISOString())}<br>Against invoice <b>${esc(inv.invoice_no)}</b> (order ${esc(inv.order_no)})<br>Reason: ${esc(cn.reason)}</p>
-    <p><b>${esc(inv.seller_name)}</b><br>GSTIN: ${esc(inv.is_demo ? 'to be confirmed' : inv.seller_gstin)}</p>
-    <p><b>To</b><br>${addrLines(inv.buyer.bill, inv.bill_state).map(esc).join('<br>')}</p>
-    <table class="tot"><tbody><tr><td>Taxable value</td><td class="n">${Number(cn.taxable).toFixed(2)}</td></tr>
-    ${intra ? `<tr><td>CGST</td><td class="n">${Number(cn.cgst).toFixed(2)}</td></tr><tr><td>SGST</td><td class="n">${Number(cn.sgst).toFixed(2)}</td></tr>` : `<tr><td>IGST</td><td class="n">${Number(cn.igst).toFixed(2)}</td></tr>`}
-    ${Number(cn.round_off) ? `<tr><td>Round off</td><td class="n">${Number(cn.round_off).toFixed(2)}</td></tr>` : ''}
-    <tr class="grand"><td>Credit total</td><td class="n">Rs ${Number(cn.total).toFixed(2)}</td></tr></tbody></table>`;
-}
 
 // ---------------------------------------------------------------- list
 export default function CommerceOrders() {
@@ -185,6 +118,7 @@ function OrderDrawer({ no, canEdit, onClose, onChanged }) {
   const canReturn = useCan('returns', 'create');
   const rets = useLoad(`/commerce/returns?order=${no}`);
   const [panel, setPanel] = useState(null); // 'return' | 'cancel' | 'edit'
+  const [openReturn, setOpenReturn] = useState(null);
   const act = useAction();
   const confirm = useConfirm();
   const d = o.data;
@@ -195,11 +129,8 @@ function OrderDrawer({ no, canEdit, onClose, onChanged }) {
     act.run(async () => { await api.send('POST', '/commerce/packing/start', { order_nos: [no] }); reload(); }, `${no} is Packing: scan it in Commerce > Packing`);
   };
   const flow = d ? FLOWS[d.delivery_kind] || FLOWS.own : [];
-  const printInvoice = (id, cn) => act.run(async () => {
-    const inv = await api.get(`/commerce/invoices/${id}`);
-    const ok = cn ? printDoc(`Credit note ${cn}`, creditNoteHtml(inv, inv.credit_notes.find((c) => c.credit_note_no === cn)), inv.is_demo)
-      : printDoc(`Invoice ${inv.invoice_no}`, invoiceHtml(inv), inv.is_demo);
-    if (!ok) act.setMsg({ kind: 'error', text: 'Allow pop-ups to open the invoice.' });
+  const printInvoice = (id, cnId) => act.run(async () => {
+    if (!(await (cnId ? printCreditNote(cnId) : printInvoiceDoc(id)))) act.setMsg({ kind: 'error', text: 'Allow pop-ups to open the invoice.' });
   });
   const live = d && d.invoices.find((i) => i.status === 'issued');
   const pendingCancel = d && d.approvals.find((a) => a.kind === 'cancel_after_dispatch' && a.status === 'pending');
@@ -212,7 +143,7 @@ function OrderDrawer({ no, canEdit, onClose, onChanged }) {
           {canPack && d.status === 'new' && <button type="button" className="a-btn" disabled={act.busy} onClick={startPacking}>Start packing</button>}
           {d.status === 'packing' && <Link className="a-btn" to="/admin/commerce/packing">Scan in Packing</Link>}
           {live && <button type="button" className="a-btn a-btn-ghost" onClick={() => printInvoice(live.invoice_id)}>Invoice {live.invoice_no}</button>}
-          {canReturn && d.status === 'delivered' && <button type="button" className="a-btn a-btn-ghost" onClick={() => setPanel('return')}>Return items</button>}
+          {canReturn && d.status === 'delivered' && <button type="button" className="a-btn a-btn-ghost" onClick={() => setPanel('return')}>New return</button>}
           {canEdit && !['cancelled', 'delivered'].includes(d.status) && !pendingCancel && <button type="button" className="a-btn a-btn-danger" onClick={() => setPanel('cancel')}>Cancel order</button>}
         </>
       ) : null}>
@@ -247,7 +178,7 @@ function OrderDrawer({ no, canEdit, onClose, onChanged }) {
               <div>{d.delivery_method}{d.delivery_area ? ` · ${d.delivery_area}` : ''}{Number(d.delivery_charge) > 0 ? ` · charge ${rs(d.delivery_charge)} + GST ${rs(d.delivery_gst)}` : ' · no delivery charge'}</div>
               {d.cartons && <div>{d.cartons} carton(s), {Number(d.weight_kg)} kg{d.pack_override ? ` · packed with override: ${d.pack_override}` : ''}</div>}
               {d.awb_no && <div>{d.courier} AWB <b>{d.awb_no}</b>{d.tracking_link && <> · <a href={d.tracking_link} target="_blank" rel="noreferrer">Track the parcel</a></>}{d.eway_bill_no ? ` · e-way bill ${d.eway_bill_no}` : ''}</div>}
-              {d.trips.map((t) => <div key={t.stop_id}>Trip T-{t.trip_id} ({t.vehicle}, {t.driver}): {t.status}{t.receiver_name ? `, received by ${t.receiver_name}` : ''}{t.failed_reason ? ` - ${t.failed_reason}` : ''}{t.cash_collected > 0 ? `, cash ${rs(t.cash_collected)}` : ''}{t.done_at ? ` · ${fmtDate(t.done_at)}` : ''}</div>)}
+              {d.trips.map((t) => <div key={t.stop_id}>Trip T-{t.trip_id}{t.kind === 'pickup' ? ' (return pickup)' : ''} ({t.vehicle}, {t.driver}): {t.status.replace('_', ' ')}{t.receiver_name ? `, received by ${t.receiver_name}` : ''}{t.failed_reason ? ` - ${t.failed_reason}` : ''}{t.cash_collected > 0 ? `, cash ${rs(t.cash_collected)}` : ''}{t.done_at ? ` · ${fmtDate(t.done_at)}` : ''}</div>)}
               {d.received_by && !d.trips.some((t) => t.receiver_name) && <div>Received by {d.received_by}</div>}
             </div>
             <div className="a-scroll">
@@ -276,7 +207,7 @@ function OrderDrawer({ no, canEdit, onClose, onChanged }) {
                       {i.cancel_reason && <small className="a-muted a-person-sub">{i.cancel_reason}</small>}</td>
                     <td className="a-num">{rs(i.total)}</td>
                     <td><button type="button" className="a-link" onClick={() => printInvoice(i.invoice_id)}>Print / PDF</button>
-                      {i.credit_note_no && <> · <button type="button" className="a-link" onClick={() => printInvoice(i.invoice_id, i.credit_note_no)}>Credit note {i.credit_note_no}</button></>}</td>
+                      {i.credit_notes.map((c) => <small key={c.credit_note_id} className="a-person-sub"><button type="button" className="a-link" onClick={() => printInvoice(i.invoice_id, c.credit_note_id)}>Credit note {c.credit_note_no}</button> {rs(c.total)}{c.return_no ? ` (${c.return_no})` : ''}</small>)}</td>
                   </tr>
                 ))}</tbody></table>
               </>
@@ -288,10 +219,11 @@ function OrderDrawer({ no, canEdit, onClose, onChanged }) {
               </>
             )}
             {panel === 'return' && (
-              <ReturnForm order={d} onCancel={() => setPanel(null)}
-                onDone={(r) => { setPanel(null); rets.reload(); onChanged(); act.setMsg({ kind: 'ok', text: `${r.return_no} saved: ${r.outcome === 'wallet' ? `Rs ${r.amount} to the wallet` : r.outcome === 'replacement' ? `replacement order ${r.replacement_no}` : `refund Rs ${r.amount} (demo)`}` }); }} />
+              <NewReturn orderNo={no} onCancel={() => setPanel(null)}
+                onDone={(r) => { setPanel(null); rets.reload(); onChanged(); setOpenReturn(r.return_no); }} />
             )}
-            {rets.data && rets.data.length > 0 && <><h3>Returns</h3><ReturnsTable rows={rets.data} compact /></>}
+            {rets.data && rets.data.rows.length > 0 && <><h3>Returns</h3><ReturnsTable rows={rets.data.rows} compact onOpen={setOpenReturn} /></>}
+            {openReturn && <ReturnDrawer no={openReturn} onClose={() => { setOpenReturn(null); rets.reload(); reload(); }} />}
             <h3>History</h3>
             <ul className="a-hist">{d.history.map((h, n) => (
               <li key={n}>{fmtDate(h.created_at)} · <b>{h.to_status === 'edited' ? 'Edited' : LABEL[h.to_status] || h.to_status}</b>{h.note ? ` - ${h.note}` : ''} <small className="a-muted">({h.emp_id})</small></li>

@@ -37,6 +37,7 @@ export const GROUPS = [
       item('commerce/prices', 'Products and prices', 'products', 'sheet'),
       item('commerce/skus', 'SKUs and labels', 'inventory', 'ruler'),
       item('commerce/stock', 'Inventory', 'inventory', 'products'),
+      item('commerce/reports', 'Reports', 'reports', 'sheet'),
     ],
   },
   {

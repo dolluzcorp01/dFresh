@@ -47,7 +47,7 @@ const GONE = ['out_for_delivery', 'with_courier', 'failed']; // the goods have l
 const HELD = { approval: 'is waiting for approval', cancelled: 'is cancelled' };
 const TERMS = { cod: 'Pay on delivery', advance: 'Paid in advance', credit: 'On credit' };
 const MODES = { cash: 'Cash', upi: 'UPI', bank: 'Bank transfer', cheque: 'Cheque', razorpay: 'Razorpay (manual)' };
-const PAYMENT_STATUS = { unpaid: 'Unpaid', partly_paid: 'Part paid', paid: 'Paid', refunded: 'Refunded' };
+const PAYMENT_STATUS = { unpaid: 'Unpaid', partly_paid: 'Part paid', paid: 'Paid', part_refunded: 'Part refunded', refunded: 'Refunded' };
 const HOLD_KINDS = ['price_below_list', 'over_available', 'credit_order'];
 const EDITABLE = { approval: 'free', new: 'free', packing: 'reason', packed: 'reason' };
 const round2 = (n) => Math.round(n * 100) / 100;
@@ -338,15 +338,22 @@ async function pickFor(q, orderId) {
 }
 
 /** recompute amount_paid, amount_due and payment_status of an order */
+// Returns (phase 6): credit notes of returns lower what the order is worth; refunds to the wallet give money back.
+// due = total - returns credited - wallet used + wallet refunds - (payments - refund payments).
 async function refreshPayment(q, orderId) {
   const [[o]] = await q.query('SELECT status, total, wallet_used FROM orders WHERE order_id = ?', [orderId]);
   const [[p]] = await q.query("SELECT COALESCE(SUM(CASE WHEN kind = 'payment' THEN amount END), 0) AS paid, COALESCE(SUM(CASE WHEN kind = 'refund' THEN amount END), 0) AS refunded FROM payments WHERE order_id = ?", [orderId]);
+  const [[cr]] = await q.query(`SELECT COALESCE(SUM(cn.total), 0) AS credited FROM credit_notes cn JOIN invoices i ON i.invoice_id = cn.invoice_id
+      WHERE i.order_id = ? AND cn.return_id IS NOT NULL`, [orderId]).catch(() => [[{ credited: 0 }]]);
+  const [[wr]] = await q.query("SELECT COALESCE(SUM(amount), 0) AS back FROM refunds WHERE order_id = ? AND method = 'wallet' AND status = 'paid'", [orderId]).catch(() => [[{ back: 0 }]]);
+  const credited = Number(cr.credited);
   const paid = round2(Number(p.paid) - Number(p.refunded));
   const cancelled = o.status === 'cancelled';
-  const owed = cancelled ? 0 : round2(Number(o.total) - Number(o.wallet_used));
+  const owed = cancelled ? 0 : round2(Number(o.total) - credited - Number(o.wallet_used) + Number(wr.back));
   const due = round2(owed - paid);
   let status = 'unpaid';
-  if (Number(p.refunded) > 0 && paid <= 0.005) status = 'refunded';
+  if (credited > 0.005 && due <= 0.005) status = credited >= Number(o.total) - 0.005 ? 'refunded' : 'part_refunded';
+  else if (Number(p.refunded) > 0 && paid <= 0.005) status = 'refunded';
   else if (!cancelled && due <= 0.005 && (paid > 0 || Number(o.wallet_used) > 0 || owed <= 0.005)) status = 'paid';
   else if (paid > 0.005) status = cancelled ? 'paid' : 'partly_paid';
   await q.query('UPDATE orders SET amount_paid = ?, amount_due = ?, payment_status = ? WHERE order_id = ?', [paid, due, status, orderId]);
@@ -626,66 +633,8 @@ approvals.onApproved('cancel_after_dispatch', async (q, p, empId) => {
   if (o) await doCancel(q, o.order_id, `${p.reason} (approved after dispatch)`, empId);
 });
 
-// ---------------------------------------------------------------- returns (demo, phase 6 rebuilds them)
-const OUTCOMES = { wallet: 'Refund to wallet', refund: 'Refund to payment (demo)', replacement: 'Replacement' };
-
-/**
- * Return on a DELIVERED order. data = { items: [{ sku_code, qty, item_check: 'ok' | 'damaged' }], reason, outcome }.
- * Stock: ok -> Returned (R), damaged -> Damaged. Amount = the paid value of those packs (after discount, with GST).
- */
-async function createReturn(q, orderNo, data, empId) {
-  const [[o]] = await q.query('SELECT order_id, order_no, customer_id, status, subtotal, discount FROM orders WHERE order_no = ? FOR UPDATE', [orderNo]);
-  if (!o) throw new CommerceError(`No order ${orderNo}`, 404);
-  if (o.status !== 'delivered') throw new CommerceError(`${orderNo} is ${o.status}: only a delivered order can be returned`, 409);
-  if (!OUTCOMES[data.outcome]) throw new CommerceError('Choose the outcome: refund to wallet, refund (demo) or replacement');
-  const reason = String(data.reason || '').trim().slice(0, 255);
-  if (!reason) throw new CommerceError('Give the reason for the return');
-  const [ordered] = await q.query('SELECT sku_code, qty, price, gst_rate FROM order_items WHERE order_id = ?', [o.order_id]);
-  const [already] = await q.query('SELECT ri.sku_code, SUM(ri.qty) AS qty FROM return_items ri JOIN returns r ON r.return_id = ri.return_id WHERE r.order_id = ? GROUP BY ri.sku_code', [o.order_id]);
-  const back = new Map(already.map((a) => [a.sku_code, Number(a.qty)]));
-  const lines = (Array.isArray(data.items) ? data.items : [])
-    .map((i) => ({ sku_code: String(i.sku_code || ''), qty: Number(i.qty), item_check: i.item_check === 'damaged' ? 'damaged' : 'ok' }))
-    .filter((i) => i.qty > 0);
-  if (!lines.length) throw new CommerceError('Choose at least one pack to return');
-  const share = Number(o.subtotal) ? (Number(o.subtotal) - Number(o.discount)) / Number(o.subtotal) : 0;
-  let amount = 0;
-  const per = new Map();
-  for (const l of lines) {
-    const it = ordered.find((x) => x.sku_code === l.sku_code);
-    if (!it || !Number.isInteger(l.qty)) throw new CommerceError(`${l.sku_code} is not in ${orderNo}`);
-    per.set(l.sku_code, (per.get(l.sku_code) || 0) + l.qty);
-    if (per.get(l.sku_code) + (back.get(l.sku_code) || 0) > it.qty) {
-      throw new CommerceError(`${l.sku_code}: ${it.qty} ordered, ${back.get(l.sku_code) || 0} already returned`);
-    }
-    amount += l.qty * Number(it.price) * share * (1 + Number(it.gst_rate) / 100);
-  }
-  amount = round2(amount);
-  const yr = istYear();
-  await q.query('INSERT INTO return_counters (yr, last_no) VALUES (?, 1) ON DUPLICATE KEY UPDATE last_no = last_no + 1', [yr]);
-  const [[ctr]] = await q.query('SELECT last_no FROM return_counters WHERE yr = ?', [yr]);
-  const returnNo = `DFR-${String(yr).padStart(2, '0')}${String(ctr.last_no).padStart(4, '0')}`;
-  const [ins] = await q.query('INSERT INTO returns (return_no, order_id, reason, outcome, amount, emp_id) VALUES (?, ?, ?, ?, ?, ?)',
-    [returnNo, o.order_id, reason, data.outcome, amount, empId]);
-  for (const l of lines) {
-    await q.query('INSERT INTO return_items (return_id, sku_code, qty, item_check) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE qty = qty + VALUES(qty)',
-      [ins.insertId, l.sku_code, l.qty, l.item_check]);
-    await q.query("INSERT INTO stock_movements (sku_code, move_type, stock_kind, delta, ref_type, ref_id, note, emp_id) VALUES (?, 'return', ?, ?, 'return', ?, ?, ?)",
-      [l.sku_code, l.item_check === 'ok' ? 'returned' : 'damaged', l.qty, returnNo, `${returnNo} on ${orderNo}: ${reason}`.slice(0, 255), empId]);
-  }
-  let replacement = null;
-  if (data.outcome === 'wallet') {
-    await q.query('INSERT INTO wallet_entries (customer_id, amount, reason, order_id, emp_id) VALUES (?, ?, ?, ?, ?)',
-      [o.customer_id, amount, `Refund ${returnNo} (${orderNo})`, o.order_id, empId]);
-  } else if (data.outcome === 'replacement') {
-    const items = [...per.entries()].map(([sku, qty]) => ({ sku_code: sku, qty, price: 0 }));
-    replacement = await createOrder(q, { customer_id: o.customer_id, items, payment_terms: 'advance', note: `Replacement for ${returnNo} (${orderNo})` }, empId, { replacement: true });
-    await q.query('UPDATE returns SET replacement_order_id = ? WHERE return_id = ?', [replacement.order_id, ins.insertId]);
-  }
-  return { return_no: returnNo, amount, outcome: data.outcome, replacement_no: replacement ? replacement.order_no : null };
-}
-
 module.exports = {
-  STATUS_LABEL, GONE, HELD, TERMS, MODES, PAYMENT_STATUS, EDITABLE, OUTCOMES, CommerceError, deliveryCharge, deliveryMethod,
-  createOrder, updateOrder, cancelOrder, doCancel, leaveGodown, setStatus, pickFor, reserve, pendingHolds, recordPayment, createReturn, couponDiscount, walletBalance, availability,
+  STATUS_LABEL, GONE, HELD, TERMS, MODES, PAYMENT_STATUS, EDITABLE, CommerceError, deliveryCharge, deliveryMethod,
+  createOrder, updateOrder, cancelOrder, doCancel, leaveGodown, setStatus, pickFor, reserve, pendingHolds, recordPayment, couponDiscount, walletBalance, availability,
   overdueOf, outstandingOf, modesOffered, OVERDUE_SQL, taxTotals, istYear, refreshPayment,
 };

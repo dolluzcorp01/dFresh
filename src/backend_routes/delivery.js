@@ -13,9 +13,13 @@
 // - courier: AWB (and the e-way bill no. above the setting amount) = Handed to courier (the goods leave); then
 //   Delivered. The courier's tracking link has {awb} replaced.
 // - customer pickup: Collected = the goods leave and the order is Delivered.
+// Return pickups (phase 6): a return collected on a trip is a stop of kind "pickup" (return_id); nothing leaves the
+// godown for it at Start trip; the driver marks it Picked up with a photo (or Failed: the return waits for another trip).
+// A stop is keyed by its order no. (delivery) or its return no. (pickup).
 const { audit } = require('./audit');
 const commerce = require('./commerce');
 const commerceSettings = require('./commerce-settings');
+const returns = require('./returns');
 const stock = require('./stock');
 
 const FAIL_REASONS = ['Customer not available', 'Shop / office closed', 'Address not found', 'Refused the goods', 'No cash ready (pay on delivery)', 'Vehicle problem', 'Other'];
@@ -25,7 +29,7 @@ class DeliveryError extends Error {
   constructor(message, status = 400) { super(message); this.status = status; }
 }
 const wrap = async (fn) => {
-  try { return await fn(); } catch (e) { if (e instanceof commerce.CommerceError || e instanceof stock.StockError) throw new DeliveryError(e.message, e.status); throw e; }
+  try { return await fn(); } catch (e) { if (e instanceof commerce.CommerceError || e instanceof stock.StockError || e instanceof returns.ReturnError) throw new DeliveryError(e.message, e.status); throw e; }
 };
 
 const ORDER_SELECT = 'SELECT order_id, order_no, status, delivery_kind, delivery_method_id, dispatched_at, total, amount_due, payment_terms, courier_id FROM orders';
@@ -194,10 +198,27 @@ async function tripRow(q, tripId, lock = false) {
 }
 const canDrive = (t, empId, office) => office || (t.driver_emp && t.driver_emp === empId);
 
-/** b = { order_nos (route order), vehicle_id, driver_id, area_id, trip_date } */
+const STOP_KEY = "CASE WHEN s.kind = 'pickup' THEN r.return_no ELSE o.order_no END";
+const STOP_FROM = 'trip_stops s JOIN orders o ON o.order_id = s.order_id LEFT JOIN returns r ON r.return_id = s.return_id';
+
+/** a return pickup stop on a trip (the return must be collected on a trip and not on another open trip) */
+async function addPickup(q, tripId, returnNo, seq, empId) {
+  const r = await wrap(() => returns.onTrip(q, returnNo, tripId, empId));
+  const [[open]] = await q.query("SELECT t.trip_id FROM trip_stops s JOIN delivery_trips t ON t.trip_id = s.trip_id WHERE s.return_id = ? AND t.status IN ('planned', 'out') AND s.status = 'pending' AND t.trip_id <> ?", [r.return_id, tripId]);
+  if (open) throw new DeliveryError(`${returnNo} is on trip T-${open.trip_id} already`, 409);
+  try {
+    await q.query("INSERT INTO trip_stops (trip_id, order_id, kind, return_id, seq) VALUES (?, ?, 'pickup', ?, ?)", [tripId, r.order_id, r.return_id, seq]);
+  } catch (e) {
+    if (e.code === 'ER_DUP_ENTRY') throw new DeliveryError(`${returnNo}: another return of the same order is a pickup on this trip already`, 409);
+    throw e;
+  }
+}
+
+/** b = { order_nos (route order), return_nos (pickups, after the deliveries), vehicle_id, driver_id, area_id, trip_date } */
 async function createTrip(q, b, empId) {
   const nos = Array.isArray(b.order_nos) ? b.order_nos.map(String) : [];
-  if (!nos.length) throw new DeliveryError('Choose the packed orders for the trip');
+  const pickups = Array.isArray(b.return_nos) ? b.return_nos.map(String) : [];
+  if (!nos.length && !pickups.length) throw new DeliveryError('Choose the packed orders (or return pickups) for the trip');
   const [[v]] = await q.query('SELECT vehicle_id FROM vehicles WHERE vehicle_id = ? AND is_active = 1', [Number(b.vehicle_id)]);
   if (!v) throw new DeliveryError('Choose the vehicle');
   const [[d]] = await q.query('SELECT driver_id FROM drivers WHERE driver_id = ? AND is_active = 1', [Number(b.driver_id)]);
@@ -213,20 +234,21 @@ async function createTrip(q, b, empId) {
     seq += 1;
     await q.query('INSERT INTO trip_stops (trip_id, order_id, seq) VALUES (?, ?, ?)', [ins.insertId, o.order_id, seq]);
   }
-  await audit(q, { empId, action: 'create', entity: 'trip', entityId: `T-${ins.insertId}`, after: { trip_date: day, vehicle_id: v.vehicle_id, driver_id: d.driver_id, stops: nos } });
+  for (const no of pickups) { seq += 1; await addPickup(q, ins.insertId, no, seq, empId); }
+  await audit(q, { empId, action: 'create', entity: 'trip', entityId: `T-${ins.insertId}`, after: { trip_date: day, vehicle_id: v.vehicle_id, driver_id: d.driver_id, stops: nos, pickups } });
   return { trip_id: ins.insertId };
 }
 
-/** planned trips: new route order (order_nos in the new order); removing a stop = leaving it out */
+/** planned trips: new route order (order nos. and return nos. in the new order); removing a stop = leaving it out */
 async function setStops(q, tripId, orderNos, empId) {
   const t = await tripRow(q, tripId, true);
   if (t.status !== 'planned') throw new DeliveryError(`Trip T-${tripId} has started: the stops cannot change`, 409);
-  const [stops] = await q.query('SELECT s.stop_id, o.order_no FROM trip_stops s JOIN orders o ON o.order_id = s.order_id WHERE s.trip_id = ?', [tripId]);
+  const [stops] = await q.query(`SELECT s.stop_id, ${STOP_KEY} AS stop_key FROM ${STOP_FROM} WHERE s.trip_id = ?`, [tripId]);
   const keep = orderNos.map(String);
   if (!keep.length) throw new DeliveryError('A trip needs at least one stop');
-  for (const st of stops) if (!keep.includes(st.order_no)) await q.query('DELETE FROM trip_stops WHERE stop_id = ?', [st.stop_id]);
+  for (const st of stops) if (!keep.includes(st.stop_key)) await q.query('DELETE FROM trip_stops WHERE stop_id = ?', [st.stop_id]);
   for (let i = 0; i < keep.length; i += 1) {
-    const st = stops.find((x) => x.order_no === keep[i]);
+    const st = stops.find((x) => x.stop_key === keep[i]);
     if (!st) throw new DeliveryError(`${keep[i]} is not on this trip`);
     await q.query('UPDATE trip_stops SET seq = ? WHERE stop_id = ?', [i + 1, st.stop_id]);
   }
@@ -239,10 +261,11 @@ async function startTrip(q, tripId, empId) {
   const t = await tripRow(q, tripId, true);
   if (t.status !== 'planned') throw new DeliveryError(`Trip T-${tripId} is ${t.status}`, 409);
   const s = await commerceSettings.read(q);
-  const [stops] = await q.query('SELECT s.stop_id, o.order_no FROM trip_stops s JOIN orders o ON o.order_id = s.order_id WHERE s.trip_id = ? ORDER BY s.seq', [tripId]);
+  const [stops] = await q.query('SELECT s.stop_id, s.kind, o.order_no FROM trip_stops s JOIN orders o ON o.order_id = s.order_id WHERE s.trip_id = ? ORDER BY s.seq', [tripId]);
   if (!stops.length) throw new DeliveryError('The trip has no stop');
   let cash = 0;
   for (const st of stops) {
+    if (st.kind === 'pickup') continue; // a return pickup: nothing leaves the godown
     const o = await lockOrder(q, st.order_no, ['packed']);
     const out = await wrap(() => commerce.leaveGodown(q, o.order_id, empId));
     await commerce.setStatus(q, o, 'out_for_delivery', empId, [`Trip T-${tripId}`, out.invoice_no ? `invoice ${out.invoice_no}` : null, out.batches.length ? `from ${out.batches.map((x) => `${x.qty} x ${x.sku_code} batch ${x.batch_no}`).join(', ')}` : null].filter(Boolean).join('; '));
@@ -257,7 +280,7 @@ async function startTrip(q, tripId, empId) {
 }
 
 async function stopRow(q, stopId) {
-  const [[st]] = await q.query(`SELECT s.stop_id, s.trip_id, s.status, s.otp, s.order_id, o.order_no FROM trip_stops s JOIN orders o ON o.order_id = s.order_id WHERE s.stop_id = ? FOR UPDATE`, [stopId]);
+  const [[st]] = await q.query(`SELECT s.stop_id, s.trip_id, s.kind, s.status, s.otp, s.order_id, o.order_no, r.return_no FROM ${STOP_FROM} WHERE s.stop_id = ? FOR UPDATE`, [stopId]);
   if (!st) throw new DeliveryError('No such stop', 404);
   return st;
 }
@@ -269,6 +292,7 @@ async function stopDelivered(q, stopId, b, photo, empId, office) {
   if (!canDrive(t, empId, office)) throw new DeliveryError('Only the driver of this trip (or the office) can mark its stops', 403);
   if (t.status !== 'out') throw new DeliveryError(`Trip T-${t.trip_id} is ${t.status}`, 409);
   if (st.status !== 'pending') throw new DeliveryError(`This stop is ${st.status} already`, 409);
+  if (st.kind === 'pickup') throw new DeliveryError(`${st.return_no} is a return pickup: mark it Picked up`);
   const name = String(b.receiver_name || '').trim().slice(0, 120);
   if (!name) throw new DeliveryError('Who received it? (name)');
   if (st.otp && String(b.otp || '').trim() !== st.otp) throw new DeliveryError('The OTP does not match: ask the customer for the 4-digit code');
@@ -291,9 +315,30 @@ async function stopFailed(q, stopId, b, empId, office) {
   if (!reason) throw new DeliveryError('Why did the delivery fail?');
   const full = b.note ? `${reason}: ${String(b.note).trim().slice(0, 50)}` : reason;
   await q.query("UPDATE trip_stops SET status = 'failed', failed_reason = ?, done_by = ?, done_at = UTC_TIMESTAMP() WHERE stop_id = ?", [full, empId, stopId]);
+  if (st.kind === 'pickup') {
+    await wrap(() => returns.pickupFailed(q, st.return_no, t.trip_id, full, empId));
+    return { stop_id: stopId, status: 'failed' };
+  }
   const o = await lockOrder(q, st.order_no, ['out_for_delivery']);
   await commerce.setStatus(q, o, 'failed', empId, `${full} (trip T-${t.trip_id})`, { failed_reason: full, delivery_attempts: (await attempts(q, o.order_id)) + 1 });
   return { stop_id: stopId, status: 'failed' };
+}
+
+/** a return pickup done: photo required; the return is on its way to the godown (received there by scanning) */
+async function stopPickedUp(q, stopId, b, photo, empId, office) {
+  const st = await stopRow(q, stopId);
+  const t = await tripRow(q, st.trip_id);
+  if (!canDrive(t, empId, office)) throw new DeliveryError('Only the driver of this trip (or the office) can mark its stops', 403);
+  if (t.status !== 'out') throw new DeliveryError(`Trip T-${t.trip_id} is ${t.status}`, 409);
+  if (st.status !== 'pending') throw new DeliveryError(`This stop is ${st.status} already`, 409);
+  if (st.kind !== 'pickup') throw new DeliveryError(`${st.order_no} is a delivery, not a return pickup`);
+  if (!photo) throw new DeliveryError('Take a photo of the packs picked up');
+  if (!/^image\/(jpeg|png|webp)$/.test(photo.mimetype)) throw new DeliveryError('Photo: a JPEG, PNG or WebP picture');
+  const name = String(b.receiver_name || '').trim().slice(0, 120) || null;
+  await q.query("UPDATE trip_stops SET status = 'picked_up', receiver_name = ?, photo = ?, photo_type = ?, done_by = ?, done_at = UTC_TIMESTAMP() WHERE stop_id = ?",
+    [name, photo.buffer, photo.mimetype, empId, stopId]);
+  await wrap(() => returns.pickedUp(q, st.return_no, t.trip_id, empId, photo, name));
+  return { stop_id: stopId, status: 'picked_up' };
 }
 
 /** cash collected at a stop: a cash payment on the order (phase 3) */
@@ -382,11 +427,12 @@ async function opsCounts(q) {
             COALESCE(SUM(CASE WHEN o.payment_terms = 'cod' AND o.status IN ('out_for_delivery', 'with_courier', 'failed') AND o.amount_due > 0 THEN o.amount_due END), 0) AS cod_due
        FROM orders o`);
   const [[c]] = await q.query("SELECT COALESCE(SUM(s.cash_collected), 0) AS held FROM trip_stops s JOIN delivery_trips t ON t.trip_id = s.trip_id WHERE t.status = 'out'");
-  return { toPick: Number(r.to_pick) || 0, toPack: Number(r.to_pack) || 0, waitingTrip: Number(r.waiting_trip) || 0, waitingOther: Number(r.waiting_other) || 0,
+  const rt = await returns.opsCounts(q);
+  return { ...rt, toPick: Number(r.to_pick) || 0, toPack: Number(r.to_pack) || 0, waitingTrip: Number(r.waiting_trip) || 0, waitingOther: Number(r.waiting_other) || 0,
     outNow: Number(r.out_now) || 0, withCourier: Number(r.with_courier) || 0, failed: Number(r.failed) || 0, codDue: round2(Number(r.cod_due)), cashOnTrips: round2(Number(c.held)) };
 }
 
 module.exports = {
   FAIL_REASONS, DeliveryError, pickList, startPacking, packState, packScan, resetScans, markPacked, createTrip, setStops, startTrip,
-  stopDelivered, stopFailed, stopCash, endTrip, reattempt, returnToGodown, handToCourier, courierDelivered, pickedUp, opsCounts,
+  stopDelivered, stopFailed, stopPickedUp, stopCash, endTrip, reattempt, returnToGodown, handToCourier, courierDelivered, pickedUp, opsCounts,
 };

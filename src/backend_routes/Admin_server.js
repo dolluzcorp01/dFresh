@@ -1400,7 +1400,7 @@ route('get', '/audit', 'audit:view', async (req) => {
 // ---------------------------------------------------------------------------------------------
 route('get', '/commerce/skus', 'inventory:view', async () => {
   const [rows] = await db.query(
-    `SELECT s.sku_code, s.product_id, s.size_label, s.is_active,
+    `SELECT s.sku_code, s.product_id, s.size_label, s.is_active, s.packs_per_carton, p.track_batches,
             COALESCE(t.name, pt.name, s.product_id) AS name
        FROM skus s
        JOIN products p ON p.product_id = s.product_id
@@ -1408,7 +1408,7 @@ route('get', '/commerce/skus', 'inventory:view', async () => {
        LEFT JOIN product_translations pt ON pt.product_id = p.variant_of AND pt.lang_code = 'en'
       ORDER BY s.sku_code`
   );
-  return rows;
+  return rows.map((r) => ({ ...r, packs_per_carton: Number(r.packs_per_carton) || 1, track_batches: Number(r.track_batches) === 1 }));
 });
 
 // Inventory (migration 20261020_commerce_stock.sql, logic in stock.js). Section "inventory": view = stock, batches,
@@ -1431,6 +1431,7 @@ route('get', '/commerce/stock', 'inventory:view', async (req) => {
             COALESCE(l.reorder_level, ?) AS reorder_level, COALESCE(l.reorder_qty, ?) AS reorder_qty,
             COALESCE(SUM(CASE WHEN m.stock_kind = 'returned' THEN m.delta END), 0) AS returned,
             COALESCE(SUM(CASE WHEN m.stock_kind = 'damaged' THEN m.delta END), 0) AS damaged,
+            COALESCE(SUM(CASE WHEN m.stock_kind = 'expired' THEN m.delta END), 0) AS expired_back,
             MAX(m.created_at) AS last_move,
             (SELECT COUNT(DISTINCT b.batch_id) FROM batches b JOIN stock_movements bm ON bm.batch_id = b.batch_id AND bm.stock_kind = 'good' WHERE b.sku_code = s.sku_code) AS batches
        FROM skus s ${SKU_JOIN}
@@ -1443,11 +1444,12 @@ route('get', '/commerce/stock', 'inventory:view', async (req) => {
   const cost = seesCost(req);
   const out = rows.map(({ avg_cost: ac, ...r }) => {
     const a = av.get(r.sku_code);
-    return { ...r, ...a, returned: Number(r.returned), damaged: Number(r.damaged), reorder_level: Number(r.reorder_level), reorder_qty: Number(r.reorder_qty),
+    return { ...r, ...a, returned: Number(r.returned), damaged: Number(r.damaged), expired_back: Number(r.expired_back), reorder_level: Number(r.reorder_level), reorder_qty: Number(r.reorder_qty),
       track_batches: Number(r.track_batches) === 1, batches: Number(r.batches), low: a.available < Number(r.reorder_level),
       ...(cost ? { avg_cost: ac === null ? null : Number(ac), value: ac === null ? null : Math.round(a.good * Number(ac) * 100) / 100 } : {}) };
   });
-  return { rows: out, seesCost: cost, totalValue: cost ? Math.round(out.reduce((x, r) => x + (r.value || 0), 0) * 100) / 100 : null, warnDays: Number(cs.expiry_warn_days) || 60 };
+  return { rows: out, seesCost: cost, totalValue: cost ? Math.round(out.reduce((x, r) => x + (r.value || 0), 0) * 100) / 100 : null, warnDays: Number(cs.expiry_warn_days) || 60,
+    resell: Boolean(cs.returned_resell) };
 });
 
 route('put', '/commerce/stock/:sku/levels', 'inventory:edit', async (req) => {
@@ -1748,22 +1750,24 @@ route('get', '/commerce/orders/:no', 'orders:view', async (req) => {
        FROM order_items i JOIN skus s ON s.sku_code = i.sku_code ${SKU_JOIN} WHERE i.order_id = ? ORDER BY i.sku_code`, [o.order_id]);
   const [hist] = await db.query('SELECT from_status, to_status, note, emp_id, created_at FROM order_status_history WHERE order_id = ? ORDER BY id', [o.order_id]);
   const [pays] = await db.query("SELECT payment_id, kind, mode, amount, DATE_FORMAT(received_on, '%Y-%m-%d') AS received_on, reference, note, emp_id, created_at FROM payments WHERE order_id = ? ORDER BY payment_id", [o.order_id]);
-  const [invs] = await db.query(`SELECT i.invoice_id, i.invoice_no, i.status, i.issued_at, DATE_FORMAT(i.due_on, '%Y-%m-%d') AS due_on, i.total, i.is_demo, i.cancelled_at, i.cancel_reason,
-       cn.credit_note_id, cn.credit_note_no, cn.total AS cn_total, cn.issued_at AS cn_issued_at
-       FROM invoices i LEFT JOIN credit_notes cn ON cn.invoice_id = i.invoice_id WHERE i.order_id = ? ORDER BY i.invoice_id`, [o.order_id]);
+  const [invs] = await db.query(`SELECT i.invoice_id, i.invoice_no, i.status, i.issued_at, DATE_FORMAT(i.due_on, '%Y-%m-%d') AS due_on, i.total, i.is_demo, i.cancelled_at, i.cancel_reason
+       FROM invoices i WHERE i.order_id = ? ORDER BY i.invoice_id`, [o.order_id]);
+  const [cnotes] = await db.query(`SELECT cn.credit_note_id, cn.credit_note_no, cn.invoice_id, cn.total, cn.issued_at, cn.reason, r.return_no
+       FROM credit_notes cn JOIN invoices i ON i.invoice_id = cn.invoice_id LEFT JOIN returns r ON r.return_id = cn.return_id WHERE i.order_id = ? ORDER BY cn.credit_note_id`, [o.order_id]);
   const [appr] = await db.query("SELECT approval_id, kind, status, summary, requested_by, decided_by, note FROM approvals WHERE ref_type = 'order' AND ref_id = ? ORDER BY approval_id", [o.order_no]);
   const [res] = await db.query("SELECT sku_code, qty, status FROM stock_reservations WHERE order_id = ? AND status = 'active'", [o.order_id]);
   const batchesOut = await stock.batchesOfOrder(db, o.order_no);
   const [[dl]] = await db.query(`SELECT dm.label AS method, a.label AS area, cr.name AS courier, cr.tracking_url FROM orders o LEFT JOIN delivery_methods dm ON dm.method_id = o.delivery_method_id
       LEFT JOIN delivery_areas a ON a.area_id = o.delivery_area_id LEFT JOIN couriers cr ON cr.courier_id = o.courier_id WHERE o.order_id = ?`, [o.order_id]);
-  const [trips] = await db.query(`SELECT s.stop_id, s.trip_id, s.status, s.receiver_name, s.failed_reason, s.cash_collected, s.photo IS NOT NULL AS has_photo, s.done_at, t.status AS trip_status, d.name AS driver, v.number AS vehicle
+  const [trips] = await db.query(`SELECT s.stop_id, s.trip_id, s.kind, s.status, s.receiver_name, s.failed_reason, s.cash_collected, s.photo IS NOT NULL AS has_photo, s.done_at, t.status AS trip_status, d.name AS driver, v.number AS vehicle
       FROM trip_stops s JOIN delivery_trips t ON t.trip_id = s.trip_id JOIN drivers d ON d.driver_id = t.driver_id JOIN vehicles v ON v.vehicle_id = t.vehicle_id WHERE s.order_id = ? ORDER BY s.stop_id`, [o.order_id]);
   const listLabel = (await pricing.lists(db)).find((l) => l.key === o.price_list);
   const cs = await commerceSettings.read(db);
   const live = invs.find((i) => i.status === 'issued');
   const overdue = Boolean(live && o.status !== 'cancelled' && Number(o.amount_due) > 0.005 && live.due_on < pricing.istToday() && (o.payment_terms !== 'cod' || o.status === 'delivered'));
   return {
-    ...o, items, history: hist, payments: pays, batches: batchesOut, invoices: invs.map((i) => ({ ...i, is_demo: Number(i.is_demo) === 1 })),
+    ...o, items, history: hist, payments: pays, batches: batchesOut,
+    invoices: invs.map((i) => ({ ...i, is_demo: Number(i.is_demo) === 1, credit_notes: cnotes.filter((c) => c.invoice_id === i.invoice_id).map((c) => ({ ...c, total: Number(c.total) })) })),
     approvals: appr.map((a) => ({ ...a, kind_label: (approvals.KINDS[a.kind] || {}).label || a.kind })), reserved: res,
     status_label: commerce.STATUS_LABEL[o.status], pay_label: commerce.PAYMENT_STATUS[o.payment_status], terms_label: commerce.TERMS[o.payment_terms],
     editable: commerce.EDITABLE[o.status] || null, overdue, due_on: live ? live.due_on : null,
@@ -1864,11 +1868,18 @@ route('get', '/commerce/packing/:no/slip', 'packing:view', async (req) => {
 // the Delivery screen (office): packed orders by kind, failed ones, couriers on the way, trips, setup lists
 route('get', '/commerce/delivery', 'delivery:create', async () => {
   const [rows] = await db.query(`${ORDER_LIST} WHERE o.status IN ('packed', 'failed', 'with_courier') ORDER BY o.order_id`);
-  const [onTrip] = await db.query("SELECT s.order_id, o.order_no, t.trip_id FROM trip_stops s JOIN delivery_trips t ON t.trip_id = s.trip_id JOIN orders o ON o.order_id = s.order_id WHERE t.status = 'planned'");
+  const [onTrip] = await db.query("SELECT s.order_id, o.order_no, t.trip_id FROM trip_stops s JOIN delivery_trips t ON t.trip_id = s.trip_id JOIN orders o ON o.order_id = s.order_id WHERE t.status = 'planned' AND s.kind = 'delivery'");
+  const [pickups] = await db.query(`SELECT r.return_no, r.status, o.order_no, c.name AS customer, o.ship_name, o.ship_address, o.ship_town, o.ship_pincode, o.ship_phone, o.delivery_area_id, a.label AS area, r.created_at,
+      (SELECT GROUP_CONCAT(CONCAT(x.qty, ' x ', x.sku_code) ORDER BY x.line_id SEPARATOR ', ') FROM return_items x WHERE x.return_id = r.return_id) AS items,
+      (SELECT t.trip_id FROM trip_stops s JOIN delivery_trips t ON t.trip_id = s.trip_id WHERE s.return_id = r.return_id AND s.status = 'pending' AND t.status IN ('planned', 'out') LIMIT 1) AS trip_id
+      FROM returns r JOIN orders o ON o.order_id = r.order_id JOIN customers c ON c.customer_id = o.customer_id LEFT JOIN delivery_areas a ON a.area_id = o.delivery_area_id
+      WHERE r.collection = 'trip' AND r.status IN ('requested', 'collecting') AND r.picked_up_at IS NULL
+        AND NOT EXISTS (SELECT 1 FROM approvals ap WHERE ap.ref_type = 'return' AND ap.ref_id = r.return_no AND ap.kind = 'return_window' AND ap.status = 'pending')
+      ORDER BY r.return_id`);
   const planned = new Map(onTrip.map((x) => [x.order_no, x.trip_id]));
   const [trips] = await db.query(`SELECT t.trip_id, DATE_FORMAT(t.trip_date, '%Y-%m-%d') AS trip_date, t.status, t.cash_expected, t.cash_collected, t.cash_handed, t.started_at, t.ended_at,
       v.number AS vehicle, d.name AS driver, a.label AS area,
-      (SELECT COUNT(*) FROM trip_stops s WHERE s.trip_id = t.trip_id) AS stops, (SELECT SUM(s.status = 'delivered') FROM trip_stops s WHERE s.trip_id = t.trip_id) AS delivered,
+      (SELECT COUNT(*) FROM trip_stops s WHERE s.trip_id = t.trip_id) AS stops, (SELECT SUM(s.status IN ('delivered', 'picked_up')) FROM trip_stops s WHERE s.trip_id = t.trip_id) AS delivered,
       (SELECT SUM(s.status = 'failed') FROM trip_stops s WHERE s.trip_id = t.trip_id) AS failed
       FROM delivery_trips t JOIN vehicles v ON v.vehicle_id = t.vehicle_id JOIN drivers d ON d.driver_id = t.driver_id LEFT JOIN delivery_areas a ON a.area_id = t.area_id
       ORDER BY t.trip_id DESC LIMIT 60`);
@@ -1878,7 +1889,7 @@ route('get', '/commerce/delivery', 'delivery:create', async () => {
   const [areas] = await db.query('SELECT area_id, label FROM delivery_areas WHERE is_active = 1 ORDER BY sort_order, area_id');
   const cs = await commerceSettings.read(db);
   return {
-    orders: rows.map((r) => ({ ...orderOut(r), trip_id: planned.get(r.order_no) || null })),
+    orders: rows.map((r) => ({ ...orderOut(r), trip_id: planned.get(r.order_no) || null })), pickups,
     trips: trips.map((t) => ({ ...t, stops: Number(t.stops), delivered: Number(t.delivered) || 0, failed: Number(t.failed) || 0 })),
     vehicles, drivers, couriers, areas, failReasons: delivery.FAIL_REASONS, eway: { required: Boolean(cs.eway_bill_required), above: Number(cs.eway_bill_above) },
   };
@@ -1895,17 +1906,18 @@ async function tripDetail(req, tripId) {
   if (!t) throw new InputError('Trip not found', 404);
   const isOffice = office(req);
   if (!isOffice && t.driver_emp !== by(req)) throw new InputError('This is not one of your trips', 403);
-  const [stops] = await db.query(`SELECT s.stop_id, s.seq, s.status, s.otp, s.receiver_name, s.photo IS NOT NULL AS has_photo, s.failed_reason, s.cash_collected, s.done_at, s.done_by,
-      o.order_no, o.status AS order_status, o.payment_terms, o.amount_due, o.total, o.cartons, o.weight_kg, o.ship_name, o.ship_address, o.ship_town, o.ship_pincode, o.ship_phone, c.name AS customer
-      FROM trip_stops s JOIN orders o ON o.order_id = s.order_id JOIN customers c ON c.customer_id = o.customer_id WHERE s.trip_id = ? ORDER BY s.seq`, [tripId]);
+  const [stops] = await db.query(`SELECT s.stop_id, s.seq, s.kind, s.status, s.otp, s.receiver_name, s.photo IS NOT NULL AS has_photo, s.failed_reason, s.cash_collected, s.done_at, s.done_by,
+      o.order_no, o.status AS order_status, o.payment_terms, o.amount_due, o.total, o.cartons, o.weight_kg, o.ship_name, o.ship_address, o.ship_town, o.ship_pincode, o.ship_phone, c.name AS customer,
+      r.return_no, (SELECT GROUP_CONCAT(CONCAT(x.qty, ' x ', x.sku_code, IFNULL(CONCAT(' batch ', b.batch_no), '')) ORDER BY x.line_id SEPARATOR ', ') FROM return_items x LEFT JOIN batches b ON b.batch_id = x.batch_id WHERE x.return_id = s.return_id) AS pickup_items
+      FROM trip_stops s JOIN orders o ON o.order_id = s.order_id JOIN customers c ON c.customer_id = o.customer_id LEFT JOIN returns r ON r.return_id = s.return_id WHERE s.trip_id = ? ORDER BY s.seq`, [tripId]);
   const cs = await commerceSettings.read(db);
   return { ...t, office: isOffice, otpOn: Boolean(cs.delivery_otp), failReasons: delivery.FAIL_REASONS,
     stops: stops.map(({ otp, ...s }) => ({ ...s, has_photo: Number(s.has_photo) === 1, amount_due: Number(s.amount_due), total: Number(s.total), cash_collected: Number(s.cash_collected),
-      to_collect: s.payment_terms === 'cod' ? Math.max(Number(s.amount_due), 0) : 0, ...(isOffice ? { otp } : {}) })) };
+      to_collect: s.kind === 'delivery' && s.payment_terms === 'cod' ? Math.max(Number(s.amount_due), 0) : 0, ...(isOffice && s.kind === 'delivery' ? { otp } : {}) })) };
 }
 route('get', '/commerce/trips/:id', 'delivery:view', async (req) => tripDetail(req, Number(req.params.id)));
 route('put', '/commerce/trips/:id/stops', 'delivery:create', async (req) => {
-  try { return await tx((q) => delivery.setStops(q, Number(req.params.id), (req.body.order_nos || []).map(String), by(req))); } catch (e) { throw asDelivery(e); }
+  try { return await tx((q) => delivery.setStops(q, Number(req.params.id), (req.body.stops || req.body.order_nos || []).map(String), by(req))); } catch (e) { throw asDelivery(e); }
 });
 route('post', '/commerce/trips/:id/start', 'delivery:edit', async (req) => {
   await tripDetail(req, Number(req.params.id)); // a driver only their own trip
@@ -1916,6 +1928,9 @@ route('post', '/commerce/trips/:id/end', 'delivery:edit', async (req) => {
 });
 route('post', '/commerce/stops/:id/delivered', 'delivery:edit', async (req) => {
   try { return await tx((q) => delivery.stopDelivered(q, Number(req.params.id), req.body || {}, req.file ? { buffer: req.file.buffer, mimetype: req.file.mimetype } : null, by(req), office(req))); } catch (e) { throw asDelivery(e); }
+}, { before: [upload(8)] });
+route('post', '/commerce/stops/:id/picked-up', 'delivery:edit', async (req) => {
+  try { return await tx((q) => delivery.stopPickedUp(q, Number(req.params.id), req.body || {}, req.file ? { buffer: req.file.buffer, mimetype: req.file.mimetype } : null, by(req), office(req))); } catch (e) { throw asDelivery(e); }
 }, { before: [upload(8)] });
 route('post', '/commerce/stops/:id/failed', 'delivery:edit', async (req) => {
   try { return await tx((q) => delivery.stopFailed(q, Number(req.params.id), req.body || {}, by(req), office(req))); } catch (e) { throw asDelivery(e); }
@@ -1933,11 +1948,12 @@ route('get', '/commerce/stops/:id/photo', 'delivery:view', async (req, res) => {
 // My trips (drivers): the trips of the driver linked to this admin user, open ones and today's ended ones
 route('get', '/commerce/my-trips', 'delivery:view', async (req) => {
   const [rows] = await db.query(`SELECT t.trip_id, DATE_FORMAT(t.trip_date, '%Y-%m-%d') AS trip_date, t.status, v.number AS vehicle, d.name AS driver,
-      (SELECT COUNT(*) FROM trip_stops s WHERE s.trip_id = t.trip_id) AS stops, (SELECT SUM(s.status <> 'pending') FROM trip_stops s WHERE s.trip_id = t.trip_id) AS done
+      (SELECT COUNT(*) FROM trip_stops s WHERE s.trip_id = t.trip_id) AS stops, (SELECT SUM(s.status <> 'pending') FROM trip_stops s WHERE s.trip_id = t.trip_id) AS done,
+      (SELECT COUNT(*) FROM trip_stops s WHERE s.trip_id = t.trip_id AND s.kind = 'pickup') AS pickups
       FROM delivery_trips t JOIN drivers d ON d.driver_id = t.driver_id JOIN vehicles v ON v.vehicle_id = t.vehicle_id
       WHERE d.emp_id = ? AND (t.status IN ('planned', 'out') OR t.ended_at > UTC_TIMESTAMP() - INTERVAL 1 DAY) ORDER BY t.trip_id DESC`, [by(req)]);
   const [[me]] = await db.query('SELECT name FROM drivers WHERE emp_id = ? LIMIT 1', [by(req)]);
-  return { driver: me ? me.name : null, trips: rows.map((r) => ({ ...r, stops: Number(r.stops), done: Number(r.done) || 0 })) };
+  return { driver: me ? me.name : null, trips: rows.map((r) => ({ ...r, stops: Number(r.stops), done: Number(r.done) || 0, pickups: Number(r.pickups) || 0 })) };
 });
 // after a failed delivery; courier; customer pickup
 route('post', '/commerce/orders/:no/reattempt', 'delivery:edit', async (req) => {
@@ -1975,29 +1991,174 @@ route('get', '/commerce/invoices/:id', 'orders:view', async (req) => {
     pos_state: stateName(inv.place_of_supply), bill_state: stateName(buyer.bill.state_code), ship_state: stateName(buyer.ship.state_code), cin: s.cin, phone: s.office_phone, email: s.public_email };
 });
 
-// Returns (database/demo/commerce-demo-schema.sql)
-route('post', '/commerce/orders/:no/returns', 'returns:create', async (req) => {
-  try {
-    return await tx(async (q) => {
-      const r = await commerce.createReturn(q, req.params.no, req.body, by(req));
-      await audit(q, { empId: by(req), action: 'create', entity: 'return', entityId: r.return_no, after: { order: req.params.no, amount: r.amount, outcome: r.outcome } });
-      return r;
-    });
-  } catch (e) { throw asInput(e); }
-});
+// ---------------------------------------------------------------------------------------------
+// Returns and refunds (docs/COMMERCE-SPEC.md 4.8, 5.5, 6.2; logic in returns.js). Section "returns": view = list and
+// detail; create = new return, request photos; edit = courier AWB, decide refund / replacement / no refund; approve =
+// decide refunds above the threshold, returns outside the window and "No refund" (Setup > Approvals). Receiving (scan)
+// and inspecting need "edit" on Inventory (the Warehouse role), not on Returns: the warehouse never decides money.
+// ---------------------------------------------------------------------------------------------
+const returns = require('./returns');
+const asReturn = (e) => (e instanceof returns.ReturnError || e instanceof commerce.CommerceError || e instanceof invoices.InvoiceError ? new InputError(e.message, e.status) : e);
+const RETURN_OUTCOMES = { refund: 'Refund', replace: 'Replacement', none: 'No refund' };
 
 route('get', '/commerce/returns', 'returns:view', async (req) => {
-  const order = typeof req.query.order === 'string' && req.query.order ? req.query.order : null;
+  const where = [];
+  const args = [];
+  const qv = (k) => (typeof req.query[k] === 'string' ? req.query[k].trim() : '');
+  if (qv('order')) { where.push('o.order_no = ?'); args.push(qv('order')); }
+  if (returns.STATUS_LABEL[qv('status')]) { where.push('r.status = ?'); args.push(qv('status')); }
+  if (/^\d+$/.test(qv('reason'))) { where.push('r.reason_id = ?'); args.push(Number(qv('reason'))); }
+  if (qv('outcome') === 'refund') where.push('EXISTS (SELECT 1 FROM return_items x WHERE x.return_id = r.return_id AND x.refund_qty > 0)');
+  if (qv('outcome') === 'replace') where.push('EXISTS (SELECT 1 FROM return_items x WHERE x.return_id = r.return_id AND x.replace_qty > 0)');
+  if (qv('outcome') === 'none') where.push('EXISTS (SELECT 1 FROM return_items x WHERE x.return_id = r.return_id AND x.none_qty > 0)');
+  if (pricing.isDate(qv('from'))) { where.push(`r.created_at >= CONVERT_TZ(?, '+05:30', '+00:00')`); args.push(`${qv('from')} 00:00:00`); }
+  if (pricing.isDate(qv('to'))) { where.push(`r.created_at < CONVERT_TZ(DATE_ADD(?, INTERVAL 1 DAY), '+05:30', '+00:00')`); args.push(qv('to')); }
+  if (qv('q')) { where.push('(r.return_no LIKE ? OR o.order_no LIKE ? OR c.name LIKE ?)'); const like = `%${qv('q')}%`; args.push(like, like, like); }
   const [rows] = await db.query(
-    `SELECT r.return_no, r.reason, r.outcome, r.amount, r.created_at, r.emp_id, o.order_no, c.name AS customer, ro.order_no AS replacement_no,
-            GROUP_CONCAT(CONCAT(ri.qty, ' x ', ri.sku_code, IF(ri.item_check = 'ok', ' (R)', ' damaged')) ORDER BY ri.sku_code SEPARATOR ', ') AS items
-       FROM returns r JOIN orders o ON o.order_id = r.order_id JOIN customers c ON c.customer_id = o.customer_id
+    `SELECT r.return_no, r.status, r.collection, r.outside_window, r.awb_no, r.created_at, r.picked_up_at, r.received_at, r.inspected_at, r.closed_at, r.requested_by,
+            o.order_no, c.name AS customer, rr.label AS reason, ro.order_no AS replacement_no, ro.status AS replacement_status,
+            (SELECT GROUP_CONCAT(CONCAT(x.qty, ' x ', x.sku_code, IFNULL(CONCAT('/', b.batch_no), '')) ORDER BY x.line_id SEPARATOR ', ') FROM return_items x LEFT JOIN batches b ON b.batch_id = x.batch_id WHERE x.return_id = r.return_id) AS items,
+            (SELECT SUM(x.refund_qty) FROM return_items x WHERE x.return_id = r.return_id) AS refund_qty,
+            (SELECT SUM(x.replace_qty) FROM return_items x WHERE x.return_id = r.return_id) AS replace_qty,
+            (SELECT SUM(x.none_qty) FROM return_items x WHERE x.return_id = r.return_id) AS none_qty,
+            (SELECT COALESCE(SUM(f.amount), 0) FROM refunds f WHERE f.return_id = r.return_id AND f.status = 'paid') AS refunded,
+            (SELECT GROUP_CONCAT(a.kind) FROM approvals a WHERE a.ref_type = 'return' AND a.ref_id = r.return_no AND a.status = 'pending') AS waiting
+       FROM returns r JOIN orders o ON o.order_id = r.order_id JOIN customers c ON c.customer_id = o.customer_id JOIN return_reasons rr ON rr.reason_id = r.reason_id
        LEFT JOIN orders ro ON ro.order_id = r.replacement_order_id
-       LEFT JOIN return_items ri ON ri.return_id = r.return_id
-      ${order ? 'WHERE o.order_no = ?' : ''}
-      GROUP BY r.return_id ORDER BY r.return_id DESC`, order ? [order] : []
-  );
-  return rows.map((r) => ({ ...r, outcome_label: commerce.OUTCOMES[r.outcome] }));
+      ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY r.return_id DESC LIMIT 300`, args);
+  const [counts] = await db.query('SELECT status, COUNT(*) AS n FROM returns GROUP BY status');
+  const [reasons] = await db.query('SELECT reason_id, label FROM return_reasons ORDER BY sort_order, reason_id');
+  return {
+    rows: rows.map((r) => ({ ...r, status_label: returns.STATUS_LABEL[r.status], collection_label: returns.COLLECTION[r.collection], refunded: Number(r.refunded),
+      outcomes: Object.keys(RETURN_OUTCOMES).filter((k) => Number(r[`${k}_qty`]) > 0), waiting: r.waiting ? r.waiting.split(',').map((k) => (approvals.KINDS[k] || {}).label || k) : [] })),
+    counts: Object.fromEntries(counts.map((c) => [c.status, Number(c.n)])), statuses: returns.STATUS_LABEL, reasons, outcomes: RETURN_OUTCOMES,
+  };
+});
+
+/** what can be returned from a delivered order, the reasons and the window (the New return form) */
+route('get', '/commerce/orders/:no/returnable', 'returns:create', async (req) => {
+  const [[o]] = await db.query(`SELECT order_id, order_no, status, delivery_kind, DATE_FORMAT(CONVERT_TZ(delivered_at, '+00:00', '+05:30'), '%Y-%m-%d') AS delivered_on,
+      DATEDIFF(DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+05:30')), DATE(CONVERT_TZ(delivered_at, '+00:00', '+05:30'))) AS days FROM orders WHERE order_no = ?`, [req.params.no]);
+  if (!o) throw new InputError('Order not found', 404);
+  const cs = await commerceSettings.read(db);
+  const [reasons] = await db.query('SELECT reason_id, label, needs_photo FROM return_reasons WHERE is_active = 1 ORDER BY sort_order, reason_id');
+  return { order_no: o.order_no, status: o.status, delivered_on: o.delivered_on, days: Number(o.days), window_days: Number(cs.return_window_days) || 0,
+    outside_rule: cs.return_outside_window, lines: o.status === 'delivered' ? await returns.returnable(db, o.order_id) : [], reasons, collections: returns.COLLECTION };
+});
+route('post', '/commerce/orders/:no/returns', 'returns:create', async (req) => {
+  try { return await tx((q) => returns.createReturn(q, req.params.no, req.body || {}, by(req))); } catch (e) { throw asReturn(e); }
+}, { status: 201 });
+
+route('get', '/commerce/returns/:no', 'returns:view', async (req) => {
+  const [[r]] = await db.query(
+    `SELECT r.return_id, r.return_no, r.status, r.reason_id, r.reason_note, DATE_FORMAT(r.delivered_on, '%Y-%m-%d') AS delivered_on, r.window_days, r.outside_window, r.collection,
+            r.courier_id, r.awb_no, r.picked_up_at, r.picked_up_by, r.received_at, r.received_by, r.inspected_at, r.inspected_by, r.inspect_note, r.refund_method, r.no_refund_reason,
+            r.requested_by, r.created_at, r.closed_at, rr.label AS reason, o.order_id, o.order_no, o.gst_type, o.payment_terms, o.payment_status, o.amount_paid, o.amount_due, o.total AS order_total,
+            o.ship_name, o.ship_address, o.ship_town, o.ship_pincode, o.ship_phone, c.customer_id, c.name AS customer, c.phone, cr.name AS courier, cr.tracking_url,
+            ro.order_no AS replacement_no, ro.status AS replacement_status
+       FROM returns r JOIN orders o ON o.order_id = r.order_id JOIN customers c ON c.customer_id = o.customer_id JOIN return_reasons rr ON rr.reason_id = r.reason_id
+       LEFT JOIN couriers cr ON cr.courier_id = r.courier_id LEFT JOIN orders ro ON ro.order_id = r.replacement_order_id WHERE r.return_no = ?`, [req.params.no]);
+  if (!r) throw new InputError('Return not found', 404);
+  const lines = await returns.receiveState(db, r.return_id);
+  const [hist] = await db.query('SELECT status, note, emp_id, created_at FROM return_history WHERE return_id = ? ORDER BY id', [r.return_id]);
+  const [photos] = await db.query('SELECT photo_id, kind, emp_id, created_at FROM return_photos WHERE return_id = ? ORDER BY photo_id', [r.return_id]);
+  const [scans] = await db.query('SELECT scan_id, code, qty, result, message, emp_id, created_at FROM return_scans WHERE return_id = ? ORDER BY scan_id DESC LIMIT 40', [r.return_id]);
+  const [refunds] = await db.query(`SELECT f.refund_id, f.method, f.mode, f.reference, f.amount, f.status, f.approval_id, f.emp_id, f.created_at, f.paid_at, cn.credit_note_no, cn.invoice_id
+      FROM refunds f LEFT JOIN credit_notes cn ON cn.credit_note_id = f.credit_note_id WHERE f.return_id = ? ORDER BY f.refund_id`, [r.return_id]);
+  const [cns] = await db.query(`SELECT cn.credit_note_id, cn.credit_note_no, cn.invoice_id, i.invoice_no, cn.taxable, cn.cgst, cn.sgst, cn.igst, cn.round_off, cn.total, cn.issued_at
+      FROM credit_notes cn JOIN invoices i ON i.invoice_id = cn.invoice_id WHERE cn.return_id = ? ORDER BY cn.credit_note_id`, [r.return_id]);
+  const [appr] = await db.query("SELECT approval_id, kind, status, summary, amount, requested_by, decided_by, note FROM approvals WHERE ref_type = 'return' AND ref_id = ? ORDER BY approval_id", [r.return_no]);
+  const [stops] = await db.query(`SELECT s.stop_id, s.trip_id, s.status, s.receiver_name, s.failed_reason, s.done_at, t.status AS trip_status, d.name AS driver, v.number AS vehicle
+      FROM trip_stops s JOIN delivery_trips t ON t.trip_id = s.trip_id JOIN drivers d ON d.driver_id = t.driver_id JOIN vehicles v ON v.vehicle_id = t.vehicle_id WHERE s.return_id = ? ORDER BY s.stop_id`, [r.return_id]);
+  const [couriers] = await db.query('SELECT courier_id, name FROM couriers WHERE is_active = 1 ORDER BY sort_order, courier_id');
+  const cs = await commerceSettings.read(db);
+  const amt = (x) => (x === null || x === undefined ? x : Number(x));
+  return {
+    ...r, status_label: returns.STATUS_LABEL[r.status], collection_label: returns.COLLECTION[r.collection], outside_window: Number(r.outside_window) === 1,
+    amount_paid: amt(r.amount_paid), amount_due: amt(r.amount_due), order_total: amt(r.order_total),
+    tracking_link: r.tracking_url && r.awb_no ? r.tracking_url.replace('{awb}', encodeURIComponent(r.awb_no)) : null,
+    lines: lines.map((l) => ({ ...l, left: returns.leftOf(l) })), history: hist, photos, scans, couriers, trips: stops,
+    refunds: refunds.map((f) => ({ ...f, amount: Number(f.amount) })), credit_notes: cns.map((c) => ({ ...c, total: Number(c.total), taxable: Number(c.taxable), cgst: Number(c.cgst), sgst: Number(c.sgst), igst: Number(c.igst) })),
+    approvals: appr.map((a) => ({ ...a, kind_label: (approvals.KINDS[a.kind] || {}).label || a.kind })),
+    waiting: appr.filter((a) => a.status === 'pending').map((a) => a.kind),
+    methods: returns.METHODS, modes: commerce.modesOffered(cs), modeLabels: commerce.MODES,
+    refundRule: { on: Boolean(cs.approve_refund_on), above: Number(cs.approve_refund_above) }, noRefundApproval: cs.approve_no_refund !== false,
+    can: { receive: canDo(req, 'inventory', 'edit'), decide: canDo(req, 'returns', 'edit'), photo: canDo(req, 'returns', 'create') || canDo(req, 'inventory', 'edit') },
+  };
+});
+route('post', '/commerce/returns/:no/photos', 'returns:view', async (req) => {
+  const kind = String(req.body.kind || 'request');
+  if (kind === 'request' && !canDo(req, 'returns', 'create')) throw new InputError('Adding photos to a return needs "create" on Returns', 403);
+  if (kind === 'inspect' && !canDo(req, 'inventory', 'edit')) throw new InputError('Inspection photos need "edit" on Inventory', 403);
+  if (kind === 'pickup') throw new InputError('The pickup photo is taken by the driver on the trip');
+  try { return await tx((q) => returns.addPhoto(q, req.params.no, kind, req.file, by(req))); } catch (e) { throw asReturn(e); }
+}, { before: [upload(8)], status: 201 });
+route('get', '/commerce/return-photos/:id', 'returns:view', async (req, res) => {
+  const [[p]] = await db.query('SELECT photo, photo_type FROM return_photos WHERE photo_id = ?', [Number(req.params.id)]);
+  if (!p) throw new InputError('No photo', 404);
+  res.set({ 'Content-Type': p.photo_type, 'Cache-Control': 'private, no-store' });
+  res.send(p.photo);
+});
+route('post', '/commerce/returns/:no/courier', 'returns:edit', async (req) => {
+  try { return await tx((q) => returns.setCourier(q, req.params.no, req.body || {}, by(req))); } catch (e) { throw asReturn(e); }
+});
+route('post', '/commerce/returns/:no/scan', 'inventory:edit', async (req) => {
+  try { return await tx((q) => returns.receiveScan(q, req.params.no, req.body.code, by(req))); } catch (e) { throw asReturn(e); }
+});
+route('post', '/commerce/returns/:no/inspect', 'inventory:edit', async (req) => {
+  try { return await tx((q) => returns.inspect(q, req.params.no, req.body || {}, by(req))); } catch (e) { throw asReturn(e); }
+});
+route('post', '/commerce/returns/:no/decide', 'returns:edit', async (req) => {
+  try { return await tx((q) => returns.decide(q, req.params.no, req.body || {}, by(req))); } catch (e) { throw asReturn(e); }
+});
+// Recheck: Returned (R) packs back to good stock (only when Commerce settings allow resale; always through approval)
+route('post', '/commerce/stock/recheck', 'inventory:edit', async (req) => {
+  try { return await tx((q) => returns.recheckRequest(q, req.body || {}, by(req))); } catch (e) { throw asReturn(e); }
+}, { status: 201 });
+
+// A credit note for printing: the invoice snapshot (seller, buyer, GST type) and the credit note's own lines
+route('get', '/commerce/credit-notes/:id', 'any', async (req) => {
+  if (!canDo(req, 'orders') && !canDo(req, 'returns')) throw new InputError('Credit notes need "view" on Orders or Returns', 403);
+  const [[cn]] = await db.query(`SELECT cn.credit_note_id, cn.credit_note_no, cn.reason, cn.taxable, cn.cgst, cn.sgst, cn.igst, cn.round_off, cn.total, cn.issued_at, cn.return_id, r.return_no,
+      i.invoice_no, i.issued_at AS invoice_date, i.gst_type, i.place_of_supply, i.seller_name, i.seller_gstin, i.seller_address, i.seller_state_code, i.buyer_json, i.is_demo, o.order_no
+      FROM credit_notes cn JOIN invoices i ON i.invoice_id = cn.invoice_id JOIN orders o ON o.order_id = i.order_id LEFT JOIN returns r ON r.return_id = cn.return_id
+      WHERE cn.credit_note_id = ?`, [Number(req.params.id)]);
+  if (!cn) throw new InputError('Credit note not found', 404);
+  const [lines] = await db.query(`SELECT l.sku_code, l.hsn, l.gst_rate, l.qty, l.taxable, l.cgst, l.sgst, l.igst, l.line_total, ${SKU_NAME} AS name, s.size_label
+      FROM credit_note_lines l JOIN skus s ON s.sku_code = l.sku_code ${SKU_JOIN} WHERE l.credit_note_id = ? ORDER BY l.id`, [cn.credit_note_id]);
+  const buyer = typeof cn.buyer_json === 'string' ? JSON.parse(cn.buyer_json) : cn.buyer_json;
+  return { ...cn, buyer_json: undefined, buyer, lines, is_demo: Number(cn.is_demo) === 1, seller_state: stateName(cn.seller_state_code), pos_state: stateName(cn.place_of_supply),
+    bill_state: stateName(buyer.bill.state_code) };
+});
+
+// Reports: returns by reason and by SKU for a period (dates in India time), return rate per SKU = packs returned /
+// packs delivered in the same period
+route('get', '/commerce/reports/returns', 'reports:view', async (req) => {
+  const today = pricing.istToday();
+  const from = pricing.isDate(String(req.query.from || '')) ? String(req.query.from) : `${today.slice(0, 8)}01`;
+  const to = pricing.isDate(String(req.query.to || '')) ? String(req.query.to) : today;
+  const span = [`${from} 00:00:00`, to];
+  const IN = `r.created_at >= CONVERT_TZ(?, '+05:30', '+00:00') AND r.created_at < CONVERT_TZ(DATE_ADD(?, INTERVAL 1 DAY), '+05:30', '+00:00') AND r.status <> 'rejected'`;
+  const [byReason] = await db.query(`SELECT rr.label AS reason, COUNT(DISTINCT r.return_id) AS returns, COALESCE(SUM(x.qty), 0) AS packs
+      FROM returns r JOIN return_reasons rr ON rr.reason_id = r.reason_id JOIN return_items x ON x.return_id = r.return_id WHERE ${IN} GROUP BY rr.reason_id, rr.label ORDER BY packs DESC`, span);
+  const [bySku] = await db.query(`SELECT x.sku_code, ${SKU_NAME} AS name, s.size_label, COUNT(DISTINCT r.return_id) AS returns, SUM(x.qty) AS packs,
+      COALESCE(SUM(x.qty_ok), 0) AS ok, COALESCE(SUM(x.qty_damaged), 0) AS damaged, COALESCE(SUM(x.qty_expired), 0) AS expired, COALESCE(SUM(x.qty_missing), 0) AS missing,
+      COALESCE(SUM(x.refund_qty), 0) AS refunded, COALESCE(SUM(x.replace_qty), 0) AS replaced
+      FROM returns r JOIN return_items x ON x.return_id = r.return_id JOIN skus s ON s.sku_code = x.sku_code ${SKU_JOIN} WHERE ${IN}
+      GROUP BY x.sku_code, t.name, pt.name, s.product_id, s.size_label ORDER BY packs DESC`, span);
+  const [sold] = await db.query(`SELECT i.sku_code, SUM(i.qty) AS packs FROM orders o JOIN order_items i ON i.order_id = o.order_id
+      WHERE o.delivered_at >= CONVERT_TZ(?, '+05:30', '+00:00') AND o.delivered_at < CONVERT_TZ(DATE_ADD(?, INTERVAL 1 DAY), '+05:30', '+00:00') AND o.status = 'delivered' GROUP BY i.sku_code`, span);
+  const del = new Map(sold.map((x) => [x.sku_code, Number(x.packs)]));
+  const num = (x) => Number(x) || 0;
+  return {
+    from, to,
+    byReason: byReason.map((x) => ({ reason: x.reason, returns: num(x.returns), packs: num(x.packs) })),
+    bySku: bySku.map((x) => {
+      const delivered = del.get(x.sku_code) || 0;
+      return { sku_code: x.sku_code, name: x.name, size_label: x.size_label, returns: num(x.returns), packs: num(x.packs), ok: num(x.ok), damaged: num(x.damaged), expired: num(x.expired),
+        missing: num(x.missing), refunded: num(x.refunded), replaced: num(x.replaced), delivered, rate: delivered ? Math.round((num(x.packs) / delivered) * 1000) / 10 : null };
+    }),
+  };
 });
 
 // Customers (CRM, tables in database/demo/commerce-demo-schema.sql)
@@ -2199,13 +2360,12 @@ route('get', '/commerce/ops', 'any', async (req) => {
     stock: canDo(req, 'inventory'), returns: canDo(req, 'returns'), wallet: canDo(req, 'customers') };
   const [[today]] = await db.query(`SELECT COUNT(*) AS n, COALESCE(SUM(total), 0) AS value FROM orders WHERE created_at >= ${IST_TODAY_UTC} AND status NOT IN ('cancelled', 'approval')`);
   const [[st]] = await db.query("SELECT SUM(status = 'new') AS to_pack, SUM(status = 'packed') AS to_dispatch FROM orders");
-  const [[ret]] = await db.query(`SELECT COUNT(*) AS n FROM returns r LEFT JOIN orders ro ON ro.order_id = r.replacement_order_id
-      WHERE r.outcome = 'replacement' AND (ro.status IS NULL OR ro.status <> 'delivered')`);
   const [[w]] = await db.query(`SELECT COALESCE(SUM(CASE WHEN amount > 0 THEN amount END), 0) AS total,
       COALESCE(SUM(CASE WHEN amount > 0 AND reason LIKE 'Cashback%' THEN amount END), 0) AS cashback,
       COALESCE(SUM(CASE WHEN amount > 0 AND reason LIKE 'Refund%' THEN amount END), 0) AS refunds FROM wallet_entries`);
   const low = can.stock ? await stock.reorderList(db) : [];
   const dc = await delivery.opsCounts(db);
+  const seeInspect = can.returns || canDo(req, 'inventory', 'edit');
   const seePack = canDo(req, 'packing') || canDo(req, 'orders');
   const seeDeliver = canDo(req, 'delivery') || canDo(req, 'orders');
   const exp = can.stock ? (await stock.batchList(db)).rows.filter((b) => b.good > 0 && b.state !== 'ok') : [];
@@ -2213,7 +2373,7 @@ route('get', '/commerce/ops', 'any', async (req) => {
   return {
     today: can.orders ? { n: Number(today.n), value: Number(today.value) } : null,
     toPack: can.pack ? Number(st.to_pack) || 0 : null, toDispatch: can.dispatch ? Number(st.to_dispatch) || 0 : null,
-    openReturns: can.returns ? Number(ret.n) : null,
+    returns: seeInspect ? { toCollect: can.returns ? dc.returnsToCollect : null, toInspect: dc.returnsToInspect, toDecide: can.returns ? dc.returnsToDecide : null } : null,
     walletGiven: can.wallet ? { total: Number(w.total), cashback: Number(w.cashback), refunds: Number(w.refunds) } : null,
     lowStock: can.stock ? low.map((r) => ({ sku_code: r.sku_code, name: r.name, available: r.available, reorder_level: r.reorder_level, suggested: r.suggested })) : null,
     expiry: can.stock ? { expired: exp.filter((b) => b.state === 'expired').length, near: exp.filter((b) => b.state === 'near').length } : null,
