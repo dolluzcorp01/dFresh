@@ -1,4 +1,4 @@
-// Commerce > Packing (docs/COMMERCE-SPEC.md 5.3; API /commerce/packing, logic in src/backend_routes/delivery.js).
+// Fulfilment > Packing (docs/COMMERCE-SPEC.md 5.3; API /commerce/packing, logic in src/backend_routes/delivery.js).
 // To pick: New orders; tick one or many for the pick list (grouped by SKU and batch, earliest expiry first, with each
 // SKU's bin; print or save as PDF) and Start packing (the batches are fixed then). Packing: open an order and scan
 // every pack (SKU, SKU/BATCH for batch-tracked products) or full carton (SKU#C); a wrong SKU, wrong batch or too many

@@ -1,4 +1,4 @@
-// Commerce > Returns (docs/COMMERCE-SPEC.md 4.8, 5.5, 6.2; API /commerce/returns, logic in src/backend_routes/returns.js).
+// Fulfilment > Returns (docs/COMMERCE-SPEC.md 4.8, 5.5, 6.2; API /commerce/returns, logic in src/backend_routes/returns.js).
 // List: status chips (Requested > Collecting > Received > Inspected > Refunded / Replaced / Closed, and Rejected),
 // filters (reason, outcome, dates, search). A return is entered on a delivered order (Orders > open > New return:
 // NewReturn below) when the customer calls: SKU and batch as delivered, packs (partial is fine), reason, how it comes
@@ -18,6 +18,10 @@ import { useLocation } from 'react-router-dom';
 import { api } from './adminApi';
 import { Drawer, InfoCard, Loading, Notice, fmtDate, useAction, useCan, useConfirm, useLoad, useUpload, UploadButton } from './ui';
 import { printCreditNote, signed } from './invoicePrint';
+
+// status chips in the order a return moves; refunded and replaced are both "done" (one chip); rejected only when there is one
+const RETURN_CHIPS = [['requested', 'Requested', ['requested']], ['collecting', 'Collecting', ['collecting']], ['received', 'Received', ['received']],
+  ['inspected', 'Inspected', ['inspected']], ['done', 'Refunded / Replaced', ['refunded', 'replaced']], ['closed', 'Closed', ['closed']], ['rejected', 'Rejected', ['rejected']]];
 
 export const rs = (n) => `Rs ${Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const day = (d) => (d ? new Date(`${String(d).slice(0, 10)}T00:00:00Z`).toLocaleDateString('en-IN', { timeZone: 'UTC', day: 'numeric', month: 'short', year: 'numeric' }) : '');
@@ -61,8 +65,8 @@ export default function CommerceReturns() {
       <div className="a-toolbar">
         <div className="a-chips" role="group" aria-label="Status">
           <button type="button" className={`a-chip${!f.status ? ' on' : ''}`} onClick={() => set({ status: '' })}>All {all}</button>
-          {meta && Object.entries(meta.statuses).filter(([k]) => k !== 'rejected' || counts[k]).map(([k, v]) => (
-            <button key={k} type="button" className={`a-chip${f.status === k ? ' on' : ''}`} onClick={() => set({ status: k })}>{v} {counts[k] || 0}</button>
+          {meta && RETURN_CHIPS.map(([k, label, sts]) => [k, label, sts.reduce((a, s) => a + (counts[s] || 0), 0)]).filter(([k, , n]) => k !== 'rejected' || n).map(([k, label, n]) => (
+            <button key={k} type="button" className={`a-chip${f.status === k ? ' on' : ''}`} onClick={() => set({ status: k })}>{label} {n}</button>
           ))}
         </div>
       </div>
@@ -197,7 +201,7 @@ export function ReturnDrawer({ no, onClose }) {
               {FLOW.map((s) => <li key={s} className={stepDone(s) ? 'done' : ''}>{{ requested: 'Requested', collecting: 'Collecting', received: 'Received', inspected: 'Inspected' }[s]}<small>{fmtDate(d[STAMP[s]])}</small></li>)}
               <li className={closed && d.status !== 'rejected' ? 'done' : ''}>{closed ? END[d.status] : 'Refund / replace'}<small>{fmtDate(d.closed_at)}</small></li>
             </ol>
-            {waitingWindow && <Notice kind="warn">Outside the return window ({d.window_days} days from {day(d.delivered_on)}): it waits for approval (Setup &gt; Approvals) before it is collected.</Notice>}
+            {waitingWindow && <Notice kind="warn">Outside the return window ({d.window_days} days from {day(d.delivered_on)}): it waits for approval (Approvals, top of the menu) before it is collected.</Notice>}
             {d.status === 'rejected' && <Notice kind="error">Rejected: the return outside the window was not approved.</Notice>}
             {d.waiting.includes('refund') && <Notice kind="warn">The refund waits for approval (above {rs(d.refundRule.above)}). The credit note is issued when it is approved.</Notice>}
             {d.waiting.includes('no_refund') && <Notice kind="warn">"No refund" waits for approval.</Notice>}

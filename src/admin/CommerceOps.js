@@ -51,7 +51,6 @@ export default function CommerceOps() {
       <Loading state={ops}>
         {d && (
           <>
-            {d.business && <Business b={d.business} />}
             {d.lowStock && d.lowStock.length > 0 && (
               <Notice kind="warn">{d.lowStock.length} SKU{d.lowStock.length === 1 ? ' is' : 's are'} below the reorder level: <Link to="/admin/commerce/stock?tab=reorder">open the Reorder list</Link>.</Notice>
             )}
@@ -59,6 +58,9 @@ export default function CommerceOps() {
               <Notice kind={d.expiry.expired ? 'error' : 'warn'}>{d.expiry.expired ? `${d.expiry.expired} expired batch${d.expiry.expired === 1 ? '' : 'es'} in stock (blocked from orders: write them off)` : ''}{d.expiry.expired && d.expiry.near ? '; ' : ''}{d.expiry.near ? `${d.expiry.near} batch${d.expiry.near === 1 ? '' : 'es'} near expiry` : ''}: <Link to="/admin/commerce/stock?tab=batches">Batches</Link>.</Notice>
             )}
             <div className="a-stats">
+              {/* in the order of the admin menu: stock, sales, fulfilment, returns, money owed to customers */}
+              {d.lowStock && <Card to="/admin/commerce/stock?tab=reorder" value={d.lowStock.length} label="below reorder level" bad={d.lowStock.length > 0} />}
+              {d.followUps && <Card to="/admin/commerce/follow-ups" value={d.followUps.overdue} label="follow-ups overdue" sub={`${d.followUps.mine} of them yours`} bad={d.followUps.overdue > 0} />}
               {d.today && <Card to="/admin/commerce/orders" value={d.today.n} label="orders today" sub={rs(d.today.value)} />}
               {d.packing && <Card to="/admin/commerce/packing" value={d.packing.toPick} label="to pick" bad={d.packing.toPick > 0} />}
               {d.packing && <Card to="/admin/commerce/packing" value={d.packing.toPack} label="to pack (packing)" bad={d.packing.toPack > 0} />}
@@ -66,23 +68,12 @@ export default function CommerceOps() {
               {d.delivery && <Card to="/admin/commerce/orders?status=out_for_delivery" value={d.delivery.outNow} label="out for delivery" sub={d.delivery.withCourier ? `+ ${d.delivery.withCourier} with couriers` : null} />}
               {d.delivery && <Card to="/admin/commerce/delivery" value={d.delivery.failed} label="failed deliveries" bad={d.delivery.failed > 0} />}
               {d.delivery && <Card to="/admin/commerce/delivery" value={rs(d.delivery.codDue)} label="COD cash to collect" sub={d.delivery.cashOnTrips ? `${rs(d.delivery.cashOnTrips)} collected on trips out now` : null} />}
-              {d.lowStock && <Card to="/admin/commerce/stock?tab=reorder" value={d.lowStock.length} label="below reorder level" bad={d.lowStock.length > 0} />}
               {d.returns && d.returns.toCollect !== null && <Card to="/admin/commerce/returns?status=collecting" value={d.returns.toCollect} label="returns to collect" sub="customer, trip pickup or courier" />}
               {d.returns && <Card to="/admin/commerce/returns?status=received" value={d.returns.toInspect} label="returns to inspect" sub="at the godown or picked up" bad={d.returns.toInspect > 0} />}
               {d.returns && d.returns.toDecide !== null && <Card to="/admin/commerce/returns?status=inspected" value={d.returns.toDecide} label="returns to decide" sub="refund, replace or no refund" />}
-              {d.followUps && <Card to="/admin/commerce/follow-ups" value={d.followUps.overdue} label="follow-ups overdue" sub={`${d.followUps.mine} of them yours`} bad={d.followUps.overdue > 0} />}
               {d.walletGiven && <Card to="/admin/commerce/customers" value={rs(d.walletGiven.total)} label="wallet balance owed to customers" sub={`from cashback ${rs(d.walletGiven.cashback)}, refunds ${rs(d.walletGiven.refunds)}`} />}
             </div>
             <div className="a-grid2">
-              {d.nextToPack && (
-              <div className="a-card">
-                <h2>Next to pack</h2>
-                {d.nextToPack.length ? (
-                  <table className="a-table"><thead><tr><th>Order</th><th>Customer</th><th>Received</th></tr></thead>
-                    <tbody>{d.nextToPack.map((o) => <tr key={o.order_no}><td><code>{o.order_no}</code></td><td>{o.customer}</td><td>{fmtDate(o.created_at)}</td></tr>)}</tbody></table>
-                ) : <p className="a-muted">Nothing to pack.</p>}
-              </div>
-              )}
               {d.lowStock && (
               <div className="a-card">
                 <h2>Reorder (low stock)</h2>
@@ -92,7 +83,17 @@ export default function CommerceOps() {
                 ) : <p className="a-muted">All SKUs above their level.</p>}
               </div>
               )}
+              {d.nextToPack && (
+              <div className="a-card">
+                <h2>Next to pack</h2>
+                {d.nextToPack.length ? (
+                  <table className="a-table"><thead><tr><th>Order</th><th>Customer</th><th>Received</th></tr></thead>
+                    <tbody>{d.nextToPack.map((o) => <tr key={o.order_no}><td><code>{o.order_no}</code></td><td>{o.customer}</td><td>{fmtDate(o.created_at)}</td></tr>)}</tbody></table>
+                ) : <p className="a-muted">Nothing to pack.</p>}
+              </div>
+              )}
             </div>
+            {d.business && <Business b={d.business} />}{/* the review last, as Reports in the menu */}
           </>
         )}
       </Loading>

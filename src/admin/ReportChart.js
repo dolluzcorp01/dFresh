@@ -1,4 +1,4 @@
-// Report charts (Commerce > Reports): inline SVG, no chart library. Three forms, picked by the report:
+// Report charts (Reports): inline SVG, no chart library. Three forms, picked by the report:
 // - line: change over time (sales by day), the period and the previous one; crosshair + one tooltip with both series.
 // - bar: a few values in order (months, ageing buckets, the stock movement); hover tooltip per column.
 // - hbar: ranked categories (top SKUs, customers, reasons); the value at the bar's tip.

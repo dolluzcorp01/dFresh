@@ -1,5 +1,5 @@
-// Commerce > Promotions (docs/COMMERCE-SPEC.md 3; API /commerce/promotions, logic in src/backend_routes/promotions.js).
-// Tabs:
+// Products and prices > Promotions (docs/COMMERCE-SPEC.md 3; API /commerce/promotions, logic in src/backend_routes/promotions.js).
+// Tabs, in this order: Offers, Coupons, Cashback, Wallets (the page opens on Coupons).
 // - Coupons: percent (with a cap) / fixed / free delivery; minimum order; valid from / to; uses in all and per customer;
 //   customer types or named customers; SKUs or categories included / excluded; on / off; the usage list per coupon.
 // - Offers (no code, applied in New order and shown on the line): quantity slab (from N packs or cartons, n % off) and
@@ -17,7 +17,7 @@ import WalletPanel from './WalletPanel';
 const day = (d) => (d ? new Date(`${String(d).slice(0, 10)}T00:00:00Z`).toLocaleDateString('en-IN', { timeZone: 'UTC', day: 'numeric', month: 'short', year: 'numeric' }) : '');
 const dates = (x) => (x.valid_from || x.valid_to ? `${x.valid_from ? day(x.valid_from) : 'any time'} to ${x.valid_to ? day(x.valid_to) : 'no end'}` : 'no dates');
 const nz = (v) => (v === null || v === undefined ? '' : String(v));
-const TABS = [['coupons', 'Coupons'], ['offers', 'Offers'], ['cashback', 'Cashback'], ['wallets', 'Wallets']];
+const TABS = [['offers', 'Offers'], ['coupons', 'Coupons'], ['cashback', 'Cashback'], ['wallets', 'Wallets']]; // automatic first, then typed, then after the sale
 
 /** chips picked from a list (customer types, customers, SKUs / categories) */
 function Picker({ label, options, values, onChange }) {

@@ -38,10 +38,10 @@ const ORDER_VARS = ['customer', 'contact', 'order_no', 'total', 'amount_due', 'i
 const EVENTS = {
   order_confirmed: { audience: 'customer', label: 'Order confirmed', to: 'order', vars: ORDER_VARS },
   order_packed: { audience: 'customer', label: 'Order packed', to: 'order', vars: [...ORDER_VARS, 'cartons'] },
+  invoice: { audience: 'customer', label: 'Invoice (PDF)', to: 'invoice', attach: 'invoice', vars: [...ORDER_VARS, 'invoice_no', 'due_on'] }, // made when the goods leave: before "out for delivery"
   order_out: { audience: 'customer', label: 'Out for delivery', to: 'order', vars: [...ORDER_VARS, 'cartons'] },
   order_courier: { audience: 'customer', label: 'Handed to the courier', to: 'order', vars: [...ORDER_VARS, 'courier', 'awb', 'tracking_link'] },
   order_delivered: { audience: 'customer', label: 'Delivered', to: 'order', vars: [...ORDER_VARS, 'received_by', 'return_days'] },
-  invoice: { audience: 'customer', label: 'Invoice (PDF)', to: 'invoice', attach: 'invoice', vars: [...ORDER_VARS, 'invoice_no', 'due_on'] },
   payment: { audience: 'customer', label: 'Payment received (receipt)', to: 'invoice', vars: [...ORDER_VARS, 'amount', 'mode', 'reference', 'paid_on'] },
   return_accepted: { audience: 'customer', label: 'Return accepted', to: 'order', vars: ['customer', 'contact', 'order_no', 'return_no', 'items'] },
   return_picked: { audience: 'customer', label: 'Return picked up', to: 'order', vars: ['customer', 'contact', 'order_no', 'return_no', 'items'] },

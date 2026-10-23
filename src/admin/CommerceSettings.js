@@ -7,9 +7,12 @@ import { useState } from 'react';
 import { api } from './adminApi';
 import { Drawer, InfoCard, Loading, Notice, fmtDate, useAction, useCan, useConfirm, useLeaveGuard, useLoad } from './ui';
 
-// groups in this order; a list is shown after the group named next to it
-const ORDER = ['General', 'Orders and pricing', 'Inventory', 'Returns', 'Delivery', 'Invoice', 'Numbering', 'GST and compliance', 'Payments', 'Notifications', 'Staff notifications', 'Accounting', 'Approvals'];
-const LISTS_AFTER = { 'Orders and pricing': ['customer_types'], Inventory: ['locations'], Returns: ['return_reasons'], Delivery: ['delivery_methods', 'delivery_areas', 'vehicles', 'drivers', 'couriers'] };
+// groups in the order of the admin menu (products and prices, stock, sales, fulfilment, reports, setup); a group not
+// listed here is shown at the end, never hidden
+const ORDER = ['General', 'Orders and pricing', 'Promotions', 'Inventory', 'Customers', 'Payments', 'Invoice', 'GST and compliance', 'Numbering',
+  'Delivery', 'Returns', 'Accounting', 'Notifications', 'Staff notifications', 'Approvals'];
+// a list is shown after the group named next to it
+const LISTS_AFTER = { Inventory: ['locations'], Customers: ['customer_types'], Delivery: ['delivery_methods', 'delivery_areas', 'vehicles', 'drivers', 'couriers'], Returns: ['return_reasons'] };
 
 export default function CommerceSettings() {
   const data = useLoad('/commerce-settings');
@@ -25,7 +28,7 @@ export default function CommerceSettings() {
     drop(row.setting_key);
     data.reload();
   }, `${row.label}: saved`);
-  const groups = d ? ORDER.map((g) => [g, d.settings.filter((s) => s.grp === g)]).filter(([, rows]) => rows.length) : [];
+  const groups = d ? [...ORDER, ...[...new Set(d.settings.map((s) => s.grp))].filter((g) => !ORDER.includes(g))].map((g) => [g, d.settings.filter((s) => s.grp === g)]).filter(([, rows]) => rows.length) : [];
   const tbc = d ? d.settings.filter((s) => s.tbc).length : 0;
 
   return (

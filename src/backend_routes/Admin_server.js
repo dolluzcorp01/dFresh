@@ -1420,7 +1420,7 @@ route('get', '/commerce/skus', 'inventory:view', async () => {
 // Inventory (migration 20261021_commerce_05_stock.sql, logic in stock.js). Section "inventory": view = stock, batches,
 // stock-ins, write-offs, counts, reorder list, movements; create = stock in, write-off request, start a count, record
 // damaged / returned; edit = reorder levels, suppliers, count quantities and submit, Excel export; approve = decide
-// write-offs and count differences (Setup > Approvals). Costs and stock value only for a role that can view Reports or
+// write-offs and count differences (Approvals). Costs and stock value only for a role that can view Reports or
 // Products and prices.
 const SKU_NAME = `COALESCE(t.name, pt.name, s.product_id)`;
 const SKU_JOIN = `JOIN products p ON p.product_id = s.product_id
@@ -1712,6 +1712,7 @@ async function orderRows(req, limit = 500) {
   if (ownEmp) { where.push('c.owner_emp_id = ?'); params.push(ownEmp); }
   const st = String(req.query.status || '');
   if (commerce.STATUS_LABEL[st]) { where.push('o.status = ?'); params.push(st); }
+  if (st === 'out') where.push("o.status IN ('out_for_delivery', 'with_courier')"); // the list's "Out for delivery / With courier" chip
   if (commerce.PAYMENT_STATUS[req.query.pay]) { where.push('o.payment_status = ?'); params.push(req.query.pay); }
   if (req.query.overdue === '1') where.push(`i.invoice_id IS NOT NULL AND ${commerce.OVERDUE_SQL}`);
   for (const [k, op] of [['from', '>='], ['to', '<=']]) {
@@ -2044,7 +2045,7 @@ route('get', '/commerce/invoices/:id/pdf', 'orders:view', async (req, res) => {
 // ---------------------------------------------------------------------------------------------
 // Returns and refunds (docs/COMMERCE-SPEC.md 4.8, 5.5, 6.2; logic in returns.js). Section "returns": view = list and
 // detail; create = new return, request photos; edit = courier AWB, decide refund / replacement / no refund; approve =
-// decide refunds above the threshold, returns outside the window and "No refund" (Setup > Approvals). Receiving (scan)
+// decide refunds above the threshold, returns outside the window and "No refund" (Approvals). Receiving (scan)
 // and inspecting need "edit" on Inventory (the Warehouse role), not on Returns: the warehouse never decides money.
 // ---------------------------------------------------------------------------------------------
 const returns = require('./returns');
@@ -2057,6 +2058,7 @@ route('get', '/commerce/returns', 'returns:view', async (req) => {
   const qv = (k) => (typeof req.query[k] === 'string' ? req.query[k].trim() : '');
   if (qv('order')) { where.push('o.order_no = ?'); args.push(qv('order')); }
   if (returns.STATUS_LABEL[qv('status')]) { where.push('r.status = ?'); args.push(qv('status')); }
+  if (qv('status') === 'done') where.push("r.status IN ('refunded', 'replaced')"); // the list's "Refunded / Replaced" chip
   if (/^\d+$/.test(qv('reason'))) { where.push('r.reason_id = ?'); args.push(Number(qv('reason'))); }
   if (qv('outcome') === 'refund') where.push('EXISTS (SELECT 1 FROM return_items x WHERE x.return_id = r.return_id AND x.refund_qty > 0)');
   if (qv('outcome') === 'replace') where.push('EXISTS (SELECT 1 FROM return_items x WHERE x.return_id = r.return_id AND x.replace_qty > 0)');
@@ -2192,12 +2194,12 @@ route('get', '/commerce/credit-notes/:id/pdf', 'any', async (req, res) => {
 // ---------------------------------------------------------------------------------------------
 const reports = require('./reports');
 const seesCosts = (req) => canDo(req, 'reports') && canDo(req, 'products');
-const REPORTS = {
+const REPORTS = { // in the order of the business: what was sold, what it earned, its GST, what is owed, stock, delivery, returns, promotions
   sales: { label: 'Sales', section: 'Orders', can: (req) => canDo(req, 'orders'), run: (q, p) => reports.sales(q, p) },
-  gst: { label: 'GST (GSTR-1)', section: 'Reports', can: (req) => canDo(req, 'reports'), run: (q, p) => reports.gst(q, p) },
   margin: { label: 'Margin', section: 'Reports + Products and prices', can: seesCosts, run: (q, p) => reports.margin(q, p) },
-  stock: { label: 'Stock', section: 'Inventory', can: (req) => canDo(req, 'inventory'), run: (q, p, req) => reports.stockReport(q, p, { seesCost: seesCosts(req) }) },
+  gst: { label: 'GST (GSTR-1)', section: 'Reports', can: (req) => canDo(req, 'reports'), run: (q, p) => reports.gst(q, p) },
   receivables: { label: 'Receivables', section: 'Customers', can: (req) => canDo(req, 'customers'), run: (q, p) => reports.receivables(q, p) },
+  stock: { label: 'Stock', section: 'Inventory', can: (req) => canDo(req, 'inventory'), run: (q, p, req) => reports.stockReport(q, p, { seesCost: seesCosts(req) }) },
   delivery: { label: 'Delivery', section: 'Delivery', can: (req) => canDo(req, 'delivery'), run: (q, p) => reports.deliveryReport(q, p) },
   returns: { label: 'Returns', section: 'Returns', can: (req) => canDo(req, 'returns'), run: (q, p) => reports.returnsReport(q, p) },
   promotions: { label: 'Promotions and wallet', section: 'Promotions', can: (req) => canDo(req, 'promotions'), run: (q, p) => reports.promotionsReport(q, p) },
@@ -2291,7 +2293,7 @@ route('get', '/commerce/reports/accounting/preview', 'reports:view', async (req)
 // Customers (CRM, docs/COMMERCE-SPEC.md 4.5; logic in customers.js, Excel in customer-excel.js). Section "customers":
 // view = list, drawer, timeline, statement, follow-ups; create = new customer, convert a lead, Excel import of new
 // ones; edit = everything on a customer (addresses, contacts, tags, status, owner, activity, follow-ups, credit, its
-// own price list and a merge: the last three may wait for approval); approve = decide those (Setup > Approvals).
+// own price list and a merge: the last three may wait for approval); approve = decide those (Approvals).
 // With the Commerce setting own_customers_only, the roles listed there see only the customers they own and their orders.
 // ---------------------------------------------------------------------------------------------
 const customers = require('./customers');

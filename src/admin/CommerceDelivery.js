@@ -1,4 +1,4 @@
-// Commerce > Delivery (office, "create" on Delivery) and My trips (drivers, phone first). API /commerce/delivery,
+// Fulfilment > Delivery (office, "create" on Delivery) and My trips (drivers, phone first). API /commerce/delivery,
 // /commerce/trips, /commerce/stops, /commerce/my-trips; logic in src/backend_routes/delivery.js.
 // Office tabs: Ready (packed own-vehicle orders by area: tick them, choose vehicle and driver = a trip), Trips (route
 // order, trip sheet with the cash to collect, Start trip = Out for delivery, then the stops as the driver sees them),
@@ -188,6 +188,7 @@ export default function CommerceDelivery() {
     ready: [...ready, ...pickups], trips: d ? d.trips : [], courier: orders.filter((o) => (o.status === 'packed' && o.delivery_kind === 'courier') || o.status === 'with_courier'),
     pickup: orders.filter((o) => o.status === 'packed' && o.delivery_kind === 'pickup'), failed: orders.filter((o) => o.status === 'failed'),
   };
+  lists.other = [...lists.courier, ...lists.pickup]; // one tab: courier and customer pickup (the orders that do not go on a trip)
   const areas = [...new Set(ready.map((o) => o.area || 'No area'))];
   const create = () => act.run(async () => {
     const chosen = ready.filter((o) => sel.includes(o.order_no));
@@ -208,7 +209,7 @@ export default function CommerceDelivery() {
       </InfoCard>
       {act.note}
       <div className="a-chips a-tabs" role="tablist" aria-label="Delivery">
-        {[['ready', 'Ready for a trip'], ['trips', 'Trips'], ['courier', 'Courier'], ['pickup', 'Pickup'], ['failed', 'Failed']].map(([k, l]) => (
+        {[['ready', 'Ready for a trip'], ['trips', 'Trips'], ['other', 'Courier and pickup'], ['failed', 'Failed']].map(([k, l]) => (
           <button key={k} type="button" role="tab" aria-selected={tab === k} className={`a-chip${tab === k ? ' on' : ''}`} onClick={() => setTab(k)}>{l} {lists[k].length}</button>
         ))}
       </div>
@@ -265,7 +266,8 @@ export default function CommerceDelivery() {
             </table>
           </div>
         )}
-        {d && tab === 'courier' && (
+        {d && tab === 'other' && lists.courier.length > 0 && <h3>Courier</h3>}
+        {d && tab === 'other' && lists.courier.length > 0 && (
           <table className="a-table"><tbody>{lists.courier.map((o) => (
             <tr key={o.order_no}>
               <td><code>{o.order_no}</code><small className="a-muted a-person-sub">{o.customer}, {o.ship_town}</small></td>
@@ -276,7 +278,8 @@ export default function CommerceDelivery() {
             </tr>
           ))}</tbody></table>
         )}
-        {d && tab === 'pickup' && (
+        {d && tab === 'other' && lists.pickup.length > 0 && <h3>Customer pickup at the godown</h3>}
+        {d && tab === 'other' && lists.pickup.length > 0 && (
           <table className="a-table"><tbody>{lists.pickup.map((o) => (
             <tr key={o.order_no}><td><code>{o.order_no}</code><small className="a-muted a-person-sub">{o.customer}</small></td><td>{o.cartons} carton(s)</td><td className="a-num">{o.payment_terms === 'cod' && o.amount_due > 0 ? `Collect ${rs(o.amount_due)}` : ''}</td>
               <td><button type="button" className="a-btn a-btn-sm" onClick={() => setForm({ order: o, kind: 'pickup', receiver_name: '' })}>Collected</button></td></tr>

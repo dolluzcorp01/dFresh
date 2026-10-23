@@ -1,5 +1,6 @@
-// Commerce > Inventory (docs/COMMERCE-SPEC.md 4.4; API /commerce/stock ..., logic in src/backend_routes/stock.js), at
-// one location, the Kanchipuram godown. Tabs (?tab=):
+// Stock > Inventory (docs/COMMERCE-SPEC.md 4.4; API /commerce/stock ..., logic in src/backend_routes/stock.js), at
+// one location, the Kanchipuram godown. Tabs (?tab=), in the order stock moves: Suppliers, Stock in, Stock (the default),
+// Batches, Reorder, Counts, Write-offs, Movements.
 // - Stock: per SKU good, expired (batches past expiry, blocked from orders), reserved by confirmed orders, available,
 //   returned (R), damaged; reorder level and quantity (edit); average cost and stock value (only for a role that can
 //   view Reports or Products and prices). Record: good -> damaged, or packs back into Returned (R). Returned packs
@@ -16,7 +17,9 @@ import { InfoCard, Loading, fmtDate, useAction, useCan, useLoad } from './ui';
 import { StockIns, WriteOffs, Counts, Suppliers } from './InventoryWork';
 
 const KIND = { good: 'Good', returned: 'Returned (R)', damaged: 'Damaged', expired: 'Expired (returns)' };
-const TABS = [['stock', 'Stock'], ['in', 'Stock in'], ['batches', 'Batches'], ['writeoffs', 'Write-offs'], ['counts', 'Counts'], ['reorder', 'Reorder'], ['moves', 'Movements'], ['suppliers', 'Suppliers']];
+// in the order stock moves: who supplies, what comes in, what is there (the default tab), by batch, what to reorder, counting it,
+// writing off, and the full movement log
+const TABS = [['suppliers', 'Suppliers'], ['in', 'Stock in'], ['stock', 'Stock'], ['batches', 'Batches'], ['reorder', 'Reorder'], ['counts', 'Counts'], ['writeoffs', 'Write-offs'], ['moves', 'Movements']];
 const rs = (n) => (n === null || n === undefined ? '-' : `Rs ${Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
 const day = (d) => (d ? new Date(`${String(d).slice(0, 10)}T00:00:00Z`).toLocaleDateString('en-IN', { timeZone: 'UTC', day: 'numeric', month: 'short', year: 'numeric' }) : '');
 
@@ -33,7 +36,7 @@ export default function CommerceStock() {
         <ul>
           <li>Stock is the sum of movements, never typed in. It comes in through Stock in (production or purchase) and goes out at dispatch, by write-off or by an approved count.</li>
           <li>Available = good stock - expired batches - stock reserved by confirmed orders. Products tracked by batch go out earliest expiry first; expired stock cannot be ordered.</li>
-          <li>Write-offs above the threshold and count differences wait for approval (Setup &gt; Approvals).</li>
+          <li>Write-offs above the threshold and count differences wait for approval (Approvals, top of the menu).</li>
         </ul>
       </InfoCard>
       <div className="a-chips a-tabs" role="tablist" aria-label="Inventory">
@@ -178,7 +181,7 @@ function Recheck({ rows, resell }) {
       {act.note}
       {!resell ? <p className="a-muted">Returned stock cannot be sold again (Commerce settings &gt; Returns): it stays in (R) until written off.</p> : (
         <>
-          <p className="a-muted">Packs checked again and fit to sell move from (R) to good stock after approval (Setup &gt; Approvals).</p>
+          <p className="a-muted">Packs checked again and fit to sell move from (R) to good stock after approval (Approvals, top of the menu).</p>
           <div className="a-toolbar">
             <label className="a-field"><span>SKU</span><select value={f.sku_code} aria-label="Recheck SKU" onChange={(e) => setF({ ...f, sku_code: e.target.value, batch_id: '' })} required>
               <option value="">Choose...</option>{rows.map((r) => <option key={r.sku_code} value={r.sku_code}>{r.sku_code} ({r.returned} in (R))</option>)}</select></label>

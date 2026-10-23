@@ -1,4 +1,4 @@
-// Commerce > Inventory: the tabs where stock is changed (API in src/backend_routes/stock.js via Admin_server.js).
+// Stock > Inventory: the tabs where stock is changed (API in src/backend_routes/stock.js via Admin_server.js).
 // - Stock in: Production (our Kanchipuram unit) or Purchase (a supplier); date, reference (bill / batch sheet no.),
 //   lines in packs or cartons with the cost per pack; a scanner (or typing a SKU and Enter) adds a line or one more of
 //   it. Batch-tracked products ask for batch no., manufacture and expiry date. A role that can see costs sees the
@@ -106,7 +106,6 @@ function StockInDrawer({ stock, onClose, onSaved }) {
         )}
         <label className="a-field"><span>Date received</span><input type="date" max={today()} value={f.received_on} onChange={(e) => setF({ ...f, received_on: e.target.value })} /></label>
         <label className="a-field"><span>{f.kind === 'purchase' ? "Supplier's bill no. (required)" : 'Batch sheet no.'}</span><input value={f.reference} maxLength={60} aria-label="Reference" onChange={(e) => setF({ ...f, reference: e.target.value })} /></label>
-        <label className="a-field"><span>Note</span><input value={f.note} maxLength={255} onChange={(e) => setF({ ...f, note: e.target.value })} /></label>
       </div>
       {addingSupplier && <SupplierDrawer onClose={() => setAddingSupplier(false)} onSaved={(s) => { setAddingSupplier(false); sup.reload(); setF((x) => ({ ...x, supplier_id: String(s.supplier_id) })); }} />}
       <ScanBox onCode={add} />
@@ -141,6 +140,7 @@ function StockInDrawer({ stock, onClose, onSaved }) {
       </div>
       {!lines.length && <p className="a-muted">Scan or type a SKU above to add the first line.</p>}
       {lines.length > 0 && <p><b>{lines.reduce((a, l) => a + packs(l), 0)} packs</b>{total > 0 ? `, ${rs(total)} at cost` : ''}</p>}
+      <label className="a-field"><span>Note</span><input value={f.note} maxLength={255} onChange={(e) => setF({ ...f, note: e.target.value })} /></label>
     </Drawer>
   );
 }

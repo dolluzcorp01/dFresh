@@ -1,4 +1,4 @@
-// Commerce > My follow-ups (API /commerce/follow-ups): the open follow-ups assigned to me, overdue first (red), with
+// Sales > My follow-ups (API /commerce/follow-ups): the open follow-ups assigned to me, overdue first (red), with
 // Done (and an outcome) or Snooze; a role with edit on Customers can switch to everyone's. A customer opens its drawer.
 import { useState } from 'react';
 import { InfoCard, Loading, useCan, useLoad } from './ui';

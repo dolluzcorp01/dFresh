@@ -76,7 +76,7 @@ INSERT IGNORE INTO commerce_settings (setting_key, grp, label, help, value, valu
   ('notify_ev_daily_summary', 'Staff notifications', 'Daily summary for Admin', 'Yesterday\'s orders, sales, payments, deliveries, returns and what waits. To the Admin users.', '1', 'bool', NULL, 0, 60),
   ('notify_ev_delivery_failed', 'Staff notifications', 'Failed delivery', 'To the users who plan trips (\"create\" on Delivery).', '1', 'bool', NULL, 0, 40),
   ('notify_ev_follow_ups', 'Staff notifications', 'Follow-ups due today (daily)', 'To each owner of follow-ups due today or overdue.', '1', 'bool', NULL, 0, 30),
-  ('notify_ev_invoice', 'Notifications', 'Customer: invoice (PDF attached)', 'When the tax invoice is issued. To the contacts with \"gets invoices\" (else the customer\'s e-mail); an opt-out never stops it.', '1', 'bool', NULL, 0, 150),
+  ('notify_ev_invoice', 'Notifications', 'Customer: invoice (PDF attached)', 'When the tax invoice is issued. To the contacts with \"gets invoices\" (else the customer\'s e-mail); an opt-out never stops it.', '1', 'bool', NULL, 0, 115),
   ('notify_ev_order_confirmed', 'Notifications', 'Customer: order confirmed', 'When an order is confirmed: at once, or when its last approval is given. An order waiting for approval sends nothing. To the order contact.', '1', 'bool', NULL, 0, 100),
   ('notify_ev_order_courier', 'Notifications', 'Customer: handed to the courier', 'With the AWB number and the tracking link. To the order contact.', '1', 'bool', NULL, 0, 130),
   ('notify_ev_order_delivered', 'Notifications', 'Customer: delivered', 'When the order is delivered (trip, courier or pickup at the godown). To the order contact.', '1', 'bool', NULL, 0, 140),

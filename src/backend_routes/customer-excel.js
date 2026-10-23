@@ -1,4 +1,4 @@
-// Customers Excel (Commerce > Customers > Excel): export the customers (the list's filters) with their default
+// Customers Excel (Sales > Customers > Excel): export the customers (the list's filters) with their default
 // billing and shipping address; import = dry run first (every new customer, every change and every error), Apply only
 // for the exact file (fingerprint) that passed with 0 errors, checked again inside the transaction - the same rules as
 // the product and price imports, and the same checks as the customer drawer (customers.js: mobile, e-mail, GSTIN of its

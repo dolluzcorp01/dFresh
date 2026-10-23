@@ -1,4 +1,4 @@
-// Commerce > Customers (CRM, docs/COMMERCE-SPEC.md 4.5; API /commerce/customers, logic in src/backend_routes/customers.js).
+// Sales > Customers (CRM, docs/COMMERCE-SPEC.md 4.5; API /commerce/customers, logic in src/backend_routes/customers.js).
 // List: CUS-0001 numbers, type, status (Active / On hold / Inactive), town, sales owner, tags, orders and the last one,
 // what is owed (Overdue), wallet, next follow-up. Filters: search (CUS no., name, phone, GSTIN), type, status, town,
 // tag, owner, no order in N days, owing at least, wallet at least; a filter can be saved as a segment. Excel export of
@@ -174,9 +174,6 @@ export function NewCustomerDrawer({ onClose, onSaved, onOpenExisting }) {
         <label className="a-field"><span>Type</span><select value={c.type_key} aria-label="Customer type" onChange={(e) => setC({ ...c, type_key: e.target.value })}>{(m ? m.types : [{ type_key: 'home', label: 'Home' }]).map((t) => <option key={t.type_key} value={t.type_key}>{t.label}</option>)}</select></label>
         <label className="a-field"><span>Mobile</span><input value={c.phone} inputMode="tel" aria-label="Customer phone" onChange={(e) => setC({ ...c, phone: e.target.value })} />{fe('phone')}</label>
         <label className="a-field"><span>E-mail (optional)</span><input value={c.email} aria-label="Customer e-mail" onChange={(e) => setC({ ...c, email: e.target.value })} />{fe('email')}</label>
-        <label className="a-field"><span>Sales owner</span><select value={c.owner_emp_id} aria-label="Sales owner" onChange={(e) => setC({ ...c, owner_emp_id: e.target.value })}><option value="">None</option>{m && m.owners.map((o) => <option key={o.emp_id} value={o.emp_id}>{o.name}</option>)}</select>{fe('owner_emp_id')}</label>
-        <label className="a-field"><span>Source</span><select value={c.source} onChange={(e) => setC({ ...c, source: e.target.value })}>{['Phone', 'WhatsApp', 'Walk-in', 'Referral', 'Other'].map((x) => <option key={x}>{x}</option>)}</select></label>
-        <label className="a-field"><span>Tags (comma separated)</span><input value={c.tags} aria-label="Tags" onChange={(e) => setC({ ...c, tags: e.target.value })} /></label>
       </div>
       <h3>Billing address</h3>
       <AddressFields a={bill} set={setBill} kind="billing" prefix="Billing" />
@@ -194,6 +191,12 @@ export function NewCustomerDrawer({ onClose, onSaved, onOpenExisting }) {
         <label className="a-inline"><input type="checkbox" checked={contact.whatsapp} onChange={(e) => setContact({ ...contact, whatsapp: e.target.checked })} /> On WhatsApp</label>
         <label className="a-inline"><input type="checkbox" checked={contact.gets_invoices} onChange={(e) => setContact({ ...contact, gets_invoices: e.target.checked })} /> Gets invoices</label>
       </span>
+      <h3>Owner, source and tags</h3>
+      <div className="a-grid2">
+        <label className="a-field"><span>Sales owner</span><select value={c.owner_emp_id} aria-label="Sales owner" onChange={(e) => setC({ ...c, owner_emp_id: e.target.value })}><option value="">None</option>{m && m.owners.map((o) => <option key={o.emp_id} value={o.emp_id}>{o.name}</option>)}</select>{fe('owner_emp_id')}</label>
+        <label className="a-field"><span>Source</span><select value={c.source} onChange={(e) => setC({ ...c, source: e.target.value })}>{['Phone', 'WhatsApp', 'Walk-in', 'Referral', 'Other'].map((x) => <option key={x}>{x}</option>)}</select></label>
+        <label className="a-field"><span>Tags (comma separated)</span><input value={c.tags} aria-label="Tags" onChange={(e) => setC({ ...c, tags: e.target.value })} /></label>
+      </div>
     </Drawer>
   );
 }
@@ -269,7 +272,7 @@ function MergeDrawer({ onClose }) {
           <button type="button" className="a-btn" disabled={act.busy || !reason.trim()} onClick={ask}>Ask to merge</button>
         </div>
       )}
-      <p className="a-muted">Every merged customer stays findable with Status: Merged; requests are decided in Setup &gt; Approvals.</p>
+      <p className="a-muted">Every merged customer stays findable with Status: Merged; requests are decided in Approvals (top of the menu).</p>
     </Drawer>
   );
 }

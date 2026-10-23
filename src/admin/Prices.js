@@ -1,4 +1,4 @@
-// Commerce > Products and prices (docs/COMMERCE-SPEC.md 4.3; API /prices, logic in src/backend_routes/pricing.js).
+// Products and prices > Products and prices (docs/COMMERCE-SPEC.md 4.3; API /prices, logic in src/backend_routes/pricing.js).
 // A grid of SKUs x price lists (Default + one per customer type). Type a price: the cell turns yellow and a bar at the
 // bottom says how many changes wait, from which date they apply, Save / Cancel. An empty cell on a customer type's
 // list uses the Default price (shown greyed); a SKU without a Default price has a red "Missing" badge. Filter by

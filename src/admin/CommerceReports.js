@@ -1,4 +1,4 @@
-// Commerce > Reports (docs/COMMERCE-SPEC.md 10; API /commerce/reports/..., logic in src/backend_routes/reports.js). One
+// Reports (docs/COMMERCE-SPEC.md 10; API /commerce/reports/..., logic in src/backend_routes/reports.js). One
 // area for every report: the period (India dates; presets), the report's filters, its checks (the totals tied back to
 // the invoices, credit notes and stock), a chart where useful (ReportChart.js), every table with its totals, Excel
 // (the GST one in the GST offline tool's sheets and column order) and Print / PDF. A report shows only for a role with

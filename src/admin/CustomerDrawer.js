@@ -1,4 +1,4 @@
-// The customer drawer (Commerce > Customers; API /commerce/customers/:id..., logic in src/backend_routes/customers.js).
+// The customer drawer (Sales > Customers; API /commerce/customers/:id..., logic in src/backend_routes/customers.js).
 // Tabs: Overview (the customer, status with a reason, sales owner, tags, credit terms and a price list of its own -
 // both may wait for approval -, the lead it came from with its history), Addresses (billing with GSTIN per branch,
 // shipping with contact and delivery area, the defaults), Contacts, Timeline (calls, WhatsApp, visits, mails, notes typed
@@ -13,7 +13,7 @@ import WalletPanel from './WalletPanel';
 
 const day = (d) => (d ? new Date(`${String(d).slice(0, 10)}T00:00:00Z`).toLocaleDateString('en-IN', { timeZone: 'UTC', day: 'numeric', month: 'short', year: 'numeric' }) : '');
 const ist = (n = 0) => new Date(Date.now() + 5.5 * 3600e3 + n * 86400e3).toISOString().slice(0, 10);
-const TABS = [['overview', 'Overview'], ['addresses', 'Addresses'], ['contacts', 'Contacts'], ['timeline', 'Timeline'], ['follow', 'Follow-ups'], ['statement', 'Statement'], ['wallet', 'Wallet'], ['orders', 'Orders']];
+const TABS = [['overview', 'Overview'], ['addresses', 'Addresses'], ['contacts', 'Contacts'], ['timeline', 'Timeline'], ['follow', 'Follow-ups'], ['orders', 'Orders'], ['statement', 'Statement'], ['wallet', 'Wallet']];
 
 export default function CustomerDrawer({ id, onClose, onChanged }) {
   const c = useLoad(`/commerce/customers/${id}`);

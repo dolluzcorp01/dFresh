@@ -1,4 +1,4 @@
-// Setup > Approvals (docs/COMMERCE-SPEC.md 2): the pending queue (red badge in the menu: what you can decide),
+// Approvals (docs/COMMERCE-SPEC.md 2): the pending queue (red badge in the menu: what you can decide),
 // decided requests, and your own. Approve (note optional) or Reject (note required) right in the row; a request you
 // cannot decide says why (you raised it, your role is not an approver, no "approve" on that section). The thresholds
 // and approver roles are in Commerce settings > Approvals.

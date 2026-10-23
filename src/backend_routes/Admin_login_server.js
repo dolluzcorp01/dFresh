@@ -305,7 +305,13 @@ router.get('/admin/me', auth.requireAuth, async (req, res) => {
       const [[c]] = await db.query("SELECT value FROM commerce_settings WHERE setting_key = 'commerce_enabled'");
       commerceEnabled = Boolean(c && c.value === '1');
     } catch { /* table not there yet: off */ }
-    res.json({ success: true, data: { ...req.admin, name, commerce_enabled: commerceEnabled } });
+    // linked to a driver (Commerce settings > Drivers): the menu shows My trips only then
+    let isDriver = false;
+    try {
+      const [[d]] = await db.query('SELECT driver_id FROM drivers WHERE emp_id = ? AND is_active = 1 LIMIT 1', [req.admin.emp_id]);
+      isDriver = Boolean(d);
+    } catch { /* table not there yet */ }
+    res.json({ success: true, data: { ...req.admin, name, commerce_enabled: commerceEnabled, is_driver: isDriver } });
   } catch (err) {
     console.error('admin me failed:', err.code || err.message);
     res.status(500).json({ success: false, message: 'Server error' });

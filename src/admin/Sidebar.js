@@ -1,8 +1,11 @@
-// Admin sidebar: Dashboard, then collapsible groups (Sales, Catalogue, Website content, Setup), a divider and the
-// User Interface link to the public site. Items a role cannot open are not shown at all (the API enforces roles).
+// Admin sidebar, in the order of the business: Dashboard, Operations and Approvals on top (no group), then the groups
+// Products and prices, Stock, Sales, Fulfilment, Reports, Website content, Setup, a divider and the User Interface link
+// to the public site. Items a role cannot open are not shown at all (the API enforces roles); a group left empty is not
+// shown. With Commerce switched off the commerce items are gone and the menu is the live site's (Commerce settings and
+// Roles stay: they are where Commerce is prepared and switched on). My trips only for a user linked to a driver.
 // - The group of the current page opens by itself and its item is highlighted.
-// - Which groups are open, and whether the sidebar is collapsed to icons, is remembered per browser (localStorage,
-//   in try / catch: a private window or blocked storage just starts with the defaults).
+// - Which groups are open is remembered per user (and per browser); whether the sidebar is collapsed to icons, per
+//   browser (localStorage, in try / catch: a private window or blocked storage just starts with the defaults).
 // - Collapsed (desktop): icons only, every item visible, name as a tooltip (and still read by screen readers).
 // - Under 900px: a slide-in drawer with the same groups (never collapsed); a link, the backdrop or Esc closes it.
 // - Group headers are buttons with aria-expanded / aria-controls, so Tab + Enter / Space open and close them.
@@ -12,35 +15,46 @@ import Icon from './icons';
 import { can } from '../shared/permissions';
 
 // Each item names the section whose "view" (or `action`) it needs (src/shared/permissions.js); null = every signed-in user.
-// Commerce items also need Commerce settings commerce_enabled (me.commerce_enabled).
+// commerce: shown only while Commerce settings commerce_enabled is on (me.commerce_enabled); driver: only for a user
+// linked to a driver (me.is_driver).
 export const DASHBOARD = { path: '', label: 'Dashboard', section: null, icon: 'dashboard' };
 const item = (path, label, section, icon, extra = {}) => ({ path, label, section, icon, ...extra });
+const C = { commerce: true };
+/** the items above the groups */
+export const TOP = [
+  DASHBOARD,
+  item('commerce/ops', 'Operations', null, 'dashboard', C),
+  item('approvals', 'Approvals', null, 'audit', C),
+];
 export const GROUPS = [
-  { key: 'sales', label: 'Sales', icon: 'sales', items: [item('leads', 'Leads', 'leads', 'leads')] },
   {
-    key: 'catalogue', label: 'Catalogue', icon: 'catalogue', items: [
+    key: 'products', label: 'Products and prices', icon: 'catalogue', items: [
       item('categories', 'Categories', 'products', 'categories'), item('products', 'Products', 'products', 'products'),
       item('kits', 'Business kits', 'products', 'kits'), item('size-picker', 'Size picker', 'products', 'ruler'),
       item('import-export', 'Excel import / export', 'products', 'sheet'),
+      item('commerce/skus', 'SKUs and labels', 'inventory', 'ruler', C),
+      item('commerce/prices', 'Products and prices', 'products', 'sheet', C),
+      item('commerce/promotions', 'Promotions', 'promotions', 'options', C),
+    ],
+  },
+  { key: 'stock', label: 'Stock', icon: 'products', items: [item('commerce/stock', 'Inventory', 'inventory', 'products', C)] },
+  {
+    key: 'sales', label: 'Sales', icon: 'sales', items: [
+      item('leads', 'Leads', 'leads', 'leads'),
+      item('commerce/customers', 'Customers', 'customers', 'users', C),
+      item('commerce/follow-ups', 'My follow-ups', 'customers', 'leads', C),
+      item('commerce/orders', 'Orders', 'orders', 'sales', C),
     ],
   },
   {
-    key: 'commerce', label: 'Commerce', icon: 'sheet', commerce: true, items: [
-      item('commerce/ops', 'Operations', null, 'dashboard'),
-      item('commerce/orders', 'Orders', 'orders', 'sales'),
-      item('commerce/packing', 'Packing', 'packing', 'products'),
-      item('commerce/delivery', 'Delivery', 'delivery', 'towns', { action: 'create' }),
-      item('commerce/my-trips', 'My trips', 'delivery', 'towns'),
-      item('commerce/returns', 'Returns', 'returns', 'leads'),
-      item('commerce/customers', 'Customers', 'customers', 'users'),
-      item('commerce/follow-ups', 'My follow-ups', 'customers', 'leads'),
-      item('commerce/promotions', 'Promotions', 'promotions', 'options'),
-      item('commerce/prices', 'Products and prices', 'products', 'sheet'),
-      item('commerce/skus', 'SKUs and labels', 'inventory', 'ruler'),
-      item('commerce/stock', 'Inventory', 'inventory', 'products'),
-      item('commerce/reports', 'Reports', null, 'sheet'), // each report checks its own section
+    key: 'fulfilment', label: 'Fulfilment', icon: 'towns', items: [
+      item('commerce/packing', 'Packing', 'packing', 'products', C),
+      item('commerce/delivery', 'Delivery', 'delivery', 'towns', { ...C, action: 'create' }),
+      item('commerce/my-trips', 'My trips', 'delivery', 'towns', { ...C, driver: true }),
+      item('commerce/returns', 'Returns', 'returns', 'leads', C),
     ],
   },
+  { key: 'reports', label: 'Reports', icon: 'sheet', items: [item('commerce/reports', 'Reports', null, 'sheet', C)] }, // each report checks its own section
   {
     key: 'content', label: 'Website content', icon: 'content', items: [
       item('banners', 'Banners', 'content', 'banners'), item('translations', 'Translations', 'content', 'translations'),
@@ -50,22 +64,27 @@ export const GROUPS = [
   },
   {
     key: 'setup', label: 'Setup', icon: 'setup', items: [
-      item('approvals', 'Approvals', null, 'audit'),
-      item('languages', 'Languages', 'content', 'languages'), item('settings', 'Settings', 'settings', 'settings'),
-      item('commerce-settings', 'Commerce settings', 'settings', 'settings'),
-      item('notifications', 'Notifications', 'settings', 'mail'),
-      item('users', 'Admin users', 'users', 'users'), item('roles', 'Roles', 'users', 'users'), item('audit', 'Audit log', 'audit', 'audit'),
+      item('settings', 'Settings', 'settings', 'settings'),
+      item('commerce-settings', 'Commerce settings', 'settings', 'settings'), // stays while Commerce is off: it is switched on here
+      item('notifications', 'Notifications', 'settings', 'mail', C),
+      item('languages', 'Languages', 'content', 'languages'),
+      item('users', 'Admin users', 'users', 'users'), item('roles', 'Roles', 'users', 'users'), // Roles: staff get their roles before go-live
+      item('audit', 'Audit log', 'audit', 'audit'),
     ],
   },
 ];
 
+/** may this user see this item? (Commerce on for commerce items, linked to a driver for My trips, the section's permission) */
+const visible = (me, i) => (!i.commerce || Boolean(me && me.commerce_enabled)) && (!i.driver || Boolean(me && me.is_driver))
+  && (!i.section || can(me && me.perms, i.section, i.action || 'view'));
+/** the top items this user may open */
+export const topFor = (me) => TOP.filter((i) => visible(me, i));
 /** The groups with only the items this user may open (a group with none left is dropped). */
 export const groupsFor = (me) => GROUPS
-  .filter((g) => !g.commerce || (me && me.commerce_enabled))
-  .map((g) => ({ ...g, items: g.items.filter((i) => !i.section || can(me && me.perms, i.section, i.action || 'view')) }))
-  .filter((g) => g.items.length && (!g.commerce || g.items.some((i) => i.section)));
+  .map((g) => ({ ...g, items: g.items.filter((i) => visible(me, i)) }))
+  .filter((g) => g.items.length);
 
-const GROUPS_KEY = 'dfresh-admin-nav-groups';
+const GROUPS_KEY = 'dfresh-admin-nav-groups'; // + ':' + emp_id: remembered per user
 const COLLAPSED_KEY = 'dfresh-admin-nav-collapsed';
 export const saved = {
   get(key, fallback) {
@@ -116,7 +135,8 @@ export default function Sidebar({ me, drawerOpen, onCloseDrawer, collapsed, onTo
   const compact = collapsed && !narrow;
   const groups = groupsFor(me);
   const current = groups.find((g) => g.items.some((i) => isActive(pathname, i.path)));
-  const [open, setOpen] = useState(() => saved.get(GROUPS_KEY, { sales: true }));
+  const groupsKey = `${GROUPS_KEY}:${(me && me.emp_id) || ''}`;
+  const [open, setOpen] = useState(() => saved.get(groupsKey, { sales: true }));
 
   // The current page's group opens by itself (and stays open, like a click would).
   const currentKey = current ? current.key : null;
@@ -125,14 +145,14 @@ export default function Sidebar({ me, drawerOpen, onCloseDrawer, collapsed, onTo
     setOpen((o) => {
       if (o[currentKey]) return o;
       const next = { ...o, [currentKey]: true };
-      saved.set(GROUPS_KEY, next);
+      saved.set(groupsKey, next);
       return next;
     });
-  }, [currentKey]);
+  }, [currentKey, groupsKey]);
 
   const toggle = (key) => setOpen((o) => {
     const next = { ...o, [key]: !o[key] };
-    saved.set(GROUPS_KEY, next);
+    saved.set(groupsKey, next);
     return next;
   });
 
@@ -153,7 +173,7 @@ export default function Sidebar({ me, drawerOpen, onCloseDrawer, collapsed, onTo
       <nav id="a-nav" className={`a-nav${drawerOpen ? ' open' : ''}${compact ? ' collapsed' : ''}`} aria-label="Admin">
         {/* Only this list scrolls (thin ink scrollbar); the menu toggle below it never moves. */}
         <div className="a-nav-list">
-        <NavItem it={DASHBOARD} pathname={pathname} compact={compact} onNavigate={navigate} />
+        {topFor(me).map((it) => <NavItem key={it.path || 'dashboard'} it={it} pathname={pathname} compact={compact} badge={badgeFor(it)} onNavigate={navigate} />)}
         {groups.map((g) => {
           const shown = compact || Boolean(open[g.key]);
           const id = `a-grp-${g.key}`;

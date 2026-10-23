@@ -1,8 +1,9 @@
-// Admin navigation check for the grouped sidebar (Dashboard, Sales, Catalogue, Website content, Setup, divider,
-// User Interface). Exit code 1 on any failure.
+// Admin navigation check for the grouped sidebar, in business-flow order (Dashboard; Products and prices, Sales, Website
+// content, Setup; divider, User Interface). Exit code 1 on any failure.
 // Runs with Commerce switched OFF (the state the live site starts in): the check switches commerce_enabled off and puts
-// it back at the end. The Commerce group and its screens are then not in the sidebar.
-// 1. Expanded (admin, 1366 wide): every admin screen to every other screen (20 x 19 = 380 moves, one Euler circuit so
+// it back at the end. The commerce items (Operations, Approvals, Stock, Fulfilment, Reports...) are then not in the
+// sidebar; the groups left are the live site's, in the same order.
+// 1. Expanded (admin, 1366 wide): every admin screen to every other screen (18 x 17 = 306 moves, one Euler circuit so
 //    every ordered pair occurs once), each through its group: a closed group is opened by its header first (groups
 //    are closed again along the way, so this happens often). After each move: the screen's heading, no "could not
 //    load" panel, loading finished, list screens show their own first row (compared with the API), the item is the
@@ -12,7 +13,7 @@
 //    / "Expand menu", aria-expanded). Collapsed to icons: every screen through its icon (tooltip), survives a reload.
 // 4. 390 wide: the drawer (burger, groups, a link closes it, the backdrop and Esc close it), every screen through it.
 // 5. Roles: Sub-admin and Viewer (the roles the old editor and viewer users get) see exactly the items their role's
-//    permissions open (src/shared/permissions.js + role_permissions), and each of them loads; Admin sees all 20.
+//    permissions open (src/shared/permissions.js + role_permissions), and each of them loads; Admin sees all 18.
 // 6. Leads badge = the API's count of New leads. User Interface -> /en in a new tab, never active.
 // 7. Error boundary: one list answered (in the browser only) with a broken row shows "This screen could not load"
 //    inside the page, logs the error, and the sidebar keeps working.
@@ -48,22 +49,20 @@ const db = getDBConnection(process.env.DB_NAME || 'dfresh').promise();
 // compare the first row with ([endpoint, keys]) or null. Order = the sidebar order (Sidebar.js, Commerce off).
 const SCREENS = [
   ['', 'Dashboard', '', null, null],
+  ['categories', 'Categories', 'products', 'products', ['/categories', ['category_key']]],
+  ['products', 'Products', 'products', 'products', null],
+  ['kits', 'Business kits', 'products', 'products', ['/kits', ['kit_key']]],
+  ['size-picker', 'Size picker', 'products', 'products', ['/size-picker', ['size_label']]],
+  ['import-export', 'Excel import / export', 'products', 'products', null],
   ['leads', 'Leads', 'sales', 'leads', null],
-  ['categories', 'Categories', 'catalogue', 'products', ['/categories', ['category_key']]],
-  ['products', 'Products', 'catalogue', 'products', null],
-  ['kits', 'Business kits', 'catalogue', 'products', ['/kits', ['kit_key']]],
-  ['size-picker', 'Size picker', 'catalogue', 'products', ['/size-picker', ['size_label']]],
-  ['import-export', 'Excel import / export', 'catalogue', 'products', null],
   ['banners', 'Banners', 'content', 'content', ['/banners', ['banner_key']]],
   ['translations', 'Translations', 'content', 'content', null],
   ['towns', 'Towns', 'content', 'content', ['/towns', ['town_key']]],
   ['form-options', 'Form options', 'content', 'content', ['/form-options', ['option_value']]], // the list name is the group heading
   ['brochures', 'Brochures', 'content', 'content', null],
-  ['approvals', 'Approvals', 'setup', null, null],
-  ['languages', 'Languages', 'setup', 'content', null],
   ['settings', 'Settings', 'setup', 'settings', null],
   ['commerce-settings', 'Commerce settings', 'setup', 'settings', null],
-  ['notifications', 'Notifications', 'setup', 'settings', null],
+  ['languages', 'Languages', 'setup', 'content', null],
   ['users', 'Admin users', 'setup', 'users', null],
   ['roles', 'Roles', 'setup', 'users', null],
   ['audit', 'Audit log', 'setup', 'audit', null],
@@ -184,10 +183,10 @@ async function main() {
       ext: [...document.querySelectorAll('.a-nav a[target]')].map((a) => ({ href: a.getAttribute('href'), target: a.target, rel: a.rel, label: a.getAttribute('aria-label') })),
     }));
     if (JSON.stringify(sidebar.screens) !== JSON.stringify(SCREENS.map(([p]) => href(p)))) fail(`admin sidebar screens ${sidebar.screens.join(' ')}`);
-    if (JSON.stringify(sidebar.groups.map((g) => g.replace(/\d+\s*new$/, '').trim())) !== JSON.stringify(['Sales', 'Catalogue', 'Website content', 'Setup'])) fail(`groups ${sidebar.groups.join(' | ')}`);
+    if (JSON.stringify(sidebar.groups.map((g) => g.replace(/\d+\s*new$/, '').trim())) !== JSON.stringify(['Products and prices', 'Sales', 'Website content', 'Setup'])) fail(`groups ${sidebar.groups.join(' | ')}`);
     const ui = sidebar.ext.find((x) => x.href === '/en');
     if (!ui || ui.target !== '_blank' || ui.rel !== 'noopener noreferrer' || ui.label !== 'User Interface - opens the website in a new tab') fail(`User Interface link: ${JSON.stringify(sidebar.ext)}`);
-    else console.log(`admin sidebar: Dashboard + 4 groups (${SCREENS.length} screens, no Commerce group while it is off) + User Interface -> /en (new tab, noopener noreferrer)`);
+    else console.log(`admin sidebar: Dashboard + 4 groups (${SCREENS.length} screens, no commerce items while it is off) + User Interface -> /en (new tab, noopener noreferrer)`);
 
     // Leads badge = API count of New leads
     const counts = await apiCall(page, '/nav-counts');

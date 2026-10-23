@@ -1,5 +1,5 @@
-// Commerce > Orders (docs/COMMERCE-SPEC.md 5.1, 5.2, 6; API /commerce/orders, logic in src/backend_routes/commerce.js).
-// Phase 5: packing (Commerce > Packing) and delivery (Commerce > Delivery, My trips) move the order on; the drawer shows
+// Sales > Orders (docs/COMMERCE-SPEC.md 5.1, 5.2, 6; API /commerce/orders, logic in src/backend_routes/commerce.js).
+// Phase 5: packing (Fulfilment > Packing) and delivery (Fulfilment > Delivery, My trips) move the order on; the drawer shows
 // the delivery method, area and charge, courier AWB with its tracking link, cartons, trips and proof of delivery.
 // List: status chips (with Overdue), payment status, customer type, date range, search by DFO / invoice / customer /
 // phone, Excel export (edit on Orders). Order drawer: status steps, addresses with the GST type (CGST + SGST in the
@@ -28,7 +28,11 @@ const FLOWS = {
   own: ['new', 'packing', 'packed', 'out_for_delivery', 'delivered'], courier: ['new', 'packing', 'packed', 'with_courier', 'delivered'], pickup: ['new', 'packing', 'packed', 'delivered'],
 };
 const STATUSES = ['approval', 'new', 'packing', 'packed', 'out_for_delivery', 'with_courier', 'failed', 'delivered', 'cancelled'];
-const MAIN = ['new', 'packing', 'packed', 'out_for_delivery', 'delivered'];
+// status chips in the order the work happens: waiting for approval, new, packing, packed, on the way (own vehicle or
+// courier: one chip), delivered, cancelled; delivery failed only when there is one; Overdue is its own filter
+const CHIPS = [['approval', ['approval']], ['new', ['new']], ['packing', ['packing']], ['packed', ['packed']], ['out', ['out_for_delivery', 'with_courier']],
+  ['failed', ['failed']], ['delivered', ['delivered']], ['cancelled', ['cancelled']]];
+const CHIP_LABEL = { approval: 'Waiting for approval', new: 'New', packing: 'Packing', packed: 'Packed', out: 'Out for delivery / With courier', failed: 'Delivery failed', delivered: 'Delivered', cancelled: 'Cancelled' };
 const GONE = ['out_for_delivery', 'with_courier', 'failed'];
 const LABEL = { approval: 'Waiting for approval', new: 'New', packing: 'Packing', packed: 'Packed', out_for_delivery: 'Out for delivery', with_courier: 'Handed to courier', failed: 'Delivery failed', delivered: 'Delivered', cancelled: 'Cancelled' };
 const STAMP = { new: 'confirmed_at', packing: 'packing_at', packed: 'packed_at', out_for_delivery: 'out_at', with_courier: 'courier_at', delivered: 'delivered_at' };
@@ -41,8 +45,8 @@ const round2 = (n) => Math.round(n * 100) / 100;
 export default function CommerceOrders() {
   const location = useLocation();
   const urlStatus = new URLSearchParams(location.search).get('status') || '';
-  const [f, setF] = useState({ status: STATUSES.includes(urlStatus) ? urlStatus : '', pay: '', overdue: '', type: '', from: '', to: '', q: '' });
-  useEffect(() => { if (STATUSES.includes(urlStatus)) setF((x) => ({ ...x, status: urlStatus })); }, [urlStatus]);
+  const [f, setF] = useState({ status: STATUSES.includes(urlStatus) || urlStatus === 'out' ? urlStatus : '', pay: '', overdue: '', type: '', from: '', to: '', q: '' });
+  useEffect(() => { if (STATUSES.includes(urlStatus) || urlStatus === 'out') setF((x) => ({ ...x, status: urlStatus })); }, [urlStatus]);
   const [search, setSearch] = useState('');
   useEffect(() => { const t = setTimeout(() => setF((x) => (x.q === search.trim() ? x : { ...x, q: search.trim() })), 350); return () => clearTimeout(t); }, [search]);
   const qs = Object.entries(f).filter(([, v]) => v).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
@@ -75,7 +79,8 @@ export default function CommerceOrders() {
       <div className="a-toolbar">
         <div className="a-chips" role="group" aria-label="Status">
           <button type="button" className={`a-chip${!f.status && !f.overdue ? ' on' : ''}`} onClick={() => set({ status: '', overdue: '' })}>All {all}</button>
-          {STATUSES.filter((s) => MAIN.includes(s) || counts[s]).map((s) => <button key={s} type="button" className={`a-chip${f.status === s ? ' on' : ''}`} onClick={() => set({ status: s, overdue: '' })}>{LABEL[s]} {counts[s] || 0}</button>)}
+          {CHIPS.map(([k, sts]) => [k, sts.reduce((a, s) => a + (counts[s] || 0), 0)]).filter(([k, n]) => k !== 'failed' || n).map(([k, n]) => (
+            <button key={k} type="button" className={`a-chip${f.status === k ? ' on' : ''}`} onClick={() => set({ status: k, overdue: '' })}>{CHIP_LABEL[k]} {n}</button>))}
           <button type="button" className={`a-chip${f.overdue ? ' on' : ''}`} onClick={() => set({ overdue: f.overdue ? '' : '1', status: '' })}>Overdue {(d && d.overdue) || 0}</button>
         </div>
         {canCreate && <button type="button" className="a-btn" onClick={() => setCreating(true)}>New order</button>}
@@ -130,7 +135,7 @@ function OrderDrawer({ no, canEdit, onClose, onChanged }) {
   const reload = () => { o.reload(); onChanged(); };
   const startPacking = async () => {
     if (!(await confirm({ title: `Start packing ${no}?`, message: 'The SKUs are picked now (batches earliest expiry first); then scan it in Packing.', action: 'Start packing' }))) return;
-    act.run(async () => { await api.send('POST', '/commerce/packing/start', { order_nos: [no] }); reload(); }, `${no} is Packing: scan it in Commerce > Packing`);
+    act.run(async () => { await api.send('POST', '/commerce/packing/start', { order_nos: [no] }); reload(); }, `${no} is Packing: scan it in Fulfilment > Packing`);
   };
   const flow = d ? FLOWS[d.delivery_kind] || FLOWS.own : [];
   const printInvoice = (id, cnId) => act.run(async () => {
@@ -155,7 +160,7 @@ function OrderDrawer({ no, canEdit, onClose, onChanged }) {
         {d && (
           <>
             {act.note}
-            {d.status === 'approval' && <Notice kind="warn">Waiting for approval ({d.approvals.filter((a) => a.status === 'pending').map((a) => a.kind_label).join(', ')}). It cannot be packed until someone else approves (Setup &gt; Approvals).</Notice>}
+            {d.status === 'approval' && <Notice kind="warn">Waiting for approval ({d.approvals.filter((a) => a.status === 'pending').map((a) => a.kind_label).join(', ')}). It cannot be packed until someone else approves (Approvals, top of the menu).</Notice>}
             {d.status === 'packed' && d.approvals.some((a) => a.status === 'pending' && a.kind !== 'cancel_after_dispatch') && <Notice kind="warn">An edit waits for approval: it cannot be dispatched until then.</Notice>}
             {pendingCancel && <Notice kind="warn">Cancelling waits for approval (request #{pendingCancel.approval_id}): {pendingCancel.summary}</Notice>}
             {d.status === 'cancelled' && <Notice kind="error">Cancelled: {d.cancel_reason}. Reserved stock released, coupon and wallet use given back{d.invoices.length ? ', invoice cancelled with a credit note' : ''}.</Notice>}
@@ -165,7 +170,7 @@ function OrderDrawer({ no, canEdit, onClose, onChanged }) {
                 {flow.map((s) => <li key={s} className={flow.indexOf(s) <= flow.indexOf(d.status === 'failed' ? 'packed' : d.status) ? 'done' : ''}>{LABEL[s]}<small>{fmtDate(d[STAMP[s]])}</small></li>)}
               </ol>
             )}
-            {d.status === 'failed' && <Notice kind="error">Delivery failed: {d.failed_reason}. Re-attempt or return it to the godown in Commerce &gt; Delivery &gt; Failed.</Notice>}
+            {d.status === 'failed' && <Notice kind="error">Delivery failed: {d.failed_reason}. Re-attempt or return it to the godown in Fulfilment &gt; Delivery &gt; Failed.</Notice>}
             <dl className="a-dl">
               <div><dt>Customer</dt><dd>{d.customer} ({d.ctype}) - {d.phone}</dd></div>
               <div><dt>Terms</dt><dd>{d.terms_label}{d.payment_terms === 'credit' ? `, ${d.credit_days} days` : ''}</dd></div>
@@ -536,17 +541,11 @@ function OrderForm({ order = null, onClose, onSaved }) {
               <p className="a-muted a-custline">Price list: <b>{list.label}</b>{customer.own_list ? ' (its own, not its type\'s)' : ''}. Credit: {customer.credit_limit > 0 ? `${customer.credit_days} days, limit ${rs(customer.credit_limit)}` : 'none'}; owes {rs(customer.outstanding)}
                 {customer.overdue > 0 && <span className="a-overdue">{customer.overdue} overdue</span>}</p>
             )}
-            <div className="a-grid2">
-              <label className="a-field"><span>Payment terms</span>
-                <select value={terms} aria-label="Payment terms" onChange={(e) => setTerms(e.target.value)}>{Object.entries(f.terms).map(([k, v]) => <option key={k} value={k}>{v}{k === 'credit' && customer ? ` (${customer.credit_days} days)` : ''}</option>)}</select>
-              </label>
-              <label className="a-field"><span>Note</span><input value={note} maxLength={255} onChange={(e) => setNote(e.target.value)} placeholder="e.g. WhatsApp order, deliver before 10 am" /></label>
-            </div>
-            {creditOver && <Notice kind="warn">Over the credit limit: {rs(customer.outstanding)} open + this order {rs(thisDue)} &gt; {rs(customer.credit_limit)}. It waits for approval.</Notice>}
             {customer && customer.status === 'on_hold' && <Notice kind="warn">{customer.name} is on hold{customer.hold_reason ? `: ${customer.hold_reason}` : ''}. A new order waits for approval.</Notice>}
             {overdueHold && <Notice kind="warn">{customer.name} has {customer.overdue} overdue invoice{customer.overdue === 1 ? '' : 's'}: a new order waits for approval.</Notice>}
             {bill && (
               <>
+                <h3>Addresses</h3>
                 {customer && (
                   <div className="a-grid2">
                     <label className="a-field"><span>Bill to (its GSTIN goes on the invoice)</span>
@@ -562,18 +561,6 @@ function OrderForm({ order = null, onClose, onSaved }) {
                 )}
                 <div className="a-addr">{addr(bill, setBill, 'bill')}{ship && addr(ship, setShip, 'ship')}</div>
                 <p className="a-gst">GST: {gstType === 'intra' ? 'CGST + SGST' : 'IGST'} - place of supply {stateName(pos.code)} ({pos.code}): {pos.reason}{gstType === 'intra' ? ", the seller's state" : ", another state than the seller's"}</p>
-                <div className="a-grid2">
-                  <label className="a-field"><span>Delivery</span>
-                    <select value={method ? String(method.method_id) : ''} aria-label="Delivery method" onChange={(e) => setMethodId(e.target.value)}>{f.methods.map((m) => <option key={m.method_id} value={m.method_id}>{m.label}</option>)}</select></label>
-                  {method && method.kind !== 'pickup' && (
-                    <label className="a-field"><span>Delivery area</span>
-                      <select value={areaId} aria-label="Delivery area" onChange={(e) => setAreaId(e.target.value)}>
-                        <option value="">From the address{autoArea ? `: ${autoArea.label}` : ': none matches (no charge)'}</option>
-                        {f.areas.map((a) => <option key={a.area_id} value={a.area_id}>{a.label}</option>)}</select></label>
-                  )}
-                </div>
-                <p className="a-muted a-delivline">{method && method.kind === 'pickup' ? 'Customer pickup at the godown: no delivery charge.'
-                  : area ? `${area.label}: Rs ${area.charge}${area.free_above !== null ? `, free above Rs ${area.free_above}` : ''}${freeDelivery ? ' - free for this order' : area.charge > 0 ? ` + GST ${f.deliveryGstRate}%` : ''}` : 'No delivery area matches this address: no delivery charge.'}</p>
               </>
             )}
             <h3>Items</h3>
@@ -623,6 +610,7 @@ function OrderForm({ order = null, onClose, onSaved }) {
             {anyShort && (f.canOverride ? (
               <label className="a-inline a-override"><input type="checkbox" checked={override} onChange={(e) => setOverride(e.target.checked)} /> Order more than available anyway{f.approval.stock ? ' (waits for approval by someone else)' : ''}</label>
             ) : <Notice kind="error">More than the available stock: lower the quantity (only a role with &quot;approve&quot; on Orders can ask for an override).</Notice>)}
+            <h3>Discounts and wallet</h3>
             <div className="a-grid2">
               <label className="a-field"><span>Coupon (one per order)</span>
                 <span className="a-row">
@@ -651,9 +639,34 @@ function OrderForm({ order = null, onClose, onSaved }) {
               <p className={P.holds.some((h) => h.kind === 'discount') ? 'a-bad' : 'a-muted'}>Discounts {rs(P.discount.total)} = {P.discount.pct}% of the goods
                 {P.discount.limit !== null ? (P.holds.some((h) => h.kind === 'discount') ? `: above ${P.discount.limit}%, it waits for approval` : ` (approval above ${P.discount.limit}%)`) : ''}.</p>
             )}
+            {bill && (
+              <>
+                <h3>Delivery</h3>
+                <div className="a-grid2">
+                  <label className="a-field"><span>Delivery</span>
+                    <select value={method ? String(method.method_id) : ''} aria-label="Delivery method" onChange={(e) => setMethodId(e.target.value)}>{f.methods.map((m) => <option key={m.method_id} value={m.method_id}>{m.label}</option>)}</select></label>
+                  {method && method.kind !== 'pickup' && (
+                    <label className="a-field"><span>Delivery area</span>
+                      <select value={areaId} aria-label="Delivery area" onChange={(e) => setAreaId(e.target.value)}>
+                        <option value="">From the address{autoArea ? `: ${autoArea.label}` : ': none matches (no charge)'}</option>
+                        {f.areas.map((a) => <option key={a.area_id} value={a.area_id}>{a.label}</option>)}</select></label>
+                  )}
+                </div>
+                <p className="a-muted a-delivline">{method && method.kind === 'pickup' ? 'Customer pickup at the godown: no delivery charge.'
+                  : area ? `${area.label}: Rs ${area.charge}${area.free_above !== null ? `, free above Rs ${area.free_above}` : ''}${freeDelivery ? ' - free for this order' : area.charge > 0 ? ` + GST ${f.deliveryGstRate}%` : ''}` : 'No delivery area matches this address: no delivery charge.'}</p>
+              </>
+            )}
+            <h3>Payment</h3>
+            <div className="a-grid2">
+              <label className="a-field"><span>Payment terms</span>
+                <select value={terms} aria-label="Payment terms" onChange={(e) => setTerms(e.target.value)}>{Object.entries(f.terms).map(([k, v]) => <option key={k} value={k}>{v}{k === 'credit' && customer ? ` (${customer.credit_days} days)` : ''}</option>)}</select>
+              </label>
+            </div>
+            {creditOver && <Notice kind="warn">Over the credit limit: {rs(customer.outstanding)} open + this order {rs(thisDue)} &gt; {rs(customer.credit_limit)}. It waits for approval.</Notice>}
+            <label className="a-field"><span>Note</span><input value={note} maxLength={255} onChange={(e) => setNote(e.target.value)} placeholder="e.g. WhatsApp order, deliver before 10 am" /></label>
+            {editing && <label className="a-field"><span>Why is it changed?{order.editable === 'reason' ? ' (required)' : ' (optional)'}</span><input value={reason} maxLength={255} aria-label="Reason for the change" onChange={(e) => setReason(e.target.value)} /></label>}
             {P && P.holds.length > 0 && <Notice kind="warn">Waits for approval: {P.holds.map((h) => `${h.label} - ${h.what}`).join('; ')}</Notice>}
             {pv && pv.error && <Notice kind="error">{pv.error}</Notice>}
-            {editing && <label className="a-field"><span>Why is it changed?{order.editable === 'reason' ? ' (required)' : ' (optional)'}</span><input value={reason} maxLength={255} aria-label="Reason for the change" onChange={(e) => setReason(e.target.value)} /></label>}
             {t ? <Totals t={{ ...t, coupon: P.coupon ? P.coupon.code : null }} due={t.due} /> : <p className="a-muted">The totals show once the customer, the address and a line are in.</p>}
           </>
         )}
