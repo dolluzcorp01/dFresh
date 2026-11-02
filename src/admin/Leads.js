@@ -1,10 +1,10 @@
 // Leads (spec F 2): filters, table, detail drawer (status, assign, staff notes), outbox rows with retry, Excel / CSV
-// download of the filtered list.
+// download of the filtered list. Sales > Leads > Enquiries; while Commerce is on, "Leads summary" opens the leads Dashboard.
 // ?ref=DFL-... (link in the staff alert e-mail) opens that lead.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { api } from './adminApi';
-import { Drawer, Loading, fmtDate, useAction, useAdmin, useCan, useConfirm, useLoad } from './ui';
+import { Drawer, Loading, PageHead, fmtDate, useAction, useAdmin, useCan, useConfirm, useLoad } from './ui';
 import rules from '../shared/rules.json';
 
 // Lead drawer: every field of the lead's form, in the form's own order (src/shared/rules.json, the same file the site
@@ -58,7 +58,7 @@ export default function Leads() {
   const navigate = useNavigate();
   const params = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const setParams = (next) => navigate({ search: next.toString() ? `?${next}` : '' }, { replace: true });
-  const { languages, leadsVersion } = useAdmin();
+  const { me, languages, leadsVersion } = useAdmin();
   const canEdit = useCan('leads', 'edit');
   const query = useMemo(() => {
     const q = new URLSearchParams();
@@ -127,7 +127,8 @@ export default function Leads() {
 
   return (
     <section>
-      <h1>Leads</h1>
+      <PageHead sub="Forms people filled on dfresh.us, and who in sales has picked each one up."
+        actions={me && me.commerce_enabled ? <Link className="a-btn a-btn-ghost" to="/admin">Leads summary</Link> : null} />
       <div className="a-toolbar">
         <select aria-label="Form" value={params.get('form') || ''} onChange={(e) => setFilter('form', e.target.value)}>
           <option value="">All forms</option>{FORMS.map((f) => <option key={f}>{f}</option>)}
@@ -246,7 +247,7 @@ function LeadDrawer({ id, onClose, onChanged }) {
 
   return (
     <Drawer title={l ? `Lead ${l.lead_ref}` : 'Lead'} onClose={onClose}
-      dirty={Boolean(form && l && (form.status !== l.status || form.assigned_to !== (l.assigned_to || '') || form.staff_notes !== (l.staff_notes || '')))}
+      wide dirty={Boolean(form && l && (form.status !== l.status || form.assigned_to !== (l.assigned_to || '') || form.staff_notes !== (l.staff_notes || '')))}
       footer={form && (canEdit || isAdmin || canConvert) ? (
         <>
           {canEdit && <button type="button" className="a-btn" onClick={save} disabled={act.busy}>Save</button>}

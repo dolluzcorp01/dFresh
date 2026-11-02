@@ -1,10 +1,10 @@
-// Setup > Roles (docs/COMMERCE-SPEC.md 1): the roles, who has them, and each role's grid of sections x actions.
+// Admin > Users and security > Roles (docs/COMMERCE-SPEC.md 1): the roles, who has them, and each role's grid of sections x actions.
 // Admin and Sub-admin are built in (shown, not editable). A custom role: name, description, ticks; create / edit /
 // approve / delete tick view too, unticking view clears the row. The API enforces the same grid on every route.
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from './adminApi';
-import { Drawer, InfoCard, Loading, Notice, useAction, useCan, useConfirm, useLoad } from './ui';
+import { Drawer, InfoCard, Loading, Notice, PageHead, Pill, Table, useAction, useCan, useConfirm, useLoad } from './ui';
 
 const ACTION_LABEL = { view: 'View', create: 'Create', edit: 'Edit', approve: 'Approve', delete: 'Delete' };
 
@@ -16,33 +16,25 @@ export default function Roles() {
   const d = data.data;
   return (
     <section>
-      <h1>Roles</h1>
+      <PageHead sub="What each job can see and do."
+        actions={canCreate && <button type="button" className="a-btn" onClick={() => { setDone(''); setOpen('new'); }}>New role</button>} />
       <InfoCard title="What each role may see and change">
         <ul>
-          <li>Every admin user has one role (<Link to="/admin/users">Admin users</Link>). A role is a grid of sections x View / Create / Edit / Approve / Delete.</li>
+          <li>Every admin user has one role (<Link to="/admin/users">Staff</Link>). A role is a grid of sections x View / Create / Edit / Approve / Delete.</li>
           <li>Admin (everything) and Sub-admin (everything except Roles and users and Settings) are built in and cannot be changed.</li>
           <li>The server checks the grid on every request: a hidden button is only a convenience, a blocked action answers &quot;No access&quot;.</li>
         </ul>
       </InfoCard>
       {done && <Notice kind="ok" onClose={() => setDone('')}>{done}</Notice>}
-      {canCreate && <div className="a-toolbar"><button type="button" className="a-btn" onClick={() => { setDone(''); setOpen('new'); }}>New role</button></div>}
       <Loading state={data}>
         {d && (
-          <div className="a-scroll">
-            <table className="a-table a-roles">
-              <thead><tr><th>Role</th><th>What it is for</th><th className="a-num">Users</th><th>Sections it can open</th></tr></thead>
-              <tbody>
-                {d.roles.map((r) => (
-                  <tr key={r.role_id} className="a-rowlink" tabIndex={0} onClick={() => setOpen(r.role_id)} onKeyDown={(e) => e.key === 'Enter' && setOpen(r.role_id)}>
-                    <td><b>{r.name}</b>{r.is_builtin && <span className="a-status a-status-off a-builtin">Built in</span>}</td>
-                    <td className="a-muted">{r.description}</td>
-                    <td className="a-num">{r.users}</td>
-                    <td>{d.sections.filter((x) => r.perms[x.key] && r.perms[x.key].view).map((x) => x.label).join(', ') || <span className="a-muted">none</span>}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <Table className="a-roles" label="Roles" rows={d.roles} rowKey={(r) => r.role_id} onRowClick={(r) => setOpen(r.role_id)}
+            columns={[
+              { key: 'name', label: 'Role', render: (r) => <><b>{r.name}</b>{r.is_builtin && <> <Pill tone="gray" className="a-builtin">Built in</Pill></>}</> },
+              { key: 'description', label: 'What it is for', className: 'a-muted' },
+              { key: 'users', label: 'Users', num: true },
+              { key: 'sections', label: 'Sections it can open', render: (r) => d.sections.filter((x) => r.perms[x.key] && r.perms[x.key].view).map((x) => x.label).join(', ') || <span className="a-muted">none</span> },
+            ]} />
         )}
       </Loading>
       {open && d && <RoleDrawer key={open} meta={d} role={open === 'new' ? null : d.roles.find((r) => r.role_id === open)} onClose={() => setOpen(null)} onSaved={(text) => { setOpen(null); setDone(text); data.reload(); }} />}

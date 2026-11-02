@@ -44,6 +44,7 @@
     "cache:bust": "node scripts/cache-bust.js",
     "test:api": "node --test --test-concurrency=1 \"tests/api/*.test.js\"",
     "test:admin-nav": "node scripts/admin-check/admin-nav.js",
+    "test:admin-menu": "node scripts/admin-check/menu-check.js",
     "test:fonts-e2e": "node scripts/admin-check/fonts-e2e.js",
     "release:pack": "node scripts/release-pack.js"
   },

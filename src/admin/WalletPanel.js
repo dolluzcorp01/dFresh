@@ -1,5 +1,5 @@
 // A customer's wallet (API /commerce/customers/:id/wallet; logic in src/backend_routes/wallet.js), in the Customers
-// drawer and Promotions > Wallets: balance, what can be used now, credits expiring, the statement (every entry with its
+// drawer and Marketing > Customer wallets: balance, what can be used now, credits expiring, the statement (every entry with its
 // source and the running balance, printable), and the manual credit / debit (Promotions create; through approval when
 // the Commerce setting says so).
 import { useState } from 'react';

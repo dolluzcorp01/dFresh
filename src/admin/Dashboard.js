@@ -1,12 +1,12 @@
 // Dashboard (spec F 1): "Attention needed" first (only what applies, every line a link to where it is fixed; a calm
 // "All good" when nothing is), then the counters (leads today / 7 days / by form, outbox health, translations per
-// language) and quick-jump tiles for the sidebar groups. Lines for screens a role cannot open are left out.
+// language) and quick-jump tiles for the menu groups (their pages that open a screen). Lines for screens a role cannot open are left out.
 import { useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from './adminApi';
-import { Loading, useAdmin, useCan, useLoad } from './ui';
-import Icon from './icons';
-import { groupsFor } from './Sidebar';
+import { Loading, PageHead, useAdmin, useCan, useLoad } from './ui';
+import LIcon from './ui/LIcon';
+import { GROUP_ICON, flatEntries, hrefOf, menuFor } from './menuAccess';
 
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 const names = (list) => (list.length <= 1 ? list.join('') : `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`);
@@ -67,7 +67,9 @@ export default function Dashboard() {
   const lines = d ? attentionLines(d, isAdmin) : [];
   return (
     <section>
-      <h1>Dashboard</h1>
+      {me && me.commerce_enabled
+        ? <PageHead title="Leads summary" crumb={['Sales', 'Leads', 'Leads summary']} sub="Enquiries, the outbox and translations at a glance." />
+        : <PageHead sub="Enquiries, the outbox and translations at a glance." />}
       <Loading state={s}>
         {d && (
           <>
@@ -77,7 +79,7 @@ export default function Dashboard() {
                 <ul>
                   {lines.map((l) => (
                     <li key={l.key} className={`a-attn-${l.kind}`}>
-                      <Link to={l.to}><span className="a-attn-dot" aria-hidden="true" />{l.text}<Icon name="chevron" className="a-attn-go" /></Link>
+                      <Link to={l.to}><span className="a-attn-dot" aria-hidden="true" />{l.text}<LIcon name="chevron-right" size="sm" className="a-attn-go" /></Link>
                     </li>
                   ))}
                 </ul>
@@ -120,10 +122,10 @@ export default function Dashboard() {
             </div>
             <h2 className="a-jump-h">Go to</h2>
             <div className="a-jump">
-              {groupsFor(me).map((g) => (
+              {menuFor(me).map((g) => ({ g, items: flatEntries([g]).filter((x) => !x.entry.target.placeholder) })).filter((x) => x.items.length).map(({ g, items }) => (
                 <div className="a-jump-tile" key={g.key}>
-                  <Link className="a-jump-title" to={`/admin/${g.items[0].path}`}><Icon name={g.icon} />{g.label}</Link>
-                  <ul>{g.items.map((it) => <li key={it.path}><Link to={`/admin/${it.path}`}>{it.label}</Link></li>)}</ul>
+                  <Link className="a-jump-title" to={hrefOf(items[0].entry.target)}><LIcon name={GROUP_ICON[g.key]} />{g.label}</Link>
+                  <ul>{items.map(({ entry }) => <li key={entry.id}><Link to={hrefOf(entry.target)}>{entry.label}</Link></li>)}</ul>
                 </div>
               ))}
             </div>

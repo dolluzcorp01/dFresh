@@ -1,4 +1,4 @@
-// Products and prices > Products and prices (docs/COMMERCE-SPEC.md 4.3; API /prices, logic in src/backend_routes/pricing.js).
+// Masters > Prices > Price lists (docs/COMMERCE-SPEC.md 4.3; API /prices, logic in src/backend_routes/pricing.js).
 // A grid of SKUs x price lists (Default + one per customer type). Type a price: the cell turns yellow and a bar at the
 // bottom says how many changes wait, from which date they apply, Save / Cancel. An empty cell on a customer type's
 // list uses the Default price (shown greyed); a SKU without a Default price has a red "Missing" badge. Filter by
@@ -10,9 +10,9 @@
 import { useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from './adminApi';
-import { Drawer, InfoCard, Loading, Notice, UploadProgress, fmtDate, useAction, useCan, useConfirm, useLeaveGuard, useLoad, useUpload } from './ui';
+import { Drawer, InfoCard, Loading, Notice, PageHead, UploadProgress, fmtDate, money, useAction, useCan, useConfirm, useLeaveGuard, useLoad, useUpload } from './ui';
 
-const rs = (n) => (n === null || n === undefined ? '-' : `Rs ${Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+const rs = (n) => money(n); // empty = '-'
 const num = (n) => (n === null || n === undefined ? '' : String(Number(n)));
 const dmy = (d) => new Date(`${d}T00:00:00Z`).toLocaleDateString('en-IN', { timeZone: 'UTC', day: 'numeric', month: 'short', year: 'numeric' });
 const cellId = (sku, list) => `${sku}/${list}`;
@@ -78,7 +78,11 @@ export default function Prices() {
 
   return (
     <section className="a-prices">
-      <h1>Products and prices</h1>
+      <PageHead sub="One price per SKU per list: Default and one list per customer type."
+        actions={canEdit && d && <>
+          <button type="button" className="a-btn a-btn-ghost" disabled={dirty} onClick={() => setPanel('excel')}>Excel</button>
+          <button type="button" className="a-btn" disabled={dirty} title={dirty ? 'Save or cancel the typed prices first' : undefined} onClick={() => setPanel('bulk')}>Bulk change</button>
+        </>} />
       <InfoCard title="Price lists">
         <ul>
           <li>One price per SKU per list: Default, and one list per customer type (Commerce settings &gt; Customer types). An order takes the price of its customer&apos;s type on the order day.</li>
@@ -104,8 +108,6 @@ export default function Prices() {
                 <button type="button" className={`a-chip${missing === 'default' ? ' on' : ''}`} onClick={() => setMissing('default')}>No Default price {noDefault}</button>
                 <button type="button" className={`a-chip${missing === 'any' ? ' on' : ''}`} onClick={() => setMissing('any')}>Uses Default somewhere</button>
               </div>
-              {canEdit && <button type="button" className="a-btn" disabled={dirty} title={dirty ? 'Save or cancel the typed prices first' : undefined} onClick={() => setPanel('bulk')}>Bulk change</button>}
-              {canEdit && <button type="button" className="a-btn a-btn-ghost" disabled={dirty} onClick={() => setPanel('excel')}>Excel</button>}
             </div>
             <div className="a-scroll">
               <table className="a-table a-pricegrid">
@@ -195,7 +197,7 @@ function SkuDrawer({ sku, meta, canEdit, onClose, onSaved }) {
     }
   }, text);
   return (
-    <Drawer title={`${sku.sku_code} - ${sku.name}`} onClose={onClose} dirty={canEdit && (skuDirty || taxDirty)}>
+    <Drawer title={`${sku.sku_code} - ${sku.name}`} onClose={onClose} dirty={canEdit && (skuDirty || taxDirty)} wide>
       {act.note}
       <PriceBasis basis={meta.basis} />
       <p className="a-muted">{sku.size_label} · {sku.category}{sku.is_active ? '' : ' · switched off'}</p>
@@ -273,7 +275,7 @@ function BulkDrawer({ meta, onClose, onSaved }) {
     onSaved(`Bulk change saved: ${r.changed} price${r.changed === 1 ? '' : 's'}, effective from ${dmy(r.effective)}.`);
   });
   return (
-    <Drawer title="Bulk change" onClose={onClose} dirty={Boolean(f.value)}
+    <Drawer title="Bulk change" onClose={onClose} dirty={Boolean(f.value)} wide
       footer={<>
         <button type="button" className="a-btn a-btn-ghost" disabled={act.busy || !f.value} onClick={run}>Preview</button>
         <button type="button" className="a-btn" disabled={act.busy || !fresh || !preview.rows.length} onClick={save}>{fresh && preview.rows.length ? `Save ${preview.rows.length} prices` : 'Save'}</button>
@@ -345,7 +347,7 @@ function ExcelDrawer({ meta, onClose, onApplied }) {
     });
   };
   return (
-    <Drawer title="Price list in Excel" onClose={onClose}>
+    <Drawer title="Price list in Excel" onClose={onClose} wide>
       <PriceBasis basis={meta.basis} />
       {act.note}
       <h3>Export</h3>

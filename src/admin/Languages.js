@@ -5,7 +5,7 @@
 // ready (subset size) / rebuilding / using full font (a rebuild failed) / - while the language is off.
 import { useState } from 'react';
 import { api } from './adminApi';
-import { Drawer, Field, InfoCard, Loading, nextOrder, useAction, useAdmin, useCan, useConfirm, useLoad } from './ui';
+import { Drawer, Field, InfoCard, Loading, PageHead, Table, nextOrder, useAction, useAdmin, useCan, useConfirm, useLoad } from './ui';
 
 const FIELDS = [
   { name: 'lang_code', label: 'Code (URL prefix)', required: true, help: '2-3 lower-case letters, e.g. te' },
@@ -60,7 +60,8 @@ export default function Languages() {
 
   return (
     <section>
-      <h1>Languages</h1>
+      <PageHead sub="Switch a language on or off, or add one."
+        actions={canCreate ? <button type="button" className="a-btn" onClick={() => setOpen({ create: true })}>Add language</button> : null} />
       <InfoCard title="How to add a language">
         <ol>
           <li>Click Add language and pick its script. The script sets the font and the text direction.</li>
@@ -69,34 +70,28 @@ export default function Languages() {
         </ol>
         <p>Anything not translated shows in English. Fonts are prepared automatically, no developer needed.</p>
       </InfoCard>
-      {canCreate && <div className="a-toolbar"><button type="button" className="a-btn" onClick={() => setOpen({ create: true })}>Add language</button></div>}
       {act.note}
       <Loading state={list}>
-        <div className="a-scroll">
-          <table className={`a-table${isAdmin ? ' a-hover' : ''}`}>
-            <thead><tr><th>Code</th><th>Name</th><th>Switcher</th><th>Script / font</th><th>Translated</th><th>Status</th><th /></tr></thead>
-            <tbody>
-              {(list.data || []).map((l) => (
-                // the whole row opens the drawer (as on every admin list); the buttons in it do not
-                <tr key={l.lang_code} className={l.is_active ? '' : 'a-off'}
-                  {...(isAdmin ? { onClick: () => setOpen({ row: l }), tabIndex: 0, onKeyDown: (e) => e.key === 'Enter' && e.target === e.currentTarget && setOpen({ row: l }) } : {})}>
-                  <td><code>{l.lang_code}</code></td>
-                  <td>{l.name_en} · {l.native_name}{Number(l.is_default) === 1 && ' (default)'}</td>
-                  <td>{l.switch_label}</td>
-                  <td><FontCell l={l} /></td>
-                  <td title={Object.entries(l.completeness.parts).map(([k, v]) => `${k}: ${v.have}/${v.total}`).join('\n')}>
-                    <meter min="0" max="100" value={l.completeness.pct} /> {l.completeness.pct}% ({l.completeness.have}/{l.completeness.total})
-                  </td>
-                  <td>{l.is_active ? 'On' : 'Off'}</td>
-                  <td className="a-row">
-                    {isAdmin && Number(l.is_default) !== 1 && <button type="button" className="a-btn a-btn-sm a-btn-ghost" onClick={(e) => { e.stopPropagation(); toggle(l); }} disabled={act.busy}>{l.is_active ? 'Switch off' : 'Switch on'}</button>}
-                    {canDelete && Number(l.is_default) !== 1 && !l.is_active && <button type="button" className="a-btn a-btn-sm a-btn-danger" onClick={(e) => { e.stopPropagation(); remove(l); }} disabled={act.busy}>Delete</button>}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        {/* the whole row opens the drawer (as on every admin list); the buttons in it do not */}
+        <Table label="Languages" rows={list.data || []} rowKey={(l) => l.lang_code} rowClass={(l) => (l.is_active ? '' : 'a-off')}
+          onRowClick={isAdmin ? (l) => setOpen({ row: l }) : undefined} columns={[
+            { key: 'lang_code', label: 'Code', render: (l) => <code>{l.lang_code}</code> },
+            { key: 'name_en', label: 'Name', render: (l) => <>{l.name_en} · {l.native_name}{Number(l.is_default) === 1 && ' (default)'}</> },
+            { key: 'switch_label', label: 'Switcher' },
+            { key: 'font', label: 'Script / font', render: (l) => <FontCell l={l} /> },
+            { key: 'pct', label: 'Translated', render: (l) => (
+              <span title={Object.entries(l.completeness.parts).map(([k, v]) => `${k}: ${v.have}/${v.total}`).join('\n')}>
+                <meter min="0" max="100" value={l.completeness.pct} /> {l.completeness.pct}% ({l.completeness.have}/{l.completeness.total})
+              </span>
+            ) },
+            { key: 'status', label: 'Status', render: (l) => (l.is_active ? 'On' : 'Off') },
+            { key: 'act', label: '', render: (l) => (
+              <span className="a-row">
+                {isAdmin && Number(l.is_default) !== 1 && <button type="button" className="a-btn a-btn-sm a-btn-ghost" onClick={(e) => { e.stopPropagation(); toggle(l); }} disabled={act.busy}>{l.is_active ? 'Switch off' : 'Switch on'}</button>}
+                {canDelete && Number(l.is_default) !== 1 && !l.is_active && <button type="button" className="a-btn a-btn-sm a-btn-danger" onClick={(e) => { e.stopPropagation(); remove(l); }} disabled={act.busy}>Delete</button>}
+              </span>
+            ) },
+          ]} />
       </Loading>
       {open && <LangEditor row={open.row} rows={list.data} scripts={(fonts.data && fonts.data.scripts) || []} onClose={() => setOpen(null)} onSaved={() => { setOpen(null); changed(); }} />}
     </section>

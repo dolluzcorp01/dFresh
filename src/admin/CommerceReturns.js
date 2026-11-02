@@ -1,5 +1,5 @@
 // Fulfilment > Returns (docs/COMMERCE-SPEC.md 4.8, 5.5, 6.2; API /commerce/returns, logic in src/backend_routes/returns.js).
-// List: status chips (Requested > Collecting > Received > Inspected > Refunded / Replaced / Closed, and Rejected),
+// List: status tabs with counts (Requested > Collecting > Received > Inspected > Refunded / Replaced / Closed, and Rejected),
 // filters (reason, outcome, dates, search). A return is entered on a delivered order (Orders > open > New return:
 // NewReturn below) when the customer calls: SKU and batch as delivered, packs (partial is fine), reason, how it comes
 // back, photos (optional). Outside the return window it waits for approval (or is refused: Commerce setting).
@@ -16,7 +16,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { api } from './adminApi';
-import { Drawer, InfoCard, Loading, Notice, fmtDate, useAction, useCan, useConfirm, useLoad, useUpload, UploadButton } from './ui';
+import { Drawer, InfoCard, Loading, Notice, PageHead, Pill, Table, Tabs, fmtDate, useAction, useCan, useConfirm, useLoad, useUpload, UploadButton } from './ui';
 import { printCreditNote, signed } from './invoicePrint';
 
 // status chips in the order a return moves; refunded and replaced are both "done" (one chip); rejected only when there is one
@@ -54,7 +54,7 @@ export default function CommerceReturns() {
   const all = Object.values(counts).reduce((a, b) => a + b, 0);
   return (
     <section>
-      <h1>Returns</h1>
+      <PageHead sub="Goods customers send back: collect, receive, inspect, then refund or replace." />
       <InfoCard title="Returns and refunds">
         <ul>
           <li>Enter a return on a delivered order when the customer calls: Orders, open the order, New return. Outside the return window it needs approval.</li>
@@ -62,14 +62,8 @@ export default function CommerceReturns() {
           <li>Then refund (credit note first: to the wallet, to the original payment, or less to pay), a Rs 0 replacement order, or no refund (needs approval).</li>
         </ul>
       </InfoCard>
-      <div className="a-toolbar">
-        <div className="a-chips" role="group" aria-label="Status">
-          <button type="button" className={`a-chip${!f.status ? ' on' : ''}`} onClick={() => set({ status: '' })}>All {all}</button>
-          {meta && RETURN_CHIPS.map(([k, label, sts]) => [k, label, sts.reduce((a, s) => a + (counts[s] || 0), 0)]).filter(([k, , n]) => k !== 'rejected' || n).map(([k, label, n]) => (
-            <button key={k} type="button" className={`a-chip${f.status === k ? ' on' : ''}`} onClick={() => set({ status: k })}>{label} {n}</button>
-          ))}
-        </div>
-      </div>
+      <Tabs label="Status" value={f.status} onChange={(k) => set({ status: k })}
+        tabs={[{ key: '', label: 'All', count: all }, ...(meta ? RETURN_CHIPS.map(([key, label, sts]) => ({ key, label, count: sts.reduce((a, s) => a + (counts[s] || 0), 0) })).filter((t) => t.key !== 'rejected' || t.count) : [])]} />
       <div className="a-filters">
         <input type="search" placeholder="DFR, DFO or customer" aria-label="Search returns" value={search} onChange={(e) => setSearch(e.target.value)} />
         <label>Reason <select value={f.reason} onChange={(e) => set({ reason: e.target.value })}><option value="">All</option>{meta && meta.reasons.map((r) => <option key={r.reason_id} value={r.reason_id}>{r.label}</option>)}</select></label>
@@ -87,26 +81,16 @@ export default function CommerceReturns() {
 
 export function ReturnsTable({ rows, compact = false, onOpen }) {
   if (!rows.length) return <p className="a-muted">No return matches.</p>;
-  return (
-    <div className="a-scroll">
-      <table className="a-table">
-        <thead><tr><th>Return</th>{!compact && <th>Order / customer</th>}<th>Packs</th><th>Reason</th><th>Status</th><th>Outcome</th>{!compact && <th>Entered</th>}</tr></thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr key={r.return_no} className="a-rowlink" tabIndex={0} onClick={() => onOpen(r.return_no)} onKeyDown={(e) => e.key === 'Enter' && onOpen(r.return_no)}>
-              <td><code>{r.return_no}</code><small className="a-muted a-person-sub">{r.collection_label}{r.awb_no ? `, AWB ${r.awb_no}` : ''}</small></td>
-              {!compact && <td><code>{r.order_no}</code><small className="a-muted a-person-sub">{r.customer}</small></td>}
-              <td>{r.items}</td>
-              <td>{r.reason}{r.outside_window ? <small className="a-bad a-person-sub">outside the window</small> : null}</td>
-              <td><RStatus status={r.status} label={r.status_label} />{r.waiting.length > 0 && <small className="a-muted a-person-sub">waits: {r.waiting.join(', ')}</small>}</td>
-              <td>{r.outcomes.map((o) => OUTCOME_SHORT[o]).join(' + ')}{r.refunded > 0 ? ` ${rs(r.refunded)}` : ''}{r.replacement_no ? <small className="a-muted a-person-sub">{r.replacement_no} ({r.replacement_status.replace(/_/g, ' ')})</small> : null}</td>
-              {!compact && <td>{fmtDate(r.created_at)}<small className="a-muted a-person-sub">{r.requested_by}</small></td>}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
+  const columns = [
+    { key: 'return_no', label: 'Return', sort: true, render: (r) => <><code>{r.return_no}</code><small className="a-muted a-person-sub">{r.collection_label}{r.awb_no ? `, AWB ${r.awb_no}` : ''}</small></> },
+    !compact && { key: 'order_no', label: 'Order / customer', sort: true, render: (r) => <><code>{r.order_no}</code><small className="a-muted a-person-sub">{r.customer}</small></> },
+    { key: 'items', label: 'Packs' },
+    { key: 'reason', label: 'Reason', sort: true, render: (r) => <>{r.reason}{r.outside_window ? <small className="a-bad a-person-sub">outside the window</small> : null}</> },
+    { key: 'status', label: 'Status', render: (r) => <><RStatus status={r.status} label={r.status_label} />{r.waiting.length > 0 && <small className="a-muted a-person-sub">waits: {r.waiting.join(', ')}</small>}</> },
+    { key: 'outcome', label: 'Outcome', render: (r) => <>{r.outcomes.map((o) => OUTCOME_SHORT[o]).join(' + ')}{r.refunded > 0 ? ` ${rs(r.refunded)}` : ''}{r.replacement_no ? <small className="a-muted a-person-sub">{r.replacement_no} ({r.replacement_status.replace(/_/g, ' ')})</small> : null}</> },
+    !compact && { key: 'created_at', label: 'Entered', sort: true, render: (r) => <>{fmtDate(r.created_at)}<small className="a-muted a-person-sub">{r.requested_by}</small></> },
+  ].filter(Boolean);
+  return <Table label="Returns" columns={columns} rows={rows} rowKey={(r) => r.return_no} onRowClick={(r) => onOpen(r.return_no)} />;
 }
 
 // ---------------------------------------------------------------- New return (in the order drawer)
@@ -192,7 +176,7 @@ export function ReturnDrawer({ no, onClose }) {
   const done = (msg) => { r.reload(); act.setMsg(msg); }; // a step panel closes when its step is done: the message stays here
   const stepDone = (s) => d && (closed ? d.status !== 'rejected' || s === 'requested' : FLOW.indexOf(s) <= FLOW.indexOf(d.status));
   return (
-    <Drawer title={`Return ${no}`} onClose={onClose}>
+    <Drawer title={`Return ${no}`} onClose={onClose} wide>
       <Loading state={r}>
         {d && (
           <>
@@ -225,10 +209,10 @@ export function ReturnDrawer({ no, onClose }) {
             {(d.refunds.length > 0 || d.credit_notes.length > 0) && (
               <>
                 <h3>Refunds and credit notes</h3>
-                <table className="a-table"><tbody>
+                <div className="a-scroll"><table className="a-table"><tbody>
                   {d.refunds.map((f) => (
                     <tr key={f.refund_id}><td>{d.methods[f.method]}{f.mode ? ` (${d.modeLabels[f.mode] || f.mode}${f.reference ? `, ${f.reference}` : ''})` : ''}<small className="a-muted a-person-sub">{fmtDate(f.paid_at || f.created_at)} · {f.emp_id}</small></td>
-                      <td className="a-num">{rs(f.amount)}</td><td>{f.status === 'paid' ? <span className="a-status a-ap-approved">Paid</span> : f.status === 'approval' ? <span className="a-status a-ap-pending">Waits for approval</span> : <span className="a-status a-ap-rejected">Not approved</span>}</td>
+                      <td className="a-num">{rs(f.amount)}</td><td>{f.status === 'paid' ? <Pill tone="good">Paid</Pill> : f.status === 'approval' ? <Pill tone="warn">Waits for approval</Pill> : <Pill tone="bad">Not approved</Pill>}</td>
                       <td>{f.credit_note_no || ''}</td></tr>
                   ))}
                   {d.credit_notes.map((c) => (
@@ -236,7 +220,7 @@ export function ReturnDrawer({ no, onClose }) {
                       <td className="a-num">{rs(c.total)}</td><td>Taxable {rs(c.taxable)} + {d.gst_type === 'intra' ? `CGST ${rs(c.cgst)} + SGST ${rs(c.sgst)}` : `IGST ${rs(c.igst)}`}{c.round_off ? ` · round off ${signed(c.round_off)}` : ''}</td>
                       <td><button type="button" className="a-link" onClick={() => printCn(c.credit_note_id)}>Print / PDF</button></td></tr>
                   ))}
-                </tbody></table>
+                </tbody></table></div>
               </>
             )}
             <h3>Photos</h3>

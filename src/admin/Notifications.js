@@ -1,5 +1,5 @@
-// Setup > Notifications (docs/COMMERCE-SPEC.md 5.5f; API /notifications, logic in src/backend_routes/notifications.js).
-// Tabs:
+// Admin > Communications > Notifications / Message templates / Outbox (docs/COMMERCE-SPEC.md 5.5f; API /notifications, logic in src/backend_routes/notifications.js).
+// Tabs (?tab=events / templates / log, one menu entry each):
 // - Events and channels: e-mail on / off, WhatsApp and SMS "provider not set up" (off, locked); each customer and staff
 //   event on / off with who gets it and what is attached; the reminder numbers; the daily mails and "Run daily mails now".
 //   The switches and numbers are Commerce settings (saved at once, audited).
@@ -10,9 +10,9 @@
 //   belongs to; a failed mail can be sent again.
 // View on Settings = everything read only; edit = switches, templates, test mail, retry, run now.
 import { useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { api } from './adminApi';
-import { InfoCard, Loading, Notice, fmtDate, useAction, useCan, useConfirm, useLeaveGuard, useLoad } from './ui';
+import { InfoCard, Loading, Notice, PageHead, Pill, Table, Tabs, fmtDate, useAction, useCan, useConfirm, useLeaveGuard, useLoad } from './ui';
 
 const TABS = [['events', 'Events and channels'], ['templates', 'Templates'], ['log', 'Log']];
 const TO = { order: 'The order contact', invoice: 'Contacts with "gets invoices"', customer: "The customer's e-mail" };
@@ -20,23 +20,27 @@ const STAFF_TO = { approval: 'Approvers who may decide it', stock_daily: 'Users 
   delivery_failed: 'Users who plan trips', cash_difference: 'Users who plan trips', daily_summary: 'Admin users' };
 const ATTACH = { invoice: 'Invoice PDF', credit_note: 'Credit note PDF', statement: 'Statement PDF' };
 const STATUS = { queued: 'Queued', sent: 'Sent', failed: 'Failed', skipped: 'Not sent', cancelled: 'Cancelled' };
-const STATUS_CLASS = { queued: 'a-status-test', sent: 'a-status-on', failed: 'a-status-bad', skipped: 'a-status-off', cancelled: 'a-status-off' };
+const STATUS_TONE = { queued: 'warn', sent: 'good', failed: 'bad', skipped: 'gray', cancelled: 'gray' };
 
 export function NoteStatus({ row }) {
   return (
-    <span className={`a-status ${STATUS_CLASS[row.status] || ''}`} title={row.status === 'skipped' ? row.skip_reason : row.last_error || undefined}>
+    <Pill tone={STATUS_TONE[row.status] || 'gray'} title={row.status === 'skipped' ? row.skip_reason : row.last_error || undefined}>
       {STATUS[row.status] || row.status}
-    </span>
+    </Pill>
   );
 }
 
 export default function Notifications() {
   const data = useLoad('/notifications');
-  const [tab, setTab] = useState('events');
+  const location = useLocation();
+  const navigate = useNavigate();
+  const asked = new URLSearchParams(location.search).get('tab');
+  const tab = TABS.some(([k]) => k === asked) ? asked : 'events';
+  const setTab = (t) => navigate(`/admin/notifications?tab=${t}`);
   const d = data.data;
   return (
     <section>
-      <h1>Notifications</h1>
+      <PageHead sub="Who is told about what, the wording of each message, and every message sent." />
       <InfoCard title="What customers and staff are told, and how">
         <ul>
           <li>Every message is an e-mail from the mail outbox (sender: Settings &gt; mail_from). It is saved with the change that caused it and sent within a minute; a SendGrid outage only delays it.</li>
@@ -45,9 +49,7 @@ export default function Notifications() {
           {d && d.week && <li>Last 7 days: {['sent', 'queued', 'failed', 'skipped'].map((k) => `${d.week[k] || 0} ${STATUS[k].toLowerCase()}`).join(', ')}.</li>}
         </ul>
       </InfoCard>
-      <div className="a-chips a-tabs" role="tablist" aria-label="Notifications">
-        {TABS.map(([k, l]) => <button key={k} type="button" role="tab" aria-selected={tab === k} className={`a-chip${tab === k ? ' on' : ''}`} onClick={() => setTab(k)}>{l}</button>)}
-      </div>
+      <Tabs tabs={TABS.map(([key, label]) => ({ key, label }))} value={tab} onChange={setTab} label="Notifications" />
       <Loading state={data}>
         {d && tab === 'events' && <Events d={d} reload={data.reload} />}
         {d && tab === 'templates' && <Templates d={d} reload={data.reload} />}
@@ -131,7 +133,7 @@ function Events({ d, reload }) {
         <thead><tr><th>Event</th><th>Goes to</th><th>When</th><th>On</th></tr></thead>
         <tbody>{d.events.filter((e) => e.audience === 'staff').map(row)}</tbody>
       </table></div>
-      <p className="a-muted">Staff mails go to each user&apos;s notification e-mail (Setup &gt; <Link to="/admin/users">Admin users</Link>; empty = their dAdmin e-mail).</p>
+      <p className="a-muted">Staff mails go to each user&apos;s notification e-mail (Admin &gt; Users and security &gt; <Link to="/admin/users">Staff</Link>; empty = their dAdmin e-mail).</p>
       <h2>Daily mails</h2>
       <p>Overdue reminders, wallet expiry, stock, follow-ups and the Admin summary go out once a day from {s.notify_daily_hour ? s.notify_daily_hour.value : 9}:00 India time.
         {canEdit && <> <button type="button" className="a-btn a-btn-sm" disabled={act.busy} onClick={runNow}>Run daily mails now</button></>}</p>
@@ -291,24 +293,21 @@ function Log({ d }) {
         <label><input type="checkbox" checked={f.tests} onChange={(e) => set('tests', e.target.checked)} /> Show test mails</label>
       </div>
       <Loading state={list}>
-        {list.data && (list.data.rows.length ? (
-          <div className="a-scroll"><table className="a-table a-nlog">
-            <thead><tr><th>When</th><th>Event</th><th>To</th><th>Subject</th><th>Status</th><th>About</th><th /></tr></thead>
-            <tbody>{list.data.rows.map((r) => (
-              <tr key={r.log_id}>
-                <td>{fmtDate(r.created_at)}<small className="a-muted a-person-sub">#{r.log_id}{r.is_test ? ' test' : ''}</small></td>
-                <td>{r.event_label}<small className="a-muted a-person-sub">{r.audience}{r.lang_code ? `, ${r.lang_code.toUpperCase()}` : ''}{r.attachments.length ? `, ${r.attachments.map((a) => ATTACH[a]).join(', ')}` : ''}</small></td>
-                <td>{r.recipient_name}<small className="a-muted a-person-sub">{r.recipient || '(no address)'}</small></td>
-                <td>{r.subject || '-'}</td>
-                <td><NoteStatus row={r} />{r.status === 'skipped' && <small className="a-muted a-person-sub">{r.skip_reason}</small>}
-                  {r.status === 'failed' && <small className="a-bad a-person-sub">{r.last_error}</small>}
-                  {r.mail_id && <small className="a-muted a-person-sub">mail #{r.mail_id}, {r.attempts || 0} attempt(s){r.sent_at ? `, sent ${fmtDate(r.sent_at)}` : ''}</small>}</td>
-                <td>{r.order_no && <span>{r.order_no}</span>}{r.customer_no && <small className="a-muted a-person-sub">{r.customer_no} {r.customer}</small>}{r.ref && !r.order_no && <small className="a-muted a-person-sub">{r.ref}</small>}</td>
-                <td>{canEdit && r.status === 'failed' && <button type="button" className="a-btn a-btn-sm" disabled={act.busy} onClick={() => retry(r)}>Send again</button>}</td>
-              </tr>
-            ))}</tbody>
-          </table></div>
-        ) : <p className="a-muted">No messages match.</p>)}
+        {list.data && (
+          <Table className="a-nlog" label="Notification log" rows={list.data.rows} rowKey={(r) => r.log_id}
+            empty={{ icon: 'inbox', title: 'No messages match.' }}
+            columns={[
+              { key: 'created_at', label: 'When', render: (r) => <>{fmtDate(r.created_at)}<small className="a-muted a-person-sub">#{r.log_id}{r.is_test ? ' test' : ''}</small></> },
+              { key: 'event', label: 'Event', render: (r) => <>{r.event_label}<small className="a-muted a-person-sub">{r.audience}{r.lang_code ? `, ${r.lang_code.toUpperCase()}` : ''}{r.attachments.length ? `, ${r.attachments.map((a) => ATTACH[a]).join(', ')}` : ''}</small></> },
+              { key: 'to', label: 'To', render: (r) => <>{r.recipient_name}<small className="a-muted a-person-sub">{r.recipient || '(no address)'}</small></> },
+              { key: 'subject', label: 'Subject', render: (r) => r.subject || '-' },
+              { key: 'status', label: 'Status', render: (r) => <><NoteStatus row={r} />{r.status === 'skipped' && <small className="a-muted a-person-sub">{r.skip_reason}</small>}
+                {r.status === 'failed' && <small className="a-bad a-person-sub">{r.last_error}</small>}
+                {r.mail_id && <small className="a-muted a-person-sub">mail #{r.mail_id}, {r.attempts || 0} attempt(s){r.sent_at ? `, sent ${fmtDate(r.sent_at)}` : ''}</small>}</> },
+              { key: 'about', label: 'About', render: (r) => <>{r.order_no && <span>{r.order_no}</span>}{r.customer_no && <small className="a-muted a-person-sub">{r.customer_no} {r.customer}</small>}{r.ref && !r.order_no && <small className="a-muted a-person-sub">{r.ref}</small>}</> },
+              { key: 'act', label: '', render: (r) => canEdit && r.status === 'failed' && <button type="button" className="a-btn a-btn-sm" disabled={act.busy} onClick={() => retry(r)}>Send again</button> },
+            ]} />
+        )}
       </Loading>
     </>
   );

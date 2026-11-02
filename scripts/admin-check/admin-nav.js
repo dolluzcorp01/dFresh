@@ -1,22 +1,24 @@
-// Admin navigation check for the grouped sidebar, in business-flow order (Dashboard; Products and prices, Sales, Website
-// content, Setup; divider, User Interface). Exit code 1 on any failure.
-// Runs with Commerce switched OFF (the state the live site starts in): the check switches commerce_enabled off and puts
-// it back at the end. The commerce items (Operations, Approvals, Stock, Fulfilment, Reports...) are then not in the
-// sidebar; the groups left are the live site's, in the same order.
-// 1. Expanded (admin, 1366 wide): every admin screen to every other screen (18 x 17 = 306 moves, one Euler circuit so
-//    every ordered pair occurs once), each through its group: a closed group is opened by its header first (groups
-//    are closed again along the way, so this happens often). After each move: the screen's heading, no "could not
-//    load" panel, loading finished, list screens show their own first row (compared with the API), the item is the
-//    only active one, its group is open and marked current, zero console errors. Then Back / Forward.
+// Admin navigation check for the Stage 2 left menu (src/admin/menu.js, docs/STAGE2-MENU-GUIDE.txt) with Commerce
+// switched OFF, the state the live site starts in: the check switches commerce_enabled off and puts it back at the end.
+// The menu then lists only the live site's screens (the entries of menu.js with a non-commerce target: 22 for Admin).
+// Exit code 1 on any failure. (Commerce ON, all 148 entries, the Sales / Warehouse roles: menu-check.js.)
+// 1. Expanded (Admin, 1366 wide): every live entry to every other one (n x (n - 1) moves, one Euler circuit so every
+//    ordered pair occurs once), each through the menu: a closed group or sub-group is opened by its header first
+//    (they are closed again along the way, so this happens often). After each move: the address, the page title (the
+//    menu entry's name, or the screen's own: Settings, Commerce settings), no "could not load" panel, loading
+//    finished, list screens show their own first row (compared with the API), the entry is the only highlighted one,
+//    its group and sub-group are open, zero console errors. Then Back / Forward.
 // 2. Group headers: aria-expanded / aria-controls, Enter and Space toggle them, the state survives a reload.
-// 3. Desktop: no menu toggle in the header; the one pinned under the sidebar list collapses / expands ("Collapse menu"
-//    / "Expand menu", aria-expanded). Collapsed to icons: every screen through its icon (tooltip), survives a reload.
-// 4. 390 wide: the drawer (burger, groups, a link closes it, the backdrop and Esc close it), every screen through it.
-// 5. Roles: Sub-admin and Viewer (the roles the old editor and viewer users get) see exactly the items their role's
-//    permissions open (src/shared/permissions.js + role_permissions), and each of them loads; Admin sees all 18.
-// 6. Leads badge = the API's count of New leads. User Interface -> /en in a new tab, never active.
+// 3. Desktop: the header's menu button collapses the menu to icons ("Collapse menu" / "Expand menu", aria-expanded);
+//    every group icon has its name as a tooltip, a click on one expands the menu with that group open; the collapsed
+//    state survives a reload.
+// 4. 390 wide: the drawer (header menu button, groups, a link closes it, the backdrop and Esc close it, focus back on
+//    the menu button), every live entry through it.
+// 5. Roles: Sub-admin and Viewer (the roles the old editor and viewer users get) see exactly the entries their role's
+//    permissions open (src/shared/permissions.js + role_permissions), and each of them loads.
+// 6. Enquiries badge = the API's count of New leads. The header's User Interface link -> /en in a new tab.
 // 7. Error boundary: one list answered (in the browser only) with a broken row shows "This screen could not load"
-//    inside the page, logs the error, and the sidebar keeps working.
+//    inside the page, logs the error, and the menu keeps working.
 // Three active dAdmin employees who are not admin users yet become temporary admin users (Admin, Sub-admin, Viewer; a
 // session needs an active dAdmin employee) with session cookies signed with JWT_SECRET; they and their audit rows are
 // removed at the end. Read-only otherwise.
@@ -31,6 +33,8 @@ if (process.env.NODE_ENV === 'production') {
   process.exit(1);
 }
 
+const fs = require('fs');
+const path = require('path');
 const puppeteer = require('puppeteer-core');
 const jwt = require('jsonwebtoken');
 const { getDBConnection } = require('../../config/db');
@@ -45,30 +49,29 @@ const COOKIE = process.env.ADMIN_COOKIE_NAME || 'dfresh_admin_token';
 const APP = process.env.ADMIN_APP_KEY || 'dFresh';
 const db = getDBConnection(process.env.DB_NAME || 'dfresh').promise();
 
-// path, heading, group ('' = no group), the section whose "view" opens it (null = every signed-in user), API list to
-// compare the first row with ([endpoint, keys]) or null. Order = the sidebar order (Sidebar.js, Commerce off).
-const SCREENS = [
-  ['', 'Dashboard', '', null, null],
-  ['categories', 'Categories', 'products', 'products', ['/categories', ['category_key']]],
-  ['products', 'Products', 'products', 'products', null],
-  ['kits', 'Business kits', 'products', 'products', ['/kits', ['kit_key']]],
-  ['size-picker', 'Size picker', 'products', 'products', ['/size-picker', ['size_label']]],
-  ['import-export', 'Excel import / export', 'products', 'products', null],
-  ['leads', 'Leads', 'sales', 'leads', null],
-  ['banners', 'Banners', 'content', 'content', ['/banners', ['banner_key']]],
-  ['translations', 'Translations', 'content', 'content', null],
-  ['towns', 'Towns', 'content', 'content', ['/towns', ['town_key']]],
-  ['form-options', 'Form options', 'content', 'content', ['/form-options', ['option_value']]], // the list name is the group heading
-  ['brochures', 'Brochures', 'content', 'content', null],
-  ['settings', 'Settings', 'setup', 'settings', null],
-  ['commerce-settings', 'Commerce settings', 'setup', 'settings', null],
-  ['languages', 'Languages', 'setup', 'content', null],
-  ['users', 'Admin users', 'setup', 'users', null],
-  ['roles', 'Roles', 'setup', 'users', null],
-  ['audit', 'Audit log', 'setup', 'audit', null],
-];
-const href = (path) => `/admin/${path}`;
-const linkSel = (path) => `.a-nav a[href="${href(path)}"]`;
+/** the live entries of src/admin/menu.js (generated, plain data): { id, label, group, sub, href, section } in menu order */
+function liveEntries() {
+  const src = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'admin', 'menu.js'), 'utf8');
+  const body = src.slice(src.indexOf('export const MENU =') + 'export const MENU ='.length).trim().replace(/;\s*$/, '');
+  const menu = new Function(`return (${body});`)(); // eslint-disable-line no-new-func
+  const out = [];
+  const add = (e, g, s) => {
+    const t = e.to && e.to.find((x) => !x.commerce);
+    if (t) out.push({ id: e.id, label: e.label, group: g.key, sub: s ? s.key : null, section: t.section, href: `/admin/${t.path}${t.search ? `?${t.search}` : ''}${t.hash ? `#${t.hash}` : ''}` });
+  };
+  for (const g of menu) {
+    if (g.solo) continue;
+    for (const k of g.kids) (k.kids ? k.kids.forEach((e) => add(e, g, k)) : add(k, g, null));
+  }
+  return out;
+}
+const SCREENS = liveEntries();
+// the page title when it is not the menu entry's name; API list to compare the first row with ([endpoint, keys])
+const TITLE = { '/admin/settings': 'Settings', '/admin/commerce-settings': 'Commerce settings' };
+const FIRST_ROW = { '/admin/categories': ['/categories', ['category_key']], '/admin/kits': ['/kits', ['kit_key']], '/admin/size-picker': ['/size-picker', ['size_label']],
+  '/admin/banners': ['/banners', ['banner_key']], '/admin/towns': ['/towns', ['town_key']], '/admin/form-options': ['/form-options', ['option_value']] };
+const titleOf = (s) => TITLE[s.href.split('#')[0]] || s.label;
+const linkSel = (s) => `#a-nav a[href="${s.href}"]`;
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Euler circuit of the complete directed graph on the screens (Hierholzer): n*(n-1) moves, each ordered pair once.
@@ -97,9 +100,9 @@ async function main() {
   await db.query("UPDATE commerce_settings SET value = '0' WHERE setting_key = 'commerce_enabled'");
   const [permRows] = await db.query('SELECT role_id, section, can_view, can_create, can_edit, can_approve, can_delete FROM role_permissions');
   const permsOf = (role) => permissions.permsFor(ROLE_ID[role], permRows.filter((r) => Number(r.role_id) === ROLE_ID[role]));
-  const opens = (role, s) => !s[3] || permissions.can(permsOf(role), s[3], 'view');
+  const opens = (role, s) => !s.section || permissions.can(permsOf(role), s.section, 'view');
   const token = (emp) => jwt.sign({ sub: emp, app: APP, stage: 'session' }, process.env.JWT_SECRET, { expiresIn: '30m' });
-  const browser = await puppeteer.launch({ executablePath: CHROME, headless: 'new' });
+  const browser = await puppeteer.launch({ executablePath: CHROME, headless: 'new', protocolTimeout: 120000 });
   let failures = 0;
   const fail = (msg) => { failures += 1; console.log(`FAIL ${msg}`); };
   const errors = [];
@@ -113,57 +116,65 @@ async function main() {
     await page.setCookie({ name: COOKIE, value: token(USERS[role]), domain: new URL(WEB).hostname, path: '/api/dfresh/admin', httpOnly: true, sameSite: 'Strict' });
     // the first load may meet an API that has just (re)started (dev: nodemon), so allow it a minute
     await page.goto(`${WEB}/admin`, { waitUntil: 'networkidle0', timeout: 60000 });
-    await page.waitForSelector('.a-nav', { timeout: 30000 });
+    await page.waitForSelector('#a-nav .a-navlist', { timeout: 30000 });
     return page;
   }
 
   const isVisible = (page, sel) => page.$eval(sel, (el) => el.offsetParent !== null).catch(() => false);
-  // Reach a screen through the sidebar: open its group first when it is closed (a real click on the header).
-  async function go(page, path) {
-    const s = SCREENS.find((x) => x[0] === path);
-    if (s[2] && !(await isVisible(page, linkSel(path)))) {
-      const h = `.a-nav .a-grp-h[aria-controls="a-grp-${s[2]}"]`;
+  // Reach a screen through the menu: open its group, then its sub-group, when closed (a real click on the header).
+  async function go(page, s) {
+    for (const [key, cls] of [[s.group, '.a-ng'], [s.sub, '.a-nsg']]) {
+      if (!key || await isVisible(page, linkSel(s))) continue;
+      const id = cls === '.a-ng' ? `a-grp-${key}` : `a-sub-${key.replace(/\W+/g, '-')}`;
+      const h = `#a-nav ${cls}[aria-controls="${id}"]`;
+      if ((await page.$eval(h, (b) => b.getAttribute('aria-expanded')).catch(() => null)) === 'true') continue;
       await page.click(h);
       const opened = await page.$eval(h, (b) => b.getAttribute('aria-expanded')).catch(() => null);
-      if (opened !== 'true') fail(`group ${s[2]} did not open (aria-expanded=${opened})`);
+      if (opened !== 'true') fail(`${key} did not open (aria-expanded=${opened})`);
     }
-    await page.click(linkSel(path));
+    await page.click(linkSel(s));
   }
 
-  const apiCall = (page, path) => page.evaluate(async (url) => {
+  const apiCall = (page, p) => page.evaluate(async (url) => {
     const r = await fetch(url, { credentials: 'include' });
     return (await r.json()).data;
-  }, `${page.url().includes(':3000') ? 'http://localhost:4012' : ''}/api/dfresh/admin${path}`);
+  }, `${page.url().includes(':3000') ? 'http://localhost:4012' : ''}/api/dfresh/admin${p}`);
 
   async function check(page, i, label, firstRow = {}) {
-    const [path, heading, group] = SCREENS[i];
+    const s = SCREENS[i];
+    const want = titleOf(s);
+    // the address first (two entries can share a page and its title, e.g. Settings #cs-s-home-page / #cs-s-company)
+    const norm = (u) => u.replace(/\/(?=$|[?#])/, '');
+    await page.waitForFunction((href) => (window.location.pathname + window.location.search + window.location.hash).replace(/\/(?=$|[?#])/, '') === href,
+      { timeout: 15000 }, norm(s.href)).catch(() => {});
+    await wait(200); // the address changes at once, the menu re-renders a frame later
     const ok = await page.waitForFunction((h) => {
       const h1 = document.querySelector('.a-main h1');
       const loading = [...document.querySelectorAll('.a-main p')].some((p) => p.textContent === 'Loading...');
-      return h1 && h1.textContent === h && !loading;
-    }, { timeout: 30000 }, heading).then(() => true, () => false); // big screens (Translations) on a busy dev machine
-    const state = await page.evaluate((g) => ({
+      return h1 && h1.textContent.trim() === h && !loading;
+    }, { timeout: 30000 }, want).then(() => true, () => false); // big screens (Translations) on a busy dev machine
+    const state = await page.evaluate((grp, sub) => ({
       h1: (document.querySelector('.a-main h1') || {}).textContent || null,
       broken: !!document.querySelector('.a-main .a-crash'),
-      url: window.location.pathname,
+      url: window.location.pathname + window.location.search + window.location.hash,
       first: [...(([...document.querySelectorAll('.a-main table.a-table tbody tr')].find((tr) => tr.querySelector('td')) || { querySelectorAll: () => [] }).querySelectorAll('td'))].map((td) => td.textContent.trim()), // grouped lists start with a header row
-      active: [...document.querySelectorAll('.a-nav a.active')].map((a) => a.getAttribute('href')),
-      current: [...document.querySelectorAll('.a-nav a[aria-current="page"]')].map((a) => a.getAttribute('href')),
-      groupOpen: g ? (document.querySelector(`#a-grp-${g}`) || {}).hidden === false : true,
-      groupCurrent: g ? !!document.querySelector(`.a-grp.current .a-grp-h[aria-controls="a-grp-${g}"]`) || document.querySelector('.a-nav.collapsed') !== null : true,
-      extActive: [...document.querySelectorAll('.a-nav a[target]')].some((a) => a.classList.contains('active') || a.hasAttribute('aria-current')),
-    }), group);
-    if (!ok) fail(`${label}: ${href(path)} did not show "${heading}" (shows "${state.h1}")`);
-    if (state.broken) fail(`${label}: ${href(path)} shows the "could not load" panel`);
-    if (state.url.replace(/\/$/, '') !== `/admin${path ? `/${path}` : ''}`) fail(`${label}: url ${state.url}`);
-    if (JSON.stringify(state.active) !== JSON.stringify([href(path)]) || JSON.stringify(state.current) !== JSON.stringify([href(path)])) {
-      fail(`${label}: active items ${JSON.stringify(state.active)} / aria-current ${JSON.stringify(state.current)}`);
+      on: [...document.querySelectorAll('#a-nav a.on')].map((a) => a.getAttribute('href')),
+      current: [...document.querySelectorAll('#a-nav a[aria-current="page"]')].map((a) => a.getAttribute('href')),
+      groupOpen: (document.querySelector(`#a-nav .a-ng[aria-controls="a-grp-${grp}"]`) || {}).ariaExpanded === 'true' || !!document.querySelector('#a-nav.mini'),
+      groupCurrent: !!document.querySelector(`#a-nav .a-ng.cur[aria-controls="a-grp-${grp}"]`),
+      subOpen: !sub || (document.querySelector(`#a-nav .a-nsg[aria-controls="a-sub-${sub.replace(/\W+/g, '-')}"]`) || {}).ariaExpanded === 'true' || !!document.querySelector('#a-nav.mini'),
+    }), s.group, s.sub);
+    if (!ok) fail(`${label}: ${s.href} did not show "${want}" (shows "${state.h1}")`);
+    if (state.broken) fail(`${label}: ${s.href} shows the "could not load" panel`);
+    if (norm(state.url) !== norm(s.href)) fail(`${label}: url ${state.url}`);
+    if (JSON.stringify(state.on) !== JSON.stringify([s.href]) || JSON.stringify(state.current) !== JSON.stringify([s.href])) {
+      fail(`${label}: highlighted ${JSON.stringify(state.on)} / aria-current ${JSON.stringify(state.current)}`);
     }
-    if (!state.groupOpen) fail(`${label}: group ${group} of the current page is not open`);
-    if (!state.groupCurrent) fail(`${label}: group ${group} is not marked current`);
-    if (state.extActive) fail(`${label}: the User Interface link is marked active`);
-    if (firstRow[path] && !firstRow[path].every((v) => state.first.includes(v))) {
-      fail(`${label}: ${href(path)} first row [${state.first.slice(0, 4).join(' | ')}] is not its own (expected ${firstRow[path].join(' + ')})`);
+    if (!state.groupOpen) fail(`${label}: group ${s.group} of the current page is not open`);
+    if (!state.groupCurrent) fail(`${label}: group ${s.group} is not marked current`);
+    if (!state.subOpen) fail(`${label}: sub-group ${s.sub} of the current page is not open`);
+    if (firstRow[s.href] && !firstRow[s.href].every((v) => state.first.includes(v))) {
+      fail(`${label}: ${s.href} first row [${state.first.slice(0, 4).join(' | ')}] is not its own (expected ${firstRow[s.href].join(' + ')})`);
     }
     if (errors.length) { fail(`${label}: ${errors.join(' || ').slice(0, 300)}`); errors.length = 0; }
   }
@@ -172,56 +183,63 @@ async function main() {
     // ---- 1. admin, expanded -------------------------------------------------------------------
     const page = await newPage('admin');
     const firstRow = {};
-    for (const [path, , , , api] of SCREENS) {
-      if (!api) continue;
-      const rows = await apiCall(page, api[0]);
-      firstRow[path] = rows && rows.length ? api[1].map((k) => String(rows[0][k])) : null;
+    for (const [href, [api, keys]] of Object.entries(FIRST_ROW)) {
+      const rows = await apiCall(page, api);
+      firstRow[href] = rows && rows.length ? keys.map((k) => String(rows[0][k])) : null;
     }
-    const sidebar = await page.evaluate(() => ({
-      screens: [...document.querySelectorAll('.a-nav a')].filter((a) => !a.target).map((a) => a.getAttribute('href')),
-      groups: [...document.querySelectorAll('.a-nav .a-grp-h')].map((b) => b.textContent.trim()),
-      ext: [...document.querySelectorAll('.a-nav a[target]')].map((a) => ({ href: a.getAttribute('href'), target: a.target, rel: a.rel, label: a.getAttribute('aria-label') })),
+    // every group and sub-group open, then read the menu
+    for (;;) {
+      const closed = await page.$$('#a-nav .a-ng[aria-expanded="false"], #a-nav .a-nsg[aria-expanded="false"]');
+      if (!closed.length) break;
+      await closed[0].click();
+      await wait(40);
+    }
+    const menu = await page.evaluate(() => ({
+      pages: [...document.querySelectorAll('#a-nav a.a-np')].map((a) => a.getAttribute('href')),
+      groups: [...document.querySelectorAll('#a-nav .a-ng .a-lbl')].map((b) => b.textContent.trim()),
+      ext: [...document.querySelectorAll('.a-head a[target]')].map((a) => ({ href: a.getAttribute('href'), target: a.target, rel: a.rel, label: a.getAttribute('aria-label') })),
     }));
-    if (JSON.stringify(sidebar.screens) !== JSON.stringify(SCREENS.map(([p]) => href(p)))) fail(`admin sidebar screens ${sidebar.screens.join(' ')}`);
-    if (JSON.stringify(sidebar.groups.map((g) => g.replace(/\d+\s*new$/, '').trim())) !== JSON.stringify(['Products and prices', 'Sales', 'Website content', 'Setup'])) fail(`groups ${sidebar.groups.join(' | ')}`);
-    const ui = sidebar.ext.find((x) => x.href === '/en');
-    if (!ui || ui.target !== '_blank' || ui.rel !== 'noopener noreferrer' || ui.label !== 'User Interface - opens the website in a new tab') fail(`User Interface link: ${JSON.stringify(sidebar.ext)}`);
-    else console.log(`admin sidebar: Dashboard + 4 groups (${SCREENS.length} screens, no commerce items while it is off) + User Interface -> /en (new tab, noopener noreferrer)`);
+    if (JSON.stringify(menu.pages) !== JSON.stringify(SCREENS.map((s) => s.href))) fail(`admin menu pages ${menu.pages.join(' ')}`);
+    if (JSON.stringify(menu.groups) !== JSON.stringify(['Home', 'Sales', 'Masters', 'Website', 'Admin'])) fail(`groups ${menu.groups.join(' | ')}`);
+    const ui = menu.ext.find((x) => x.href === '/en');
+    if (!ui || ui.target !== '_blank' || ui.rel !== 'noopener noreferrer' || ui.label !== 'User Interface - opens the website in a new tab') fail(`User Interface link: ${JSON.stringify(menu.ext)}`);
+    else console.log(`admin menu (Commerce off): ${menu.groups.length} groups (${menu.groups.join(', ')}), ${SCREENS.length} pages, no commerce entry; User Interface -> /en (header, new tab, noopener noreferrer)`);
 
-    // Leads badge = API count of New leads
+    // Enquiries badge = API count of New leads
     const counts = await apiCall(page, '/nav-counts');
-    const badge = await page.$eval(linkSel('leads'), (a) => { const b = a.querySelector('.a-badge'); return b ? Number(b.firstChild.textContent) : 0; });
-    if (badge !== counts.newLeads) fail(`Leads badge ${badge}, API says ${counts.newLeads} new`);
-    else console.log(`leads badge: ${badge} (API: ${counts.newLeads} new leads)`);
+    const leads = SCREENS.find((s) => s.id === 'sales/leads/enquiries');
+    const badge = await page.$eval(linkSel(leads), (a) => { const b = a.querySelector('.a-ncount'); return b ? Number(b.firstChild.textContent) : 0; });
+    if (badge !== counts.newLeads) fail(`Enquiries badge ${badge}, API says ${counts.newLeads} new`);
+    else console.log(`enquiries badge: ${badge} (API: ${counts.newLeads} new leads)`);
 
     const order = circuit(SCREENS.length);
-    await page.click(linkSel(''));
+    await page.click(linkSel(SCREENS[0]));
     await check(page, order[0], 'start', firstRow);
     let reopened = 0;
     for (let m = 1; m < order.length; m += 1) {
       if (m % 5 === 0) {
-        // close every open group except the current page's, so the next moves must open them again
+        // close every open group except the current page's, and every open sub-group, so the next moves must open them again
         const closed = await page.evaluate(() => {
           let n = 0;
-          document.querySelectorAll('.a-grp:not(.current) .a-grp-h[aria-expanded="true"]').forEach((b) => { b.click(); n += 1; });
+          document.querySelectorAll('#a-nav .a-ng:not(.cur)[aria-expanded="true"], #a-nav .a-nsg[aria-expanded="true"]').forEach((b) => { b.click(); n += 1; });
           return n;
         });
         reopened += closed;
+        await wait(60);
       }
-      const to = SCREENS[order[m]][0];
-      await go(page, to);
-      await check(page, order[m], `move ${m} ${SCREENS[order[m - 1]][0] || 'dashboard'} -> ${to || 'dashboard'}`, firstRow);
+      await go(page, SCREENS[order[m]]);
+      await check(page, order[m], `move ${m} ${SCREENS[order[m - 1]].id} -> ${SCREENS[order[m]].id}`, firstRow);
     }
-    console.log(`expanded: ${order.length - 1} moves (every ordered pair once), groups closed ${reopened} times along the way and reopened by their headers`);
+    console.log(`expanded: ${order.length - 1} moves (every ordered pair once), groups / sub-groups closed ${reopened} times along the way and reopened by their headers`);
     const tail = order.slice(-SCREENS.length);
-    for (let k = tail.length - 2; k >= 0; k -= 1) { await page.goBack(); await check(page, tail[k], `back to ${SCREENS[tail[k]][0] || 'dashboard'}`, firstRow); }
-    for (let k = 1; k < tail.length; k += 1) { await page.goForward(); await check(page, tail[k], `forward to ${SCREENS[tail[k]][0] || 'dashboard'}`, firstRow); }
+    for (let k = tail.length - 2; k >= 0; k -= 1) { await page.goBack(); await check(page, tail[k], `back to ${SCREENS[tail[k]].id}`, firstRow); }
+    for (let k = 1; k < tail.length; k += 1) { await page.goForward(); await check(page, tail[k], `forward to ${SCREENS[tail[k]].id}`, firstRow); }
     console.log(`back / forward: ${tail.length - 1} + ${tail.length - 1}`);
 
     // ---- 2. group headers: keyboard + remembered -----------------------------------------------
-    await page.click(linkSel(''));
+    await go(page, SCREENS[0]);
     await check(page, 0, 'dashboard for the keyboard check');
-    const hdr = '.a-nav .a-grp-h[aria-controls="a-grp-content"]';
+    const hdr = '#a-nav .a-ng[aria-controls="a-grp-website"]';
     const exp = () => page.$eval(hdr, (b) => b.getAttribute('aria-expanded'));
     const start = await exp();
     await page.focus(hdr);
@@ -237,70 +255,75 @@ async function main() {
     if ((await exp()) !== before) fail(`group state not remembered after reload (${before} -> ${await exp()})`);
     else console.log(`group header: Enter / Space toggle aria-expanded (${start} -> ${afterEnter} -> ${afterSpace}), state remembered after reload`);
 
-    // ---- 3. collapsed to icons (desktop: no header toggle; the pinned one collapses and expands, labelled) -------
-    const toggles = () => page.evaluate(() => {
-      const b = document.querySelector('.a-nav .a-collapse');
-      return { header: !!document.querySelector('.a-top .a-burger'), pinned: `${b.getAttribute('aria-label')}|${b.getAttribute('aria-expanded')}` };
-    });
-    const t0 = await toggles();
-    await page.click('.a-nav .a-collapse');
-    await page.waitForSelector('.a-nav.collapsed');
-    const t1 = await toggles();
-    if (t0.header || t1.header) fail('desktop: the header has a menu toggle (it belongs under 900px only)');
-    if (t0.pinned !== 'Collapse menu|true' || t1.pinned !== 'Expand menu|false') fail(`pinned toggle: ${t0.pinned} -> ${t1.pinned}`);
-    else console.log(`pinned toggle: "${t0.pinned}" -> click -> "${t1.pinned}"; no header toggle on desktop`);
-    const tips = await page.$$eval('.a-nav.collapsed a', (as) => as.map((a) => [a.getAttribute('href'), a.title, a.offsetParent !== null]));
-    const noTip = tips.filter(([, t, v]) => !t || !v);
-    if (noTip.length) fail(`collapsed: items without tooltip or hidden: ${JSON.stringify(noTip)}`);
-    for (let i = 1; i < SCREENS.length; i += 1) {
-      await page.click(linkSel(SCREENS[i][0]));
-      await check(page, i, `collapsed -> ${SCREENS[i][0]}`, firstRow);
-    }
+    // ---- 3. collapsed to icons (the header's menu button) ---------------------------------------
+    const toggle = '.a-head button[aria-controls="a-nav"]';
+    const state = () => page.$eval(toggle, (b) => `${b.getAttribute('aria-label')}|${b.getAttribute('aria-expanded')}`);
+    const t0 = await state();
+    await page.click(toggle);
+    await page.waitForSelector('#a-nav.mini');
+    const t1 = await state();
+    if (t0 !== 'Collapse menu|true' || t1 !== 'Expand menu|false') fail(`menu button: ${t0} -> ${t1}`);
+    else console.log(`menu button: "${t0}" -> click -> "${t1}"`);
+    const tips = await page.$$eval('#a-nav.mini .a-ng', (bs) => bs.map((b) => [b.title, b.offsetParent !== null]));
+    const noTip = tips.filter(([t, v]) => !t || !v);
+    if (noTip.length) fail(`collapsed: group icons without tooltip or hidden: ${JSON.stringify(noTip)}`);
     await page.reload({ waitUntil: 'networkidle0' });
-    const stillCollapsed = await page.$('.a-nav.collapsed').then(Boolean);
-    if (!stillCollapsed) fail('collapsed state not remembered after reload');
-    await page.click('.a-nav .a-collapse'); // the pinned toggle expands again
-    await page.waitForFunction(() => !document.querySelector('.a-nav.collapsed'));
-    console.log(`collapsed: ${tips.length} icons with tooltips, ${SCREENS.length - 1} screens reached, remembered after reload, expanded again`);
+    if (!(await page.$('#a-nav.mini'))) fail('collapsed state not remembered after reload');
+    // a click on a group icon expands the menu with that group open; then its pages are reached as usual
+    const target = SCREENS.find((s) => s.group === 'website' && !s.sub);
+    await page.evaluate(() => { const b = document.querySelector('#a-nav .a-ng[aria-controls="a-grp-website"]'); if (b.getAttribute('aria-expanded') === 'true') b.click(); });
+    await page.click('#a-nav.mini .a-ng[title="Website"]');
+    await page.waitForFunction(() => !document.querySelector('#a-nav.mini'));
+    const websiteOpen = await page.$eval('#a-nav .a-ng[aria-controls="a-grp-website"]', (b) => b.getAttribute('aria-expanded'));
+    if (websiteOpen !== 'true') fail('collapsed: a click on the Website icon did not open the Website group');
+    await go(page, target);
+    await check(page, SCREENS.indexOf(target), `from the icons -> ${target.id}`, firstRow);
+    console.log(`collapsed: ${tips.length} group icons with tooltips, remembered after reload; a click on the Website icon expanded the menu with Website open and reached ${target.label}`);
 
     // ---- 4. 390 wide: the drawer ------------------------------------------------------------------
     const phone = await newPage('admin', 390, 844);
     const drawerOpen = () => phone.$eval('#a-nav', (n) => n.classList.contains('open') && getComputedStyle(n).visibility === 'visible');
     for (let i = 1; i < SCREENS.length; i += 1) {
-      await phone.click('.a-burger');
+      await phone.click(toggle);
       await phone.waitForFunction(() => document.querySelector('#a-nav').classList.contains('open'));
       await wait(260);
-      await go(phone, SCREENS[i][0]);
-      await check(phone, i, `drawer -> ${SCREENS[i][0]}`, firstRow);
+      await go(phone, SCREENS[i]);
+      await check(phone, i, `drawer -> ${SCREENS[i].id}`, firstRow);
       await wait(260);
-      if (await drawerOpen()) fail(`drawer -> ${SCREENS[i][0]}: still open after the link`);
+      if (await drawerOpen()) fail(`drawer -> ${SCREENS[i].id}: still open after the link`);
     }
-    await phone.click('.a-burger');
+    await phone.click(toggle);
     await wait(260);
     await phone.click('.a-nav-backdrop', { offset: { x: 370, y: 400 } }).catch(() => phone.mouse.click(375, 400));
     await wait(260);
     const afterBackdrop = await drawerOpen();
-    await phone.click('.a-burger');
+    await phone.click(toggle);
     await wait(260);
     await phone.keyboard.press('Escape');
     await wait(260);
     const afterEsc = await drawerOpen();
-    const focusBurger = await phone.evaluate(() => document.activeElement && document.activeElement.classList.contains('a-burger'));
-    if (afterBackdrop || afterEsc || !focusBurger) fail(`drawer close: backdrop ${!afterBackdrop}, Esc ${!afterEsc}, focus back on Menu ${focusBurger}`);
-    else console.log(`390 drawer: ${SCREENS.length - 1} screens through the groups, closes on a link, the backdrop and Esc (focus back on Menu)`);
+    const focusBack = await phone.evaluate(() => document.activeElement && document.activeElement.getAttribute('aria-controls') === 'a-nav');
+    if (afterBackdrop || afterEsc || !focusBack) fail(`drawer close: backdrop ${!afterBackdrop}, Esc ${!afterEsc}, focus back on the menu button ${focusBack}`);
+    else console.log(`390 drawer: ${SCREENS.length - 1} pages through the groups, closes on a link, the backdrop and Esc (focus back on the menu button)`);
     if (errors.length) { fail(`drawer: ${errors.join(' || ').slice(0, 300)}`); errors.length = 0; }
 
     // ---- 5. roles ------------------------------------------------------------------------------------
     for (const role of ['viewer', 'subadmin']) {
       const p = await newPage(role);
-      const shown = await p.$$eval('.a-nav a', (as) => as.filter((a) => !a.target).map((a) => a.getAttribute('href')));
-      const want = SCREENS.filter((s) => opens(role, s)).map(([path]) => href(path));
-      const setup = await p.$$eval('#a-grp-setup a', (as) => as.map((a) => a.textContent.trim()));
-      if (JSON.stringify(shown) !== JSON.stringify(want)) fail(`${role}: sidebar ${shown.join(' ')} (expected ${want.join(' ')})`);
-      else console.log(`${role}: ${shown.length} items, Setup = ${setup.join(', ')}`);
-      for (const path of want.map((h) => h.replace('/admin/', ''))) {
-        await go(p, path);
-        await check(p, SCREENS.findIndex((s) => s[0] === path), `${role} -> ${path || 'dashboard'}`);
+      for (;;) {
+        const closed = await p.$$('#a-nav .a-ng[aria-expanded="false"], #a-nav .a-nsg[aria-expanded="false"]');
+        if (!closed.length) break;
+        await closed[0].click();
+        await wait(40);
+      }
+      const shown = await p.$$eval('#a-nav a.a-np', (as) => as.map((a) => a.getAttribute('href')));
+      const want = SCREENS.filter((s) => opens(role, s));
+      const admin = await p.$$eval('#a-nav .a-ng[aria-controls="a-grp-admin"] + .a-kids a', (as) => as.map((a) => a.textContent.trim()));
+      if (JSON.stringify(shown) !== JSON.stringify(want.map((s) => s.href))) fail(`${role}: menu ${shown.join(' ')} (expected ${want.map((s) => s.href).join(' ')})`);
+      else console.log(`${role}: ${shown.length} pages, Admin group = ${admin.join(', ') || '(none)'}`);
+      for (const s of want) {
+        await go(p, s);
+        await check(p, SCREENS.indexOf(s), `${role} -> ${s.id}`);
       }
       await p.browserContext().close();
     }
@@ -314,15 +337,16 @@ async function main() {
       });
       else r.continue();
     });
-    await go(page, 'kits');
+    await go(page, SCREENS.find((s) => s.id === 'masters/catalogue/kits'));
     const panel = await page.waitForSelector('.a-main .a-crash', { timeout: 10000 }).then(() => true, () => false);
     const logged = errors.some((e) => /screen could not load/.test(e));
     errors.length = 0;
-    await go(page, 'towns');
-    await check(page, SCREENS.findIndex((x) => x[0] === 'towns'), 'after a crashed screen, sidebar to towns', firstRow);
+    const towns = SCREENS.find((s) => s.href === '/admin/towns');
+    await go(page, towns);
+    await check(page, SCREENS.indexOf(towns), 'after a crashed screen, menu to Where we deliver map', firstRow);
     if (!panel) fail('boundary: a crashing screen did not show the "could not load" panel');
     if (!logged) fail('boundary: the error was not logged to the console');
-    else console.log('boundary: crashing screen showed the panel, error logged, sidebar still works');
+    else console.log('boundary: crashing screen showed the panel, error logged, the menu still works');
 
     console.log(`${failures ? 'FAILED' : 'PASS'}: ${failures} failure(s)`);
   } finally {

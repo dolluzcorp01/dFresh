@@ -1,14 +1,18 @@
-// Admin console (lazy chunk, staff only, noindex; spec F). Plain staff layout, not the public design.
+// Admin console (lazy chunk, staff only, noindex; spec F): the v23 back office look (docs/reference/dFresh_Back_Office_v23.html),
+// not the public design. Header: menu button, godown picker, website link, approvals count, alerts bell, who is signed in
+// (sign out in their menu); the left menu (Sidebar.js, 148 entries from docs/STAGE2-MENU-GUIDE.txt); the page.
 // /admin/me decides: signed in -> sidebar + screens; 401 -> two-step sign-in. Screens hide write buttons for
 // lower roles, but the API is what enforces roles.
 import { useCallback, useEffect, useRef, useState } from 'react';
 // Only router exports the public site already uses (Link, useLocation...), so this chunk adds 0 KB to main.js.
 import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import Sidebar, { MenuToggle, saveCollapsed, savedCollapsed, useNarrow } from './Sidebar';
+import Placeholder from './Placeholder';
+import HeaderBar from './HeaderBar';
 import useLeadPulse from './useLeadPulse';
 import { api } from './adminApi';
 import { mediaUrl } from '../utils/api';
-import { AdminContext, ConfirmProvider, Need, Notice, UploadGuard } from './ui';
+import { AdminContext, ConfirmProvider, Need, Notice, ToastProvider, UploadGuard } from './ui';
 import { can } from '../shared/permissions';
 import Roles from './Roles';
 import Approvals from './Approvals';
@@ -41,8 +45,6 @@ import AuditLog from './AuditLog';
 import css from './adminStyles';
 import ScreenBoundary from './ScreenBoundary';
 
-const LOGO_ON_DARK = '/media/logo/dfresh-logo-on-dark.webp';
-
 // The site's favicon links (index.html), added if a page ever lacks them.
 function ensureFavicon() {
   if (document.querySelector('link[rel~="icon"]')) return null;
@@ -74,7 +76,7 @@ export default function AdminApp() {
     meta.name = 'robots';
     meta.content = 'noindex, nofollow';
     document.head.appendChild(meta);
-    document.title = 'dFresh admin';
+    document.title = 'dFresh Back Office';
     // Fonts: Saira and Open Sans (the admin is English only) are self-hosted in the main CSS (styles/fonts.css).
     const icon = ensureFavicon();
     const style = document.createElement('style');
@@ -130,23 +132,15 @@ export default function AdminApp() {
     <AdminContext.Provider value={ctx}>
       <div className={`adm a-shell${collapsed ? ' collapsed' : ''}`}>
         <ConfirmProvider>
+        <ToastProvider>
         <UploadGuard />
-        <header className="a-top">
-          {/* Under 900px only: the button left of the logo opens / closes the drawer. On desktop the sidebar's pinned
-              toggle collapses / expands it. */}
-          {narrow && (
-            <MenuToggle className="a-burger" buttonRef={burgerRef} narrow={narrow} collapsed={collapsed} drawerOpen={menuOpen}
-              onToggleCollapsed={toggleCollapsed} onOpenDrawer={() => setMenuOpen(true)} onCloseDrawer={() => setMenuOpen(false)} />
-          )}
-          <Link to="/admin" className="a-brand" aria-label="dFresh admin - dashboard">
-            <img src={mediaUrl(LOGO_ON_DARK)} alt="" width="900" height="498" />
-            <span className="a-brand-tag" aria-hidden="true">Admin</span>
-          </Link>
-          <span className="a-who">{me.name} <code>{me.emp_id}</code> · {me.role_name}</span>
-          <button type="button" className="a-btn a-btn-ghost" onClick={logout}>Sign out</button>
-        </header>
         <Sidebar me={me} drawerOpen={menuOpen} onCloseDrawer={closeDrawer} collapsed={collapsed}
           onToggleCollapsed={toggleCollapsed} newLeads={newLeads} approvals={approvalCount} />
+        <div className="a-mainwrap">
+        <HeaderBar me={me} newLeads={newLeads} approvals={approvalCount} onLogout={logout}>
+          <MenuToggle className="a-iconbtn" buttonRef={burgerRef} narrow={narrow} collapsed={collapsed} drawerOpen={menuOpen}
+            onToggleCollapsed={toggleCollapsed} onOpenDrawer={() => setMenuOpen(true)} onCloseDrawer={() => setMenuOpen(false)} />
+        </HeaderBar>
         <main className="a-main">
           <ScreenBoundary key={pathname}>
           <Routes>
@@ -183,16 +177,19 @@ export default function AdminApp() {
             <Route path="roles" element={<Need section="users"><Roles /></Need>} />
             <Route path="approvals" element={<Approvals onChanged={refreshCounts} />} />
             <Route path="audit" element={<Need section="audit"><AuditLog /></Need>} />
+            <Route path="p/*" element={<Placeholder />} />
             <Route path="*" element={<Navigate to="/admin" replace />} />
           </Routes>
           </ScreenBoundary>
         </main>
+        </div>
         {pulse.toast && (
           <div className="a-toast" role="status" aria-live="polite">
             <Link to="/admin/leads" onClick={pulse.dismissToast}>{pulse.toast}</Link>
             <button type="button" className="a-x" onClick={pulse.dismissToast} aria-label="Dismiss">×</button>
           </div>
         )}
+        </ToastProvider>
         </ConfirmProvider>
       </div>
     </AdminContext.Provider>

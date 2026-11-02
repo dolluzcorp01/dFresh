@@ -1,0 +1,316 @@
+dFresh Back Office - test from scratch, page by page
+The order to set up and run dFresh from day one. Each step needs the steps before it.
+Page = where to go in the left menu.  Do = what to enter.  Check = what should happen.
+
+Before you start
+  - Use dFresh_Back_Office_Empty.html: it opens with no business data. Staff, roles, approval
+    rules, switches, numbering, the company profile and the godowns are already there.
+  - The eraser button in the header (Clear data) empties everything again at any time, so you
+    can test, clear and test again. Numbers start again from 1.
+  - The Tests page "Start again" button loads the sample data instead (for the written tests).
+  - Log in as Shoban B (Super admin) unless a step says otherwise. Switch person with the
+    "who" box at the top.
+  - Things that need approval: approve them as a second person (Pavithran V V or Anitha R)
+    in Home > Approvals before going on.
+
+
+PHASE 1 - THE COMPANY (Admin)
+------------------------------------------------------------------------------------------
+ 1. Admin > Organisation > Company
+      Do    : company name, GSTIN, PAN, address, bank account, UPI ID.
+      Check : bank account and UPI wait for a second Admin. Approve as Pavithran.
+
+ 2. Admin > Organisation > Godowns
+      Do    : add your godown(s) and the person in charge of each.
+      Check : each godown has its own code (used in document numbers).
+
+ 3. Admin > Organisation > Numbering
+      Do    : check the prefixes for invoice, order, PO, return, etc.
+      Check : the sample number shown looks right.
+
+ 4. Admin > Users and security > Roles
+      Do    : look at each role (Sales, Warehouse, Supervisor...) and what it can do.
+      Check : giving a role wider rights waits for a second Admin.
+
+ 5. Admin > Users and security > Staff
+      Do    : add staff, give each a role, godowns and an approval limit.
+      Check : anyone who can sign waits for a second Admin before they are active.
+
+ 6. Admin > Users and security > Stand-ins
+      Do    : set who approves when a supervisor is on leave.
+      Check : a stand-in must already approve the same things at the same limit.
+
+ 7. Admin > Users and security > Approval rules
+      Do    : check each rule and its limit (discount, PO, write-off, expense...).
+      Check : loosening a rule waits for a second Admin; bank rules cannot be switched off.
+
+ 8. Admin > Settings > Switches
+      Do    : turn on the features you will test (QC hold, wallet, split shipments, e-way bill).
+      Check : switching off a control waits for a second Admin.
+
+ 9. Admin > Communications > Notifications and Message templates
+      Do    : check which events send messages and their wording.
+      Check : nothing is really sent; messages go to the Outbox only.
+
+
+PHASE 2 - THE BASE LISTS (Masters)
+------------------------------------------------------------------------------------------
+10. Masters > Tax and units > Units of measure
+      Do    : pack, carton, kg, roll and how they convert.
+
+11. Masters > Tax and units > HSN and GST rates
+      Do    : HSN code and GST % for your product groups.
+      Check : a rate change from a date needs approval.
+
+12. Masters > Catalogue > Categories
+      Do    : Napkins, Rolls, Tissues... in the order you want.
+
+13. Masters > Catalogue > Raw materials
+      Do    : paper reels, cores, film, cartons.
+
+14. Masters > Catalogue > Products and SKUs
+      Do    : a new product, its pack sizes (SKUs), HSN, MRP, standard cost, reorder level.
+      Check : the product stays Draft until made Active; draft packs cannot be sold.
+
+15. Masters > Catalogue > Barcodes and labels
+      Do    : link barcodes to the packs and cartons; print a label.
+
+16. Masters > Catalogue > Kits (only if you sell kits)
+      Do    : packs sold together as one.
+
+17. Sales > Customers > Customer types
+      Do    : shop, hotel, distributor... and their payment days.
+
+18. Masters > Prices > Price lists
+      Do    : price of each pack per list; the lowest allowed price.
+      Check : a price below cost plus margin waits for approval.
+
+19. Masters > Prices > Quantity slabs
+      Do    : lower price for bigger quantity.
+
+20. Masters > Partners > Suppliers
+      Do    : a new supplier with GSTIN, MSME, bank account.
+      Check : the bank account waits for approval; no payment until it is approved.
+
+21. Masters > Partners > Vehicles and drivers, and Couriers
+      Do    : your vehicle, driver, insurance and fitness dates; a courier.
+
+22. Masters > Tax and units > Delivery areas
+      Do    : towns and PIN codes you deliver to, days and charges.
+
+
+PHASE 3 - BUY AND RECEIVE (Purchase)
+------------------------------------------------------------------------------------------
+23. Purchase > Indents
+      Do    : a staff request for raw material; turn it into a PO.
+
+24. Purchase > Purchase orders
+      Do    : PO to your supplier with price and expected date.
+      Check : above the limit it waits for approval (orders to one supplier count together).
+
+25. Purchase > Goods in
+      Do    : record what arrived against the PO.
+      Check : the goods go to QC hold, not to stock yet.
+
+26. Purchase > Quality check
+      Do    : accept the good ones, reject a few.
+      Check : accepted goods go into stock; average cost is set; rejects become a claim.
+
+27. Purchase > Supplier bills
+      Do    : enter the supplier's bill for the goods in.
+      Check : a price different from the PO waits for approval.
+
+28. Purchase > Claims and purchase returns
+      Do    : send the rejected goods back; record the supplier's credit note.
+
+29. Money > Payments > Supplier payments
+      Do    : pay the bill.
+      Check : only to the approved bank account; big payments need a second person.
+
+
+PHASE 4 - MAKE (Production) - skip if you only trade
+------------------------------------------------------------------------------------------
+30. Production > Production runs > Machines tab
+      Do    : add a machine at your godown and tick the categories it makes.
+      Check : a run can only be planned on a machine that makes that category.
+
+    Production > Recipes
+      Do    : raw material per pack and wastage % allowed.
+
+31. Production > Production runs
+      Do    : plan a run, start it (material is issued), finish it.
+      Check : packs go to QC hold.
+
+32. Purchase > Quality check (production runs)
+      Do    : pass most packs, reject some.
+      Check : passed packs go to stock at the made cost; rejects above the wastage %
+              need approval.
+
+33. Production > Wastage
+      Check : wastage above the recipe is listed with its reason.
+
+
+PHASE 5 - STOCK (Inventory)
+------------------------------------------------------------------------------------------
+34. Inventory > Stock status
+      Check : your new pack shows total, held and free at your godown.
+
+35. Inventory > Batches and expiry
+      Check : each batch with its date; expired ones are blocked.
+
+36. Inventory > Transfers (if you have two godowns)
+      Do    : send stock to the other godown; receive it there (try a short one).
+      Check : a short goes to the Disputed shelf until Found or Lost is approved.
+
+37. Inventory > Reorder
+      Check : items below reorder level are listed.
+
+
+PHASE 6 - SELL (Sales)
+------------------------------------------------------------------------------------------
+38. Sales > Leads > Enquiries
+      Do    : take an enquiry (from the website form or add one).
+
+39. Sales > Leads > Follow-ups
+      Do    : set a call-back date and a note.
+
+40. Sales > Customers > Customer list
+      Do    : turn the enquiry into a customer: type, godown, salesperson, address.
+
+41. Sales > Customers > Credit limits
+      Do    : give the customer a credit limit (or leave as cash).
+
+42. Masters > Prices > Special prices (optional)
+      Do    : one agreed price for this customer.
+      Check : below the allowed limit it waits for approval.
+
+43. Marketing > Offers, Coupons, Cashback rules (optional)
+      Do    : an offer or a cashback rule.
+      Check : a cashback rule goes live only after approval.
+
+44. Sales > Orders > Quotes
+      Do    : a quote for the customer; send it; turn it into an order.
+
+45. Sales > Orders > Orders
+      Do    : confirm the order.
+      Check : the stock is held for this customer; big discounts wait for approval.
+
+46. Sales > Orders > Back-orders (if stock was short)
+      Check : the short items are owed and held as soon as stock arrives.
+
+47. Sales > Orders > Standing orders (optional)
+      Do    : a repeat order every week.
+
+
+PHASE 7 - PACK AND DELIVER (Fulfilment)
+------------------------------------------------------------------------------------------
+48. Fulfilment > Packing > To pick
+      Do    : print or follow the pick list.
+
+49. Fulfilment > Packing > Packing
+      Do    : scan the packs into boxes; press Packed.
+      Check : stock goes down; an expired or wrong batch is refused.
+
+50. Money > Billing > Invoices
+      Do    : make the invoice for the packed order (before the goods leave).
+      Check : above the limit it asks for the e-way bill number.
+
+51. GST > E-way bill / E-invoice
+      Do    : add the e-way bill number (and the IRN if e-invoice is on).
+
+52. Fulfilment > Packing > Packed, waiting
+      Check : the order is ready to load.
+
+53. Fulfilment > Delivery > Trips (or Courier and pickup)
+      Do    : load the order on a trip with a vehicle and driver; send the trip.
+
+54. Fulfilment > Delivery > Proof of delivery
+      Do    : record the delivery with a signature or photo.
+
+55. Fulfilment > Delivery > Failed / short / refused (try one)
+      Check : packs not kept come back to stock and a credit note is made.
+
+56. Fulfilment > Delivery > Cash on delivery
+      Do    : record the cash the driver hands in; close the trip.
+
+
+PHASE 8 - GET PAID (Money)
+------------------------------------------------------------------------------------------
+57. Money > Payments > Receipts
+      Do    : record the customer's payment (UPI, bank, cheque or cash).
+      Check : the invoice shows paid; the customer ledger is up to date.
+
+58. Sales > Customers > Customer ledger
+      Check : invoice, payment and balance are all there.
+
+59. Money > Billing > Debit notes (optional)
+      Do    : an extra charge on an invoice.
+
+60. Money > Payments > Refunds (optional)
+      Do    : pay money back to a customer.
+      Check : needs approval.
+
+
+PHASE 9 - RETURNS
+------------------------------------------------------------------------------------------
+61. Sales > Returns > Return requests
+      Do    : the customer sends some packs back.
+      Check : outside the return window it needs approval.
+
+62. Sales > Returns > Inspection
+      Do    : decide each pack: back to stock, repack or scrap.
+
+63. Money > Billing > Credit notes
+      Check : the credit note is made from the return; the customer ledger goes down.
+
+64. Marketing > Customer wallets (if wallet is on)
+      Check : cashback earned on the invoice; part taken back after the return.
+
+
+PHASE 10 - EXPENSES
+------------------------------------------------------------------------------------------
+65. Money > Expenses > Petty cash
+      Do    : top up the godown cash box.
+
+66. Money > Expenses > Expenses
+      Do    : rent, fuel or a small spend; try a new payee.
+      Check : a new payee is approved once; big amounts need approval.
+
+
+PHASE 11 - CHECK AND CLOSE THE MONTH
+------------------------------------------------------------------------------------------
+67. Inventory > Stock take
+      Do    : count a shelf; enter a difference.
+      Check : the difference is posted only after approval.
+
+68. Inventory > Write-offs
+      Do    : write off a damaged pack.
+      Check : needs approval; stock and value go down.
+
+69. Inventory > Stock ledger
+      Check : every movement of your pack from goods in to delivery is there.
+
+70. Home > Dashboard and Home > Alerts
+      Check : today's sales, stock, money owed and alerts match what you did.
+
+71. Reports > Sales and purchases, Stock, Money owed, GST and delivery
+      Check : the numbers agree with the pages you used.
+
+72. GST > GSTR-1 / GSTR-3B data
+      Check : the month's sales, credit notes and tax by rate.
+
+73. Money > Accounting export > Export to accountant
+      Do    : export a FINISHED month to the CA (the running month is refused;
+              a Super admin test tool can treat October as ended).
+      Check : the month is locked; nothing dated in it can change without approval.
+
+74. Money > Accounting export > Export history
+      Check : what was sent, when and by whom.
+
+75. Admin > Users and security > Audit log, and Admin > Communications > Outbox
+      Check : every change you made is logged; every message is in the Outbox.
+
+
+Not in this order (not built yet or later)
+  My tasks, Job work, Cheque register, Other GST returns, Financial year lock,
+  Print templates, Devices, Online store, and the Website pages (section 18).

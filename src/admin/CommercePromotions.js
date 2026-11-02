@@ -1,5 +1,5 @@
-// Products and prices > Promotions (docs/COMMERCE-SPEC.md 3; API /commerce/promotions, logic in src/backend_routes/promotions.js).
-// Tabs, in this order: Offers, Coupons, Cashback, Wallets (the page opens on Coupons).
+// Marketing > Offers / Coupons / Cashback rules / Customer wallets (docs/COMMERCE-SPEC.md 3; API /commerce/promotions, logic in src/backend_routes/promotions.js).
+// Tabs (?tab=, one per menu entry), in this order: Offers, Coupons, Cashback, Wallets (no ?tab= opens on Coupons).
 // - Coupons: percent (with a cap) / fixed / free delivery; minimum order; valid from / to; uses in all and per customer;
 //   customer types or named customers; SKUs or categories included / excluded; on / off; the usage list per coupon.
 // - Offers (no code, applied in New order and shown on the line): quantity slab (from N packs or cartons, n % off) and
@@ -9,8 +9,9 @@
 // - Wallets: a customer's statement and the manual credit / debit (WalletPanel).
 // View = everything; create = new coupon / offer / rule and manual wallet changes; edit = change and switch on / off.
 import { useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from './adminApi';
-import { Drawer, InfoCard, Loading, Notice, fmtDate, useAction, useCan, useLoad } from './ui';
+import { Drawer, InfoCard, Loading, Notice, PageHead, Tabs, fmtDate, useAction, useCan, useLoad } from './ui';
 import { rs } from './printKit';
 import WalletPanel from './WalletPanel';
 
@@ -35,11 +36,15 @@ function Picker({ label, options, values, onChange }) {
 
 export default function CommercePromotions() {
   const data = useLoad('/commerce/promotions');
-  const [tab, setTab] = useState('coupons');
+  const location = useLocation();
+  const navigate = useNavigate();
+  const t = new URLSearchParams(location.search).get('tab');
+  const tab = TABS.some(([k]) => k === t) ? t : 'coupons';
+  const setTab = (k) => navigate(`/admin/commerce/promotions?tab=${k}`);
   const d = data.data;
   return (
     <section>
-      <h1>Promotions</h1>
+      <PageHead sub="Offers, coupons, cashback and the customer wallets they fill." />
       <InfoCard title="Coupons, offers, cashback and wallets">
         <ul>
           <li>One coupon per order, typed in New order. Offers apply by themselves and show on the order line; {d && d.settings.offers_with_coupon ? 'they combine with a coupon' : 'an order with an offer takes no coupon'} (Commerce settings &gt; Promotions).</li>
@@ -47,9 +52,7 @@ export default function CommercePromotions() {
           <li>Cashback goes to the wallet {d && d.settings.cashback_credit_at === 'delivery' ? 'on delivery' : `once the return window (${d ? d.settings.return_window_days : ''} days) has passed`}; a later refund takes it back. Wallet use: at most {d ? d.settings.wallet_max_use_pct : ''}% of an order.</li>
         </ul>
       </InfoCard>
-      <div className="a-chips a-tabs" role="tablist" aria-label="Promotions">
-        {TABS.map(([k, l]) => <button key={k} type="button" role="tab" aria-selected={tab === k} className={`a-chip${tab === k ? ' on' : ''}`} onClick={() => setTab(k)}>{l}</button>)}
-      </div>
+      <Tabs tabs={TABS.map(([key, label]) => ({ key, label }))} value={tab} onChange={setTab} label="Promotions" />
       <Loading state={data}>
         {d && tab === 'coupons' && <Coupons d={d} reload={data.reload} />}
         {d && tab === 'offers' && <Offers d={d} reload={data.reload} />}

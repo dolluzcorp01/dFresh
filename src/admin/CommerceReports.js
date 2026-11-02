@@ -3,10 +3,13 @@
 // the invoices, credit notes and stock), a chart where useful (ReportChart.js), every table with its totals, Excel
 // (the GST one in the GST offline tool's sheets and column order) and Print / PDF. A report shows only for a role with
 // view on its own section (listed on the report); costs and margins need Reports and Products and prices.
-// Reports: Sales, GST (GSTR-1), Margin, Stock, Receivables, Delivery, Returns, Promotions and wallet, Accounting export.
-import { useEffect, useRef, useState } from 'react';
+// Reports: Sales, Margin, GST (GSTR-1), Receivables, Stock, Delivery, Returns, Promotions and wallet, Accounting export.
+// The report is in the address (?tab=<key>; the menu's Reports, GST and Money entries open their report), else the
+// first one the role may see. The period and filters stay while switching reports.
+import { useRef, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from './adminApi';
-import { InfoCard, Loading, Notice, useAction, useLoad } from './ui';
+import { InfoCard, Loading, Notice, PageHead, Tabs, useAction, useLoad } from './ui';
 import { esc, printPage, rs } from './printKit';
 import ReportChart from './ReportChart';
 
@@ -32,15 +35,18 @@ export default function CommerceReports() {
   const meta = useLoad('/commerce/reports');
   const m = meta.data;
   const allowed = m ? m.reports.filter((r) => r.allowed) : [];
-  const [key, setKey] = useState(null);
-  useEffect(() => { if (m && !key && allowed.length) setKey(allowed[0].key); }, [m]); // eslint-disable-line react-hooks/exhaustive-deps
+  const location = useLocation();
+  const navigate = useNavigate();
+  const urlTab = new URLSearchParams(location.search).get('tab');
+  const key = allowed.some((r) => r.key === urlTab) ? urlTab : allowed.length ? allowed[0].key : null;
+  const setKey = (k) => navigate(`/admin/commerce/reports?tab=${k}`);
   const [p, setP] = useState({ from: `${ist().slice(0, 8)}01`, to: ist() });
   const [f, setF] = useState({ group: 'day', type: '', owner: '', by: 'sku', view: 'movement', days: '' });
   const set = (patch) => setF((x) => ({ ...x, ...patch }));
   const rep = m && allowed.find((r) => r.key === key);
   return (
     <section>
-      <h1>Reports</h1>
+      <PageHead title="Reports" sub="Sales, margin, GST, money owed, stock, delivery, returns and promotions for any period; Excel and Print." />
       <InfoCard title="Reports">
         <ul>
           <li>Choose the report and the period; Excel and Print / PDF give exactly what is on screen. Each report shows only for a role with view on its section; costs and margins need Reports and Products and prices.</li>
@@ -50,9 +56,7 @@ export default function CommerceReports() {
       <Loading state={meta}>
         {m && (!allowed.length ? <Notice kind="info">No report for your role: each report needs view on its section ({m.reports.map((r) => `${r.label}: ${r.section}`).join('; ')}).</Notice> : (
           <>
-            <div className="a-chips a-tabs" role="tablist" aria-label="Reports">
-              {allowed.map((r) => <button key={r.key} type="button" role="tab" aria-selected={key === r.key} className={`a-chip${key === r.key ? ' on' : ''}`} onClick={() => setKey(r.key)}>{r.label}</button>)}
-            </div>
+            <Tabs label="Reports" value={key} onChange={setKey} tabs={allowed.map((r) => ({ key: r.key, label: r.label }))} />
             <div className="a-filters">
               <label>Period <select value="" aria-label="Period preset" onChange={(e) => { const x = presets().find((pp) => pp[0] === e.target.value); if (x) setP({ from: x[1], to: x[2] }); }}><option value="">Choose...</option>{presets().map(([l]) => <option key={l}>{l}</option>)}</select></label>
               <label>From <input type="date" value={p.from} max={p.to} aria-label="From" onChange={(e) => e.target.value && setP({ ...p, from: e.target.value })} /></label>

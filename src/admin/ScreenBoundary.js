@@ -2,6 +2,7 @@
 // "This screen could not load - Reload" in place of that screen and the sidebar keeps working. AdminApp gives it
 // key={pathname}, so moving to another screen starts clean. The error goes to the console.
 import { Component } from 'react';
+import { Alert } from './ui/blocks';
 
 export default class ScreenBoundary extends Component {
   constructor(props) {
@@ -20,10 +21,10 @@ export default class ScreenBoundary extends Component {
   render() {
     if (!this.state.failed) return this.props.children;
     return (
-      <div className="a-note a-note-error a-crash" role="alert">
+      <Alert tone="bad" className="a-crash">
         <span>This screen could not load - </span>
         <button type="button" className="a-btn a-btn-sm" onClick={() => window.location.reload()}>Reload</button>
-      </div>
+      </Alert>
     );
   }
 }

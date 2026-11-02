@@ -10,14 +10,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { api } from './adminApi';
-import { Drawer, InfoCard, Loading, Notice, useAction, useCan, useConfirm, useLoad, useUpload, UploadProgress } from './ui';
+import { Drawer, InfoCard, Loading, Notice, PageHead, Pill, Table, useAction, useCan, useConfirm, useLoad, useUpload, UploadProgress } from './ui';
 import { rs } from './printKit';
 import { GST_STATES } from '../shared/gstStates';
 import CustomerDrawer from './CustomerDrawer';
 
 const day = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric' }) : '');
-const STATUS_CLASS = { active: 'a-ap-approved', on_hold: 'a-ap-pending', inactive: 'a-status-off' };
-export const StatusChip = ({ s, label }) => <span className={`a-status ${STATUS_CLASS[s] || ''}`}>{label}</span>;
+const STATUS_TONE = { active: 'good', on_hold: 'warn', inactive: 'gray' };
+export const StatusChip = ({ s, label }) => <Pill tone={STATUS_TONE[s] || 'gray'}>{label}</Pill>;
 const F0 = { q: '', type: '', status: '', town: '', tag: '', owner: '', no_order_days: '', outstanding_min: '', wallet_min: '' };
 
 export default function CommerceCustomers() {
@@ -54,7 +54,13 @@ export default function CommerceCustomers() {
   const filtered = Object.values(f).some(Boolean);
   return (
     <section>
-      <h1>Customers</h1>
+      <PageHead sub="Every shop, hotel, office and distributor that buys, with their addresses, contacts and follow-ups."
+        actions={<>
+          {canCreate && canEdit && <button type="button" className="a-btn a-btn-ghost" onClick={() => setPanel('import')}>Import</button>}
+          <button type="button" className="a-btn a-btn-ghost" disabled={act.busy} onClick={exportXlsx}>Excel</button>
+          {canEdit && <button type="button" className="a-btn a-btn-ghost" onClick={() => setPanel('merge')}>Merge duplicates</button>}
+          {canCreate && <button type="button" className="a-btn" onClick={() => setPanel('new')}>New customer</button>}
+        </>} />
       <InfoCard title="Customers, branches and follow-ups">
         <ul>
           <li>Each customer has billing addresses (each with its own GSTIN and state, for B2B branches) and shipping addresses; an order picks one of each and the GST follows the shipping state.</li>
@@ -67,10 +73,6 @@ export default function CommerceCustomers() {
       <div className="a-toolbar">
         <label className="a-inline">Segment <select value={segment} aria-label="Segment" onChange={(e) => chooseSegment(e.target.value)}><option value="">None</option>{meta && meta.segments.map((sg) => <option key={sg.segment_id} value={sg.segment_id}>{sg.name}</option>)}</select></label>
         {segment && canEdit && <button type="button" className="a-btn a-btn-sm a-btn-ghost" onClick={deleteSegment}>Delete segment</button>}
-        {canCreate && <button type="button" className="a-btn" onClick={() => setPanel('new')}>New customer</button>}
-        <button type="button" className="a-btn a-btn-ghost" disabled={act.busy} onClick={exportXlsx}>Excel</button>
-        {canCreate && canEdit && <button type="button" className="a-btn a-btn-ghost" onClick={() => setPanel('import')}>Import</button>}
-        {canEdit && <button type="button" className="a-btn a-btn-ghost" onClick={() => setPanel('merge')}>Merge duplicates</button>}
       </div>
       <div className="a-filters">
         <input type="search" placeholder="CUS no., name, phone or GSTIN" aria-label="Search customers" value={search} onChange={(e) => setSearch(e.target.value)} />
@@ -90,25 +92,24 @@ export default function CommerceCustomers() {
       </div>
       <Loading state={list}>
         {d && (
-          <div className="a-scroll">
-            <table className="a-table">
-              <thead><tr><th>Customer</th><th>Type</th><th>Status</th><th>Town</th><th>Owner</th><th>Tags</th><th className="a-num">Orders</th><th>Last order</th><th className="a-num">Owes</th><th className="a-num">Wallet</th><th>Follow-up</th></tr></thead>
-              <tbody>{d.rows.map((c) => (
-                <tr key={c.customer_id} className="a-rowlink" tabIndex={0} onClick={() => setOpen(c.customer_id)} onKeyDown={(e) => e.key === 'Enter' && setOpen(c.customer_id)}>
-                  <td><code>{c.customer_no}</code> {c.name}{c.business_name && c.business_name !== c.name && <small className="a-muted a-person-sub">{c.business_name}</small>}<small className="a-muted a-person-sub">{c.phone}</small></td>
-                  <td>{c.type_label}{c.price_list && <small className="a-muted a-person-sub">{c.price_list} prices</small>}</td>
-                  <td><StatusChip s={c.status} label={c.status_label} /></td><td>{c.town}</td>
-                  <td>{c.owner_emp_id ? (meta && (meta.owners.find((o) => o.emp_id === c.owner_emp_id) || {}).name) || c.owner_emp_id : <span className="a-muted">-</span>}</td>
-                  <td>{c.tags.map((t) => <span key={t} className="a-tag">{t}</span>)}</td>
-                  <td className="a-num">{c.orders}</td><td>{c.last_order ? day(c.last_order) : <span className="a-muted">never</span>}</td>
-                  <td className="a-num">{c.outstanding ? rs(c.outstanding) : ''}{c.overdue > 0 && <span className="a-overdue">Overdue</span>}</td>
-                  <td className="a-num">{c.wallet ? rs(c.wallet) : ''}</td>
-                  <td>{c.next_follow_up ? <span className={new Date(c.next_follow_up) < new Date(new Date().toDateString()) ? 'a-bad' : undefined}>{day(c.next_follow_up)}</span> : ''}</td>
-                </tr>
-              ))}</tbody>
-            </table>
+          <>
+            <Table label="Customers" rows={d.rows} rowKey={(c) => c.customer_id} onRowClick={(c) => setOpen(c.customer_id)}
+              empty={{ icon: 'users', title: filtered ? 'No customer matches.' : 'No customers yet.' }}
+              columns={[
+                { key: 'name', label: 'Customer', sort: true, render: (c) => <><code>{c.customer_no}</code> {c.name}{c.business_name && c.business_name !== c.name && <small className="a-muted a-person-sub">{c.business_name}</small>}<small className="a-muted a-person-sub">{c.phone}</small></> },
+                { key: 'type_label', label: 'Type', sort: true, render: (c) => <>{c.type_label}{c.price_list && <small className="a-muted a-person-sub">{c.price_list} prices</small>}</> },
+                { key: 'status', label: 'Status', render: (c) => <StatusChip s={c.status} label={c.status_label} /> },
+                { key: 'town', label: 'Town', sort: true },
+                { key: 'owner', label: 'Owner', render: (c) => (c.owner_emp_id ? (meta && (meta.owners.find((o) => o.emp_id === c.owner_emp_id) || {}).name) || c.owner_emp_id : <span className="a-muted">-</span>) },
+                { key: 'tags', label: 'Tags', render: (c) => c.tags.map((t) => <span key={t} className="a-tag">{t}</span>) },
+                { key: 'orders', label: 'Orders', num: true, sort: true },
+                { key: 'last_order', label: 'Last order', sort: true, render: (c) => (c.last_order ? day(c.last_order) : <span className="a-muted">never</span>) },
+                { key: 'outstanding', label: 'Owes', num: true, sort: true, render: (c) => <>{c.outstanding ? rs(c.outstanding) : ''}{c.overdue > 0 && <span className="a-overdue">Overdue</span>}</> },
+                { key: 'wallet', label: 'Wallet', num: true, sort: true, render: (c) => (c.wallet ? rs(c.wallet) : '') },
+                { key: 'next_follow_up', label: 'Follow-up', sort: true, render: (c) => (c.next_follow_up ? <span className={new Date(c.next_follow_up) < new Date(new Date().toDateString()) ? 'a-bad' : undefined}>{day(c.next_follow_up)}</span> : '') },
+              ]} />
             <p className="a-muted">{d.rows.length} customer(s){filtered ? ' match' : ''}.</p>
-          </div>
+          </>
         )}
       </Loading>
       {panel === 'new' && <NewCustomerDrawer onClose={() => setPanel(null)} onSaved={(c) => { setPanel(null); list.reload(); setOpen(c.customer_id); }} onOpenExisting={(id) => { setPanel(null); setOpen(id); }} />}
@@ -220,7 +221,7 @@ function ImportDrawer({ onClose }) {
     });
   };
   return (
-    <Drawer title="Import customers (.xlsx)" onClose={onClose}>
+    <Drawer title="Import customers (.xlsx)" onClose={onClose} wide>
       {act.note}
       <p className="a-muted">Export the list (Excel), edit it, then choose it here. The dry run lists every new customer, every change and every error; Apply is offered only for that file with 0 errors.</p>
       <input ref={inputRef} type="file" accept=".xlsx" aria-label="Customers file" onChange={(e) => { setFile(e.target.files[0] || null); setReport(null); }} />

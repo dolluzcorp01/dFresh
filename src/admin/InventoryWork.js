@@ -1,4 +1,4 @@
-// Stock > Inventory: the tabs where stock is changed (API in src/backend_routes/stock.js via Admin_server.js).
+// Inventory (and Purchase > Goods in, Masters > Partners > Suppliers): the tabs where stock is changed (API in src/backend_routes/stock.js via Admin_server.js).
 // - Stock in: Production (our Kanchipuram unit) or Purchase (a supplier); date, reference (bill / batch sheet no.),
 //   lines in packs or cartons with the cost per pack; a scanner (or typing a SKU and Enter) adds a line or one more of
 //   it. Batch-tracked products ask for batch no., manufacture and expiry date. A role that can see costs sees the
@@ -10,7 +10,7 @@
 // - Suppliers: name, phone, GSTIN (optional), address.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from './adminApi';
-import { Drawer, Loading, Notice, UploadProgress, fmtDate, useAction, useCan, useConfirm, useLoad, useUpload } from './ui';
+import { Drawer, Loading, Notice, Pill, Table, UploadProgress, fmtDate, useAction, useCan, useConfirm, useLoad, useUpload } from './ui';
 const rs = (n) => (n === null || n === undefined ? '-' : `Rs ${Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
 const day = (d) => (d ? new Date(`${String(d).slice(0, 10)}T00:00:00Z`).toLocaleDateString('en-IN', { timeZone: 'UTC', day: 'numeric', month: 'short', year: 'numeric' }) : '');
 const today = () => new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10);
@@ -40,23 +40,18 @@ export function StockIns({ stock }) {
       {canCreate && <div className="a-toolbar"><button type="button" className="a-btn" onClick={() => setOpen(true)}>New stock in</button></div>}
       <Loading state={list}>
         {d && (
-          <div className="a-scroll">
-            <table className="a-table">
-              <thead><tr><th>#</th><th>Date</th><th>From</th><th>Reference</th><th>Lines</th><th className="a-num">Packs</th>{d.seesCost && <th className="a-num">Value</th>}<th>By</th></tr></thead>
-              <tbody>{d.rows.map((s) => (
-                <tr key={s.stock_in_id}>
-                  <td>SI-{s.stock_in_id}</td><td>{day(s.received_on)}</td>
-                  <td>{s.kind === 'production' ? 'Production (Kanchipuram unit)' : `Purchase: ${s.supplier}`}</td>
-                  <td>{s.reference}{s.note && <small className="a-muted a-person-sub">{s.note}</small>}</td>
-                  <td className="a-silines">{s.lines.slice(0, 6).map((l) => <div key={`${l.sku_code}${l.batch_no}`}>{l.qty} x <code>{l.sku_code}</code>{l.batch_no ? ` batch ${l.batch_no} (exp. ${day(l.expiry_date)})` : ''}{d.seesCost ? ` @ ${rs(l.unit_cost)} · avg ${rs(l.avg_before)} -> ${rs(l.avg_after)}` : ''}</div>)}
-                    {s.lines.length > 6 && <small className="a-muted">+ {s.lines.length - 6} more</small>}</td>
-                  <td className="a-num">{s.packs}</td>{d.seesCost && <td className="a-num">{rs(s.value)}</td>}
-                  <td>{s.emp_name || s.emp_id}<small className="a-muted a-person-sub">{fmtDate(s.created_at)}</small></td>
-                </tr>
-              ))}</tbody>
-            </table>
-            {!d.rows.length && <p className="a-muted">No stock in yet.</p>}
-          </div>
+          <Table label="Stock in" rows={d.rows} rowKey={(x) => x.stock_in_id} empty={{ icon: 'package', title: 'No stock in yet.' }}
+            columns={[
+              { key: 'stock_in_id', label: '#', sort: true, render: (x) => `SI-${x.stock_in_id}` },
+              { key: 'received_on', label: 'Date', sort: true, render: (x) => day(x.received_on) },
+              { key: 'from', label: 'From', render: (x) => (x.kind === 'production' ? 'Production (Kanchipuram unit)' : `Purchase: ${x.supplier}`) },
+              { key: 'reference', label: 'Reference', render: (x) => <>{x.reference}{x.note && <small className="a-muted a-person-sub">{x.note}</small>}</> },
+              { key: 'lines', label: 'Lines', className: 'a-silines', render: (x) => <>{x.lines.slice(0, 6).map((l) => <div key={`${l.sku_code}${l.batch_no}`}>{l.qty} x <code>{l.sku_code}</code>{l.batch_no ? ` batch ${l.batch_no} (exp. ${day(l.expiry_date)})` : ''}{d.seesCost ? ` @ ${rs(l.unit_cost)} · avg ${rs(l.avg_before)} -> ${rs(l.avg_after)}` : ''}</div>)}
+                {x.lines.length > 6 && <small className="a-muted">+ {x.lines.length - 6} more</small>}</> },
+              { key: 'packs', label: 'Packs', num: true, sort: true },
+              d.seesCost && { key: 'value', label: 'Value', num: true, sort: true, render: (x) => rs(x.value) },
+              { key: 'by', label: 'By', render: (x) => <>{x.emp_name || x.emp_id}<small className="a-muted a-person-sub">{fmtDate(x.created_at)}</small></> },
+            ].filter(Boolean)} />
         )}
       </Loading>
       {open && <StockInDrawer stock={stock} onClose={() => setOpen(false)} onSaved={(text) => { setOpen(false); setMsg(text); list.reload(); stock.reload(); }} />}
@@ -91,7 +86,7 @@ function StockInDrawer({ stock, onClose, onSaved }) {
   });
   const total = lines.reduce((a, l) => a + packs(l) * (Number(l.unit_cost) || 0), 0);
   return (
-    <Drawer title="New stock in" onClose={onClose} dirty={lines.length > 0}
+    <Drawer title="New stock in" onClose={onClose} wide dirty={lines.length > 0}
       footer={<button type="button" className="a-btn" disabled={act.busy || !lines.length} onClick={save}>Save stock in</button>}>
       {act.note}
       <div className="a-chips" role="group" aria-label="Kind">
@@ -161,22 +156,19 @@ export function WriteOffs({ stock }) {
       {canCreate && <div className="a-toolbar"><button type="button" className="a-btn" onClick={() => setOpen(true)}>New write-off</button></div>}
       <Loading state={list}>
         {d && (
-          <div className="a-scroll">
-            <table className="a-table">
-              <thead><tr><th>#</th><th>SKU</th><th>From</th><th className="a-num">Packs</th><th>Why</th>{d.rows.some((r) => 'value' in r) && <th className="a-num">Value</th>}<th>Status</th><th>By</th><th>Photo</th></tr></thead>
-              <tbody>{d.rows.map((w) => (
-                <tr key={w.write_off_id}>
-                  <td>WO-{w.write_off_id}</td><td><code>{w.sku_code}</code>{w.batch_no && <small className="a-muted a-person-sub">batch {w.batch_no}</small>}</td><td>{KIND[w.stock_kind]}</td>
-                  <td className="a-num">{w.qty}</td><td><b>{d.types[w.reason_type]}</b> - {w.reason}</td>{'value' in w && <td className="a-num">{rs(w.value)}</td>}
-                  <td>{w.status === 'posted' ? <span className="a-status a-ap-approved">Posted</span> : w.status === 'pending' ? <span className="a-status a-ap-pending">Waiting for approval #{w.approval_id}</span> : <span className="a-status a-ap-rejected">Rejected</span>}
-                    {w.approval_note && <small className="a-muted a-person-sub">&quot;{w.approval_note}&quot; ({w.decided_by})</small>}</td>
-                  <td>{w.emp_id}<small className="a-muted a-person-sub">{fmtDate(w.created_at)}</small></td>
-                  <td>{w.has_photo ? <button type="button" className="a-link" onClick={() => photoAct.run(async () => { if (!(await api.open(`/commerce/write-offs/${w.write_off_id}/photo`))) photoAct.setMsg({ kind: 'error', text: 'Allow pop-ups to see the photo.' }); })}>View</button> : ''}</td>
-                </tr>
-              ))}</tbody>
-            </table>
-            {!d.rows.length && <p className="a-muted">No write-off yet.</p>}
-          </div>
+          <Table label="Write-offs" rows={d.rows} rowKey={(w) => w.write_off_id} empty={{ icon: 'package', title: 'No write-off yet.' }}
+            columns={[
+              { key: 'write_off_id', label: '#', sort: true, render: (w) => `WO-${w.write_off_id}` },
+              { key: 'sku_code', label: 'SKU', sort: true, render: (w) => <><code>{w.sku_code}</code>{w.batch_no && <small className="a-muted a-person-sub">batch {w.batch_no}</small>}</> },
+              { key: 'stock_kind', label: 'From', render: (w) => KIND[w.stock_kind] },
+              { key: 'qty', label: 'Packs', num: true, sort: true },
+              { key: 'why', label: 'Why', render: (w) => <><b>{d.types[w.reason_type]}</b> - {w.reason}</> },
+              d.rows.some((r) => 'value' in r) && { key: 'value', label: 'Value', num: true, render: (w) => ('value' in w ? rs(w.value) : '') },
+              { key: 'status', label: 'Status', render: (w) => <>{w.status === 'posted' ? <Pill tone="good">Posted</Pill> : w.status === 'pending' ? <Pill tone="warn">Waiting for approval #{w.approval_id}</Pill> : <Pill tone="bad">Rejected</Pill>}
+                {w.approval_note && <small className="a-muted a-person-sub">&quot;{w.approval_note}&quot; ({w.decided_by})</small>}</> },
+              { key: 'by', label: 'By', render: (w) => <>{w.emp_id}<small className="a-muted a-person-sub">{fmtDate(w.created_at)}</small></> },
+              { key: 'photo', label: 'Photo', render: (w) => (w.has_photo ? <button type="button" className="a-link" onClick={() => photoAct.run(async () => { if (!(await api.open(`/commerce/write-offs/${w.write_off_id}/photo`))) photoAct.setMsg({ kind: 'error', text: 'Allow pop-ups to see the photo.' }); })}>View</button> : '') },
+            ].filter(Boolean)} />
         )}
       </Loading>
       {open && d && <WriteOffDrawer stock={stock} types={d.types} onClose={() => setOpen(false)}
@@ -250,20 +242,16 @@ export function Counts() {
       )}
       <Loading state={list}>
         {d && (
-          <div className="a-scroll">
-            <table className="a-table">
-              <thead><tr><th>#</th><th>What</th><th>Status</th><th className="a-num">Counted</th><th className="a-num">Differences</th><th>Started</th><th>Submitted</th></tr></thead>
-              <tbody>{d.rows.map((c) => (
-                <tr key={c.count_id} className="a-rowlink" tabIndex={0} onClick={() => setOpen(c.count_id)} onKeyDown={(e) => e.key === 'Enter' && setOpen(c.count_id)}>
-                  <td>#{c.count_id}</td><td>{c.scope_label}</td>
-                  <td><span className={`a-status ${STATUS[c.status][1]}`}>{STATUS[c.status][0]}</span>{c.approval_note && <small className="a-muted a-person-sub">&quot;{c.approval_note}&quot; ({c.decided_by})</small>}</td>
-                  <td className="a-num">{c.counted} / {c.line_count}</td><td className="a-num">{c.status === 'open' ? '' : c.differences}</td>
-                  <td>{c.started_by}<small className="a-muted a-person-sub">{fmtDate(c.started_at)}</small></td><td>{c.submitted_by || ''}<small className="a-muted a-person-sub">{fmtDate(c.submitted_at)}</small></td>
-                </tr>
-              ))}</tbody>
-            </table>
-            {!d.rows.length && <p className="a-muted">No count yet.</p>}
-          </div>
+          <Table label="Counts" rows={d.rows} rowKey={(c) => c.count_id} onRowClick={(c) => setOpen(c.count_id)} empty={{ icon: 'clipboard-check', title: 'No count yet.' }}
+            columns={[
+              { key: 'count_id', label: '#', sort: true, render: (c) => `#${c.count_id}` },
+              { key: 'scope_label', label: 'What' },
+              { key: 'status', label: 'Status', render: (c) => <><span className={`a-status ${STATUS[c.status][1]}`}>{STATUS[c.status][0]}</span>{c.approval_note && <small className="a-muted a-person-sub">&quot;{c.approval_note}&quot; ({c.decided_by})</small>}</> },
+              { key: 'counted', label: 'Counted', num: true, render: (c) => `${c.counted} / ${c.line_count}` },
+              { key: 'differences', label: 'Differences', num: true, render: (c) => (c.status === 'open' ? '' : c.differences) },
+              { key: 'started', label: 'Started', render: (c) => <>{c.started_by}<small className="a-muted a-person-sub">{fmtDate(c.started_at)}</small></> },
+              { key: 'submitted', label: 'Submitted', render: (c) => <>{c.submitted_by || ''}<small className="a-muted a-person-sub">{fmtDate(c.submitted_at)}</small></> },
+            ]} />
         )}
       </Loading>
       {open && <CountDrawer id={open} onClose={() => setOpen(null)} onChanged={list.reload} />}
@@ -306,7 +294,7 @@ function CountDrawer({ id, onClose, onChanged }) {
   };
   const counted = d ? d.lines.filter((l) => val(l) !== '').length : 0;
   return (
-    <Drawer title={`Count #${id}`} onClose={onClose} dirty={dirty}
+    <Drawer title={`Count #${id}`} onClose={onClose} wide dirty={dirty}
       footer={editable ? <>
         <button type="button" className="a-btn a-btn-ghost" disabled={act.busy || !dirty} onClick={save}>Save</button>
         <button type="button" className="a-btn" disabled={act.busy || !counted} onClick={submit}>Submit</button>
@@ -356,17 +344,16 @@ export function Suppliers() {
       {canCreate && <div className="a-toolbar"><button type="button" className="a-btn" onClick={() => setOpen('new')}>New supplier</button></div>}
       <Loading state={list}>
         {list.data && (
-          <div className="a-scroll">
-            <table className="a-table">
-              <thead><tr><th>Supplier</th><th>Phone</th><th>GSTIN</th><th>Address</th><th className="a-num">Stock-ins</th><th>Last</th></tr></thead>
-              <tbody>{list.data.map((s) => (
-                <tr key={s.supplier_id} className={`a-rowlink${Number(s.is_active) ? '' : ' a-off'}`} tabIndex={0} onClick={() => setOpen(s)} onKeyDown={(e) => e.key === 'Enter' && setOpen(s)}>
-                  <td>{s.name}{Number(s.is_active) ? '' : ' (off)'}</td><td>{s.phone}</td><td>{s.gstin}</td><td>{s.address}</td><td className="a-num">{s.stock_ins}</td><td>{day(s.last_in)}</td>
-                </tr>
-              ))}</tbody>
-            </table>
-            {!list.data.length && <p className="a-muted">No supplier yet.</p>}
-          </div>
+          <Table label="Suppliers" rows={list.data} rowKey={(x) => x.supplier_id} onRowClick={setOpen} rowClass={(x) => (Number(x.is_active) ? undefined : 'a-off')}
+            empty={{ icon: 'truck', title: 'No supplier yet.' }}
+            columns={[
+              { key: 'name', label: 'Supplier', sort: true, render: (x) => <>{x.name}{Number(x.is_active) ? '' : ' (off)'}</> },
+              { key: 'phone', label: 'Phone' },
+              { key: 'gstin', label: 'GSTIN' },
+              { key: 'address', label: 'Address' },
+              { key: 'stock_ins', label: 'Stock-ins', num: true, sort: true },
+              { key: 'last_in', label: 'Last', sort: true, render: (x) => day(x.last_in) },
+            ]} />
         )}
       </Loading>
       {open && <SupplierDrawer supplier={open === 'new' ? null : open} onClose={() => setOpen(null)} onSaved={() => { setOpen(null); list.reload(); }} />}

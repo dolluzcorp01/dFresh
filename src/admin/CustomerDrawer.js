@@ -6,7 +6,7 @@
 // Statement (invoices, payments, credit notes, wallet, running balance, ageing; print / PDF), Wallet, Orders.
 import { useState } from 'react';
 import { api } from './adminApi';
-import { Drawer, Loading, Notice, fmtDate, useAction, useCan, useLoad } from './ui';
+import { Drawer, LIcon, Loading, Pill, Notice, Table, Tabs, fmtDate, useAction, useCan, useLoad } from './ui';
 import { esc, printPage, rs } from './printKit';
 import { AddressFields, StatusChip } from './CommerceCustomers';
 import WalletPanel from './WalletPanel';
@@ -21,18 +21,19 @@ export default function CustomerDrawer({ id, onClose, onChanged }) {
   const d = c.data;
   const reload = () => { c.reload(); if (onChanged) onChanged(); };
   return (
-    <Drawer title={d ? `${d.customer_no} ${d.name}` : 'Customer'} onClose={onClose}>
+    <Drawer title={d ? d.name : 'Customer'} onClose={onClose} thumb={<LIcon name="user" />}
+      pill={d ? <Pill tone="gray">{d.customer_no}</Pill> : null}
+      status={d ? (
+        <><StatusChip s={d.status} label={d.status_label} /><Pill tone="gray">{d.type_label}</Pill><span className="a-custhead">{d.priceList.own ? `${d.priceList.label} prices · ` : ''}{d.phone}{d.email ? ` · ${d.email}` : ''}
+          {d.outstanding > 0 && <> · owes <b>{rs(d.outstanding)}</b></>}{d.wallet ? ` · wallet ${rs(d.wallet)}` : ''}</span></>
+      ) : null}>
       <Loading state={c}>
         {d && (
           <>
-            <p className="a-custhead"><StatusChip s={d.status} label={d.status_label} /> {d.type_label}{d.priceList.own ? ` · ${d.priceList.label} prices` : ''} · {d.phone}{d.email ? ` · ${d.email}` : ''}
-              {d.outstanding > 0 && <> · owes <b>{rs(d.outstanding)}</b></>}{d.wallet ? ` · wallet ${rs(d.wallet)}` : ''}</p>
             {d.merged_into && <Notice kind="warn">Merged into {d.merged_into_no}: open that customer.</Notice>}
             {d.status !== 'active' && d.hold_reason && <Notice kind={d.status === 'on_hold' ? 'warn' : 'info'}>{d.status_label}: {d.hold_reason}{d.status === 'on_hold' ? ' - a new order waits for approval.' : ''}</Notice>}
             {d.pending.map((p) => <Notice key={p.approval_id} kind="info">Waiting for approval (#{p.approval_id}): {p.summary}</Notice>)}
-            <div className="a-chips a-tabs" role="tablist" aria-label="Customer">
-              {TABS.map(([k, l]) => <button key={k} type="button" role="tab" aria-selected={tab === k} className={`a-chip${tab === k ? ' on' : ''}`} onClick={() => setTab(k)}>{l}</button>)}
-            </div>
+            <Tabs tabs={TABS.map(([key, label]) => ({ key, label }))} value={tab} onChange={setTab} label="Customer" />
             {tab === 'overview' && <Overview d={d} reload={reload} />}
             {tab === 'addresses' && <Addresses d={d} reload={reload} />}
             {tab === 'contacts' && <Contacts d={d} reload={reload} />}
@@ -270,29 +271,24 @@ export function FollowUpList({ rows, people, onChanged, onOpen }) {
   return (
     <>
       {act.note}
-      <div className="a-scroll">
-      <table className="a-table">
-        <thead><tr><th>Due</th>{rows[0].customer !== null && <th>Customer</th>}<th>About</th><th>For</th><th /></tr></thead>
-        <tbody>{rows.map((x) => (
-          <tr key={x.follow_up_id} className={x.status === 'done' ? 'a-offrow' : x.overdue ? 'a-lowrow' : undefined}>
-            <td>{day(x.due_on)}{x.overdue && x.status !== 'done' && <span className="a-overdue">Overdue</span>}{x.snoozes > 0 && <small className="a-muted a-person-sub">snoozed {x.snoozes}x</small>}</td>
-            {x.customer !== null && <td>{onOpen ? <button type="button" className="a-link" onClick={() => onOpen(x.customer_id)}><code>{x.customer_no}</code> {x.customer}</button> : x.customer}<small className="a-muted a-person-sub">{x.phone}</small></td>}
-            <td>{x.note}{x.status === 'done' && <small className="a-muted a-person-sub">done {fmtDate(x.done_at)} by {x.done_by}{x.done_note ? `: ${x.done_note}` : ''}</small>}</td>
-            <td>{who(x.assignee)}</td>
-            <td>{x.status === 'open' && (done && done.id === x.follow_up_id ? (
-              <span className="a-row"><input value={done.note} placeholder="Outcome (optional)" aria-label="Follow-up outcome" onChange={(e) => setDone({ ...done, note: e.target.value })} />
-                <button type="button" className="a-btn a-btn-sm" disabled={act.busy} onClick={() => call(x.follow_up_id, { action: 'done', note: done.note }, 'Done')}>Save</button></span>
-            ) : (
-              <span className="a-row">
-                <button type="button" className="a-btn a-btn-sm" onClick={() => setDone({ id: x.follow_up_id, note: '' })}>Done</button>
-                <select value="" aria-label="Snooze" onChange={(e) => e.target.value && call(x.follow_up_id, { action: 'snooze', days: Number(e.target.value) }, `Snoozed ${e.target.value} day(s)`)}>
-                  <option value="">Snooze...</option>{[1, 2, 3, 7, 14, 30].map((n) => <option key={n} value={n}>{n} day{n === 1 ? '' : 's'}</option>)}</select>
-              </span>
-            ))}</td>
-          </tr>
-        ))}</tbody>
-      </table>
-      </div>
+      <Table label="Follow-ups" rows={rows} rowKey={(x) => x.follow_up_id}
+        rowClass={(x) => (x.status === 'done' ? 'a-offrow' : x.overdue ? 'a-lowrow' : undefined)}
+        columns={[
+          { key: 'due_on', label: 'Due', sort: true, render: (x) => <>{day(x.due_on)}{x.overdue && x.status !== 'done' && <span className="a-overdue">Overdue</span>}{x.snoozes > 0 && <small className="a-muted a-person-sub">snoozed {x.snoozes}x</small>}</> },
+          ...(rows[0].customer !== null ? [{ key: 'customer', label: 'Customer', sort: true, render: (x) => <>{onOpen ? <button type="button" className="a-link" onClick={() => onOpen(x.customer_id)}><code>{x.customer_no}</code> {x.customer}</button> : x.customer}<small className="a-muted a-person-sub">{x.phone}</small></> }] : []),
+          { key: 'note', label: 'About', render: (x) => <>{x.note}{x.status === 'done' && <small className="a-muted a-person-sub">done {fmtDate(x.done_at)} by {x.done_by}{x.done_note ? `: ${x.done_note}` : ''}</small>}</> },
+          { key: 'assignee', label: 'For', render: (x) => who(x.assignee) },
+          { key: 'act', label: '', render: (x) => x.status === 'open' && (done && done.id === x.follow_up_id ? (
+            <span className="a-row"><input value={done.note} placeholder="Outcome (optional)" aria-label="Follow-up outcome" onChange={(e) => setDone({ ...done, note: e.target.value })} />
+              <button type="button" className="a-btn a-btn-sm" disabled={act.busy} onClick={() => call(x.follow_up_id, { action: 'done', note: done.note }, 'Done')}>Save</button></span>
+          ) : (
+            <span className="a-row">
+              <button type="button" className="a-btn a-btn-sm" onClick={() => setDone({ id: x.follow_up_id, note: '' })}>Done</button>
+              <select value="" aria-label="Snooze" onChange={(e) => e.target.value && call(x.follow_up_id, { action: 'snooze', days: Number(e.target.value) }, `Snoozed ${e.target.value} day(s)`)}>
+                <option value="">Snooze...</option>{[1, 2, 3, 7, 14, 30].map((n) => <option key={n} value={n}>{n} day{n === 1 ? '' : 's'}</option>)}</select>
+            </span>
+          )) },
+        ]} />
     </>
   );
 }

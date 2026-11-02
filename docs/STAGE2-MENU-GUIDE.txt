@@ -1,0 +1,536 @@
+dFresh Back Office - menu guide
+Every page in the left menu, in the same order. For each page:
+  What you see  = what is on the page
+  Use it to     = what you do there
+Pages marked (not built yet) or (later) are in the menu but not working yet.
+
+
+dFresh Back Office
+│
+├── 🏠 HOME - your starting point every morning
+│   │
+│   ├── Dashboard
+│   │       What you see : today's sales, this month's sales, orders to pack and deliver,
+│   │                      cash in hand, money customers owe us, stock value, and the latest alerts.
+│   │       Use it to    : get a quick picture of the business in one look, then click any tile
+│   │                      to go straight to the detail.
+│   │
+│   ├── Approvals
+│   │       What you see : every request waiting for a "yes" or "no" - discounts, write-offs,
+│   │                      refunds, big POs, rule changes - with who asked, the amount and who can sign.
+│   │       Use it to    : approve or reject (a reason is needed to reject), withdraw your own request,
+│   │                      or in rare cases override when the other Admin is away.
+│   │
+│   ├── My tasks (not built yet)
+│   │       What you see : jobs given to you - call a customer back, pack an order, count a shelf.
+│   │       Use it to    : see your own to-do list and tick jobs off when done.
+│   │
+│   └── Alerts
+│           What you see : warnings - low stock, batches near expiry, overdue customers,
+│                          cheques to deposit, vehicle insurance ending, packs with no cost.
+│           Use it to    : act on problems early; click an alert to open the page that fixes it,
+│                          or snooze it for a while.
+│
+├── 📈 SALES - from the first enquiry to the order
+│   │
+│   ├── Leads
+│   │   ├── Enquiries
+│   │   │       What you see : forms people filled on dfresh.us - name, phone, business type,
+│   │   │                      what they want - and who in sales has picked each one up.
+│   │   │       Use it to    : take an enquiry, call them, and turn it into a customer
+│   │   │                      (or mark it lost with the reason).
+│   │   │
+│   │   └── Follow-ups
+│   │           What you see : enquiries with a call-back date, and notes of what was said last time.
+│   │           Use it to    : never forget a call back; see today's and overdue follow-ups first.
+│   │
+│   ├── Customers
+│   │   ├── Customer list
+│   │   │       What you see : every shop, hotel, office and distributor that buys from us - type,
+│   │   │                      godown, salesperson, what they owe, and whether they are active,
+│   │   │                      on hold or blocked.
+│   │   │       Use it to    : add or edit a customer, their contacts and delivery addresses,
+│   │   │                      put a customer on hold, or merge two records of the same customer.
+│   │   │
+│   │   ├── Customer types
+│   │   │       What you see : the kinds of customer (shop, hotel, distributor...) and which
+│   │   │                      price list and payment days each one gets.
+│   │   │       Use it to    : add a type or change its price list (moving to another list
+│   │   │                      needs Accounts or an Admin to approve).
+│   │   │
+│   │   ├── Credit limits
+│   │   │       What you see : each customer's limit, what they owe now, and how much is overdue.
+│   │   │       Use it to    : set how much a customer may owe before new orders stop
+│   │   │                      (a higher limit needs approval).
+│   │   │
+│   │   └── Customer ledger
+│   │           What you see : one customer's full account - every invoice, payment, credit note,
+│   │                          debit note and charge, with the running balance.
+│   │           Use it to    : answer "how much do I owe you?" and send the customer a statement.
+│   │
+│   ├── Orders
+│   │   ├── Quotes
+│   │   │       What you see : price offers sent to customers or enquiries, with their valid-until date.
+│   │   │       Use it to    : make a quote, send it, and turn it into an order with one press.
+│   │   │
+│   │   ├── Orders
+│   │   │       What you see : all orders - draft, waiting for approval, confirmed, packing,
+│   │   │                      dispatched, delivered, cancelled - with total and stock held.
+│   │   │       Use it to    : take a new order; confirming it holds the stock for that customer.
+│   │   │                      Change or cancel an order (cancel after dispatch needs approval).
+│   │   │
+│   │   ├── Standing orders
+│   │   │       What you see : repeat orders, e.g. every Monday the same items for a hotel.
+│   │   │       Use it to    : set them once; the system makes the order on each date.
+│   │   │
+│   │   └── Back-orders
+│   │           What you see : items we could not supply yet - who is owed what, and what is free now.
+│   │           Use it to    : see when stock has arrived (it is held for the oldest order first),
+│   │                          hold it now, or drop what the customer no longer wants.
+│   │
+│   └── Returns
+│       ├── Return requests
+│       │       What you see : customers who want to send goods back - which invoice, how many,
+│       │                      why, and whether it is inside the return window.
+│       │       Use it to    : record the request, get approval if needed, and arrange pickup.
+│       │
+│       └── Inspection
+│               What you see : returned goods waiting to be checked.
+│               Use it to    : decide for each pack - back to stock, repack or scrap -
+│                              and the credit note is made from it.
+│
+├── 🚚 FULFILMENT - goods out of the godown to the customer
+│   │
+│   ├── Packing
+│   │   ├── To pick
+│   │   │       What you see : confirmed orders and the pick list - which item, which shelf,
+│   │   │                      which batch to take.
+│   │   │       Use it to    : print or follow the pick list so the right packs leave the shelf.
+│   │   │
+│   │   ├── Packing
+│   │   │       What you see : the order being packed, and each pack you scan into the box.
+│   │   │       Use it to    : scan packs and cartons; when you press Packed, stock goes down.
+│   │   │                      Expired or wrong batches are refused.
+│   │   │
+│   │   └── Packed, waiting
+│   │           What you see : boxes packed and ready, with boxes and weight.
+│   │           Use it to    : see what is ready to load on a vehicle or give to a courier.
+│   │
+│   └── Delivery
+│       ├── Trips
+│       │       What you see : each trip - vehicle, driver, the orders on it and cash to collect.
+│       │       Use it to    : load orders on a trip, send it, and close it when the driver is back.
+│       │
+│       ├── Courier and pickup
+│       │       What you see : orders going by courier, and orders the customer collects himself.
+│       │       Use it to    : record the courier and tracking number, or who collected and their phone.
+│       │
+│       ├── Proof of delivery
+│       │       What you see : the signature or photo for each delivered order.
+│       │       Use it to    : show the customer it was delivered, if they ask.
+│       │
+│       ├── Failed / short / refused
+│       │       What you see : deliveries that went wrong - not delivered, fewer packs taken, or refused.
+│       │       Use it to    : bring the goods back to stock and make the credit note for what was not kept.
+│       │
+│       └── Cash on delivery
+│               What you see : cash each driver collected, handed in, and any difference.
+│               Use it to    : check driver cash against what was due and record it as receipts.
+│
+├── 🛒 PURCHASE - buying raw material and goods
+│   │
+│   ├── Indents
+│   │       What you see : requests from staff - "we need this" - with item and quantity.
+│   │       Use it to    : turn an indent into a purchase order.
+│   │
+│   ├── Purchase orders
+│   │       What you see : what we ordered, from which supplier, at what price, and how much has come in.
+│   │       Use it to    : raise a PO (big ones need approval), amend it, or close it.
+│   │                      Amendments that raise the price need approval again.
+│   │
+│   ├── Goods in
+│   │       What you see : deliveries arriving from suppliers, matched to the PO.
+│   │       Use it to    : scan or count cartons as they arrive; the goods go to QC hold first.
+│   │
+│   ├── Quality check
+│   │       What you see : goods-in and production runs waiting to be checked.
+│   │       Use it to    : accept the good packs (they go into stock) and reject the bad ones
+│   │                      (they become a claim or a write-off).
+│   │
+│   ├── Supplier bills
+│   │       What you see : the supplier's invoices, matched to goods in and the PO price.
+│   │       Use it to    : enter a bill; if the price differs from the PO it waits for approval.
+│   │                      Only matched or approved bills can be paid.
+│   │
+│   └── Claims and purchase returns
+│           What you see : damaged, short or wrong goods we are claiming from suppliers.
+│           Use it to    : send goods back, make a debit note, and record the supplier's credit note.
+│
+├── 🏭 PRODUCTION - making our own products
+│   │
+│   ├── Recipes
+│   │       What you see : the raw material needed for one pack, and the wastage allowed.
+│   │       Use it to    : set or change a recipe; its cost becomes the pack's made cost.
+│   │
+│   ├── Production runs
+│   │       What you see : each run - planned, started, finished - material issued and packs made.
+│   │       Use it to    : plan a run, issue material, finish it, and check the packs made.
+│   │
+│   ├── Wastage
+│   │       What you see : material lost while making, against what the recipe allows.
+│   │       Use it to    : record the reason; wastage above the allowed % needs approval.
+│   │
+│   └── Job work (later)
+│           What you see : work done for us by another factory.
+│           Use it to    : send material out and receive finished packs back (only if we use it).
+│
+├── 📦 INVENTORY - what we have and where
+│   │
+│   ├── Stock status
+│   │       What you see : for each item and godown - total, held for orders, free to sell.
+│   │       Use it to    : answer "do we have it?" before promising a customer.
+│   │
+│   ├── Batches and expiry
+│   │       What you see : each lot with its batch number and expiry date.
+│   │       Use it to    : sell older batches first; expired batches are blocked from sale.
+│   │
+│   ├── Transfers
+│   │       What you see : stock moving between godowns - on the road, received, short.
+│   │       Use it to    : send stock to another godown and receive it there; shorts are
+│   │                      settled as Found or Lost (with approval).
+│   │
+│   ├── Stock take
+│   │       What you see : count sheets per godown and the difference against the books.
+│   │       Use it to    : count shelves; the difference is posted after approval.
+│   │
+│   ├── Write-offs
+│   │       What you see : damaged, lost or expired stock to remove, and shelf moves.
+│   │       Use it to    : remove stock from the books (needs approval) or move packs
+│   │                      between shelves such as Good and Damaged.
+│   │
+│   ├── Reorder
+│   │       What you see : items below their reorder level.
+│   │       Use it to    : decide what to buy or make next.
+│   │
+│   └── Stock ledger
+│           What you see : every stock movement in and out, with date, person and document.
+│           Use it to    : trace where any pack came from and where it went.
+│
+├── 💰 MONEY - bills, payments and expenses
+│   │
+│   ├── Billing
+│   │   ├── Invoices
+│   │   │       What you see : every GST invoice - customer, amount, paid or unpaid,
+│   │   │                      e-way bill and e-invoice details.
+│   │   │       Use it to    : make the invoice from a packed order, print it, or ask to cancel it.
+│   │   │
+│   │   ├── Credit notes
+│   │   │       What you see : money given back to customers - returns and price corrections.
+│   │   │       Use it to    : make a credit note against an invoice (needs approval).
+│   │   │
+│   │   ├── Debit notes
+│   │   │       What you see : extra charges added after the invoice.
+│   │   │       Use it to    : charge the customer more, against the original invoice.
+│   │   │
+│   │   └── Delivery challans
+│   │           What you see : goods sent without a sale - samples, transfers, repairs.
+│   │           Use it to    : make the challan that travels with the goods.
+│   │
+│   ├── Payments
+│   │   ├── Receipts
+│   │   │       What you see : money received from customers by cash, UPI, bank or cheque.
+│   │   │       Use it to    : record a payment; it clears the oldest dues, or the invoice the
+│   │   │                      customer names (an exact amount matches its invoice).
+│   │   │
+│   │   ├── Supplier payments
+│   │   │       What you see : what we owe each supplier, with due dates (MSME 45-day rule).
+│   │   │       Use it to    : pay suppliers against their bills; only to the approved bank account.
+│   │   │
+│   │   ├── Refunds
+│   │   │       What you see : money paid back to customers.
+│   │   │       Use it to    : record a refund (needs approval).
+│   │   │
+│   │   └── Cheque register (later)
+│   │           What you see : cheques received and given, and their status.
+│   │           Use it to    : deposit cheques on time and record bounces.
+│   │
+│   ├── Expenses
+│   │   ├── Expenses
+│   │   │       What you see : rent, fuel, salaries, power and other spends, with GST to claim.
+│   │   │       Use it to    : record an expense; a new payee and big amounts need approval.
+│   │   │
+│   │   └── Petty cash
+│   │           What you see : the small cash box at each godown and what was spent from it.
+│   │           Use it to    : top it up and record small cash spends.
+│   │
+│   └── Accounting export
+│       ├── Export to accountant
+│       │       What you see : a finished month's vouchers, checked and balanced, ready for Tally.
+│       │       Use it to    : send the month to the CA; that month is then locked.
+│       │
+│       └── Export history
+│               What you see : every month sent, when, by whom, and changes made after it.
+│               Use it to    : see what the CA has, and send corrections.
+│
+├── 🧾 GST - tax filing data
+│   │
+│   ├── GSTR-1 / GSTR-3B data
+│   │       What you see : the month's sales, credit notes, tax by rate and HSN, input GST.
+│   │       Use it to    : give the CA the figures to file the monthly returns.
+│   │
+│   ├── E-invoice
+│   │       What you see : invoices that need a government IRN number, and their status.
+│   │       Use it to    : add the IRN so the invoice is valid.
+│   │
+│   ├── E-way bill
+│   │       What you see : loads above the limit that need an e-way bill, and their numbers.
+│   │       Use it to    : add the e-way bill number before the goods leave.
+│   │
+│   └── Other GST returns (later)
+│           What you see : other returns, done by the CA in Tally.
+│           Use it to    : nothing here yet.
+│
+├── 🎁 MARKETING - bringing customers back
+│   │
+│   ├── Offers
+│   │       What you see : running and planned offers, e.g. "buy 10 get 1".
+│   │       Use it to    : make an offer, choose who gets it and for how long.
+│   │
+│   ├── Coupons
+│   │       What you see : discount codes and how often each was used.
+│   │       Use it to    : make codes a customer gives to get a discount.
+│   │
+│   ├── Cashback rules
+│   │       What you see : rules that give a % back as wallet credit.
+│   │       Use it to    : set a rule (needs approval before it goes live).
+│   │
+│   └── Customer wallets
+│           What you see : each customer's wallet credit - usable, pending, expiring - and its history.
+│           Use it to    : see or adjust a customer's credit (a manual credit needs approval).
+│
+├── 📊 REPORTS - numbers to decide with
+│   │
+│   ├── Sales and purchases
+│   │       What you see : what sold, margin earned, discounts given, what we bought.
+│   │       Use it to    : see which products and customers make money.
+│   │
+│   ├── Stock
+│   │       What you see : stock value by shelf and category, ageing, write-offs.
+│   │       Use it to    : see how much money is in stock and what is getting old.
+│   │
+│   ├── Money owed
+│   │       What you see : who owes us (by age) and whom we owe.
+│   │       Use it to    : chase overdue customers and plan supplier payments.
+│   │
+│   └── GST and delivery
+│           What you see : tax totals, on-time and failed deliveries.
+│           Use it to    : check tax figures and delivery performance.
+│
+├── 📚 MASTERS - the base lists everything else uses
+│   │
+│   ├── Catalogue
+│   │   ├── Products and SKUs
+│   │   │       What you see : every product and each pack size (SKU), with status, cost and stock.
+│   │   │       Use it to    : add or change products and packs; these show on the website too (live).
+│   │   │
+│   │   ├── Categories
+│   │   │       What you see : Napkins, Rolls, Tissues... in the order the site shows them.
+│   │   │       Use it to    : add or reorder categories (live on the site).
+│   │   │
+│   │   ├── Kits
+│   │   │       What you see : packs sold together as one kit.
+│   │   │       Use it to    : make a kit and choose whether it shows on the site (live).
+│   │   │
+│   │   ├── Barcodes and labels
+│   │   │       What you see : our barcodes and suppliers' barcodes for each item.
+│   │   │       Use it to    : link barcodes and print pack and carton labels.
+│   │   │
+│   │   └── Raw materials
+│   │           What you see : paper reels, cores, film, cartons - with stock and cost.
+│   │           Use it to    : keep the list of what production uses and what we buy.
+│   │
+│   ├── Prices
+│   │   ├── Price lists
+│   │   │       What you see : the price of each pack for each customer type, and the lowest allowed price.
+│   │   │       Use it to    : set or change prices (below cost plus margin needs approval).
+│   │   │
+│   │   ├── Quantity slabs
+│   │   │       What you see : lower prices for bigger quantities.
+│   │   │       Use it to    : set the slabs, e.g. 10+ packs at 5% off.
+│   │   │
+│   │   └── Special prices
+│   │           What you see : one customer's own agreed price for a pack.
+│   │           Use it to    : give a special price (below the limit needs approval).
+│   │
+│   ├── Partners
+│   │   ├── Suppliers
+│   │   │       What you see : who we buy from - GST, MSME, bank account, rating, what we owe.
+│   │   │       Use it to    : add or change suppliers; a bank account change needs approval.
+│   │   │
+│   │   ├── Vehicles and drivers
+│   │   │       What you see : our delivery vehicles and drivers, insurance and fitness dates.
+│   │   │       Use it to    : keep the fleet up to date for trips.
+│   │   │
+│   │   └── Couriers
+│   │           What you see : outside delivery companies and their rates.
+│   │           Use it to    : choose a courier for an order.
+│   │
+│   └── Tax and units
+│       ├── Units of measure
+│       │       What you see : pack, carton, kg, roll and how they convert.
+│       │       Use it to    : add or change units.
+│       │
+│       ├── HSN and GST rates
+│       │       What you see : the tax code and GST rate for each product, with the date it starts.
+│       │       Use it to    : change a rate from a date (needs approval).
+│       │
+│       └── Delivery areas
+│               What you see : towns and PIN codes we deliver to, days and charges.
+│               Use it to    : add areas; they can show on the website map (live).
+│
+├── 🌐 WEBSITE - what visitors see on dfresh.us
+│   │
+│   ├── Home page
+│   │   ├── Banners
+│   │   │       What you see : the sliding photos at the top of the home page.
+│   │   │       Use it to    : change the photos, text and links (live).
+│   │   │
+│   │   ├── Home doors
+│   │   │       What you see : the "For Home" and "For Business" entry boxes.
+│   │   │       Use it to    : change their pictures and text (live).
+│   │   │
+│   │   ├── Most loved
+│   │   │       What you see : the products shown on the home page, in order.
+│   │   │       Use it to    : choose and reorder them (live).
+│   │   │
+│   │   ├── Size picker
+│   │   │       What you see : the napkin size try-it tool.
+│   │   │       Use it to    : set the sizes it shows (live).
+│   │   │
+│   │   └── Kits on the site
+│   │           What you see : kits shown under "For Business".
+│   │           Use it to    : choose which kits appear (live).
+│   │
+│   ├── Words and languages
+│   │   ├── Translations
+│   │   │       What you see : every word on the site in English, Tamil and Hindi.
+│   │   │       Use it to    : correct or add wording (live).
+│   │   │
+│   │   └── Languages
+│   │           What you see : the languages the site offers.
+│   │           Use it to    : switch a language on or off, or add one (live).
+│   │
+│   ├── Brochures
+│   │       What you see : PDF brochures visitors can download.
+│   │       Use it to    : upload or replace a brochure (live).
+│   │
+│   ├── Forms
+│   │   ├── Form options
+│   │   │       What you see : the dropdown choices in the site's forms.
+│   │   │       Use it to    : add or change the choices (live).
+│   │   │
+│   │   └── Form rules
+│   │           What you see : which fields are required, checks, and the spam limit.
+│   │           Use it to    : tighten or relax the forms.
+│   │
+│   ├── Where we deliver map
+│   │       What you see : the towns shown on the delivery map.
+│   │       Use it to    : choose which areas appear (live).
+│   │
+│   ├── Brand and layout
+│   │   ├── Logo and brand images
+│   │   │       What you see : the logo and brand pictures used on the site.
+│   │   │       Use it to    : change the logo without a developer.
+│   │   │
+│   │   ├── Menu links
+│   │   │       What you see : the top menu items and their order.
+│   │   │       Use it to    : add, remove or reorder menu items.
+│   │   │
+│   │   └── Visit cards
+│   │           What you see : office and godown addresses shown on the site.
+│   │           Use it to    : change addresses or add a new one.
+│   │
+│   ├── Google and sharing
+│   │       What you see : page titles and the preview shown when a link is shared on WhatsApp.
+│   │       Use it to    : set how pages appear in Google and in shares (live).
+│   │
+│   └── Site settings
+│           What you see : WhatsApp number, company name, CIN, GSTIN shown on the site.
+│           Use it to    : keep those details correct (live).
+│
+├── ⚙️ ADMIN - who can do what, and how the system behaves
+│   │
+│   ├── Organisation
+│   │   ├── Company
+│   │   │       What you see : company name, GSTIN, PAN, address, bank accounts and UPI ID.
+│   │   │       Use it to    : keep company details right; bank and UPI changes need a second Admin.
+│   │   │
+│   │   ├── Godowns
+│   │   │       What you see : every godown, its code and who is in charge.
+│   │   │       Use it to    : add a godown or change the person in charge.
+│   │   │
+│   │   ├── Numbering
+│   │   │       What you see : how invoice, order, return and other numbers look.
+│   │   │       Use it to    : set prefixes and starting numbers.
+│   │   │
+│   │   ├── Financial year lock (not built yet)
+│   │   │       What you see : the years that are closed.
+│   │   │       Use it to    : close a year so old bills cannot change.
+│   │   │
+│   │   └── Print templates (not built yet)
+│   │           What you see : how invoices and labels look when printed.
+│   │           Use it to    : change the layout of printed documents.
+│   │
+│   ├── Users and security
+│   │   ├── Staff
+│   │   │       What you see : everyone with a login - role, godowns, approval limit, leave.
+│   │   │       Use it to    : add staff, change roles, record leave, or mark someone as left.
+│   │   │                      Anything that gives signing power waits for a second Admin.
+│   │   │
+│   │   ├── Roles
+│   │   │       What you see : each job role and what it can see, add, edit, approve or export.
+│   │   │       Use it to    : tick or untick rights per role; wider rights wait for a second Admin.
+│   │   │
+│   │   ├── Approval rules
+│   │   │       What you see : what needs a second "yes" and above what amount.
+│   │   │       Use it to    : switch a rule on or set its limit; loosening a rule needs a second Admin.
+│   │   │
+│   │   ├── Stand-ins
+│   │   │       What you see : who approves for whom while someone is on leave.
+│   │   │       Use it to    : set a stand-in and the leave dates.
+│   │   │
+│   │   └── Audit log
+│   │           What you see : every change made - what, by whom, when, old and new value.
+│   │           Use it to    : check who did what; it cannot be edited (live).
+│   │
+│   ├── Devices (not built yet)
+│   │   ├── Label printer
+│   │   │       What you see : the printer used for labels.
+│   │   │       Use it to    : choose and test the label printer.
+│   │   │
+│   │   └── Scanner
+│   │           What you see : the barcode scanner setup.
+│   │           Use it to    : connect and test a scanner.
+│   │
+│   ├── Communications
+│   │   ├── Notifications
+│   │   │       What you see : which events send a message (order confirmed, payment due...) and to whom.
+│   │   │       Use it to    : turn messages on or off per event.
+│   │   │
+│   │   ├── Message templates
+│   │   │       What you see : the wording of each e-mail and WhatsApp, in each language.
+│   │   │       Use it to    : change what the messages say.
+│   │   │
+│   │   └── Outbox
+│   │           What you see : every message prepared or sent, and any that failed.
+│   │           Use it to    : check a customer or staff member was told, and resend failed ones.
+│   │
+│   └── Settings
+│       └── Switches
+│               What you see : features you can turn on or off (wallet, split shipments, QC hold...)
+│                              and limits like hold hours and request expiry.
+│               Use it to    : switch features on or off; switching off a control needs a second Admin.
+│
+└── 🛍️ ONLINE STORE (later)
+        What you see : customers buying directly on dfresh.us.
+        Use it to    : nothing yet; planned for stage 3.

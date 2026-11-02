@@ -1,7 +1,7 @@
-// Sales > My follow-ups (API /commerce/follow-ups): the open follow-ups assigned to me, overdue first (red), with
+// Sales > Leads > Follow-ups (API /commerce/follow-ups; the old My follow-ups): the open follow-ups assigned to me, overdue first (red), with
 // Done (and an outcome) or Snooze; a role with edit on Customers can switch to everyone's. A customer opens its drawer.
 import { useState } from 'react';
-import { InfoCard, Loading, useCan, useLoad } from './ui';
+import { InfoCard, Loading, PageHead, useCan, useLoad } from './ui';
 import CustomerDrawer, { FollowUpList } from './CustomerDrawer';
 
 export default function MyFollowUps() {
@@ -13,10 +13,10 @@ export default function MyFollowUps() {
   const overdue = d ? d.rows.filter((r) => r.overdue).length : 0;
   return (
     <section>
-      <h1>My follow-ups</h1>
+      <PageHead sub="Calls and visits you said you would make, overdue first." />
       <InfoCard title="Calls and visits to make">
         <ul>
-          <li>Follow-ups are added on a customer (Customers &gt; open &gt; Follow-ups). Overdue ones are red and counted on Operations.</li>
+          <li>Follow-ups are added on a customer (Sales &gt; Customers &gt; Customer list, open it &gt; Follow-ups). Overdue ones are red and counted on Operations.</li>
           <li>Done closes it (with what came of it); Snooze moves the due date. Both show on the customer&apos;s timeline.</li>
         </ul>
       </InfoCard>

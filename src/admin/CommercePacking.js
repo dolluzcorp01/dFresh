@@ -4,10 +4,12 @@
 // every pack (SKU, SKU/BATCH for batch-tracked products) or full carton (SKU#C); a wrong SKU, wrong batch or too many
 // shows a red message and is not counted. Mark packed needs every line matched plus cartons and weight; a role with
 // "approve" on Packing can pack anyway with a reason (audited). Packed: packing slip and carton labels (carton x of y,
-// barcode of the order number).
+// barcode of the order number). The tab is in the address (?tab=pick | packing | packed; the menu's Fulfilment > Packing
+// entries open each one), To pick by default.
 import { useEffect, useRef, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from './adminApi';
-import { Drawer, InfoCard, Loading, Notice, fmtDate, useAction, useCan, useConfirm, useLoad } from './ui';
+import { Drawer, InfoCard, Loading, Notice, PageHead, Pill, Tabs, fmtDate, useAction, useCan, useConfirm, useLoad } from './ui';
 import { barcodeSvg, esc, printPage, rs } from './printKit';
 import { stateName } from '../shared/gstStates';
 
@@ -59,7 +61,11 @@ export default function CommercePacking() {
   const data = useLoad('/commerce/packing');
   const canEdit = useCan('packing', 'edit');
   const act = useAction();
-  const [tab, setTab] = useState('pick');
+  const location = useLocation();
+  const navigate = useNavigate();
+  const urlTab = new URLSearchParams(location.search).get('tab');
+  const tab = ['pick', 'packing', 'packed'].includes(urlTab) ? urlTab : 'pick';
+  const setTab = (t) => navigate(`/admin/commerce/packing?tab=${t}`);
   const [picked, setPicked] = useState([]);
   const [open, setOpen] = useState(null);
   const d = data.data;
@@ -76,7 +82,7 @@ export default function CommercePacking() {
   useEffect(() => setPicked([]), [tab]);
   return (
     <section>
-      <h1>Packing</h1>
+      <PageHead sub="Pick the packs from the shelves, scan them into the box, mark the order packed." />
       <InfoCard title="Pick, scan, pack">
         <ul>
           <li>Tick New orders for a pick list (by bin, SKU and batch, earliest expiry first) and Start packing: the batches are fixed then.</li>
@@ -85,11 +91,8 @@ export default function CommercePacking() {
         </ul>
       </InfoCard>
       {act.note}
-      <div className="a-chips a-tabs" role="tablist" aria-label="Packing">
-        {[['pick', 'To pick', by('new').length], ['packing', 'Packing', by('packing').length], ['packed', 'Packed (3 days)', by('packed').length]].map(([k, l, n]) => (
-          <button key={k} type="button" role="tab" aria-selected={tab === k} className={`a-chip${tab === k ? ' on' : ''}`} onClick={() => setTab(k)}>{l} {n}</button>
-        ))}
-      </div>
+      <Tabs label="Packing" value={tab} onChange={setTab}
+        tabs={[['pick', 'To pick', by('new').length], ['packing', 'Packing', by('packing').length], ['packed', 'Packed (3 days)', by('packed').length]].map(([key, label, count]) => ({ key, label, count }))} />
       {tab !== 'packed' && (
         <div className="a-toolbar">
           <button type="button" className="a-btn a-btn-ghost" disabled={!picked.length || act.busy} onClick={pickList}>Pick list ({picked.length})</button>
@@ -103,7 +106,7 @@ export default function CommercePacking() {
             <tbody>{list.map((o) => (
               <tr key={o.order_no}>
                 {tab !== 'packed' && <td><input type="checkbox" aria-label={`Pick ${o.order_no}`} disabled={o.waiting} checked={picked.includes(o.order_no)} onChange={() => toggle(o.order_no)} /></td>}
-                <td><code>{o.order_no}</code>{o.waiting && <span className="a-status a-ap-pending a-builtin">waits for approval</span>}</td>
+                <td><code>{o.order_no}</code>{o.waiting && <Pill tone="warn" className="a-builtin">waits for approval</Pill>}</td>
                 <td>{o.customer}<small className="a-muted a-person-sub">{o.ship_town}</small></td>
                 <td>{o.method}{o.area ? <small className="a-muted a-person-sub">{o.area}</small> : null}</td>
                 <td className="a-num">{o.units}</td>
@@ -156,6 +159,7 @@ function PackDrawer({ no, onClose }) {
   });
   return (
     <Drawer title={`Pack ${no}`} onClose={onClose}
+      status={d ? <span className={`a-ostatus a-ostatus-${d.order.status}`}>{d.order.status}</span> : null}
       footer={d ? (
         <>
           {packing && canEdit && <button type="button" className="a-btn" disabled={act.busy || (!d.complete && !(f.override && f.override_reason.trim())) || !f.cartons || !f.weight_kg} onClick={packed}>Mark packed</button>}
@@ -167,7 +171,7 @@ function PackDrawer({ no, onClose }) {
         {d && (
           <>
             {act.note}
-            <p><b>{d.order.customer}</b> · {d.order.ship_town} · {d.order.method}{d.order.area ? ` (${d.order.area})` : ''} · <span className={`a-ostatus a-ostatus-${d.order.status}`}>{d.order.status}</span></p>
+            <p><b>{d.order.customer}</b> · {d.order.ship_town} · {d.order.method}{d.order.area ? ` (${d.order.area})` : ''}</p>
             {packing && canEdit && (
               <form onSubmit={scan} className="a-packscan">
                 <label className="a-field"><span>Scan a pack or carton (or type the code and press Enter)</span>
@@ -175,7 +179,7 @@ function PackDrawer({ no, onClose }) {
               </form>
             )}
             {last && <div className={`a-scanmsg ${last.result === 'ok' ? 'ok' : 'bad'}`} role="alert">{last.result === 'ok' ? 'OK ' : 'NOT COUNTED: '}{last.message}</div>}
-            <p className="a-packprogress"><b>{got} of {need} packs</b>{d.complete ? <span className="a-status a-ap-approved a-builtin">All matched</span> : null}</p>
+            <p className="a-packprogress"><b>{got} of {need} packs</b>{d.complete ? <Pill tone="good" className="a-builtin">All matched</Pill> : null}</p>
             <div className="a-scroll">
               <table className="a-table">
                 <thead><tr><th>Bin</th><th>SKU</th><th>Batch</th><th className="a-num">Packs</th><th className="a-num">Scanned</th></tr></thead>

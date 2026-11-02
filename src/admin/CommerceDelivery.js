@@ -8,9 +8,12 @@
 // collected (a cash payment on the order); End trip compares the cash collected with the cash handed over.
 // Return pickups (phase 6): returns collected on a trip wait in Ready next to the packed orders; on the trip they are
 // stops of their own (DFR no.), marked Picked up with a photo (required) or Failed.
+// The office tab is in the address (?tab=ready | trips | other | failed; the menu's Fulfilment > Delivery entries open
+// Trips, Courier and pickup, Failed), Ready by default.
 import { useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from './adminApi';
-import { Drawer, InfoCard, Loading, Notice, fmtDate, useAction, useCan, useLoad, useUpload, UploadProgress } from './ui';
+import { Drawer, InfoCard, Loading, Notice, PageHead, Table, Tabs, fmtDate, useAction, useCan, useLoad, useUpload, UploadProgress } from './ui';
 import { barcodeSvg, esc, printPage, rs } from './printKit';
 
 /** street, town PIN without a dangling comma when a part is empty (a customer made from a lead has no street yet) */
@@ -174,7 +177,11 @@ export function TripView({ id, onChanged }) {
 export default function CommerceDelivery() {
   const data = useLoad('/commerce/delivery');
   const act = useAction();
-  const [tab, setTab] = useState('ready');
+  const location = useLocation();
+  const navigate = useNavigate();
+  const urlTab = new URLSearchParams(location.search).get('tab');
+  const tab = ['ready', 'trips', 'other', 'failed'].includes(urlTab) ? urlTab : 'ready';
+  const setTab = (t) => navigate(`/admin/commerce/delivery?tab=${t}`);
   const [sel, setSel] = useState([]);
   const [selRet, setSelRet] = useState([]);
   const [trip, setTrip] = useState({ vehicle_id: '', driver_id: '' });
@@ -199,7 +206,7 @@ export default function CommerceDelivery() {
   const act2 = (path, body, text) => act.run(async () => { await api.send('POST', path, body); setForm(null); data.reload(); }, text);
   return (
     <section>
-      <h1>Delivery</h1>
+      <PageHead sub="Load packed orders on a trip, hand them to a courier or the customer, and sort out failed deliveries." />
       <InfoCard title="Trips, couriers and pickups">
         <ul>
           <li>Ready: packed orders for our own vehicle, by area, and returns to pick up. Tick them, choose the vehicle and the driver: a trip. Start trip = the goods leave the godown (stock out, tax invoice).</li>
@@ -208,11 +215,8 @@ export default function CommerceDelivery() {
         </ul>
       </InfoCard>
       {act.note}
-      <div className="a-chips a-tabs" role="tablist" aria-label="Delivery">
-        {[['ready', 'Ready for a trip'], ['trips', 'Trips'], ['other', 'Courier and pickup'], ['failed', 'Failed']].map(([k, l]) => (
-          <button key={k} type="button" role="tab" aria-selected={tab === k} className={`a-chip${tab === k ? ' on' : ''}`} onClick={() => setTab(k)}>{l} {lists[k].length}</button>
-        ))}
-      </div>
+      <Tabs label="Delivery" value={tab} onChange={setTab}
+        tabs={[['ready', 'Ready for a trip'], ['trips', 'Trips'], ['other', 'Courier and pickup'], ['failed', 'Failed']].map(([key, label]) => ({ key, label, count: lists[key].length }))} />
       <Loading state={data}>
         {d && tab === 'ready' && (
           <>
@@ -253,22 +257,20 @@ export default function CommerceDelivery() {
           </>
         )}
         {d && tab === 'trips' && (
-          <div className="a-scroll">
-            <table className="a-table">
-              <thead><tr><th>Trip</th><th>Date</th><th>Vehicle / driver</th><th>Status</th><th className="a-num">Stops</th><th className="a-num">Cash collected / handed</th></tr></thead>
-              <tbody>{d.trips.map((t) => (
-                <tr key={t.trip_id} className="a-rowlink" tabIndex={0} onClick={() => setOpenTrip(t.trip_id)} onKeyDown={(e) => e.key === 'Enter' && setOpenTrip(t.trip_id)}>
-                  <td>T-{t.trip_id}{t.area && <small className="a-muted a-person-sub">{t.area}</small>}</td><td>{day(t.trip_date)}</td><td>{t.vehicle}<small className="a-muted a-person-sub">{t.driver}</small></td>
-                  <td><span className={`a-status ${TRIP[t.status][1]}`}>{TRIP[t.status][0]}</span></td><td className="a-num">{t.delivered}/{t.stops}{t.failed ? ` (${t.failed} failed)` : ''}</td>
-                  <td className="a-num">{t.cash_collected == null ? (t.cash_expected != null ? `to collect ${rs(t.cash_expected)}` : '') : `${rs(t.cash_collected)} / ${rs(t.cash_handed)}`}</td>
-                </tr>
-              ))}</tbody>
-            </table>
-          </div>
+          <Table label="Trips" rows={d.trips} rowKey={(t) => t.trip_id} onRowClick={(t) => setOpenTrip(t.trip_id)}
+            empty={{ icon: 'truck', title: 'No trips yet.' }}
+            columns={[
+              { key: 'trip_id', label: 'Trip', sort: true, render: (t) => <>T-{t.trip_id}{t.area && <small className="a-muted a-person-sub">{t.area}</small>}</> },
+              { key: 'trip_date', label: 'Date', sort: true, render: (t) => day(t.trip_date) },
+              { key: 'vehicle', label: 'Vehicle / driver', render: (t) => <>{t.vehicle}<small className="a-muted a-person-sub">{t.driver}</small></> },
+              { key: 'status', label: 'Status', render: (t) => <span className={`a-status ${TRIP[t.status][1]}`}>{TRIP[t.status][0]}</span> },
+              { key: 'stops', label: 'Stops', num: true, render: (t) => `${t.delivered}/${t.stops}${t.failed ? ` (${t.failed} failed)` : ''}` },
+              { key: 'cash', label: 'Cash collected / handed', num: true, render: (t) => (t.cash_collected == null ? (t.cash_expected != null ? `to collect ${rs(t.cash_expected)}` : '') : `${rs(t.cash_collected)} / ${rs(t.cash_handed)}`) },
+            ]} />
         )}
         {d && tab === 'other' && lists.courier.length > 0 && <h3>Courier</h3>}
         {d && tab === 'other' && lists.courier.length > 0 && (
-          <table className="a-table"><tbody>{lists.courier.map((o) => (
+          <div className="a-scroll"><table className="a-table"><tbody>{lists.courier.map((o) => (
             <tr key={o.order_no}>
               <td><code>{o.order_no}</code><small className="a-muted a-person-sub">{o.customer}, {o.ship_town}</small></td>
               <td>{o.status === 'packed' ? `${o.cartons} carton(s), ${Number(o.weight_kg)} kg` : <>{o.courier} AWB <b>{o.awb_no}</b>{o.tracking_link && <> · <a href={o.tracking_link} target="_blank" rel="noreferrer">Track</a></>}<small className="a-muted a-person-sub">handed {fmtDate(o.courier_at)}</small></>}</td>
@@ -276,21 +278,21 @@ export default function CommerceDelivery() {
               <td>{o.status === 'packed' ? <button type="button" className="a-btn a-btn-sm" onClick={() => setForm({ order: o, kind: 'courier', courier_id: d.couriers[0] ? String(d.couriers[0].courier_id) : '', awb_no: '', eway_bill_no: '' })}>Hand to courier</button>
                 : <button type="button" className="a-btn a-btn-sm a-btn-ghost" onClick={() => setForm({ order: o, kind: 'courier_done', receiver_name: '' })}>Mark delivered</button>}</td>
             </tr>
-          ))}</tbody></table>
+          ))}</tbody></table></div>
         )}
         {d && tab === 'other' && lists.pickup.length > 0 && <h3>Customer pickup at the godown</h3>}
         {d && tab === 'other' && lists.pickup.length > 0 && (
-          <table className="a-table"><tbody>{lists.pickup.map((o) => (
+          <div className="a-scroll"><table className="a-table"><tbody>{lists.pickup.map((o) => (
             <tr key={o.order_no}><td><code>{o.order_no}</code><small className="a-muted a-person-sub">{o.customer}</small></td><td>{o.cartons} carton(s)</td><td className="a-num">{o.payment_terms === 'cod' && o.amount_due > 0 ? `Collect ${rs(o.amount_due)}` : ''}</td>
               <td><button type="button" className="a-btn a-btn-sm" onClick={() => setForm({ order: o, kind: 'pickup', receiver_name: '' })}>Collected</button></td></tr>
-          ))}</tbody></table>
+          ))}</tbody></table></div>
         )}
-        {d && tab === 'failed' && (
-          <table className="a-table"><tbody>{lists.failed.map((o) => (
+        {d && tab === 'failed' && lists.failed.length > 0 && (
+          <div className="a-scroll"><table className="a-table"><tbody>{lists.failed.map((o) => (
             <tr key={o.order_no}><td><code>{o.order_no}</code><small className="a-muted a-person-sub">{o.customer}, {o.ship_town}</small></td><td className="a-bad">{o.failed_reason}<small className="a-muted a-person-sub">{fmtDate(o.failed_at)}</small></td>
               <td><span className="a-row"><button type="button" className="a-btn a-btn-sm" onClick={() => act2(`/commerce/orders/${o.order_no}/reattempt`, {}, `${o.order_no} is ready for the next trip`)}>Re-attempt</button>
                 <button type="button" className="a-btn a-btn-sm a-btn-danger" onClick={() => setForm({ order: o, kind: 'return', reason: '' })}>Return to godown</button></span></td></tr>
-          ))}</tbody></table>
+          ))}</tbody></table></div>
         )}
         {d && tab !== 'ready' && tab !== 'trips' && !lists[tab].length && <p className="a-muted">Nothing here.</p>}
       </Loading>
@@ -333,7 +335,7 @@ export function MyTrips() {
   const d = data.data;
   return (
     <section className="a-mytrips">
-      <h1>My trips</h1>
+      <PageHead title="My trips" sub="Your trips: mark each stop delivered, picked up or failed, and the cash collected." />
       <Loading state={data}>
         {d && (
           !d.driver ? <Notice kind="warn">Your user is not linked to a driver yet: an Admin links it in Commerce settings &gt; Drivers.</Notice> : open ? (

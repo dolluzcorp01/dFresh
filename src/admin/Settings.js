@@ -1,4 +1,5 @@
-// Settings (spec F 10, admin): every site_settings row with its description, in sections; the public flag is shown as
+// Settings (spec F 10, admin; menu: Website > Site settings / Google and sharing / Home page > Home doors, and
+// Admin > Organisation > Company): every site_settings row with its description, in sections; the public flag is shown as
 // a badge, not editable here (a secret must never become public by a click). Typed values are pending until Save
 // (Save / Cancel on the row), checked with the API's own rules (shared/settingRules.js); whatsapp_number follows
 // whatsapp_display. The lead sheet ID gets "Open sheet" and a read-only "Test connection". share_image / about_image: preview + Upload /
@@ -6,10 +7,10 @@
 // mail_logo_url also gets a live preview on the e-mail's ink header (the typed URL, or the built-in logo when
 // empty), the server's last check of the saved URL, and "Send test mail" (MAIL_TEST_TO locally, the signed-in
 // admin's own e-mail in production). Saving a URL is refused by the server unless it passes the check.
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { api } from './adminApi';
 import { API_BASE, mediaUrl } from '../utils/api';
-import { InfoCard, Loading, UploadButton, fmtDate, useAction, useConfirm, useLeaveGuard, useLoad, useUpload } from './ui';
+import { InfoCard, Loading, PageHead, Pill, UploadButton, fmtDate, useAction, useConfirm, useHashScroll, useLeaveGuard, useLoad, useUpload } from './ui';
 import { ProductSelect } from './ProductSelect';
 import { DERIVED, checkSetting, whatsappNumber } from '../shared/settingRules';
 import { ABOUT, DEFAULT_FOCUS, formatFocus, parseFocus, visibleWindow } from '../shared/photoFocus';
@@ -41,12 +42,9 @@ export default function Settings() {
   const products = useLoad('/products');
   const act = useAction();
   const cards = (products.data || []).filter((p) => !p.variant_of);
-  // #setting-<key> (dashboard links): scroll to that row once the list is there
-  useEffect(() => {
-    const id = decodeURIComponent(window.location.hash.slice(1));
-    const el = id && list.data ? document.getElementById(id) : null;
-    if (el) { el.scrollIntoView({ block: 'center' }); el.classList.add('a-target'); }
-  }, [list.data]);
+  // #setting-<key> (dashboard links) and #cs-s-<section> (menu entries: Company, Home doors, Google and sharing):
+  // scroll there once the list is there
+  useHashScroll(Boolean(list.data));
   // typed values are pending (row highlighted, Save / Cancel on the row) until saved; leaving the page asks first
   const [pending, setPending] = useState({}); // key -> typed value
   const setValue = (s, v) => setPending((p) => {
@@ -85,7 +83,7 @@ export default function Settings() {
 
   return (
     <section>
-      <h1>Settings</h1>
+      <PageHead title="Settings" sub="Company details, contact, home page pictures, sharing, e-mail and security of the site." />
       <InfoCard title="Addresses are not set here">
         <ul>
           <li>Office and godown names and addresses: Translations, group Contact details (<code>c_office</code>, <code>c_office_a</code>, <code>c_godown</code>, <code>c_godown_a</code>), one text per language.</li>
@@ -100,7 +98,7 @@ export default function Settings() {
             <colgroup><col className="a-set-key" /><col /><col className="a-set-pub" /><col className="a-set-act" /></colgroup>
             <thead><tr><th>Setting</th><th>Value</th><th>Visibility</th><th /></tr></thead>
             {sections.map(([title, items]) => (
-              <tbody key={title}>
+              <tbody key={title} id={`cs-s-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`}>
                 <tr className="a-group"><th colSpan={4}>{title}</th></tr>
                 {items.map((s) => (
                   <Row key={s.setting_key} s={s} act={act} cards={cards} onSaved={list.reload}
@@ -168,7 +166,7 @@ function Row({ s, act, cards, onSaved, value: v, pending, derivedFrom, onChange:
         {s.setting_key === 'mail_logo_url' && <MailLogo value={v} act={act} />}
         {s.setting_key === 'gsheet_spreadsheet_id' && <SheetCheck value={v} />}
       </td>
-      <td><span className={`a-status ${Number(s.is_public) ? 'a-status-pub' : 'a-status-off'}`}>{Number(s.is_public) ? 'Public' : 'Server only'}</span></td>
+      <td><Pill tone={Number(s.is_public) ? 'info' : 'gray'}>{Number(s.is_public) ? 'Public' : 'Server only'}</Pill></td>
       <td>
         {pending && !picture && (
           <span className="a-pending-btns">
@@ -312,7 +310,7 @@ function Hint({ text, empty }) {
   const hint = marked ? text.replace(TO_BE_PROVIDED, '') : text;
   return (
     <small className="a-muted">
-      {marked && empty && <span className="a-status a-status-test a-tbp">To be provided</span>}
+      {marked && empty && <Pill tone="warn" className="a-tbp">To be provided</Pill>}
       {hint}
     </small>
   );
@@ -354,7 +352,7 @@ function SheetCheck({ value }) {
       </span>
       {info && (
         <small>
-          <span className={`a-status ${info.kind === 'LIVE' ? 'a-status-on' : 'a-status-test'}`}>{info.kind}</span>{' '}
+          <Pill tone={info.kind === 'LIVE' ? 'good' : 'warn'}>{info.kind}</Pill>{' '}
           <b>{info.title}</b> · tabs: {info.tabs.join(', ')} · sync {info.syncEnabled ? 'on' : 'off (GSHEET_ENABLED)'}
         </small>
       )}

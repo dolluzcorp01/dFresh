@@ -1,10 +1,10 @@
-// dFresh Commerce (DEMO, database dfresh_commerce): operations dashboard. Each card opens the matching screen:
+// Home > Dashboard while Commerce is on (dFresh Commerce, DEMO database dfresh_commerce): the operations dashboard. Each card opens the matching screen:
 // today's orders, to pack (New), to dispatch (Packed), low stock, returns to collect / inspect / decide,
 // the wallet balance owed to customers. Plus the next orders to pack and the SKUs to reorder. A card or table is
 // only there when the role can view its section (the API sends null for the others). The Business view (sales,
 // margin, owed, stock value, top SKUs and customers) only for a role with Reports and Products and prices.
 import { Link } from 'react-router-dom';
-import { InfoCard, Loading, Notice, fmtDate, useLoad } from './ui';
+import { InfoCard, Loading, Notice, PageHead, fmtDate, useLoad } from './ui';
 import { rs } from './CommerceReturns';
 
 function Card({ to, value, label, sub, bad }) {
@@ -29,8 +29,8 @@ function Business({ b }) {
         <Card to="/admin/commerce/reports" value={rs(b.wallet)} label="wallets owed to customers" />
       </div>
       <div className="a-grid2">
-        <div><h3>Top SKUs this month</h3><table className="a-table"><tbody>{b.topSkus.map((x) => <tr key={x.name}><td>{x.name}</td><td className="a-num">{rs(x.total)}</td></tr>)}</tbody></table></div>
-        <div><h3>Top customers this month</h3><table className="a-table"><tbody>{b.topCustomers.map((x) => <tr key={x.name}><td>{x.name}</td><td className="a-num">{rs(x.total)}</td></tr>)}</tbody></table></div>
+        <div><h3>Top SKUs this month</h3><div className="a-scroll"><table className="a-table"><tbody>{b.topSkus.map((x) => <tr key={x.name}><td>{x.name}</td><td className="a-num">{rs(x.total)}</td></tr>)}</tbody></table></div></div>
+        <div><h3>Top customers this month</h3><div className="a-scroll"><table className="a-table"><tbody>{b.topCustomers.map((x) => <tr key={x.name}><td>{x.name}</td><td className="a-num">{rs(x.total)}</td></tr>)}</tbody></table></div></div>
       </div>
     </div>
   );
@@ -41,7 +41,7 @@ export default function CommerceOps() {
   const d = ops.data;
   return (
     <section>
-      <h1>Operations</h1>
+      <PageHead title="Dashboard" sub="Today's work in the order the goods move, then the business at a glance." />
       <InfoCard title="Commerce demo - today at a glance">
         <ul>
           <li>Click a card to open the list behind it.</li>
@@ -78,8 +78,8 @@ export default function CommerceOps() {
               <div className="a-card">
                 <h2>Reorder (low stock)</h2>
                 {d.lowStock.length ? (
-                  <table className="a-table"><thead><tr><th>SKU</th><th>Product</th><th className="a-num">Available</th><th className="a-num">Level</th><th className="a-num">Suggested</th></tr></thead>
-                    <tbody>{d.lowStock.map((s) => <tr key={s.sku_code}><td><code>{s.sku_code}</code></td><td>{s.name}</td><td className="a-num a-bad">{s.available}</td><td className="a-num">{s.reorder_level}</td><td className="a-num">{s.suggested}</td></tr>)}</tbody></table>
+                  <div className="a-scroll"><table className="a-table"><thead><tr><th>SKU</th><th>Product</th><th className="a-num">Available</th><th className="a-num">Level</th><th className="a-num">Suggested</th></tr></thead>
+                    <tbody>{d.lowStock.map((s) => <tr key={s.sku_code}><td><code>{s.sku_code}</code></td><td>{s.name}</td><td className="a-num a-bad">{s.available}</td><td className="a-num">{s.reorder_level}</td><td className="a-num">{s.suggested}</td></tr>)}</tbody></table></div>
                 ) : <p className="a-muted">All SKUs above their level.</p>}
               </div>
               )}
@@ -87,8 +87,8 @@ export default function CommerceOps() {
               <div className="a-card">
                 <h2>Next to pack</h2>
                 {d.nextToPack.length ? (
-                  <table className="a-table"><thead><tr><th>Order</th><th>Customer</th><th>Received</th></tr></thead>
-                    <tbody>{d.nextToPack.map((o) => <tr key={o.order_no}><td><code>{o.order_no}</code></td><td>{o.customer}</td><td>{fmtDate(o.created_at)}</td></tr>)}</tbody></table>
+                  <div className="a-scroll"><table className="a-table"><thead><tr><th>Order</th><th>Customer</th><th>Received</th></tr></thead>
+                    <tbody>{d.nextToPack.map((o) => <tr key={o.order_no}><td><code>{o.order_no}</code></td><td>{o.customer}</td><td>{fmtDate(o.created_at)}</td></tr>)}</tbody></table></div>
                 ) : <p className="a-muted">Nothing to pack.</p>}
               </div>
               )}

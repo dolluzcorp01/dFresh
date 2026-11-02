@@ -7,7 +7,7 @@ import { api, rowId } from './adminApi';
 import { mediaUrl } from '../utils/api';
 import { KitProducts, ProductField, RepPreview, Thumb, productName } from './ProductSelect';
 import useOrderDraft from './useOrderDraft';
-import { Drawer, Field, InfoTip, Loading, MissingBadges, TrEditor, UploadButton, missingTexts, nextOrder, useAction, useAdmin, useCan, useConfirm, useLoad, useUpload } from './ui';
+import { Drawer, Field, InfoTip, Loading, MissingBadges, PageHead, TrEditor, UploadButton, missingTexts, nextOrder, useAction, useAdmin, useCan, useConfirm, useLoad, useUpload } from './ui';
 import { fontVar, loadFont } from '../i18n/fonts';
 import { LAND, MAP_H, MAP_W } from '../shared/mapShape';
 
@@ -186,10 +186,8 @@ export default function EntityPage({ name }) {
 
   return (
     <section>
-      <h1>{cfg.title}</h1>
-      {cfg.hint && <p className="a-muted a-pagehint">{cfg.hint}</p>}
+      <PageHead sub={cfg.hint} actions={canCreate ? <button type="button" className="a-btn" onClick={() => openDrawer({ create: true })}>Add</button> : null} />
       <div className="a-toolbar">
-        {canCreate && <button type="button" className="a-btn" onClick={() => openDrawer({ create: true })}>Add</button>}
         {cfg.reorder && canEdit && <span className="a-muted">{onlyMissing ? 'Show all rows to drag them.' : 'Drag rows to change the order, then Save order.'}</span>}
         {cfg.tr && (
           <button type="button" className="a-chip" aria-pressed={onlyMissing} onClick={() => setOnlyMissing((x) => !x)}
@@ -308,7 +306,7 @@ function Editor({ name, cfg, id, lookups, products, rows, listRows, lists, cats,
     return r;
   }, `${kind} photo saved`);
 
-  if (!creating && !loaded.data) return <Drawer title={cfg.title} onClose={onClose}><Loading state={loaded}>{null}</Loading></Drawer>;
+  if (!creating && !loaded.data) return <Drawer title={cfg.title} onClose={onClose} wide><Loading state={loaded}>{null}</Loading></Drawer>;
 
   function renderField(f) {
     const def = { ...f, type: f.keyField && !creating ? 'readonly' : f.type, options: f.lookup ? lookups[f.lookup] : f.options };
@@ -338,7 +336,7 @@ function Editor({ name, cfg, id, lookups, products, rows, listRows, lists, cats,
   }
 
   return (
-    <Drawer title={creating ? `New - ${cfg.title}` : `${cfg.title}: ${cfg.title1 ? cfg.title1(row) : decodeURIComponent(id).replace('~', ' / ')}`} onClose={onClose} dirty={draft !== null}
+    <Drawer title={creating ? `New - ${cfg.title}` : `${cfg.title}: ${cfg.title1 ? cfg.title1(row) : decodeURIComponent(id).replace('~', ' / ')}`} onClose={onClose} dirty={draft !== null} wide
       footer={canEdit && (
         <>
           <button type="button" className="a-btn" onClick={save} disabled={act.busy}>{creating ? 'Create' : 'Save'}</button>

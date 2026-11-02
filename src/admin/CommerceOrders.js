@@ -1,7 +1,7 @@
 // Sales > Orders (docs/COMMERCE-SPEC.md 5.1, 5.2, 6; API /commerce/orders, logic in src/backend_routes/commerce.js).
 // Phase 5: packing (Fulfilment > Packing) and delivery (Fulfilment > Delivery, My trips) move the order on; the drawer shows
 // the delivery method, area and charge, courier AWB with its tracking link, cartons, trips and proof of delivery.
-// List: status chips (with Overdue), payment status, customer type, date range, search by DFO / invoice / customer /
+// List: status tabs with their counts (Overdue is its own filter next to them), payment status, customer type, date range, search by DFO / invoice / customer /
 // phone, Excel export (edit on Orders). Order drawer: status steps, addresses with the GST type (CGST + SGST in the
 // seller's state, IGST elsewhere), lines with their tax, totals, payments (record a payment or a refund, receipts
 // list, balance due), invoices and every credit note against them (print / save as PDF, invoicePrint.js; DEMO
@@ -16,7 +16,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { api } from './adminApi';
-import { Drawer, InfoCard, Loading, Notice, fmtDate, useAction, useCan, useConfirm, useLoad } from './ui';
+import { Drawer, InfoCard, Loading, Notice, PageHead, Table, Tabs, fmtDate, money, useAction, useCan, useConfirm, useLoad } from './ui';
 import { NewReturn, ReturnDrawer, ReturnsTable } from './CommerceReturns';
 import { addrLines, printCreditNote, printInvoice as printInvoiceDoc, signed } from './invoicePrint';
 import { NewCustomerDrawer } from './CommerceCustomers';
@@ -37,7 +37,7 @@ const GONE = ['out_for_delivery', 'with_courier', 'failed'];
 const LABEL = { approval: 'Waiting for approval', new: 'New', packing: 'Packing', packed: 'Packed', out_for_delivery: 'Out for delivery', with_courier: 'Handed to courier', failed: 'Delivery failed', delivered: 'Delivered', cancelled: 'Cancelled' };
 const STAMP = { new: 'confirmed_at', packing: 'packing_at', packed: 'packed_at', out_for_delivery: 'out_at', with_courier: 'courier_at', delivered: 'delivered_at' };
 const PAY = { unpaid: 'Unpaid', partly_paid: 'Part paid', paid: 'Paid', refunded: 'Refunded', part_refunded: 'Part refunded' };
-const rs = (n) => `Rs ${Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const rs = (n) => money(n || 0); // empty = Rs 0.00 here (totals and lines)
 const day = (d) => (d ? new Date(`${String(d).slice(0, 10)}T00:00:00Z`).toLocaleDateString('en-IN', { timeZone: 'UTC', day: 'numeric', month: 'short', year: 'numeric' }) : '');
 const round2 = (n) => Math.round(n * 100) / 100;
 
@@ -67,7 +67,8 @@ export default function CommerceOrders() {
 
   return (
     <section>
-      <h1>Orders</h1>
+      <PageHead sub="Phone, WhatsApp and B2B orders, from confirmation to delivery and payment."
+        actions={canCreate && <button type="button" className="a-btn" onClick={() => setCreating(true)}>New order</button>} />
       <InfoCard title="Orders entered in the admin">
         <ul>
           <li>Phone, WhatsApp and B2B orders. New &gt; Packing &gt; Packed (Packing) &gt; Out for delivery, Handed to courier or collected (Delivery) &gt; Delivered. The goods leave the godown with the tax invoice.</li>
@@ -76,16 +77,12 @@ export default function CommerceOrders() {
         </ul>
       </InfoCard>
       {act.note}
-      <div className="a-toolbar">
-        <div className="a-chips" role="group" aria-label="Status">
-          <button type="button" className={`a-chip${!f.status && !f.overdue ? ' on' : ''}`} onClick={() => set({ status: '', overdue: '' })}>All {all}</button>
-          {CHIPS.map(([k, sts]) => [k, sts.reduce((a, s) => a + (counts[s] || 0), 0)]).filter(([k, n]) => k !== 'failed' || n).map(([k, n]) => (
-            <button key={k} type="button" className={`a-chip${f.status === k ? ' on' : ''}`} onClick={() => set({ status: k, overdue: '' })}>{CHIP_LABEL[k]} {n}</button>))}
-          <button type="button" className={`a-chip${f.overdue ? ' on' : ''}`} onClick={() => set({ overdue: f.overdue ? '' : '1', status: '' })}>Overdue {(d && d.overdue) || 0}</button>
-        </div>
-        {canCreate && <button type="button" className="a-btn" onClick={() => setCreating(true)}>New order</button>}
-      </div>
+      <Tabs label="Status" value={f.overdue ? null : f.status}
+        tabs={[{ key: '', label: 'All', count: all },
+          ...CHIPS.map(([k, sts]) => [k, sts.reduce((a, s) => a + (counts[s] || 0), 0)]).filter(([k, n]) => k !== 'failed' || n).map(([k, n]) => ({ key: k, label: CHIP_LABEL[k], count: n }))]}
+        onChange={(k) => set({ status: k, overdue: '' })} />
       <div className="a-filters">
+        <button type="button" className={`a-chip${f.overdue ? ' on' : ''}`} aria-pressed={Boolean(f.overdue)} onClick={() => set({ overdue: f.overdue ? '' : '1', status: '' })}>Overdue {(d && d.overdue) || 0}</button>
         <input type="search" placeholder="DFO, invoice, customer or phone" aria-label="Search orders" value={search} onChange={(e) => setSearch(e.target.value)} />
         <label>Payment <select value={f.pay} onChange={(e) => set({ pay: e.target.value })}><option value="">All</option>{Object.entries(PAY).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></label>
         <label>Customer type <select value={f.type} onChange={(e) => set({ type: e.target.value })}><option value="">All</option>{types.map((l) => <option key={l.key} value={l.key}>{l.label}</option>)}</select></label>
@@ -94,26 +91,18 @@ export default function CommerceOrders() {
         {canEdit && <button type="button" className="a-btn a-btn-ghost" disabled={act.busy} onClick={exportXlsx}>Excel</button>}
       </div>
       <Loading state={list}>
-        <div className="a-scroll">
-          <table className="a-table a-orders">
-            <thead><tr><th>Order</th><th>Customer</th><th>Status</th><th>Payment</th><th className="a-num">Total</th><th className="a-num">Due</th><th>Invoice</th><th>Received</th></tr></thead>
-            <tbody>
-              {((d && d.rows) || []).map((o) => (
-                <tr key={o.order_no} className="a-rowlink" tabIndex={0} onClick={() => setOpen(o.order_no)} onKeyDown={(e) => e.key === 'Enter' && setOpen(o.order_no)}>
-                  <td><code>{o.order_no}</code></td>
-                  <td>{o.customer} <small className="a-muted">{o.ctype}, {o.town}{o.gst_type === 'inter' ? ', IGST' : ''}</small></td>
-                  <td><span className={`a-ostatus a-ostatus-${o.status}`}>{LABEL[o.status]}</span></td>
-                  <td><span className={`a-pay a-pay-${o.payment_status}`}>{PAY[o.payment_status]}</span>{o.overdue && <span className="a-overdue">Overdue</span>}</td>
-                  <td className="a-num">{rs(o.total)}</td>
-                  <td className="a-num">{o.status !== 'cancelled' && o.amount_due > 0 ? rs(o.amount_due) : o.amount_due < 0 ? <span className="a-bad">refund {rs(-o.amount_due)}</span> : ''}</td>
-                  <td>{o.invoice_no || ''}{o.due_on && <small className="a-muted a-person-sub">due {day(o.due_on)}</small>}</td>
-                  <td>{fmtDate(o.created_at)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {d && !d.rows.length && <p className="a-muted">No order matches.</p>}
-        </div>
+        <Table label="Orders" className="a-orders" rows={(d && d.rows) || []} rowKey={(o) => o.order_no} onRowClick={(o) => setOpen(o.order_no)}
+          empty={d ? { icon: 'inbox', title: 'No order matches.' } : null}
+          columns={[
+            { key: 'order_no', label: 'Order', sort: true, render: (o) => <code>{o.order_no}</code> },
+            { key: 'customer', label: 'Customer', sort: true, render: (o) => <>{o.customer} <small className="a-muted">{o.ctype}, {o.town}{o.gst_type === 'inter' ? ', IGST' : ''}</small></> },
+            { key: 'status', label: 'Status', render: (o) => <span className={`a-ostatus a-ostatus-${o.status}`}>{LABEL[o.status]}</span> },
+            { key: 'payment_status', label: 'Payment', render: (o) => <><span className={`a-pay a-pay-${o.payment_status}`}>{PAY[o.payment_status]}</span>{o.overdue && <span className="a-overdue">Overdue</span>}</> },
+            { key: 'total', label: 'Total', num: true, sort: true, render: (o) => rs(o.total) },
+            { key: 'amount_due', label: 'Due', num: true, sort: true, render: (o) => (o.status !== 'cancelled' && o.amount_due > 0 ? rs(o.amount_due) : o.amount_due < 0 ? <span className="a-bad">refund {rs(-o.amount_due)}</span> : '') },
+            { key: 'invoice_no', label: 'Invoice', render: (o) => <>{o.invoice_no || ''}{o.due_on && <small className="a-muted a-person-sub">due {day(o.due_on)}</small>}</> },
+            { key: 'created_at', label: 'Received', sort: true, render: (o) => fmtDate(o.created_at) },
+          ]} />
       </Loading>
       {open && <OrderDrawer no={open} canEdit={canEdit} onClose={() => setOpen(null)} onChanged={list.reload} />}
       {creating && <OrderForm onClose={() => setCreating(false)} onSaved={(no) => { setCreating(false); list.reload(); setOpen(no); }} />}
@@ -145,7 +134,7 @@ function OrderDrawer({ no, canEdit, onClose, onChanged }) {
   const pendingCancel = d && d.approvals.find((a) => a.kind === 'cancel_after_dispatch' && a.status === 'pending');
   if (panel === 'edit' && d) return <OrderForm order={d} onClose={() => setPanel(null)} onSaved={() => { setPanel(null); reload(); act.setMsg({ kind: 'ok', text: `${no} saved.` }); }} />;
   return (
-    <Drawer title={`Order ${no}`} onClose={onClose}
+    <Drawer title={`Order ${no}`} onClose={onClose} wide
       footer={d ? (
         <>
           {canEdit && d.editable && <button type="button" className="a-btn a-btn-ghost" onClick={() => setPanel('edit')}>Edit{d.editable === 'reason' ? ' (with reason)' : ''}</button>}
@@ -515,7 +504,7 @@ function OrderForm({ order = null, onClose, onSaved }) {
   );
 
   return (
-    <Drawer title={editing ? `Edit ${order.order_no}` : 'New order'} onClose={onClose} dirty={dirty}
+    <Drawer title={editing ? `Edit ${order.order_no}` : 'New order'} onClose={onClose} dirty={dirty} wide
       footer={<>
         <button type="button" className="a-btn" disabled={act.busy || !customerId || !items.length || blocked || !P || Boolean(pv && pv.error)} onClick={save}>{held ? 'Save - send for approval' : editing ? 'Save changes' : 'Save order'}</button>
         {held && P && <span className="a-muted">It waits for approval: {P.holds.map((h) => h.label.toLowerCase()).join(', ')}.</span>}

@@ -1,4 +1,4 @@
-// dFresh Commerce (DEMO, branch `commerce`, database dfresh_commerce): SKU and barcode.
+// Masters > Catalogue > Barcodes and labels (dFresh Commerce, DEMO database dfresh_commerce): SKU and barcode.
 // One SKU per product / colour version and pack size (migration 20261021_commerce_04_catalogue.sql). The barcode is the
 // SKU printed as Code 128 (JsBarcode). "Scan / search SKU": a USB scanner types the code and Enter, like a keyboard.
 // Print labels: a label sheet (A4, 3 x 8) in a new window, printed or saved as PDF from the browser. Three kinds, the
@@ -6,7 +6,7 @@
 // one full carton) and batch labels (SKU/BATCH, with the manufacture and expiry dates) for batch-tracked products.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import JsBarcode from 'jsbarcode';
-import { InfoCard, Loading, Notice, useLoad } from './ui';
+import { InfoCard, Loading, Notice, PageHead, useLoad } from './ui';
 import { FONT_STACK, PRINT_FONTS, printWhenReady } from './printKit';
 
 const BARCODE = { format: 'CODE128', margin: 6, background: '#ffffff', lineColor: '#121214', font: 'monospace' };
@@ -95,7 +95,7 @@ export default function CommerceSkus() {
 
   return (
     <section>
-      <h1>SKUs and labels</h1>
+      <PageHead sub="Every SKU with its barcode: scan to find one, print pack, carton and batch labels." />
       <InfoCard title="Commerce demo - SKU and barcode">
         <ul>
           <li>One SKU per product and pack size, e.g. <code>DF037-M150</code> = DF037, pack of 150. Colour versions get their own (<code>DF008BLK-M100</code>).</li>

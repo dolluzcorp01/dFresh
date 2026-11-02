@@ -4,7 +4,7 @@
 // Choosing another file or "Clear" drops the previous result; after an apply the form resets and says what changed.
 import { useRef, useState } from 'react';
 import { api } from './adminApi';
-import { InfoCard, Notice, UploadProgress, useAction, useCan, useConfirm, useUpload } from './ui';
+import { InfoCard, Notice, PageHead, UploadProgress, useAction, useCan, useConfirm, useUpload } from './ui';
 
 const show = (v) => (v === null || v === undefined || v === '' ? <em className="a-muted">empty</em> : String(v));
 // a column like Name_TA / Pack_HI: its language, so the browser picks the right font and shaping
@@ -52,7 +52,7 @@ export default function ImportExport() {
 
   return (
     <section>
-      <h1>Excel import / export</h1>
+      <PageHead title="Excel import / export" crumb={['Masters', 'Catalogue', 'Excel import / export']} sub="Products in Excel: export, edit, check, then apply." />
       <InfoCard title="How the import works">
         <ul>
           <li>Export the list, edit it in Excel, then choose it here and run the dry run: it lists every change and every error.</li>

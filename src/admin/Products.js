@@ -6,9 +6,10 @@
 // toggle, featured order, add colour version. Positions are whole numbers 1, 2, 3 ... kept unique by the server
 // (positions.js); a new product goes to the end of its category.
 import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api } from './adminApi';
 import { mediaUrl } from '../utils/api';
-import { Drawer, Field, Loading, MissingBadges, Notice, TrEditor, UploadButton, missingTexts, nextOrder, useAction, useAdmin, useCan, useConfirm, useLoad, useUpload } from './ui';
+import { Drawer, Field, Loading, MissingBadges, Notice, PageHead, TrEditor, UploadButton, missingTexts, nextOrder, useAction, useAdmin, useCan, useConfirm, useHashScroll, useLoad, useUpload } from './ui';
 import { ProductField } from './ProductSelect';
 import useOrderDraft from './useOrderDraft';
 
@@ -134,9 +135,11 @@ export default function Products() {
     </tr>
   );
 
+  useHashScroll(Boolean(list.data)); // Website > Home page > Most loved: /admin/products#most-loved
   return (
     <section>
-      <h1>Products</h1>
+      <PageHead sub="Every product and pack, with its picture, in the site's order."
+        actions={<Link className="a-btn a-btn-ghost" to="/admin/import-export">Excel import / export</Link>} />
       <div className="a-toolbar">
         <input type="search" placeholder="Filter by ID or name" aria-label="Filter" value={filter} onChange={(e) => setFilter(e.target.value)} />
         {canCreate && <button type="button" className="a-btn" onClick={() => open({ create: { is_active: 1 } })}>Add product</button>}
@@ -148,7 +151,7 @@ export default function Products() {
       </div>
       {act.note}
       <Loading state={list}>
-        <div className="a-card a-featured">
+        <div className="a-card a-featured" id="most-loved">
           {home.kicker && <p className="a-kicker">{home.kicker}</p>}
           <h2>{home.title}</h2>
           <p className="a-muted">{home.hint}{canDrag && featured.length > 1 ? ' Drag the cards to change it.' : ''}</p>
@@ -240,7 +243,7 @@ function ProductEditor({ id, initial, cats, all, listRows, home, onClose, onSave
     onSaved(creating ? saved.product_id : null);
   }, 'Saved');
 
-  if (!creating && !loaded.data) return <Drawer title="Product" onClose={onClose}><Loading state={loaded}>{null}</Loading></Drawer>;
+  if (!creating && !loaded.data) return <Drawer title="Product" onClose={onClose} wide><Loading state={loaded}>{null}</Loading></Drawer>;
 
   // The swatch only matters for a colour version or a product that has colour versions (the dots on the card); it
   // follows "Colour version of" at once (the draft), before saving.
@@ -257,7 +260,7 @@ function ProductEditor({ id, initial, cats, all, listRows, home, onClose, onSave
   const F = (name) => <Field key={name} def={defs[name]} value={name in preview ? preview[name] : p[name]} disabled={!canEdit} onChange={(v) => set(name, v)} />;
 
   return (
-    <Drawer title={creating ? (initial.variant_of ? `New colour of ${initial.variant_of}` : 'New product') : `${p.product_id}`} onClose={onClose} dirty={draft !== null}
+    <Drawer title={creating ? (initial.variant_of ? `New colour of ${initial.variant_of}` : 'New product') : `${p.product_id}`} onClose={onClose} dirty={draft !== null} wide
       footer={canEdit && (
         <>
           <button type="button" className="a-btn" onClick={save} disabled={act.busy}>{creating ? 'Create' : 'Save'}</button>

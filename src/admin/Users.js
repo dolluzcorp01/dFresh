@@ -1,4 +1,4 @@
-// Admin users (spec F 11, admin): pick an active dAdmin employee (search by name or emp_id), give a role, Add; change a
+// Admin > Users and security > Staff (spec F 11, admin): pick an active dAdmin employee (search by name or emp_id), give a role, Add; change a
 // role (asked first, audited); deactivate / reactivate (asked first). The server keeps the rules: nobody can lock
 // themselves out, there is always at least one active admin, and someone inactive in dAdmin cannot sign in.
 // emp_id is a string like DZIND148 (never a number). Staff notification mails (phase 10) go to the dAdmin e-mail, or to
@@ -6,7 +6,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from './adminApi';
 import { Link } from 'react-router-dom';
-import { Avatar, InfoCard, Loading, fmtDate, useAction, useAdmin, useCan, useConfirm, useLeaveGuard, useLoad } from './ui';
+import { Avatar, InfoCard, Loading, PageHead, Pill, Table, fmtDate, useAction, useAdmin, useCan, useConfirm, useLeaveGuard, useLoad } from './ui';
 
 
 export default function Users() {
@@ -56,7 +56,7 @@ export default function Users() {
 
   return (
     <section>
-      <h1>Admin users</h1>
+      <PageHead sub="Everyone with a login to the back office, and the role each one has." />
       <InfoCard title="Who can use dFresh admin">
         <ul>
           <li>People come from dAdmin: pick an active employee, give a role, Add. They sign in with their dAdmin e-mail and password.</li>
@@ -80,55 +80,45 @@ export default function Users() {
       )}
       {act.note}
       <Loading state={list}>
-        <div className="a-scroll">
-          <table className="a-table">
-            <thead><tr><th>Name</th><th>emp_id</th><th>E-mail</th><th>Role</th><th>Status</th><th>Added</th><th /></tr></thead>
-            <tbody>
-              {(list.data || []).map((u) => {
-                const self = u.emp_id === me.emp_id;
-                const next = pending[u.emp_id];
-                return (
-                  <tr key={u.emp_id} className={`${u.is_active ? '' : 'a-off'}${next ? ' a-pending' : ''}`}>
-                    <td>
-                      <span className="a-person">
-                        <Avatar name={u.name || u.emp_id} photo={u.photo} />
-                        <span>
-                          <b>{u.name || u.emp_id}</b>{self && <span className="a-muted"> (you)</span>}
-                          {u.left_company && <span className="a-warnbadge a-leftbadge" title="Inactive in dAdmin: cannot sign in">Left the company</span>}
-                          {u.not_in_dadmin && <span className="a-warnbadge a-leftbadge" title="No dAdmin employee with this emp_id">Not in dAdmin</span>}
-                          {(u.designation || u.department) && <small className="a-muted a-person-sub">{[u.designation, u.department].filter(Boolean).join(' · ')}</small>}
-                        </span>
-                      </span>
-                    </td>
-                    <td><code>{u.emp_id}</code></td>
-                    <td>{u.email}<NotifyMail u={u} canEdit={canEdit} act={act} onSaved={list.reload} /></td>
-                    <td>
-                      <select aria-label={`Role of ${u.name || u.emp_id}`} value={next || u.role_id || ''} disabled={self || !canEdit || act.busy} title={self ? 'You cannot change your own role' : undefined}
-                        onChange={(e) => pickRole(u, e.target.value)}>
-                        {!u.role_id && <option value="">(no role)</option>}
-                        {roles.map((r) => <option key={r.role_id} value={r.role_id}>{r.name}</option>)}
-                      </select>
-                    </td>
-                    <td><span className={`a-status ${u.is_active ? 'a-status-on' : 'a-status-off'}`}>{u.is_active ? 'Active' : 'Inactive'}</span></td>
-                    <td>{fmtDate(u.created_at)}<small className="a-muted a-person-sub">by {u.created_by || '-'}</small></td>
-                    <td>
-                      {next ? (
-                        <span className="a-pending-btns">
-                          <button type="button" className="a-btn a-btn-sm" disabled={act.busy} onClick={() => saveRole(u)}>Save</button>
-                          <button type="button" className="a-btn a-btn-sm a-btn-ghost" disabled={act.busy} onClick={() => cancelRole(u)}>Cancel</button>
-                        </span>
-                      ) : !self && canEdit && (
-                        <button type="button" className="a-btn a-btn-sm a-btn-ghost" disabled={act.busy} onClick={() => toggle(u)}>
-                          {u.is_active ? 'Deactivate' : 'Reactivate'}
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <Table label="Staff" rows={list.data || []} rowKey={(u) => u.emp_id}
+          rowClass={(u) => `${u.is_active ? '' : 'a-off'}${pending[u.emp_id] ? ' a-pending' : ''}`.trim()}
+          columns={[
+            { key: 'name', label: 'Name', render: (u) => (
+              <span className="a-person">
+                <Avatar name={u.name || u.emp_id} photo={u.photo} />
+                <span>
+                  <b>{u.name || u.emp_id}</b>{u.emp_id === me.emp_id && <span className="a-muted"> (you)</span>}
+                  {u.left_company && <span className="a-warnbadge a-leftbadge" title="Inactive in dAdmin: cannot sign in">Left the company</span>}
+                  {u.not_in_dadmin && <span className="a-warnbadge a-leftbadge" title="No dAdmin employee with this emp_id">Not in dAdmin</span>}
+                  {(u.designation || u.department) && <small className="a-muted a-person-sub">{[u.designation, u.department].filter(Boolean).join(' · ')}</small>}
+                </span>
+              </span>
+            ) },
+            { key: 'emp_id', label: 'emp_id', render: (u) => <code>{u.emp_id}</code> },
+            { key: 'email', label: 'E-mail', render: (u) => <>{u.email}<NotifyMail u={u} canEdit={canEdit} act={act} onSaved={list.reload} /></> },
+            { key: 'role', label: 'Role', render: (u) => {
+              const self = u.emp_id === me.emp_id;
+              return (
+                <select aria-label={`Role of ${u.name || u.emp_id}`} value={pending[u.emp_id] || u.role_id || ''} disabled={self || !canEdit || act.busy} title={self ? 'You cannot change your own role' : undefined}
+                  onChange={(e) => pickRole(u, e.target.value)}>
+                  {!u.role_id && <option value="">(no role)</option>}
+                  {roles.map((r) => <option key={r.role_id} value={r.role_id}>{r.name}</option>)}
+                </select>
+              );
+            } },
+            { key: 'status', label: 'Status', render: (u) => <Pill tone={u.is_active ? 'good' : 'gray'}>{u.is_active ? 'Active' : 'Inactive'}</Pill> },
+            { key: 'created_at', label: 'Added', render: (u) => <>{fmtDate(u.created_at)}<small className="a-muted a-person-sub">by {u.created_by || '-'}</small></> },
+            { key: 'act', label: '', render: (u) => (pending[u.emp_id] ? (
+              <span className="a-pending-btns">
+                <button type="button" className="a-btn a-btn-sm" disabled={act.busy} onClick={() => saveRole(u)}>Save</button>
+                <button type="button" className="a-btn a-btn-sm a-btn-ghost" disabled={act.busy} onClick={() => cancelRole(u)}>Cancel</button>
+              </span>
+            ) : u.emp_id !== me.emp_id && canEdit && (
+              <button type="button" className="a-btn a-btn-sm a-btn-ghost" disabled={act.busy} onClick={() => toggle(u)}>
+                {u.is_active ? 'Deactivate' : 'Reactivate'}
+              </button>
+            )) },
+          ]} />
       </Loading>
     </section>
   );

@@ -4,7 +4,7 @@
 import { useMemo, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { api } from './adminApi';
-import { InfoCard, Loading, Notice, UploadProgress, useAction, useAdmin, useCan, useLeaveGuard, useLoad, useUpload } from './ui';
+import { InfoCard, Loading, Notice, PageHead, UploadProgress, useAction, useAdmin, useCan, useLeaveGuard, useLoad, useUpload } from './ui';
 import { COUNTS } from '../shared/countText';
 
 export default function Translations() {
@@ -69,7 +69,7 @@ export default function Translations() {
 
   return (
     <section>
-      <h1>Translations</h1>
+      <PageHead sub="Every word of the site in each language, side by side." />
       <InfoCard title="Live numbers in any text">
         <ul>
           <li>{COUNTS.map((c) => <code key={c}>{`{${c}}`}</code>).reduce((a, b) => [a, ', ', b])} show the current count, e.g. 25</li>

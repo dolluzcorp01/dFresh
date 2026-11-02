@@ -1,4 +1,4 @@
-// Stock > Inventory (docs/COMMERCE-SPEC.md 4.4; API /commerce/stock ..., logic in src/backend_routes/stock.js), at
+// Inventory (docs/COMMERCE-SPEC.md 4.4; API /commerce/stock ..., logic in src/backend_routes/stock.js), at
 // one location, the Kanchipuram godown. Tabs (?tab=), in the order stock moves: Suppliers, Stock in, Stock (the default),
 // Batches, Reorder, Counts, Write-offs, Movements.
 // - Stock: per SKU good, expired (batches past expiry, blocked from orders), reserved by confirmed orders, available,
@@ -13,7 +13,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from './adminApi';
-import { InfoCard, Loading, fmtDate, useAction, useCan, useLoad } from './ui';
+import { InfoCard, Loading, PageHead, Pill, Table, Tabs, fmtDate, useAction, useCan, useLoad } from './ui';
 import { StockIns, WriteOffs, Counts, Suppliers } from './InventoryWork';
 
 const KIND = { good: 'Good', returned: 'Returned (R)', damaged: 'Damaged', expired: 'Expired (returns)' };
@@ -31,7 +31,7 @@ export default function CommerceStock() {
   const setTab = (t) => navigate(`/admin/commerce/stock${t === 'stock' ? '' : `?tab=${t}`}`);
   return (
     <section>
-      <h1>Inventory</h1>
+      <PageHead sub="What we have at the Kanchipuram godown, how it came in and how it left." />
       <InfoCard title="Stock at the Kanchipuram godown">
         <ul>
           <li>Stock is the sum of movements, never typed in. It comes in through Stock in (production or purchase) and goes out at dispatch, by write-off or by an approved count.</li>
@@ -39,9 +39,7 @@ export default function CommerceStock() {
           <li>Write-offs above the threshold and count differences wait for approval (Approvals, top of the menu).</li>
         </ul>
       </InfoCard>
-      <div className="a-chips a-tabs" role="tablist" aria-label="Inventory">
-        {TABS.map(([k, l]) => <button key={k} type="button" role="tab" aria-selected={tab === k} className={`a-chip${tab === k ? ' on' : ''}`} onClick={() => setTab(k)}>{l}</button>)}
-      </div>
+      <Tabs tabs={TABS.map(([key, label]) => ({ key, label }))} value={tab} onChange={setTab} label="Inventory" />
       {tab === 'stock' && <StockTab stock={stock} />}
       {tab === 'in' && <StockIns stock={stock} />}
       {tab === 'batches' && <Batches />}
@@ -213,17 +211,17 @@ function Batches() {
           <div className="a-chips" role="group" aria-label="Batches">
             {[['stock', 'With stock'], ['near', `Near expiry ${n('near')}`], ['expired', `Expired ${n('expired')}`], ['all', 'All']].map(([k, l]) => <button key={k} type="button" className={`a-chip${show === k ? ' on' : ''}`} onClick={() => setShow(k)}>{l}</button>)}
           </div>
-          <div className="a-scroll">
-            <table className="a-table">
-              <thead><tr><th>SKU</th><th>Product</th><th>Batch</th><th>Made</th><th>Expires</th><th>State</th><th className="a-num">Good</th><th className="a-num">Damaged</th></tr></thead>
-              <tbody>{rows.map((r) => (
-                <tr key={r.batch_id}><td><code>{r.sku_code}</code></td><td>{r.name} <small className="a-muted">{r.size_label}</small></td><td><b>{r.batch_no}</b></td><td>{day(r.mfg_date)}</td><td>{day(r.expiry_date)}</td>
-                  <td>{r.state === 'expired' ? <span className="a-status a-status-bad">Expired {-r.days_left} days ago</span> : r.state === 'near' ? <span className="a-status a-status-test">Expires in {r.days_left} days</span> : <span className="a-muted">{r.days_left} days left</span>}</td>
-                  <td className="a-num">{r.good}</td><td className="a-num">{r.damaged || ''}</td></tr>
-              ))}</tbody>
-            </table>
-            {!rows.length && <p className="a-muted">No batch here.</p>}
-          </div>
+          <Table label="Batches" rows={rows} rowKey={(r) => r.batch_id} empty={{ icon: 'package', title: 'No batch here.' }}
+            columns={[
+              { key: 'sku_code', label: 'SKU', sort: true, render: (r) => <code>{r.sku_code}</code> },
+              { key: 'name', label: 'Product', sort: true, render: (r) => <>{r.name} <small className="a-muted">{r.size_label}</small></> },
+              { key: 'batch_no', label: 'Batch', sort: true, render: (r) => <b>{r.batch_no}</b> },
+              { key: 'mfg_date', label: 'Made', sort: true, render: (r) => day(r.mfg_date) },
+              { key: 'expiry_date', label: 'Expires', sort: true, render: (r) => day(r.expiry_date) },
+              { key: 'state', label: 'State', render: (r) => (r.state === 'expired' ? <Pill tone="bad">Expired {-r.days_left} days ago</Pill> : r.state === 'near' ? <Pill tone="warn">Expires in {r.days_left} days</Pill> : <span className="a-muted">{r.days_left} days left</span>) },
+              { key: 'good', label: 'Good', num: true, sort: true },
+              { key: 'damaged', label: 'Damaged', num: true, sort: true, render: (r) => r.damaged || '' },
+            ]} />
         </>
       )}
     </Loading>
@@ -238,15 +236,15 @@ function Reorder() {
         data.data.length ? (
           <>
             <p className="a-muted">SKUs whose available stock is below the reorder level. Suggested = the reorder quantity, or up to twice the level, in full cartons.</p>
-            <div className="a-scroll">
-              <table className="a-table">
-                <thead><tr><th>SKU</th><th>Product</th><th className="a-num">Available</th><th className="a-num">Reorder level</th><th className="a-num">Suggested</th><th className="a-num">Cartons</th></tr></thead>
-                <tbody>{data.data.map((r) => (
-                  <tr key={r.sku_code}><td><code>{r.sku_code}</code></td><td>{r.name} <small className="a-muted">{r.size_label}</small></td><td className="a-num a-bad">{r.available}</td>
-                    <td className="a-num">{r.reorder_level}</td><td className="a-num"><b>{r.suggested}</b></td><td className="a-num">{r.cartons} x {r.packs_per_carton}</td></tr>
-                ))}</tbody>
-              </table>
-            </div>
+            <Table label="Reorder" rows={data.data} rowKey={(r) => r.sku_code}
+              columns={[
+                { key: 'sku_code', label: 'SKU', sort: true, render: (r) => <code>{r.sku_code}</code> },
+                { key: 'name', label: 'Product', sort: true, render: (r) => <>{r.name} <small className="a-muted">{r.size_label}</small></> },
+                { key: 'available', label: 'Available', num: true, sort: true, render: (r) => <span className="a-bad">{r.available}</span> },
+                { key: 'reorder_level', label: 'Reorder level', num: true, sort: true },
+                { key: 'suggested', label: 'Suggested', num: true, sort: true, render: (r) => <b>{r.suggested}</b> },
+                { key: 'cartons', label: 'Cartons', num: true, render: (r) => `${r.cartons} x ${r.packs_per_carton}` },
+              ]} />
           </>
         ) : <p className="a-muted">Every SKU is above its reorder level.</p>
       )}
@@ -281,27 +279,18 @@ function Movements() {
       </div>
       <Loading state={data}>
         {d && (
-          <div className="a-scroll">
-            <table className="a-table a-moves">
-              <thead><tr><th>When</th><th>SKU</th><th>Type</th><th className="a-num">Change</th><th>Stock</th><th>Batch</th>{cost && <th className="a-num">Cost / pack</th>}<th>Reference / note</th><th>Who</th></tr></thead>
-              <tbody>
-                {d.rows.map((m) => (
-                  <tr key={m.move_id}>
-                    <td>{fmtDate(m.created_at)}</td>
-                    <td><code>{m.sku_code}{m.stock_kind === 'returned' ? ' (R)' : ''}</code></td>
-                    <td>{m.type_label}</td>
-                    <td className={`a-num ${m.delta < 0 ? 'a-bad' : ''}`}>{m.delta > 0 ? `+${m.delta}` : m.delta}</td>
-                    <td>{KIND[m.stock_kind]}</td>
-                    <td>{m.batch_no || ''}</td>
-                    {cost && <td className="a-num">{m.unit_cost == null ? '' : rs(m.unit_cost)}</td>}
-                    <td>{m.ref_type ? <small className="a-muted">{m.ref_type} {m.ref_id} </small> : null}{m.note}</td>
-                    <td>{m.emp_name || m.emp_id} <small className="a-muted">{m.emp_id}</small></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {!d.rows.length && <p className="a-muted">No movement matches.</p>}
-          </div>
+          <Table label="Movements" className="a-moves" rows={d.rows} rowKey={(m) => m.move_id} empty={{ icon: 'arrow-up-down', title: 'No movement matches.' }}
+            columns={[
+              { key: 'created_at', label: 'When', sort: true, render: (m) => fmtDate(m.created_at) },
+              { key: 'sku_code', label: 'SKU', sort: true, render: (m) => <code>{m.sku_code}{m.stock_kind === 'returned' ? ' (R)' : ''}</code> },
+              { key: 'type_label', label: 'Type', sort: true },
+              { key: 'delta', label: 'Change', num: true, sort: true, render: (m) => <span className={m.delta < 0 ? 'a-bad' : undefined}>{m.delta > 0 ? `+${m.delta}` : m.delta}</span> },
+              { key: 'stock_kind', label: 'Stock', render: (m) => KIND[m.stock_kind] },
+              { key: 'batch_no', label: 'Batch', render: (m) => m.batch_no || '' },
+              cost && { key: 'unit_cost', label: 'Cost / pack', num: true, render: (m) => (m.unit_cost == null ? '' : rs(m.unit_cost)) },
+              { key: 'note', label: 'Reference / note', render: (m) => <>{m.ref_type ? <small className="a-muted">{m.ref_type} {m.ref_id} </small> : null}{m.note}</> },
+              { key: 'who', label: 'Who', render: (m) => <>{m.emp_name || m.emp_id} <small className="a-muted">{m.emp_id}</small></> },
+            ].filter(Boolean)} />
         )}
       </Loading>
     </>

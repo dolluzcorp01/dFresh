@@ -1,11 +1,12 @@
-// Setup > Commerce settings (docs/COMMERCE-SPEC.md 3): every commerce value with its default, grouped like the site
+// Commerce settings (docs/COMMERCE-SPEC.md 3; menu: Admin > Settings > Switches, and the parts Godowns, Numbering,
+// Approval rules, Customer types, Vehicles and drivers, Couriers and Delivery areas open): every commerce value with its default, grouped like the site
 // Settings page; the 6 values sir still has to decide carry "To be confirmed". A typed value is pending (row
 // highlighted, Save / Cancel) until saved; every save is audited. The lists (customer types, return reasons, delivery
 // methods and areas, stock locations) are edited in their own tables. A role with only "view" on Settings sees it all,
 // greyed out.
 import { useState } from 'react';
 import { api } from './adminApi';
-import { Drawer, InfoCard, Loading, Notice, fmtDate, useAction, useCan, useConfirm, useLeaveGuard, useLoad } from './ui';
+import { Drawer, InfoCard, Loading, Notice, PageHead, Pill, fmtDate, useAction, useCan, useConfirm, useHashScroll, useLeaveGuard, useLoad } from './ui';
 
 // groups in the order of the admin menu (products and prices, stock, sales, fulfilment, reports, setup); a group not
 // listed here is shown at the end, never hidden
@@ -30,14 +31,15 @@ export default function CommerceSettings() {
   }, `${row.label}: saved`);
   const groups = d ? [...ORDER, ...[...new Set(d.settings.map((s) => s.grp))].filter((g) => !ORDER.includes(g))].map((g) => [g, d.settings.filter((s) => s.grp === g)]).filter(([, rows]) => rows.length) : [];
   const tbc = d ? d.settings.filter((s) => s.tbc).length : 0;
+  useHashScroll(Boolean(d)); // menu entries: #cs-g-<group> (Numbering, Approvals), #cs-l-<list> (Godowns, Vehicles...)
 
   return (
     <section>
-      <h1>Commerce settings</h1>
+      <PageHead title="Commerce settings" sub="Feature switches, limits, numbering, approvals and the lists the back office uses." />
       <InfoCard title="How the back office behaves">
         <ul>
           <li>Every value here has a sensible default; change one and Save. Each change is in the audit log.</li>
-          <li><span className="a-status a-status-test">To be confirmed</span> marks the {tbc} values sir still has to decide: they work with a placeholder until then.</li>
+          <li><Pill tone="warn">To be confirmed</Pill> marks the {tbc} values sir still has to decide: they work with a placeholder until then.</li>
           <li>While the seller GSTIN is a placeholder, every invoice is marked &quot;DEMO - not a tax invoice&quot;.</li>
         </ul>
       </InfoCard>
@@ -54,7 +56,7 @@ export default function CommerceSettings() {
               <div className="a-stat"><b>{d.numbers.ret}</b><span>return numbers</span></div>
             </div>
             {groups.map(([g, rows]) => (
-              <div key={g} id={`group-${g.replace(/\s+/g, '-')}`}>
+              <div key={g} id={`cs-g-${g.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`}>
                 <div className="a-scroll">
                   <table className="a-table a-settings a-csettings">
                     <tbody>
@@ -107,7 +109,7 @@ function SettingRow({ row, roles, value, pending, busy, onChange, onSave, onCanc
   }
   return (
     <tr id={`cs-${row.setting_key}`} className={pending ? 'a-pending' : undefined}>
-      <td className="a-cs-label"><b>{row.label}</b>{row.tbc && <span className="a-status a-status-test a-tbp">To be confirmed</span>}
+      <td className="a-cs-label"><b>{row.label}</b>{row.tbc && <Pill tone="warn" className="a-tbp">To be confirmed</Pill>}
         {row.help && <small className="a-muted a-person-sub">{row.help}</small>}</td>
       <td className="a-set-val">{control}
         {row.updated_by && !pending && <small className="a-muted">Changed {fmtDate(row.updated_at)} by {row.updated_by}</small>}</td>
@@ -128,7 +130,7 @@ function ListEditor({ listKey, list, onChanged, canEdit }) {
   const show = (row, col, def) => (def.type === 'bool' ? (Number(row[col]) ? 'Yes' : 'No') : row[col] === null || row[col] === undefined || row[col] === '' ? '-'
     : def.type === 'select' ? ((def.options.find(([v]) => v === row[col]) || [])[1] || String(row[col])) : String(row[col]));
   return (
-    <div className="a-card a-listed">
+    <div className="a-card a-listed" id={`cs-l-${listKey}`}>
       <div className="a-listed-head"><h3>{list.label}</h3>{canCreate && <button type="button" className="a-btn a-btn-sm" onClick={() => setOpen('new')}>Add</button>}</div>
       <div className="a-scroll">
         <table className="a-table">

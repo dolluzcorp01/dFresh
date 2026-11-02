@@ -1,6 +1,6 @@
-// Audit log (spec F 12, admin): who changed what, with before / after.
+// Admin > Users and security > Audit log (spec F 12, admin): who changed what, with before / after.
 import { useState } from 'react';
-import { Loading, fmtDate, useLoad } from './ui';
+import { Loading, PageHead, Table, fmtDate, useLoad } from './ui';
 
 const asObj = (v) => (typeof v === 'string' ? JSON.parse(v) : v);
 
@@ -25,7 +25,7 @@ export default function AuditLog() {
   const d = list.data;
   return (
     <section>
-      <h1>Audit log</h1>
+      <PageHead sub="Every change, who made it and when, with the value before and after." />
       <div className="a-toolbar">
         <input placeholder="Entity (product, ui_text, lead...)" aria-label="Entity" value={f.entity} onChange={(e) => setF({ ...f, entity: e.target.value.trim(), page: 1 })} />
         <input placeholder="emp_id" aria-label="emp_id" value={f.emp} onChange={(e) => setF({ ...f, emp: e.target.value.trim(), page: 1 })} />
@@ -34,28 +34,18 @@ export default function AuditLog() {
         {d && (
           <>
             <p className="a-muted">{d.total} entries</p>
-            <div className="a-scroll">
-              <table className="a-table">
-                <thead><tr><th>When</th><th>Who</th><th>Action</th><th>What</th><th>Change</th></tr></thead>
-                <tbody>
-                  {d.rows.map((r) => {
-                    const diff = changes(r.before_json, r.after_json);
-                    return (
-                      <tr key={r.audit_id}>
-                        <td>{fmtDate(r.created_at)}</td>
-                        <td><code>{r.emp_id}</code></td>
-                        <td>{r.action}</td>
-                        <td>{r.entity_type} <code>{r.entity_id || ''}</code></td>
-                        <td className="a-diff">
-                          {diff ? diff.map(([k, b, a]) => <div key={k}><strong>{k}</strong>: <del>{short(b)}</del> → <ins>{short(a)}</ins></div>)
-                            : <code>{short(asObj(r.after_json) || asObj(r.before_json))}</code>}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <Table label="Audit log" rows={d.rows} rowKey={(r) => r.audit_id} empty={{ icon: 'list-todo', title: 'No entries.' }}
+              columns={[
+                { key: 'created_at', label: 'When', render: (r) => fmtDate(r.created_at) },
+                { key: 'emp_id', label: 'Who', render: (r) => <code>{r.emp_id}</code> },
+                { key: 'action', label: 'Action' },
+                { key: 'what', label: 'What', render: (r) => <>{r.entity_type} <code>{r.entity_id || ''}</code></> },
+                { key: 'change', label: 'Change', className: 'a-diff', render: (r) => {
+                  const diff = changes(r.before_json, r.after_json);
+                  return diff ? diff.map(([k, b, a]) => <div key={k}><strong>{k}</strong>: <del>{short(b)}</del> → <ins>{short(a)}</ins></div>)
+                    : <code>{short(asObj(r.after_json) || asObj(r.before_json))}</code>;
+                } },
+              ]} />
             <div className="a-pager">
               <button type="button" className="a-btn a-btn-ghost" disabled={f.page <= 1} onClick={() => setF({ ...f, page: f.page - 1 })}>Previous</button>
               <span>Page {f.page}</span>

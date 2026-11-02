@@ -1,11 +1,22 @@
-// Small shared pieces for the admin screens (staff tool: plain layout, English labels).
+// Small shared pieces for the admin screens (staff tool, English labels), in the v23 look
+// (docs/reference/dFresh_Back_Office_v23.html). The newer blocks live in ./ui/ and are re-exported here, so every
+// screen imports from './ui' only: PageHead, Tabs, RuleChips, Table, Pill, Tag, Alert, Empty, Toast, ApprovalCard,
+// money / costText, LIcon.
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from './adminApi';
 import { SECTIONS, can as canPerm } from '../shared/permissions';
+import { AdminContext, useAdmin } from './ui/context';
+import { Alert } from './ui/blocks';
+import { useToast } from './ui/Toast';
+import LIcon from './ui/LIcon';
 
-export const AdminContext = createContext(null);
-export const useAdmin = () => useContext(AdminContext);
+export { AdminContext, useAdmin };
+export { Alert, Empty, PageHead, Pill, RuleChips, Tabs, Tag, costText, money } from './ui/blocks';
+export { default as Table } from './ui/Table';
+export { ToastProvider, useToast } from './ui/Toast';
+export { default as ApprovalCard } from './ui/ApprovalCard';
+export { default as LIcon } from './ui/LIcon';
 
 /** Can the signed-in user do `action` (view / create / edit / approve / delete) in `section`? (src/shared/permissions.js;
  * the API enforces the same rule on every route, this only hides or disables what would be refused.) */
@@ -35,14 +46,10 @@ export function useLoad(path) {
   return { data: own.data, error: own.error, loading: own.loading, reload, setData };
 }
 
+/** A message in the page: the v23 alert box. kind: info, warn, error, ok (= Alert tones info, warn, bad, good). */
 export function Notice({ kind = 'info', children, onClose }) {
   if (!children) return null;
-  return (
-    <div className={`a-note a-note-${kind}`} role={kind === 'error' ? 'alert' : 'status'}>
-      <span>{children}</span>
-      {onClose && <button type="button" className="a-x" onClick={onClose} aria-label="Dismiss">×</button>}
-    </div>
-  );
+  return <Alert tone={kind} onClose={onClose}>{children}</Alert>;
 }
 
 /** The help / info card at the top of an admin page (one style everywhere): a heading and short text or a list. */
@@ -63,25 +70,32 @@ export function Avatar({ name, photo, size = 32 }) {
     : <span className="a-avatar a-avatar-i" aria-hidden="true" style={{ width: size, height: size, fontSize: Math.round(size * 0.4) }}>{initials}</span>;
 }
 
-/** Runs async actions with a busy flag and a message line. */
+/**
+ * Runs async actions with a busy flag. Done (okText, or setMsg({ kind: 'ok' })): a toast. Anything else (an error, a
+ * warning): an alert box in the page (`note`), until closed or the next action.
+ */
 export function useAction() {
+  const toast = useToast();
   const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState(null);
+  const [msg, setMsgRaw] = useState(null);
+  const setMsg = useCallback((m) => {
+    if (m && m.kind === 'ok' && toast) { toast('good', m.text); setMsgRaw(null); } else setMsgRaw(m);
+  }, [toast]);
   const run = useCallback(async (fn, okText) => {
     setBusy(true);
-    setMsg(null);
+    setMsgRaw(null);
     try {
       const out = await fn();
       if (okText) setMsg({ kind: 'ok', text: okText });
       return out;
     } catch (err) {
-      setMsg({ kind: 'error', text: err.message });
+      setMsgRaw({ kind: 'error', text: err.message });
       return undefined;
     } finally {
       setBusy(false);
     }
-  }, []);
-  const note = msg ? <Notice kind={msg.kind} onClose={() => setMsg(null)}>{msg.text}</Notice> : null;
+  }, [setMsg]);
+  const note = msg ? <Notice kind={msg.kind} onClose={() => setMsgRaw(null)}>{msg.text}</Notice> : null;
   return { busy, run, note, setMsg };
 }
 
@@ -92,28 +106,36 @@ export function Loading({ state, children }) {
 }
 
 /**
- * A small (i) next to a label: the longer explanation, shown on hover or keyboard focus (and read by screen readers).
- * Hints stay at most 2 lines; the detail goes here. A click on it never reaches the control the label belongs to.
+ * The small "i" next to a label (v23): a click (or Enter / Space) opens a floating help popup with the longer
+ * explanation; a second click, Esc or a click elsewhere closes it. It floats in window coordinates (position: fixed),
+ * never shifts the layout and never widens a drawer or a table. A click on it never reaches the control the label
+ * belongs to.
  */
-// The bubble exists only while it is open and is placed in window coordinates (position: fixed), kept inside the
-// window: a hidden tooltip must never widen a drawer or a table (it used to give the Towns drawer a sideways scroll).
 export function InfoTip({ text }) {
   const ref = useRef(null);
-  const [at, setAt] = useState(null); // { left, top } while open
+  const [at, setAt] = useState(null); // { left, top, width } while open
+  useEffect(() => {
+    if (!at) return undefined;
+    const close = (e) => { if (e.type === 'keydown' ? e.key === 'Escape' : !ref.current || !ref.current.contains(e.target)) setAt(null); };
+    document.addEventListener('mousedown', close);
+    document.addEventListener('keydown', close);
+    window.addEventListener('scroll', close, true);
+    return () => { document.removeEventListener('mousedown', close); document.removeEventListener('keydown', close); window.removeEventListener('scroll', close, true); };
+  }, [at]);
   if (!text) return null;
-  const show = () => {
+  const toggle = (e) => {
+    e.preventDefault(); e.stopPropagation();
+    if (at) { setAt(null); return; }
     const r = ref.current.getBoundingClientRect();
     const width = Math.min(300, window.innerWidth - 16);
-    const left = Math.max(8, Math.min(r.left - 8, window.innerWidth - width - 8));
-    const below = r.bottom + 8;
-    setAt({ left, top: below, width });
+    const left = Math.max(8, Math.min(r.left - 10, window.innerWidth - width - 8));
+    setAt({ left, top: r.bottom + 8, width });
   };
   return (
-    <span ref={ref} className="a-info" tabIndex={0} role="note" aria-label={text}
-      onMouseEnter={show} onMouseLeave={() => setAt(null)} onFocus={show} onBlur={() => setAt(null)}
-      onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}>
+    <span ref={ref} className="a-info" tabIndex={0} role="button" aria-label={`Help: ${text}`} aria-expanded={Boolean(at)}
+      onClick={toggle} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') toggle(e); }}>
       i
-      {at && <span className="a-tip" aria-hidden="true" style={{ left: at.left, top: at.top, maxWidth: at.width }}>{text}</span>}
+      {at && <span className="a-tip" role="tooltip" style={{ left: at.left, top: at.top, maxWidth: at.width }}>{text}</span>}
     </span>
   );
 }
@@ -148,10 +170,10 @@ export function Field({ def, value, onChange, disabled }) {
     control = <input type={def.type === 'number' ? 'number' : 'text'} step={def.step || 'any'} min={def.min} max={def.max} {...common} value={value ?? ''} onChange={(e) => onChange(e.target.value)} />;
   }
   return (
-    <label className={`a-field${def.type === 'bool' ? ' a-check' : ''}${def.wide ? ' a-wide' : ''}`} htmlFor={id}>
-      <span>{def.label || def.name}{def.required && ' *'}<InfoTip text={def.info} /></span>
+    <label className={`a-field${def.type === 'bool' ? ' a-check' : ''}${def.wide ? ' a-wide' : ''}${def.error ? ' a-err' : ''}`} htmlFor={id}>
+      <span>{def.label || def.name}{def.required && <span className="a-req"> *</span>}<InfoTip text={def.info} /></span>
       {control}
-      {def.error ? <small className="a-bad" role="alert">{def.error}</small> : def.help && <small className="a-muted">{def.help}</small>}
+      {def.error ? <small className="a-emsg" role="alert">{def.error}</small> : def.help && <small className="a-hint">{def.help}</small>}
     </label>
   );
 }
@@ -242,7 +264,8 @@ export function MissingBadges({ missing }) {
 // ---------------------------------------------------------------------------------------------------------------
 // In-app confirmations (never the browser's alert / confirm / prompt). confirm(opts) -> Promise: true (the action),
 // 'alt' (a second action, e.g. "Discard"), false (Cancel, Esc, click outside).
-// opts: { title, message, action = 'OK', cancel = 'Cancel', danger (red action button), alt }
+// opts: { title, message, action = 'OK', cancel = 'Cancel', danger (red action button), alt,
+//         reason: { label, required } - a reason box; the promise then gives { reason } for the action }
 const ConfirmContext = createContext(null);
 export const useConfirm = () => useContext(ConfirmContext);
 
@@ -261,23 +284,25 @@ export function ConfirmProvider({ children }) {
   );
 }
 
-export function ConfirmDialog({ title, message, action = 'OK', cancel = 'Cancel', danger = false, alt = null, onDone }) {
+export function ConfirmDialog({ title, message, action = 'OK', cancel = 'Cancel', danger = false, alt = null, reason = null, onDone }) {
   const boxRef = useRef(null);
   const actionRef = useRef(null);
   const cancelRef = useRef(null);
+  const reasonRef = useRef(null);
   const doneRef = useRef(onDone);
   doneRef.current = onDone;
+  const [why, setWhy] = useState('');
   useEffect(() => {
     const before = document.activeElement;
-    // a destructive action starts on the safe button, so Enter never deletes by reflex
-    const first = danger ? cancelRef.current : actionRef.current;
+    // a reason box takes the focus; else a destructive action starts on the safe button, so Enter never deletes by reflex
+    const first = reasonRef.current || (danger ? cancelRef.current : actionRef.current);
     if (first) first.focus();
     const onKey = (e) => {
       if (e.key === 'Escape') {
         e.preventDefault(); e.stopImmediatePropagation(); // the drawer under it stays open
         doneRef.current(false);
       } else if (e.key === 'Tab') { // focus stays in the dialog
-        const items = [...boxRef.current.querySelectorAll('button:not([disabled])')];
+        const items = [...boxRef.current.querySelectorAll('button:not([disabled]), textarea')];
         const i = items.indexOf(document.activeElement);
         if (e.shiftKey && i <= 0) { e.preventDefault(); items[items.length - 1].focus(); }
         else if (!e.shiftKey && i === items.length - 1) { e.preventDefault(); items[0].focus(); }
@@ -289,15 +314,28 @@ export function ConfirmDialog({ title, message, action = 'OK', cancel = 'Cancel'
       if (before && before.focus && document.contains(before)) before.focus({ preventScroll: true });
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const missing = Boolean(reason && reason.required && !why.trim());
   return (
     <div className="a-cd-wrap" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) onDone(false); }}>
       <div ref={boxRef} className="a-cd" role="alertdialog" aria-modal="true" aria-labelledby="a-cd-t" aria-describedby={message ? 'a-cd-m' : undefined}>
-        <h2 id="a-cd-t">{title}</h2>
-        {message && <p id="a-cd-m">{message}</p>}
+        <div className="a-cd-mb">
+          <span className={`a-cd-mi ${danger ? 'a-tone-bad' : 'a-tone-warn'}`}><LIcon name={danger ? 'circle-x' : 'triangle-alert'} /></span>
+          <div className="a-cd-txt">
+            <h2 id="a-cd-t">{title}</h2>
+            {message && <p id="a-cd-m">{message}</p>}
+            {reason && (
+              <label className="a-field a-cd-reason">
+                <span>{reason.label || 'Reason'}{reason.required && <span className="a-req"> *</span>}</span>
+                <textarea ref={reasonRef} rows={3} maxLength={500} value={why} onChange={(e) => setWhy(e.target.value)} />
+              </label>
+            )}
+          </div>
+        </div>
         <div className="a-cd-btns">
-          <button ref={actionRef} type="button" className={`a-btn${danger ? ' a-btn-danger' : ''}`} onClick={() => onDone(true)}>{action}</button>
-          {alt && <button type="button" className="a-btn a-btn-ghost" onClick={() => onDone('alt')}>{alt}</button>}
           <button ref={cancelRef} type="button" className="a-btn a-btn-ghost" onClick={() => onDone(false)}>{cancel}</button>
+          {alt && <button type="button" className="a-btn a-btn-ghost" onClick={() => onDone('alt')}>{alt}</button>}
+          <button ref={actionRef} type="button" className={`a-btn${danger ? ' a-btn-danger' : ''}`} disabled={missing}
+            onClick={() => onDone(reason ? { reason: why.trim() } : true)}>{action}</button>
         </div>
       </div>
     </div>
@@ -412,9 +450,13 @@ export function useLeaveGuard(dirty, dialog = DISCARD) {
   }, [on, dialog, confirm, navigate]);
 }
 
+// The v23 side panel: right side, a title (with an optional thumb picture, a sub line and a pill such as its number;
+// the pill is hidden on a phone), the status bar of pills,
+// a body that scrolls, and a sticky foot with the buttons. 620 px wide (v23); `wide` keeps 1100 px for panels with
+// language grids or line tables.
 // dirty: closing (X, Esc, click outside) asks "Discard unsaved changes?" first, and so does leaving the page.
 // An upload running in it: closing asks "Upload in progress. Leave anyway?" instead.
-export function Drawer({ title, onClose, children, footer, dirty = false }) {
+export function Drawer({ title, onClose, children, footer, dirty = false, thumb, sub, pill, status, wide = false }) {
   const confirm = useConfirm();
   const uploading = useUploadsActive();
   useLeaveGuard(dirty);
@@ -429,13 +471,39 @@ export function Drawer({ title, onClose, children, footer, dirty = false }) {
   }, [close]);
   return (
     <div className="a-drawer-wrap" role="presentation" onMouseDown={(e) => e.target === e.currentTarget && close()}>
-      <aside className="a-drawer" role="dialog" aria-modal="true" aria-label={title}>
-        <header><h2>{title}</h2>{dirty && <span className="a-unsaved">Unsaved changes</span>}<button type="button" className="a-x" onClick={close} aria-label="Close">×</button></header>
-        <div className="a-drawer-body">{children}</div>
+      <aside className={`a-drawer${wide ? ' a-drawer-wide' : ''}`} role="dialog" aria-modal="true" aria-label={title}>
+        <header>
+          {thumb && <span className="a-thumb2">{typeof thumb === 'string' ? <img src={thumb} alt="" /> : thumb}</span>}
+          <h2>{title}{sub && <span className="a-dsub">{sub}</span>}</h2>
+          {pill}
+          {dirty && <span className="a-unsaved">Unsaved changes</span>}
+          <button type="button" className="a-iconbtn" onClick={close} aria-label="Close"><LIcon name="x" /></button>
+        </header>
+        <div className="a-drawer-body">
+          {status && <div className="a-statusbar">{status}</div>}
+          {children}
+        </div>
         {footer && <footer>{footer}</footer>}
       </aside>
     </div>
   );
+}
+
+/**
+ * The part of a page a menu entry or a link names with #id (e.g. Commerce settings #cs-l-vehicles): scrolled into view
+ * and marked for a moment, once `ready` (the data is there) and again when the hash changes.
+ */
+export function useHashScroll(ready) {
+  const { hash } = useLocation();
+  useEffect(() => {
+    const id = decodeURIComponent((hash || '').slice(1));
+    const el = ready && id ? document.getElementById(id) : null;
+    if (!el) return undefined;
+    el.scrollIntoView({ block: 'start' });
+    el.classList.add('a-target');
+    const t = setTimeout(() => el.classList.remove('a-target'), 2500);
+    return () => clearTimeout(t);
+  }, [hash, ready]);
 }
 
 // Every time in the admin in India time, whatever zone the viewer's PC is in (the API sends UTC instants).
