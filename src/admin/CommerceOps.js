@@ -2,7 +2,7 @@
 // today's orders, to pack (New), to dispatch (Packed), low stock, returns to collect / inspect / decide,
 // the wallet balance owed to customers. Plus the next orders to pack and the SKUs to reorder. A card or table is
 // only there when the role can view its section (the API sends null for the others). The Business view (sales,
-// margin, owed, stock value, top SKUs and customers) only for a role with Reports and Products and prices.
+// margin, owed, stock value, top SKUs and customers) only for a role with See cost. Every figure covers the godowns in view (the godown picker).
 import { Link } from 'react-router-dom';
 import { InfoCard, Loading, Notice, PageHead, fmtDate, useLoad } from './ui';
 import { rs } from './CommerceReturns';
@@ -15,7 +15,7 @@ function Card({ to, value, label, sub, bad }) {
   );
 }
 
-/** the Business view (a role with Reports and Products and prices): sales, margin, what is owed, stock value, the tops */
+/** the Business view (a role with See cost): sales, margin, what is owed, stock value, the tops */
 function Business({ b }) {
   return (
     <div className="a-card a-business">
@@ -78,8 +78,8 @@ export default function CommerceOps() {
               <div className="a-card">
                 <h2>Reorder (low stock)</h2>
                 {d.lowStock.length ? (
-                  <div className="a-scroll"><table className="a-table"><thead><tr><th>SKU</th><th>Product</th><th className="a-num">Available</th><th className="a-num">Level</th><th className="a-num">Suggested</th></tr></thead>
-                    <tbody>{d.lowStock.map((s) => <tr key={s.sku_code}><td><code>{s.sku_code}</code></td><td>{s.name}</td><td className="a-num a-bad">{s.available}</td><td className="a-num">{s.reorder_level}</td><td className="a-num">{s.suggested}</td></tr>)}</tbody></table></div>
+                  <div className="a-scroll"><table className="a-table"><thead><tr><th>Godown</th><th>SKU</th><th>Product</th><th className="a-num">Available</th><th className="a-num">Level</th><th className="a-num">Suggested</th></tr></thead>
+                    <tbody>{d.lowStock.map((s) => <tr key={`${s.godown_code}-${s.sku_code}`}><td>{s.godown_code}</td><td><code>{s.sku_code}</code></td><td>{s.name}</td><td className="a-num a-bad">{s.available}</td><td className="a-num">{s.reorder_level}</td><td className="a-num">{s.suggested}</td></tr>)}</tbody></table></div>
                 ) : <p className="a-muted">All SKUs above their level.</p>}
               </div>
               )}

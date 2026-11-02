@@ -63,7 +63,7 @@ const addrOf = (r, p) => ({ label: txt(r[`${p}_label`]), name: txt(r[`${p}_name`
 const hasAddr = (r, p) => ['label', 'name', 'address', 'town', 'state', 'PIN'].some((k) => !blank(r[`${p}_${k}`])) || (p === 'Bill' && !blank(r.Bill_GSTIN));
 
 /** -> { ok, summary, errors, notes, unknownColumns, creates, changes, plan } (nothing is written) */
-async function diffWorkbook(q, buffer, opts = {}) { // opts.own: a user limited to their own customers (security review H1)
+async function diffWorkbook(q, buffer, opts = {}) { // opts.own: a user limited to their own customers (security review H1); opts.scope: the godown ids in view (null = every godown)
   const wb = new ExcelJS.Workbook();
   try { await wb.xlsx.load(buffer); } catch { throw new InputError('This is not an Excel (.xlsx) file this tool can read'); }
   const ws = wb.getWorksheet(SHEET);
@@ -110,7 +110,7 @@ async function diffWorkbook(q, buffer, opts = {}) { // opts.own: a user limited 
     if (seenNo.has(no)) { errors.push(`${at}: ${no} appears twice`); continue; }
     seenNo.add(no);
     const [[c]] = await q.query('SELECT * FROM customers WHERE customer_no = ?', [no]);
-    if (!c) { errors.push(`${at}: there is no customer ${no}`); continue; }
+    if (!c || (opts.scope && !opts.scope.includes(Number(c.godown_id)))) { errors.push(`${at}: there is no customer ${no}`); continue; } // another godown's customer: as if it did not exist
     if (opts.own && c.owner_emp_id !== opts.own) { errors.push(`${at}: ${no} belongs to another sales owner`); continue; } // nothing of it is shown or changed
     if (c.merged_into) { errors.push(`${at}: ${no} was merged into another customer`); continue; }
     if (!errs.length) {
@@ -152,11 +152,11 @@ async function diffWorkbook(q, buffer, opts = {}) { // opts.own: a user limited 
   return { ok: errors.length === 0, summary, errors, notes, unknownColumns, creates, changes, plan };
 }
 
-/** apply a dry-run plan inside the caller's transaction (every step through customers.js, audited there) */
-async function applyPlan(q, plan, empId) {
+/** apply a dry-run plan inside the caller's transaction (every step through customers.js, audited there); new customers go to godownId */
+async function applyPlan(q, plan, empId, godownId) {
   const made = [];
   for (const c of plan.creates) {
-    const r = await customers.createCustomer(q, c.data, empId);
+    const r = await customers.createCustomer(q, { ...c.data, godown_id: godownId }, empId);
     if (c.status !== 'active') await customers.setStatus(q, r.customer_id, c.status, c.reason || 'Set by the Excel import', empId);
     made.push(r.customer_no);
   }

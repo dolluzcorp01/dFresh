@@ -11,6 +11,7 @@ export default function Translations() {
   const grid = useLoad('/ui-text');
   const { languages, reloadLanguages } = useAdmin();
   const canEdit = useCan('content', 'edit');
+  const canExport = useCan('content', 'export');
   const act = useAction();
   const up = useUpload();
   // ?lang=ta&missing=1 (dashboard "not translated yet" links) opens the grid already filtered
@@ -85,8 +86,8 @@ export default function Translations() {
           <option value="">All languages</option>{languages.filter((l) => l.lang_code !== def).map((l) => <option key={l.lang_code} value={l.lang_code}>{l.name_en}</option>)}
         </select>
         <label className="a-inline"><input type="checkbox" checked={missingOnly} onChange={(e) => setMissingOnly(e.target.checked)} /> Missing only</label>
-        {canEdit && <button type="button" className="a-btn" onClick={() => act.run(() => api.download('/ui-text/export.xlsx', 'dFresh_Translations.xlsx'))}>Export Excel</button>}
-        {canEdit && <button type="button" className="a-btn" onClick={() => act.run(() => api.download('/ui-text/export.csv', 'dFresh_Translations.csv'))} title="The file to edit and import back">Export CSV (for import)</button>}
+        {canExport && <button type="button" className="a-btn" onClick={() => act.run(() => api.download('/ui-text/export.xlsx', 'dFresh_Translations.xlsx'))}>Export Excel</button>}
+        {canExport && <button type="button" className="a-btn" onClick={() => act.run(() => api.download('/ui-text/export.csv', 'dFresh_Translations.csv'))} title="The file to edit and import back">Export CSV (for import)</button>}
       </div>
       {canEdit && (
         <div className="a-toolbar">

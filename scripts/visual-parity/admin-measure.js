@@ -57,6 +57,13 @@ const PARTS = {
     ['close', '.drawer .dh .iconbtn', '.a-drawer > header .a-iconbtn'], ['body', '.drawer .db', '.a-drawer-body'], ['status bar', '.drawer .statusbar', '.a-drawer .a-statusbar'],
     ['tabs', '.drawer .dtabs', '.a-drawer .a-tabs'], ['foot', '.drawer .df', '.a-drawer > footer'], ['foot button', '.drawer .df .btn', '.a-drawer > footer .a-btn'],
   ]],
+  // phase 12a pages: the same parts on v23's page and ours (PAGES below)
+  ...Object.fromEntries(['godowns', 'staff', 'roles', 'approval rules', 'stand-ins'].map((k) => [`${k} page`, [['#page', '.a-main'], [
+    ['page', '#page', '.a-main'], ['crumb', '.crumb', '.a-crumb'], ['title', '.ph h1', '.a-ph h1'], ['subtitle', '.ph p', '.a-ph p'],
+    ['rule chips', '.rchips', '.a-rchips'], ['rule chip', '.rchips .pill', '.a-rchips .a-pill'], ['primary button', '.ph .acts .btn.primary', '.a-ph-acts .a-btn:not(.a-btn-ghost)'],
+    ['card', '#page .card', k === 'roles' ? '.a-main .a-roleedit' : '.a-main .a-listcard, .a-main .a-card'], ['th', '#page table.t th', '.a-main .a-table th'], ['td', '#page table.t tbody td', '.a-main .a-table tbody td'],
+    ['pill', '#page table.t .pill, #page .card .pill', '.a-main .a-table .a-pill, .a-main .a-card .a-pill'],
+  ]]])),
   toast: [['.toasts', '.a-toasts'], [
     ['stack', '.toasts', '.a-toasts'], ['toast', '.toast', '.a-tst'], ['icon', '.toast > svg', '.a-tst > .a-i'], ['title', '.toast .tx b', '.a-tst-tx b'], ['text', '.toast .tx span', '.a-tst-tx span'],
   ]],
@@ -86,15 +93,20 @@ function measure(sections) {
   return out;
 }
 
-async function v23Page(browser, w, h) {
+async function v23Page(browser, w, h, part) {
   const p = await browser.newPage();
   await p.setViewport({ width: w, height: h });
-  await p.goto(`${V23}#sales/customers/customer-list`, { waitUntil: 'load' });
+  await p.goto(`${V23}#${V23_PAGE[part] || 'sales/customers/customer-list'}`, { waitUntil: 'load' });
   await wait(700);
   return p;
 }
 // our page per part: the list page is Orders (a list with tabs, like v23's Customer list); the rest on the Customer list
-const OUR_PATH = { 'list page': 'commerce/orders' };
+const OUR_PATH = { 'list page': 'commerce/orders', 'godowns page': 'godowns', 'staff page': 'users', 'roles page': 'roles', 'approval rules page': 'approval-rules', 'stand-ins page': 'stand-ins' };
+// v23's page per part (default: the Customer list)
+const V23_PAGE = { 'godowns page': 'admin/organisation/godowns', 'staff page': 'admin/users-and-security/staff', 'roles page': 'admin/users-and-security/roles',
+  'approval rules page': 'admin/users-and-security/approval-rules', 'stand-ins page': 'admin/users-and-security/stand-ins' };
+// ONLY=part,part limits the run (e.g. ONLY="godowns page,staff page")
+const ONLY = process.env.ONLY ? process.env.ONLY.split(',').map((x) => x.trim()) : null;
 async function ourPage(browser, w, h, part) {
   const ctx = await browser.createBrowserContext();
   const p = await ctx.newPage();
@@ -108,6 +120,7 @@ async function ourPage(browser, w, h, part) {
 
 // each part: how to bring it on screen in v23 / ours (null = as loaded); phone: the menu opens as a drawer
 const SETUP = {
+  ...Object.fromEntries(Object.keys(V23_PAGE).map((k) => [k, [null, null]])),
   header: [null, null],
   menu: [async (p, w) => { if (w < 900) { await p.click('[data-a="phoneMenu"]'); await wait(400); } },
     async (p, w) => { if (w < 900) { await p.click('.a-head button[aria-controls="a-nav"]'); await wait(400); } }],
@@ -134,9 +147,10 @@ const SETUP = {
       result[w] = { preview: {}, ours: {} };
       for (const [part, [secSel, items]] of Object.entries(PARTS)) {
         if (part === 'menu collapsed' && w < 900) continue; // no icon-only menu on a phone (both: a drawer)
+        if (ONLY && !ONLY.includes(part)) continue;
         const files = [];
         for (const [i, which] of [[0, 'preview'], [1, 'ours']]) {
-          const p = which === 'preview' ? await v23Page(browser, w, h) : await ourPage(browser, w, h, part);
+          const p = which === 'preview' ? await v23Page(browser, w, h, part) : await ourPage(browser, w, h, part);
           if (!result[w][which].__doc) result[w][which].__doc = await p.evaluate(() => ({ scrollW: document.documentElement.scrollWidth }));
           if (SETUP[part][i]) await SETUP[part][i](p, w);
           const pick = (x) => (typeof x === 'object' ? (w < 900 ? x.p : x.d) : x);

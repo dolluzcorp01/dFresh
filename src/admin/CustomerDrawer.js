@@ -10,6 +10,8 @@ import { Drawer, LIcon, Loading, Pill, Notice, Table, Tabs, fmtDate, useAction, 
 import { esc, printPage, rs } from './printKit';
 import { AddressFields, StatusChip } from './CommerceCustomers';
 import WalletPanel from './WalletPanel';
+import GodownField from './GodownField';
+import { useAdmin } from './ui/context';
 
 const day = (d) => (d ? new Date(`${String(d).slice(0, 10)}T00:00:00Z`).toLocaleDateString('en-IN', { timeZone: 'UTC', day: 'numeric', month: 'short', year: 'numeric' }) : '');
 const ist = (n = 0) => new Date(Date.now() + 5.5 * 3600e3 + n * 86400e3).toISOString().slice(0, 10);
@@ -53,7 +55,9 @@ export default function CustomerDrawer({ id, onClose, onChanged }) {
 function Overview({ d, reload }) {
   const canEdit = useCan('customers', 'edit') && !d.merged_into;
   const act = useAction();
-  const [f, setF] = useState({ name: d.name, business_name: d.business_name || '', type_key: d.type_key, phone: d.phone, email: d.email || '', owner_emp_id: d.owner_emp_id || '', source: d.source || '', tags: d.tags.join(', '),
+  const { me } = useAdmin();
+  const godownList = (me && me.godown_list) || [];
+  const [f, setF] = useState({ name: d.name, business_name: d.business_name || '', type_key: d.type_key, godown_id: String(d.godown_id), phone: d.phone, email: d.email || '', owner_emp_id: d.owner_emp_id || '', source: d.source || '', tags: d.tags.join(', '),
     lang_code: d.lang_code || '', opt_out_reminders: Number(d.opt_out_reminders) === 1, opt_out_offers: Number(d.opt_out_offers) === 1 });
   const [st, setSt] = useState({ status: d.status, reason: '' });
   const [credit, setCredit] = useState({ credit_days: String(d.credit_days), credit_limit: String(d.credit_limit) });
@@ -72,6 +76,7 @@ function Overview({ d, reload }) {
         <label className="a-field"><span>Type</span><select value={f.type_key} disabled={!canEdit} aria-label="Customer type" onChange={(e) => setF({ ...f, type_key: e.target.value })}>{d.types.map((t) => <option key={t.type_key} value={t.type_key}>{t.label}</option>)}</select></label>
         <label className="a-field"><span>Mobile</span><input value={f.phone} disabled={!canEdit} aria-label="Customer phone" onChange={(e) => setF({ ...f, phone: e.target.value })} /></label>
         <label className="a-field"><span>E-mail</span><input value={f.email} disabled={!canEdit} aria-label="Customer e-mail" onChange={(e) => setF({ ...f, email: e.target.value })} /></label>
+        <GodownField value={f.godown_id} onChange={(v) => setF({ ...f, godown_id: v })} list={godownList} label="Served from godown" disabled={!canEdit} />
         <label className="a-field"><span>Sales owner</span><select value={f.owner_emp_id} disabled={!canEdit} aria-label="Sales owner" onChange={(e) => setF({ ...f, owner_emp_id: e.target.value })}><option value="">None</option>{d.owners.map((o) => <option key={o.emp_id} value={o.emp_id}>{o.name}</option>)}</select></label>
         <label className="a-field"><span>Source</span><select value={f.source} disabled={!canEdit} onChange={(e) => setF({ ...f, source: e.target.value })}><option value="">-</option>{[...d.sources, 'Lead', 'Import'].map((x) => <option key={x}>{x}</option>)}</select></label>
         <label className="a-field"><span>Tags (comma separated)</span><input value={f.tags} disabled={!canEdit} aria-label="Tags" onChange={(e) => setF({ ...f, tags: e.target.value })} /></label>

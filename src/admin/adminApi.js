@@ -4,6 +4,14 @@ import { API_BASE, apiFetch } from '../utils/api';
 
 const BASE = '/api/dfresh/admin';
 
+// The header godown picker (phase 12a): when one godown is picked, every call says so (header X-Godown) and the API
+// narrows its lists and figures to it; null = "All godowns" (all of the person's own). The API ignores a godown the
+// person does not work at.
+let godown = null;
+export function setGodown(id) { godown = id ? Number(id) : null; }
+const withGodown = (headers = {}) => (godown ? { ...headers, 'X-Godown': String(godown) } : headers);
+const fetchAdmin = (path, options = {}) => apiFetch(`${BASE}${path}`, { ...options, headers: withGodown(options.headers) });
+
 async function handle(res) {
   const json = await res.json().catch(() => null);
   if (!res.ok || !json || !json.success) {
@@ -16,8 +24,8 @@ async function handle(res) {
 }
 
 export const api = {
-  get: (path) => apiFetch(`${BASE}${path}`).then(handle),
-  send: (method, path, body) => apiFetch(`${BASE}${path}`, {
+  get: (path) => fetchAdmin(path).then(handle),
+  send: (method, path, body) => fetchAdmin(path, {
     method,
     headers: { 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -34,6 +42,7 @@ export const api = {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', `${API_BASE}${BASE}${path}`);
     xhr.withCredentials = true;
+    if (godown) xhr.setRequestHeader('X-Godown', String(godown));
     if (onProgress) {
       xhr.upload.onprogress = (e) => {
         if (e.lengthComputable) onProgress({ phase: 'uploading', pct: Math.min(99, Math.floor((e.loaded / e.total) * 100)) });
@@ -55,7 +64,7 @@ export const api = {
   }),
   /** Downloads a file response (CSV, XLSX, PDF) through the browser. */
   download: async (path, fallbackName) => {
-    const res = await apiFetch(`${BASE}${path}`);
+    const res = await fetchAdmin(path);
     if (!res.ok) await handle(res);
     const name = (/filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') || '') || [])[1] || fallbackName;
     const url = URL.createObjectURL(await res.blob());
@@ -71,7 +80,7 @@ export const api = {
   open: async (path) => {
     const w = window.open('', '_blank');
     if (!w) return false;
-    const res = await apiFetch(`${BASE}${path}`);
+    const res = await fetchAdmin(path);
     if (!res.ok) { w.close(); await handle(res); }
     w.location.href = URL.createObjectURL(await res.blob());
     return true;

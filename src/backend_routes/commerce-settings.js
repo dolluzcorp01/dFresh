@@ -17,10 +17,27 @@ function typed(row) {
   }
 }
 
-/** every setting, typed */
+/**
+ * every setting, typed. The approval limits moved to approval_rules (phase 12a, Admin > Approval rules); their old
+ * keys (approve_refund_on, approve_refund_above ...) are still given here, read from the rules, for the screens that
+ * show them next to a form.
+ */
 async function read(q) {
   const [rows] = await q.query('SELECT setting_key, value, value_type FROM commerce_settings');
-  return Object.fromEntries(rows.map((r) => [r.setting_key, typed(r)]));
+  const out = Object.fromEntries(rows.map((r) => [r.setting_key, typed(r)]));
+  const [rules] = await q.query('SELECT kind, is_on, limit_value, limit_packs FROM approval_rules');
+  const r = Object.fromEntries(rules.map((x) => [x.kind, { on: Number(x.is_on) === 1, v: x.limit_value === null ? 0 : Number(x.limit_value), packs: x.limit_packs === null ? 0 : Number(x.limit_packs) }]));
+  const on = (k) => Boolean(r[k] && r[k].on);
+  const v = (k) => (r[k] ? r[k].v : 0);
+  return {
+    ...out,
+    approve_refund_on: on('refund'), approve_refund_above: v('refund'),
+    approve_writeoff_on: on('write_off'), approve_writeoff_value_above: v('write_off'), approve_writeoff_qty_above: r.write_off ? r.write_off.packs : 0,
+    approve_discount_on: on('discount'), approve_discount_pct_above: v('discount'),
+    approve_price_below_on: on('price_below_list'), approve_price_below_pct: v('price_below_list'),
+    approve_cancel_after_dispatch: on('cancel_after_dispatch'), approve_goodwill_credit: on('goodwill_credit'), approve_credit_raise: on('credit_raise'),
+    approve_over_available: on('over_available'), approve_credit_order: on('credit_order'), approve_no_refund: on('no_refund'), approve_price_list: on('price_list'),
+  };
 }
 
 /** a value typed in the admin -> { value (text to store), error } */

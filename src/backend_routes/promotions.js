@@ -203,7 +203,7 @@ async function reverseCashback(q, orderId, taxableBack, returnId, returnNo, empI
 // ---------------------------------------------------------------- manual wallet credit / debit
 /** b = { direction: credit | debit, amount, reason } -> { posted, approval_id } */
 async function manualWallet(q, customerId, b, empId) {
-  const [[c]] = await q.query('SELECT customer_id, name FROM customers WHERE customer_id = ?', [customerId]);
+  const [[c]] = await q.query('SELECT customer_id, name, godown_id FROM customers WHERE customer_id = ?', [customerId]);
   if (!c) throw new PromoError('No such customer', 404);
   const dir = b.direction === 'debit' ? 'debit' : 'credit';
   const s = String(b.amount ?? '').trim();
@@ -214,8 +214,8 @@ async function manualWallet(q, customerId, b, empId) {
   if (dir === 'debit' && amount > await wallet.balance(q, customerId) + 0.005) throw new PromoError(`The wallet has only ${rs(await wallet.balance(q, customerId))}`);
   const payload = { customer_id: c.customer_id, direction: dir, amount, reason };
   const kind = dir === 'credit' ? 'goodwill_credit' : 'wallet_debit';
-  if (await approvals.needed(q, kind, { amount })) {
-    const id = await approvals.request(q, { kind, refType: 'customer', refId: String(c.customer_id), summary: `${dir === 'credit' ? 'Wallet credit' : 'Wallet debit'} ${rs(amount)} for ${c.name}: ${reason}`, amount, payload }, empId);
+  if (await approvals.needed(q, kind, { amount, target: `cust:${c.customer_id}` })) {
+    const id = await approvals.request(q, { kind, godownId: c.godown_id, target: `cust:${c.customer_id}`, refType: 'customer', refId: String(c.customer_id), summary: `${dir === 'credit' ? 'Wallet credit' : 'Wallet debit'} ${rs(amount)} for ${c.name}: ${reason}`, amount, payload }, empId);
     return { posted: false, approval_id: id };
   }
   await postManual(q, payload, null, empId);

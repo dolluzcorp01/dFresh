@@ -24,6 +24,8 @@ const { storable } = require('./photo-check');
 const crypto = require('crypto');
 const returns = require('./returns');
 const stock = require('./stock');
+const godowns = require('./godowns');
+const { inScope } = require('./scope-sql');
 
 const FAIL_REASONS = ['Customer not available', 'Shop / office closed', 'Address not found', 'Refused the goods', 'No cash ready (pay on delivery)', 'Vehicle problem', 'Other'];
 const round2 = (n) => Math.round(n * 100) / 100;
@@ -47,7 +49,7 @@ async function lockOrder(q, orderNo, allowed) {
 /** the pick list of these orders: SKU and batch lines (earliest expiry first) with bin and which order takes how many */
 async function pickList(q, orderNos) {
   if (!orderNos.length) throw new DeliveryError('Choose at least one order');
-  const [orders] = await q.query(`SELECT o.order_id, o.order_no, o.status, c.name AS customer FROM orders o JOIN customers c ON c.customer_id = o.customer_id WHERE o.order_no IN (?) ORDER BY o.order_id`, [orderNos]);
+  const [orders] = await q.query(`SELECT o.order_id, o.order_no, o.godown_id, o.status, c.name AS customer FROM orders o JOIN customers c ON c.customer_id = o.customer_id WHERE o.order_no IN (?) ORDER BY o.order_id`, [orderNos]);
   const bad = orders.filter((o) => !['new', 'packing'].includes(o.status));
   if (bad.length) throw new DeliveryError(`Only New or Packing orders: ${bad.map((o) => `${o.order_no} is ${commerce.STATUS_LABEL[o.status]}`).join(', ')}`);
   const lines = new Map();
@@ -59,6 +61,7 @@ async function pickList(q, orderNos) {
     l.orders.push(`${orderNo} x ${qty}`);
   };
   const tentative = new Map(); // batch_id -> qty taken by the New orders in this list
+  if (new Set(orders.map((o) => o.godown_id)).size > 1) throw new DeliveryError('One pick list per godown: choose orders of one godown');
   for (const o of orders) {
     const [picks] = await q.query('SELECT sku_code, batch_id, qty FROM order_picks WHERE order_id = ?', [o.order_id]);
     if (o.status === 'packing' && picks.length) { picks.forEach((p) => add(p.sku_code, p.batch_id, p.qty, o.order_no)); continue; }
@@ -68,10 +71,10 @@ async function pickList(q, orderNos) {
     for (const i of items) {
       if (!tr.has(i.sku_code)) { add(i.sku_code, null, i.qty, o.order_no); continue; }
       const [taken] = await q.query(`SELECT pk.batch_id, SUM(pk.qty) AS qty FROM order_picks pk JOIN orders x ON x.order_id = pk.order_id
-          WHERE pk.sku_code = ? AND x.status IN ('packing', 'packed') AND x.dispatched_at IS NULL GROUP BY pk.batch_id`, [i.sku_code]);
+          WHERE pk.sku_code = ? AND x.godown_id = ? AND x.status IN ('packing', 'packed') AND x.dispatched_at IS NULL GROUP BY pk.batch_id`, [i.sku_code, o.godown_id]);
       const used = new Map(taken.map((t) => [t.batch_id, Number(t.qty)]));
       let left = i.qty;
-      for (const b of (await stock.batchStock(q, i.sku_code)).filter((x) => x.qty > 0 && !x.expired)) {
+      for (const b of (await stock.batchStock(q, i.sku_code, 'good', { godown: o.godown_id })).filter((x) => x.qty > 0 && !x.expired)) {
         const free = b.qty - (used.get(b.batch_id) || 0) - (tentative.get(b.batch_id) || 0);
         if (free <= 0 || !left) continue;
         const take = Math.min(free, left);
@@ -235,7 +238,14 @@ async function createTrip(q, b, empId) {
     const [[a]] = await q.query('SELECT area_id FROM delivery_areas WHERE area_id = ?', [Number(b.area_id)]);
     if (!a) throw new DeliveryError('Unknown delivery area');
   }
-  const [ins] = await q.query('INSERT INTO delivery_trips (trip_date, area_id, vehicle_id, driver_id, created_by) VALUES (?, ?, ?, ?, ?)', [day, b.area_id ? Number(b.area_id) : null, v.vehicle_id, d.driver_id, empId]);
+  // a trip leaves from one godown: every order and pickup on it belongs there (phase 12a, D8)
+  const [og] = nos.length ? await q.query('SELECT DISTINCT godown_id FROM orders WHERE order_no IN (?)', [nos]) : [[]];
+  const [rg] = pickups.length ? await q.query('SELECT DISTINCT godown_id FROM returns WHERE return_no IN (?)', [pickups]) : [[]];
+  const gs = [...new Set([...og, ...rg].map((x) => Number(x.godown_id)))];
+  if (gs.length > 1) throw new DeliveryError('A trip leaves from one godown: choose orders and pickups of one godown');
+  if (!gs.length) throw new DeliveryError('Choose the packed orders (or return pickups) for the trip');
+  if (b.admin && !godowns.covers(b.admin, gs[0])) throw new DeliveryError('You do not work at that godown', 403);
+  const [ins] = await q.query('INSERT INTO delivery_trips (godown_id, trip_date, area_id, vehicle_id, driver_id, created_by) VALUES (?, ?, ?, ?, ?, ?)', [gs[0], day, b.area_id ? Number(b.area_id) : null, v.vehicle_id, d.driver_id, empId]);
   let seq = 0;
   for (const no of nos) {
     const o = await lockOrder(q, no, ['packed']);
@@ -246,7 +256,7 @@ async function createTrip(q, b, empId) {
     await q.query('INSERT INTO trip_stops (trip_id, order_id, seq) VALUES (?, ?, ?)', [ins.insertId, o.order_id, seq]);
   }
   for (const no of pickups) { seq += 1; await addPickup(q, ins.insertId, no, seq, empId); }
-  await audit(q, { empId, action: 'create', entity: 'trip', entityId: `T-${ins.insertId}`, after: { trip_date: day, vehicle_id: v.vehicle_id, driver_id: d.driver_id, stops: nos, pickups } });
+  await audit(q, { empId, action: 'create', entity: 'trip', entityId: `T-${ins.insertId}`, after: { godown: gs[0], trip_date: day, vehicle_id: v.vehicle_id, driver_id: d.driver_id, stops: nos, pickups } });
   return { trip_id: ins.insertId };
 }
 
@@ -445,16 +455,17 @@ async function pickedUp(q, orderNo, b, empId) {
 }
 
 /** the Operations counts */
-async function opsCounts(q) {
+/** the Operations figures for the godowns of scope (godowns.viewScope: null = every godown) */
+async function opsCounts(q, scope = null) {
   const [[r]] = await q.query(
     `SELECT SUM(o.status = 'new') AS to_pick, SUM(o.status = 'packing') AS to_pack,
             SUM(o.status = 'packed' AND o.delivery_kind = 'own' AND NOT EXISTS (SELECT 1 FROM trip_stops s JOIN delivery_trips t ON t.trip_id = s.trip_id WHERE s.order_id = o.order_id AND s.status = 'pending' AND t.status = 'planned')) AS waiting_trip,
             SUM(o.status = 'packed' AND o.delivery_kind <> 'own') AS waiting_other,
             SUM(o.status = 'out_for_delivery') AS out_now, SUM(o.status = 'with_courier') AS with_courier, SUM(o.status = 'failed') AS failed,
             COALESCE(SUM(CASE WHEN o.payment_terms = 'cod' AND o.status IN ('out_for_delivery', 'with_courier', 'failed') AND o.amount_due > 0 THEN o.amount_due END), 0) AS cod_due
-       FROM orders o`);
-  const [[c]] = await q.query("SELECT COALESCE(SUM(s.cash_collected), 0) AS held FROM trip_stops s JOIN delivery_trips t ON t.trip_id = s.trip_id WHERE t.status = 'out'");
-  const rt = await returns.opsCounts(q);
+       FROM orders o WHERE ${inScope('o.godown_id', scope)}`);
+  const [[c]] = await q.query(`SELECT COALESCE(SUM(s.cash_collected), 0) AS held FROM trip_stops s JOIN delivery_trips t ON t.trip_id = s.trip_id WHERE t.status = 'out' AND ${inScope('t.godown_id', scope)}`);
+  const rt = await returns.opsCounts(q, scope);
   return { ...rt, toPick: Number(r.to_pick) || 0, toPack: Number(r.to_pack) || 0, waitingTrip: Number(r.waiting_trip) || 0, waitingOther: Number(r.waiting_other) || 0,
     outNow: Number(r.out_now) || 0, withCourier: Number(r.with_courier) || 0, failed: Number(r.failed) || 0, codDue: round2(Number(r.cod_due)), cashOnTrips: round2(Number(c.held)) };
 }

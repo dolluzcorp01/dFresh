@@ -1,9 +1,10 @@
 // Inventory (and Purchase > Goods in, Masters > Partners > Suppliers): the tabs where stock is changed (API in src/backend_routes/stock.js via Admin_server.js).
+// Godowns (phase 12a): a stock in, a write-off and a count each belong to one godown (the Godown select, GodownField.js).
 // - Stock in: Production (our Kanchipuram unit) or Purchase (a supplier); date, reference (bill / batch sheet no.),
 //   lines in packs or cartons with the cost per pack; a scanner (or typing a SKU and Enter) adds a line or one more of
 //   it. Batch-tracked products ask for batch no., manufacture and expiry date. A role that can see costs sees the
 //   average cost before -> after.
-// - Write-offs: damaged / expired / lost / sample, from good, damaged or returned stock (a batch for tracked products),
+// - Write-offs: damaged / expired / lost / sample, from a shelf (good, QC hold, damaged, returned...: labels from the API) (a batch for tracked products),
 //   reason, photo optional; above the Commerce setting thresholds it waits for approval.
 // - Counts: all SKUs or a category; enter or scan the counted packs, see the difference with the system; submit sends
 //   the differences to approval, which posts them as count movements.
@@ -11,10 +12,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from './adminApi';
 import { Drawer, Loading, Notice, Pill, Table, UploadProgress, fmtDate, useAction, useCan, useConfirm, useLoad, useUpload } from './ui';
+import GodownField, { useGodown } from './GodownField';
 const rs = (n) => (n === null || n === undefined ? '-' : `Rs ${Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
 const day = (d) => (d ? new Date(`${String(d).slice(0, 10)}T00:00:00Z`).toLocaleDateString('en-IN', { timeZone: 'UTC', day: 'numeric', month: 'short', year: 'numeric' }) : '');
 const today = () => new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10);
-const KIND = { good: 'Good', damaged: 'Damaged', returned: 'Returned (R)', expired: 'Expired (returns)' };
+// a stock row's packs on a shelf (the /commerce/stock row's field for each shelf)
+const SHELF_FIELD = { good: 'good', hold: 'hold', dmg: 'damaged', ret: 'returned', rej: 'rejected', disp: 'display' };
+/** the /commerce/stock rows of one godown, by SKU */
+const skusOf = (stock, godown) => new Map(((stock.data && stock.data.rows) || []).filter((r) => String(r.godown_id) === String(godown)).map((r) => [r.sku_code, r]));
 
 /** a scan box: a barcode scanner types the code and Enter; onCode(code) */
 function ScanBox({ onCode, label = 'Scan a barcode or type a SKU and press Enter' }) {
@@ -44,6 +49,7 @@ export function StockIns({ stock }) {
             columns={[
               { key: 'stock_in_id', label: '#', sort: true, render: (x) => `SI-${x.stock_in_id}` },
               { key: 'received_on', label: 'Date', sort: true, render: (x) => day(x.received_on) },
+              { key: 'godown_code', label: 'Godown', sort: true, render: (x) => <span title={x.godown}>{x.godown_code}</span> },
               { key: 'from', label: 'From', render: (x) => (x.kind === 'production' ? 'Production (Kanchipuram unit)' : `Purchase: ${x.supplier}`) },
               { key: 'reference', label: 'Reference', render: (x) => <>{x.reference}{x.note && <small className="a-muted a-person-sub">{x.note}</small>}</> },
               { key: 'lines', label: 'Lines', className: 'a-silines', render: (x) => <>{x.lines.slice(0, 6).map((l) => <div key={`${l.sku_code}${l.batch_no}`}>{l.qty} x <code>{l.sku_code}</code>{l.batch_no ? ` batch ${l.batch_no} (exp. ${day(l.expiry_date)})` : ''}{d.seesCost ? ` @ ${rs(l.unit_cost)} · avg ${rs(l.avg_before)} -> ${rs(l.avg_after)}` : ''}</div>)}
@@ -63,10 +69,11 @@ function StockInDrawer({ stock, onClose, onSaved }) {
   const act = useAction();
   const sup = useLoad('/commerce/suppliers');
   const [f, setF] = useState({ kind: 'production', supplier_id: '', received_on: today(), reference: '', note: '' });
+  const [godown, setGodown, godownList] = useGodown();
   const [lines, setLines] = useState([]);
   const [scanMsg, setScanMsg] = useState(null);
   const [addingSupplier, setAddingSupplier] = useState(false);
-  const skus = useMemo(() => new Map(((stock.data && stock.data.rows) || []).map((r) => [r.sku_code, r])), [stock.data]);
+  const skus = useMemo(() => skusOf(stock, godown), [stock, godown]);
   const seesCost = Boolean(stock.data && stock.data.seesCost);
   const add = (code) => {
     const s = skus.get(code);
@@ -81,7 +88,7 @@ function StockInDrawer({ stock, onClose, onSaved }) {
   const setLine = (n, patch) => setLines((ls) => ls.map((l, i) => (i === n ? { ...l, ...patch } : l)));
   const packs = (l) => { const s = skus.get(l.sku_code); return (Number(l.qty) || 0) * (l.unit === 'carton' && s ? Number(s.packs_per_carton) : 1); };
   const save = () => act.run(async () => {
-    const r = await api.send('POST', '/commerce/stock-ins', { ...f, lines: lines.map((l) => ({ sku_code: l.sku_code, qty: packs(l), unit_cost: l.unit_cost, batch_no: l.batch_no, mfg_date: l.mfg_date, expiry_date: l.expiry_date })) });
+    const r = await api.send('POST', '/commerce/stock-ins', { ...f, godown_id: godown, lines: lines.map((l) => ({ sku_code: l.sku_code, qty: packs(l), unit_cost: l.unit_cost, batch_no: l.batch_no, mfg_date: l.mfg_date, expiry_date: l.expiry_date })) });
     onSaved(`Stock in SI-${r.stock_in_id} saved: ${r.lines.map((l) => `${l.qty} x ${l.sku_code}${l.avg_after !== undefined ? ` (avg ${rs(l.avg_before)} -> ${rs(l.avg_after)})` : ''}`).join(', ')}.`);
   });
   const total = lines.reduce((a, l) => a + packs(l) * (Number(l.unit_cost) || 0), 0);
@@ -94,6 +101,7 @@ function StockInDrawer({ stock, onClose, onSaved }) {
         <button type="button" className={`a-chip${f.kind === 'purchase' ? ' on' : ''}`} onClick={() => setF({ ...f, kind: 'purchase' })}>Purchase (from a supplier)</button>
       </div>
       <div className="a-grid2">
+        <GodownField value={godown} onChange={setGodown} list={godownList} label="Into godown" disabled={lines.length > 0} />
         {f.kind === 'purchase' && (
           <label className="a-field"><span>Supplier <button type="button" className="a-link" onClick={() => setAddingSupplier(true)}>+ New supplier</button></span>
             <select value={f.supplier_id} aria-label="Supplier" onChange={(e) => setF({ ...f, supplier_id: e.target.value })}><option value="">Choose...</option>
@@ -160,7 +168,8 @@ export function WriteOffs({ stock }) {
             columns={[
               { key: 'write_off_id', label: '#', sort: true, render: (w) => `WO-${w.write_off_id}` },
               { key: 'sku_code', label: 'SKU', sort: true, render: (w) => <><code>{w.sku_code}</code>{w.batch_no && <small className="a-muted a-person-sub">batch {w.batch_no}</small>}</> },
-              { key: 'stock_kind', label: 'From', render: (w) => KIND[w.stock_kind] },
+              { key: 'godown_code', label: 'Godown', sort: true },
+              { key: 'stock_kind', label: 'From', render: (w) => d.kinds[w.stock_kind] },
               { key: 'qty', label: 'Packs', num: true, sort: true },
               { key: 'why', label: 'Why', render: (w) => <><b>{d.types[w.reason_type]}</b> - {w.reason}</> },
               d.rows.some((r) => 'value' in r) && { key: 'value', label: 'Value', num: true, render: (w) => ('value' in w ? rs(w.value) : '') },
@@ -171,30 +180,31 @@ export function WriteOffs({ stock }) {
             ].filter(Boolean)} />
         )}
       </Loading>
-      {open && d && <WriteOffDrawer stock={stock} types={d.types} onClose={() => setOpen(false)}
+      {open && d && <WriteOffDrawer stock={stock} types={d.types} kinds={d.kinds} onClose={() => setOpen(false)}
         onSaved={(r) => { setOpen(false); list.reload(); stock.reload(); setMsg(r.status === 'pending' ? { kind: 'info', text: `Write-off WO-${r.write_off_id} is above the threshold: it waits for approval (#${r.approval_id}). Stock stays until it is approved.` } : { kind: 'ok', text: `Write-off WO-${r.write_off_id} posted: the packs are out of stock.` }); }} />}
     </>
   );
 }
 
-function WriteOffDrawer({ stock, types, onClose, onSaved }) {
+function WriteOffDrawer({ stock, types, kinds, onClose, onSaved }) {
   const act = useAction();
   const up = useUpload();
   const fileRef = useRef(null);
   const [f, setF] = useState({ sku_code: '', stock_kind: 'good', batch_id: '', qty: '', reason_type: 'damaged', reason: '' });
+  const [godown, setGodown, godownList] = useGodown();
   const [photo, setPhoto] = useState(null);
   const [batches, setBatches] = useState([]);
-  const skus = useMemo(() => new Map(((stock.data && stock.data.rows) || []).map((r) => [r.sku_code, r])), [stock.data]);
+  const skus = useMemo(() => skusOf(stock, godown), [stock, godown]);
   const s = skus.get(f.sku_code.trim().toUpperCase());
   useEffect(() => {
     let alive = true;
     setBatches([]);
-    if (s && s.track_batches) api.get(`/commerce/batches?sku=${encodeURIComponent(s.sku_code)}&kind=${f.stock_kind}`).then((r) => { if (alive) setBatches(r.rows.filter((b) => b.batch_id)); }, () => {});
+    if (s && s.track_batches) api.get(`/commerce/batches?sku=${encodeURIComponent(s.sku_code)}&kind=${f.stock_kind}&godown_id=${godown}`).then((r) => { if (alive) setBatches(r.rows.filter((b) => b.batch_id)); }, () => {});
     return () => { alive = false; };
-  }, [s && s.sku_code, f.stock_kind]); // eslint-disable-line react-hooks/exhaustive-deps
-  const have = s ? { good: s.good, damaged: s.damaged, returned: s.returned, expired: s.expired_back }[f.stock_kind] : null;
+  }, [s && s.sku_code, f.stock_kind, godown]); // eslint-disable-line react-hooks/exhaustive-deps
+  const have = s ? s[SHELF_FIELD[f.stock_kind]] : null;
   const save = () => act.run(async () => {
-    const body = { ...f, sku_code: f.sku_code.trim().toUpperCase() };
+    const body = { ...f, godown_id: godown, sku_code: f.sku_code.trim().toUpperCase() };
     const r = photo ? await up.send('photo', '/commerce/write-offs', photo, body) : await api.send('POST', '/commerce/write-offs', body);
     onSaved(r);
   });
@@ -203,10 +213,11 @@ function WriteOffDrawer({ stock, types, onClose, onSaved }) {
       footer={<button type="button" className="a-btn a-btn-danger" disabled={act.busy || !s || !f.qty || !f.reason.trim()} onClick={save}>{up.is('photo') ? <UploadProgress state={up.state} /> : 'Write off'}</button>}>
       {act.note}
       <div className="a-grid2">
+        <GodownField value={godown} onChange={(v) => { setGodown(v); setF({ ...f, batch_id: '' }); }} list={godownList} />
         <label className="a-field"><span>SKU (scan or type)</span><input value={f.sku_code} list="wo-skus" aria-label="Write-off SKU" onChange={(e) => setF({ ...f, sku_code: e.target.value, batch_id: '' })} />
           <datalist id="wo-skus">{[...skus.values()].map((r) => <option key={r.sku_code} value={r.sku_code}>{r.name}</option>)}</datalist>
           {s && <small className="a-muted">{s.name} - {s.size_label}: {s.good} good ({s.expired} expired), {s.damaged} damaged, {s.returned} returned</small>}</label>
-        <label className="a-field"><span>From</span><select value={f.stock_kind} aria-label="Write-off from" onChange={(e) => setF({ ...f, stock_kind: e.target.value, batch_id: '' })}>{Object.entries(KIND).map(([k, v]) => <option key={k} value={k}>{v} stock</option>)}</select></label>
+        <label className="a-field"><span>From</span><select value={f.stock_kind} aria-label="Write-off from" onChange={(e) => setF({ ...f, stock_kind: e.target.value, batch_id: '' })}>{Object.entries(kinds).map(([k, v]) => <option key={k} value={k}>{v} shelf</option>)}</select></label>
         {s && s.track_batches && (
           <label className="a-field"><span>Batch{f.stock_kind === 'good' ? ' (required)' : ''}</span>
             <select value={f.batch_id} aria-label="Write-off batch" onChange={(e) => setF({ ...f, batch_id: e.target.value })}><option value="">Choose...</option>
@@ -227,15 +238,17 @@ export function Counts() {
   const canCreate = useCan('inventory', 'create');
   const act = useAction();
   const [scope, setScope] = useState('all');
+  const [godown, setGodown, godownList] = useGodown();
   const [open, setOpen] = useState(null);
   const d = list.data;
-  const start = () => act.run(async () => { const r = await api.send('POST', '/commerce/counts', { scope }); list.reload(); setOpen(r.count_id); });
+  const start = () => act.run(async () => { const r = await api.send('POST', '/commerce/counts', { scope, godown_id: godown }); list.reload(); setOpen(r.count_id); });
   const STATUS = { open: ['Open', 'a-ap-pending'], pending: ['Waiting for approval', 'a-ap-pending'], posted: ['Posted', 'a-ap-approved'], rejected: ['Rejected', 'a-ap-rejected'], closed: ['No difference', 'a-ap-approved'] };
   return (
     <>
       {act.note}
       {canCreate && d && (
         <div className="a-toolbar">
+          <GodownField value={godown} onChange={setGodown} list={godownList} />
           <label className="a-inline">Count <select value={scope} aria-label="Count scope" onChange={(e) => setScope(e.target.value)}><option value="all">All SKUs</option>{d.categories.map((c) => <option key={c.category_key} value={c.category_key}>{c.label}</option>)}</select></label>
           <button type="button" className="a-btn" disabled={act.busy} onClick={start}>Start a count</button>
         </div>
@@ -245,6 +258,7 @@ export function Counts() {
           <Table label="Counts" rows={d.rows} rowKey={(c) => c.count_id} onRowClick={(c) => setOpen(c.count_id)} empty={{ icon: 'clipboard-check', title: 'No count yet.' }}
             columns={[
               { key: 'count_id', label: '#', sort: true, render: (c) => `#${c.count_id}` },
+              { key: 'godown_code', label: 'Godown', sort: true },
               { key: 'scope_label', label: 'What' },
               { key: 'status', label: 'Status', render: (c) => <><span className={`a-status ${STATUS[c.status][1]}`}>{STATUS[c.status][0]}</span>{c.approval_note && <small className="a-muted a-person-sub">&quot;{c.approval_note}&quot; ({c.decided_by})</small>}</> },
               { key: 'counted', label: 'Counted', num: true, render: (c) => `${c.counted} / ${c.line_count}` },

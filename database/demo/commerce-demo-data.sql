@@ -39,12 +39,14 @@ UPDATE skus s JOIN products p ON p.product_id = s.product_id
                                '-S', 1 + (CRC32(s.sku_code) % 4));
 
 -- DEMO reorder levels and quantities (the stock itself comes from the seed's stock-ins: scripts/commerce-demo-seed.js)
-INSERT IGNORE INTO stock_levels (sku_code, reorder_level, reorder_qty)
-SELECT s.sku_code, CASE WHEN s.sku_code LIKE '%-R%' THEN 30 ELSE 20 END, s.packs_per_carton * 4 FROM skus s;
+-- (per godown since phase 12a: the Kanchipuram godown, code K)
+INSERT IGNORE INTO stock_levels (sku_code, location_id, reorder_level, reorder_qty)
+SELECT s.sku_code, g.location_id, CASE WHEN s.sku_code LIKE '%-R%' THEN 30 ELSE 20 END, s.packs_per_carton * 4 FROM skus s JOIN locations g ON g.code = 'K';
 
--- DEMO returned stock (R) kept apart from good stock
-INSERT INTO stock_movements (sku_code, move_type, stock_kind, delta, ref_type, note, emp_id, created_at) VALUES
-  ('DF037-M150', 'return', 'returned', 4, 'return', 'DEMO return from Demo Hotel Sangam - unopened', 'DZIND148', UTC_TIMESTAMP() - INTERVAL 5 HOUR),
-  ('DF001-M100', 'return', 'returned', 2, 'return', 'DEMO return from Demo Cafe Thendral - wrong size', 'DZIND148', UTC_TIMESTAMP() - INTERVAL 4 HOUR);
+-- DEMO returned stock (R) kept apart from good stock: the Returned shelf (ret) of the Kanchipuram godown
+INSERT INTO stock_movements (location_id, sku_code, move_type, stock_kind, delta, ref_type, note, emp_id, created_at)
+SELECT g.location_id, x.sku_code, 'return', 'ret', x.delta, 'return', x.note, 'DZIND148', UTC_TIMESTAMP() - INTERVAL x.h HOUR
+  FROM (SELECT 'DF037-M150' AS sku_code, 4 AS delta, 'DEMO return from Demo Hotel Sangam - unopened' AS note, 5 AS h
+        UNION ALL SELECT 'DF001-M100', 2, 'DEMO return from Demo Cafe Thendral - wrong size', 4) x JOIN locations g ON g.code = 'K';
 
 -- coupons, offers, cashback rules and wallets: phase 7 tables, filled by scripts/commerce-demo-seed.js

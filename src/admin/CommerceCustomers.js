@@ -14,6 +14,7 @@ import { Drawer, InfoCard, Loading, Notice, PageHead, Pill, Table, useAction, us
 import { rs } from './printKit';
 import { GST_STATES } from '../shared/gstStates';
 import CustomerDrawer from './CustomerDrawer';
+import GodownField, { useGodown } from './GodownField';
 
 const day = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric' }) : '');
 const STATUS_TONE = { active: 'good', on_hold: 'warn', inactive: 'gray' };
@@ -33,6 +34,7 @@ export default function CommerceCustomers() {
   const [panel, setPanel] = useState(null); // new | import | merge
   const canCreate = useCan('customers', 'create');
   const canEdit = useCan('customers', 'edit');
+  const canExport = useCan('customers', 'export');
   const act = useAction();
   const confirm = useConfirm();
   const d = list.data;
@@ -57,7 +59,7 @@ export default function CommerceCustomers() {
       <PageHead sub="Every shop, hotel, office and distributor that buys, with their addresses, contacts and follow-ups."
         actions={<>
           {canCreate && canEdit && <button type="button" className="a-btn a-btn-ghost" onClick={() => setPanel('import')}>Import</button>}
-          <button type="button" className="a-btn a-btn-ghost" disabled={act.busy} onClick={exportXlsx}>Excel</button>
+          {canExport && <button type="button" className="a-btn a-btn-ghost" disabled={act.busy} onClick={exportXlsx}>Excel</button>}
           {canEdit && <button type="button" className="a-btn a-btn-ghost" onClick={() => setPanel('merge')}>Merge duplicates</button>}
           {canCreate && <button type="button" className="a-btn" onClick={() => setPanel('new')}>New customer</button>}
         </>} />
@@ -144,6 +146,7 @@ export function NewCustomerDrawer({ onClose, onSaved, onOpenExisting }) {
   const meta = useLoad('/commerce/customers?status=merged'); // only for the type / owner lists (cheap: merged ones)
   const act = useAction();
   const [c, setC] = useState({ name: '', business_name: '', type_key: 'home', phone: '', email: '', source: 'Phone', owner_emp_id: '', tags: '' });
+  const [godown, setGodown, godownList] = useGodown(); // the customer's godown: its orders go out from there
   const [bill, setBill] = useState(A0);
   const [same, setSame] = useState(true);
   const [ship, setShip] = useState(A0);
@@ -154,7 +157,7 @@ export function NewCustomerDrawer({ onClose, onSaved, onOpenExisting }) {
   const save = () => act.run(async () => {
     setErrors({}); setDup(null);
     try {
-      const r = await api.send('POST', '/commerce/customers', { ...c, tags: c.tags.split(','), bill: { ...bill, name: bill.name || c.business_name || c.name, phone: bill.phone || c.phone },
+      const r = await api.send('POST', '/commerce/customers', { ...c, godown_id: godown, tags: c.tags.split(','), bill: { ...bill, name: bill.name || c.business_name || c.name, phone: bill.phone || c.phone },
         ship: same ? null : ship, contacts: contact.name ? [contact] : [] });
       onSaved(r);
     } catch (e) {
@@ -175,10 +178,11 @@ export function NewCustomerDrawer({ onClose, onSaved, onOpenExisting }) {
         <label className="a-field"><span>Type</span><select value={c.type_key} aria-label="Customer type" onChange={(e) => setC({ ...c, type_key: e.target.value })}>{(m ? m.types : [{ type_key: 'home', label: 'Home' }]).map((t) => <option key={t.type_key} value={t.type_key}>{t.label}</option>)}</select></label>
         <label className="a-field"><span>Mobile</span><input value={c.phone} inputMode="tel" aria-label="Customer phone" onChange={(e) => setC({ ...c, phone: e.target.value })} />{fe('phone')}</label>
         <label className="a-field"><span>E-mail (optional)</span><input value={c.email} aria-label="Customer e-mail" onChange={(e) => setC({ ...c, email: e.target.value })} />{fe('email')}</label>
+        <span><GodownField value={godown} onChange={setGodown} list={godownList} label="Served from godown" />{fe('godown_id')}</span>
       </div>
       <h3>Billing address</h3>
       <AddressFields a={bill} set={setBill} kind="billing" prefix="Billing" />
-      {Object.entries(errors).filter(([k]) => ['name', 'phone', 'email', 'owner_emp_id'].indexOf(k) < 0).map(([k, v]) => <small key={k} className="a-bad a-person-sub" role="alert">{v}</small>)}
+      {Object.entries(errors).filter(([k]) => ['name', 'phone', 'email', 'owner_emp_id', 'godown_id'].indexOf(k) < 0).map(([k, v]) => <small key={k} className="a-bad a-person-sub" role="alert">{v}</small>)}
       <label className="a-inline"><input type="checkbox" checked={same} onChange={(e) => { setSame(e.target.checked); if (!e.target.checked) setShip({ ...bill, gstin: '', contact_person: c.name }); }} /> Ship to the billing address</label>
       {!same && (<><h3>Shipping address</h3><AddressFields a={ship} set={setShip} kind="shipping" prefix="Shipping" /></>)}
       <h3>Contact person (optional)</h3>

@@ -55,6 +55,7 @@ export default function CommerceOrders() {
   const [creating, setCreating] = useState(false);
   const canEdit = useCan('orders', 'edit');
   const canCreate = useCan('orders', 'create');
+  const canExport = useCan('orders', 'export');
   const act = useAction();
   const d = list.data;
   // the customer types stay in the filter while the list reloads
@@ -88,7 +89,7 @@ export default function CommerceOrders() {
         <label>Customer type <select value={f.type} onChange={(e) => set({ type: e.target.value })}><option value="">All</option>{types.map((l) => <option key={l.key} value={l.key}>{l.label}</option>)}</select></label>
         <label>From <input type="date" value={f.from} onChange={(e) => set({ from: e.target.value })} /></label>
         <label>To <input type="date" value={f.to} onChange={(e) => set({ to: e.target.value })} /></label>
-        {canEdit && <button type="button" className="a-btn a-btn-ghost" disabled={act.busy} onClick={exportXlsx}>Excel</button>}
+        {canExport && <button type="button" className="a-btn a-btn-ghost" disabled={act.busy} onClick={exportXlsx}>Excel</button>}
       </div>
       <Loading state={list}>
         <Table label="Orders" className="a-orders" rows={(d && d.rows) || []} rowKey={(o) => o.order_no} onRowClick={(o) => setOpen(o.order_no)}
@@ -121,6 +122,7 @@ function OrderDrawer({ no, canEdit, onClose, onChanged }) {
   const confirm = useConfirm();
   const d = o.data;
   const canPack = useCan('packing', 'edit');
+  const canCancel = useCan('orders', 'cancel');
   const reload = () => { o.reload(); onChanged(); };
   const startPacking = async () => {
     if (!(await confirm({ title: `Start packing ${no}?`, message: 'The SKUs are picked now (batches earliest expiry first); then scan it in Packing.', action: 'Start packing' }))) return;
@@ -142,7 +144,7 @@ function OrderDrawer({ no, canEdit, onClose, onChanged }) {
           {d.status === 'packing' && <Link className="a-btn" to="/admin/commerce/packing">Scan in Packing</Link>}
           {live && <button type="button" className="a-btn a-btn-ghost" onClick={() => printInvoice(live.invoice_id)}>Invoice {live.invoice_no}</button>}
           {canReturn && d.status === 'delivered' && <button type="button" className="a-btn a-btn-ghost" onClick={() => setPanel('return')}>New return</button>}
-          {canEdit && !['cancelled', 'delivered'].includes(d.status) && !pendingCancel && <button type="button" className="a-btn a-btn-danger" onClick={() => setPanel('cancel')}>Cancel order</button>}
+          {canCancel && !['cancelled', 'delivered'].includes(d.status) && !pendingCancel && <button type="button" className="a-btn a-btn-danger" onClick={() => setPanel('cancel')}>Cancel order</button>}
         </>
       ) : null}>
       <Loading state={o}>
@@ -396,8 +398,13 @@ function OrderForm({ order = null, onClose, onSaved }) {
   const [addingCustomer, setAddingCustomer] = useState(false);
   const f = form.data;
   const pickCustomer = (id) => { setAddingCustomer(false); form.reload(); setCustomerId(String(id)); setWallet(''); };
-  const skuMap = useMemo(() => new Map(((f && f.skus) || []).map((s) => [s.sku_code, s])), [f]);
   const customer = f && f.customers.find((c) => String(c.customer_id) === String(customerId));
+  // the stock of the customer's godown (an order goes out from there; before a customer is chosen: the first godown)
+  const stockGodown = f ? (customer ? customer.godown_id : Object.keys(f.stockByGodown)[0]) : null;
+  const skuMap = useMemo(() => {
+    const st = (f && f.stockByGodown[stockGodown]) || {};
+    return new Map(((f && f.skus) || []).map((s) => [s.sku_code, { good: 0, reserved: 0, expired: 0, available: 0, ...s, ...st[s.sku_code] }]));
+  }, [f, stockGodown]);
   // a new order takes the customer's address (both); the form keeps what was typed afterwards
   // a new order takes the customer's default billing and shipping address (phase 8: one of each kind, chosen below)
   const billAddrs = customer ? customer.addresses.filter((a) => a.kind === 'billing') : [];

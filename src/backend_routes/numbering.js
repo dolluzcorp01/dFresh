@@ -3,6 +3,8 @@
 // transaction waits for it) and a ROLLBACK undoes the bump, so a number is never skipped or handed out twice.
 // - Orders DFO-26nnnn and returns per calendar year; invoices DFI/26-27/nnnn and credit notes per financial year
 //   (April to March, India time).
+// - Per-godown documents (invoices, credit notes): a godown with in_number = 1 puts its code in the number and has its
+//   own counter (DFI/C/26-27/0001, series DFI-C-2026-27); Kanchipuram (K, in_number 0) keeps DFI/26-27/nnnn.
 
 /** India date parts of a moment -> { y, m (1-12), d, ymd } */
 function istParts(at = new Date()) {
@@ -30,4 +32,11 @@ async function next(q, seriesKey, start = 1) {
 
 const pad = (n, w = 4) => String(n).padStart(w, '0');
 
-module.exports = { istParts, fyOf, next, pad };
+/** the godown part of a per-godown number: { seg: '' | 'C/', key: '' | 'C-' } */
+async function godownSegment(q, godownId) {
+  const [[g]] = await q.query('SELECT code, in_number FROM locations WHERE location_id = ?', [Number(godownId)]);
+  if (!g || !Number(g.in_number)) return { seg: '', key: '' };
+  return { seg: `${g.code}/`, key: `${g.code}-` };
+}
+
+module.exports = { istParts, fyOf, next, pad, godownSegment };

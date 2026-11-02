@@ -1,11 +1,11 @@
-// Inventory (docs/COMMERCE-SPEC.md 4.4; API /commerce/stock ..., logic in src/backend_routes/stock.js), at
-// one location, the Kanchipuram godown. Tabs (?tab=), in the order stock moves: Suppliers, Stock in, Stock (the default),
-// Batches, Reorder, Counts, Write-offs, Movements.
-// - Stock: per SKU good, expired (batches past expiry, blocked from orders), reserved by confirmed orders, available,
-//   returned (R), damaged; reorder level and quantity (edit); average cost and stock value (only for a role that can
-//   view Reports or Products and prices). Record: good -> damaged, or packs back into Returned (R). Returned packs
-//   found expired at a return inspection are their own kind (blocked until written off). Recheck (phase 6): Returned
-//   (R) packs back to good stock, only when Commerce settings allow resale, always through approval.
+// Inventory (docs/COMMERCE-SPEC.md 4.4; API /commerce/stock ..., logic in src/backend_routes/stock.js), per godown
+// (phase 12a: the godowns in view, the header picker narrows them). Tabs (?tab=), in the order stock moves: Suppliers,
+// Stock in, Stock (the default), Batches, Reorder, Counts, Write-offs, Movements.
+// - Stock: per godown and SKU good, expired (batches past expiry, blocked from orders), reserved by confirmed orders,
+//   available, and the other shelves (labels from the API: QC hold, Damaged, Returned (R), Rejected, Display); reorder
+//   level and quantity per godown (edit); average cost and stock value (only for a role with See cost). Record: good ->
+//   damaged, or packs back into Returned (R), in one godown. Recheck (phase 6): Returned (R) packs back to good stock,
+//   only when Commerce settings allow resale, always through approval.
 // - Stock in, Write-offs, Counts, Suppliers: InventoryWork.js.
 // - Batches: every batch with good stock, Expired / Near expiry (Commerce setting days) / OK.
 // - Reorder: SKUs whose available stock is below the reorder level, with a suggested quantity in full cartons.
@@ -15,8 +15,10 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from './adminApi';
 import { InfoCard, Loading, PageHead, Pill, Table, Tabs, fmtDate, useAction, useCan, useLoad } from './ui';
 import { StockIns, WriteOffs, Counts, Suppliers } from './InventoryWork';
+import GodownField, { useGodown } from './GodownField';
 
-const KIND = { good: 'Good', returned: 'Returned (R)', damaged: 'Damaged', expired: 'Expired (returns)' };
+// the shelves besides Good, in the order of the stock table (labels come from the API: stock.KIND_LABEL)
+const SHELF_COLS = [['hold', 'hold'], ['damaged', 'dmg'], ['returned', 'ret'], ['rejected', 'rej'], ['display', 'disp']];
 // in the order stock moves: who supplies, what comes in, what is there (the default tab), by batch, what to reorder, counting it,
 // writing off, and the full movement log
 const TABS = [['suppliers', 'Suppliers'], ['in', 'Stock in'], ['stock', 'Stock'], ['batches', 'Batches'], ['reorder', 'Reorder'], ['counts', 'Counts'], ['writeoffs', 'Write-offs'], ['moves', 'Movements']];
@@ -31,11 +33,12 @@ export default function CommerceStock() {
   const setTab = (t) => navigate(`/admin/commerce/stock${t === 'stock' ? '' : `?tab=${t}`}`);
   return (
     <section>
-      <PageHead sub="What we have at the Kanchipuram godown, how it came in and how it left." />
-      <InfoCard title="Stock at the Kanchipuram godown">
+      <PageHead sub="What we have in each godown, how it came in and how it left." />
+      <InfoCard title="Stock per godown">
         <ul>
           <li>Stock is the sum of movements, never typed in. It comes in through Stock in (production or purchase) and goes out at dispatch, by write-off or by an approved count.</li>
           <li>Available = good stock - expired batches - stock reserved by confirmed orders. Products tracked by batch go out earliest expiry first; expired stock cannot be ordered.</li>
+          <li>Each godown has its own stock, reorder levels and counts; the godown picker at the top shows one godown or all of yours.</li>
           <li>Write-offs above the threshold and count differences wait for approval (Approvals, top of the menu).</li>
         </ul>
       </InfoCard>
@@ -59,9 +62,13 @@ function StockTab({ stock }) {
   const [q, setQ] = useState('');
   const [lowOnly, setLowOnly] = useState(false);
   const [form, setForm] = useState({ sku_code: '', move_type: 'damaged', qty: '', note: '' });
-  const [levels, setLevels] = useState({}); // sku -> { reorder_level, reorder_qty } typed (pending)
+  const [godown, setGodown, godownList] = useGodown();
+  const [levels, setLevels] = useState({}); // godown-sku -> { reorder_level, reorder_qty } typed (pending)
   const d = stock.data;
   const rows = useMemo(() => (d ? d.rows : []), [d]);
+  const many = Boolean(d && d.godowns.length > 1); // more than one godown in view: a Godown column
+  const shelves = d ? SHELF_COLS.filter(([k, kind]) => ['dmg', 'ret'].includes(kind) || rows.some((r) => r[k])) : [];
+  const key = (r) => `${r.godown_id}-${r.sku_code}`;
   const shown = useMemo(() => {
     const s = q.trim().toLowerCase();
     return rows.filter((r) => (!lowOnly || r.low) && (!s || [r.sku_code, r.name, r.size_label].some((v) => String(v).toLowerCase().includes(s))));
@@ -70,17 +77,17 @@ function StockTab({ stock }) {
   const record = (e) => {
     e.preventDefault();
     act.run(async () => {
-      await api.send('POST', '/commerce/movements', { ...form, sku_code: form.sku_code.trim().toUpperCase(), qty: Number(form.qty) });
+      await api.send('POST', '/commerce/movements', { ...form, godown_id: godown, sku_code: form.sku_code.trim().toUpperCase(), qty: Number(form.qty) });
       setForm({ ...form, qty: '', note: '' });
       stock.reload();
     }, `${form.move_type === 'damaged' ? 'Moved to damaged' : 'Back into Returned (R)'}: ${form.qty} x ${form.sku_code.toUpperCase()}`);
   };
-  const lv = (r) => levels[r.sku_code] || { reorder_level: String(r.reorder_level), reorder_qty: String(r.reorder_qty), bin_location: r.bin_location || '' };
-  const lvDirty = (r) => Boolean(levels[r.sku_code]) && (levels[r.sku_code].reorder_level !== String(r.reorder_level) || levels[r.sku_code].reorder_qty !== String(r.reorder_qty)
-    || levels[r.sku_code].bin_location !== (r.bin_location || ''));
+  const lv = (r) => levels[key(r)] || { reorder_level: String(r.reorder_level), reorder_qty: String(r.reorder_qty), bin_location: r.bin_location || '' };
+  const lvDirty = (r) => Boolean(levels[key(r)]) && (levels[key(r)].reorder_level !== String(r.reorder_level) || levels[key(r)].reorder_qty !== String(r.reorder_qty)
+    || levels[key(r)].bin_location !== (r.bin_location || ''));
   const saveLevel = (r) => act.run(async () => {
-    await api.send('PUT', `/commerce/stock/${encodeURIComponent(r.sku_code)}/levels`, { reorder_level: Number(lv(r).reorder_level), reorder_qty: Number(lv(r).reorder_qty), bin_location: lv(r).bin_location });
-    setLevels((l) => { const n = { ...l }; delete n[r.sku_code]; return n; });
+    await api.send('PUT', `/commerce/stock/${encodeURIComponent(r.sku_code)}/levels`, { godown_id: r.godown_id, reorder_level: Number(lv(r).reorder_level), reorder_qty: Number(lv(r).reorder_qty), bin_location: lv(r).bin_location });
+    setLevels((l) => { const n = { ...l }; delete n[key(r)]; return n; });
     stock.reload();
   }, `${r.sku_code} saved`);
 
@@ -104,23 +111,21 @@ function StockTab({ stock }) {
           <div className="a-scroll">
             <table className="a-table a-stocktable">
               <thead><tr>
-                <th>SKU</th><th>Product</th><th className="a-num">Good</th><th className="a-num" title="Batches past their expiry date">Expired</th><th className="a-num" title="Held by confirmed orders">Reserved</th>
-                <th className="a-num" title="Good - expired - reserved">Available</th><th className="a-num">(R)</th><th className="a-num">Damaged</th>
-                <th className="a-num" title="Returned packs found expired at inspection: blocked until written off">Ret. expired</th><th>Bin · reorder level / qty</th>
+                {many && <th>Godown</th>}<th>SKU</th><th>Product</th><th className="a-num">Good</th><th className="a-num" title="Batches past their expiry date">Expired</th><th className="a-num" title="Held by confirmed orders">Reserved</th>
+                <th className="a-num" title="Good - expired - reserved">Available</th>{shelves.map(([k, kind]) => <th key={k} className="a-num">{d.shelves[kind]}</th>)}<th>Bin · reorder level / qty</th>
                 {d.seesCost && <><th className="a-num">Avg cost</th><th className="a-num">Value</th></>}<th>Last movement</th>
               </tr></thead>
               <tbody>
                 {shown.map((r) => (
-                  <tr key={r.sku_code} className={r.low ? 'a-lowrow' : undefined}>
+                  <tr key={key(r)} className={r.low ? 'a-lowrow' : undefined}>
+                    {many && <td title={r.godown}>{r.godown_code}</td>}
                     <td><code>{r.sku_code}</code>{r.track_batches && <small className="a-muted a-person-sub">batches: {r.batches}</small>}</td>
                     <td>{r.name} <small className="a-muted">{r.size_label}</small></td>
                     <td className="a-num"><b>{r.good}</b></td>
                     <td className={`a-num${r.expired ? ' a-bad' : ''}`}>{r.expired || ''}</td>
                     <td className="a-num">{r.reserved || ''}</td>
                     <td className={`a-num${r.available < 0 ? ' a-bad' : ''}`}><b>{r.available}</b> {r.low && <span className="a-status a-status-bad">Low</span>}</td>
-                    <td className="a-num">{r.returned || ''}</td>
-                    <td className="a-num">{r.damaged || ''}</td>
-                    <td className={`a-num${r.expired_back ? ' a-bad' : ''}`}>{r.expired_back || ''}</td>
+                    {shelves.map(([k]) => <td key={k} className="a-num">{r[k] || ''}</td>)}
                     <td>
                       {canEdit ? (
                         <span className="a-row">
@@ -138,14 +143,15 @@ function StockTab({ stock }) {
               </tbody>
             </table>
           </div>
-          {canEdit && rows.some((r) => r.returned > 0) && <Recheck rows={rows.filter((r) => r.returned > 0)} resell={d.resell} />}
+          {canEdit && rows.some((r) => r.returned > 0) && <Recheck rows={rows.filter((r) => r.returned > 0)} resell={d.resell} many={many} />}
           {canRecord && (
             <form className="a-card a-moveform" onSubmit={record}>
               <h2>Record damaged or returned packs</h2>
               <p className="a-muted">Stock in, write-offs and counts have their own tabs. Here: good packs found damaged in the godown, or packs back into Returned (R).</p>
               <div className="a-toolbar">
+                <GodownField value={godown} onChange={setGodown} list={godownList} />
                 <label className="a-field"><span>SKU (scan or type)</span><input value={form.sku_code} list="stock-skus" onChange={(e) => setForm({ ...form, sku_code: e.target.value })} required /></label>
-                <datalist id="stock-skus">{rows.map((r) => <option key={r.sku_code} value={r.sku_code}>{r.name}</option>)}</datalist>
+                <datalist id="stock-skus">{rows.filter((r) => String(r.godown_id) === godown).map((r) => <option key={r.sku_code} value={r.sku_code}>{r.name}</option>)}</datalist>
                 <label className="a-field"><span>What</span><select value={form.move_type} onChange={(e) => setForm({ ...form, move_type: e.target.value })}><option value="damaged">Damaged (good -&gt; damaged)</option><option value="return">Returned (to (R) stock)</option></select></label>
                 <label className="a-field"><span>Packs</span><input className="a-qty" type="number" min="1" step="1" value={form.qty} onChange={(e) => setForm({ ...form, qty: e.target.value })} required /></label>
                 <label className="a-field"><span>Note</span><input value={form.note} maxLength={255} onChange={(e) => setForm({ ...form, note: e.target.value })} /></label>
@@ -160,17 +166,17 @@ function StockTab({ stock }) {
 }
 
 /** Recheck: Returned (R) packs back to good stock (approval); only when the setting allows resale */
-function Recheck({ rows, resell }) {
+function Recheck({ rows, resell, many }) {
   const act = useAction();
-  const [f, setF] = useState({ sku_code: '', batch_id: '', qty: '', note: '' });
-  const row = rows.find((r) => r.sku_code === f.sku_code);
-  const batches = useLoad(row && row.track_batches ? `/commerce/batches?sku=${encodeURIComponent(row.sku_code)}&kind=returned` : null);
+  const [f, setF] = useState({ row: '', batch_id: '', qty: '', note: '' }); // row = godown-sku
+  const row = rows.find((r) => `${r.godown_id}-${r.sku_code}` === f.row);
+  const batches = useLoad(row && row.track_batches ? `/commerce/batches?sku=${encodeURIComponent(row.sku_code)}&kind=ret&godown_id=${row.godown_id}` : null);
   const save = (e) => {
     e.preventDefault();
     act.run(async () => {
-      const r = await api.send('POST', '/commerce/stock/recheck', { ...f, qty: Number(f.qty) });
-      setF({ sku_code: '', batch_id: '', qty: '', note: '' });
-      act.setMsg({ kind: 'info', text: `Recheck of ${f.qty} x ${f.sku_code} sent for approval (request #${r.approval_id}): the packs move to good stock when it is approved.` });
+      const r = await api.send('POST', '/commerce/stock/recheck', { godown_id: row.godown_id, sku_code: row.sku_code, batch_id: f.batch_id, qty: Number(f.qty), note: f.note });
+      setF({ row: '', batch_id: '', qty: '', note: '' });
+      act.setMsg({ kind: 'info', text: `Recheck of ${f.qty} x ${row.sku_code} sent for approval (request #${r.approval_id}): the packs move to good stock when it is approved.` });
     });
   };
   return (
@@ -181,8 +187,8 @@ function Recheck({ rows, resell }) {
         <>
           <p className="a-muted">Packs checked again and fit to sell move from (R) to good stock after approval (Approvals, top of the menu).</p>
           <div className="a-toolbar">
-            <label className="a-field"><span>SKU</span><select value={f.sku_code} aria-label="Recheck SKU" onChange={(e) => setF({ ...f, sku_code: e.target.value, batch_id: '' })} required>
-              <option value="">Choose...</option>{rows.map((r) => <option key={r.sku_code} value={r.sku_code}>{r.sku_code} ({r.returned} in (R))</option>)}</select></label>
+            <label className="a-field"><span>SKU</span><select value={f.row} aria-label="Recheck SKU" onChange={(e) => setF({ ...f, row: e.target.value, batch_id: '' })} required>
+              <option value="">Choose...</option>{rows.map((r) => <option key={`${r.godown_id}-${r.sku_code}`} value={`${r.godown_id}-${r.sku_code}`}>{many ? `${r.godown_code} ` : ''}{r.sku_code} ({r.returned} in (R))</option>)}</select></label>
             {row && row.track_batches && (
               <label className="a-field"><span>Batch</span><select value={f.batch_id} aria-label="Recheck batch" onChange={(e) => setF({ ...f, batch_id: e.target.value })}>
                 <option value="">Choose...</option>{(batches.data ? batches.data.rows : []).map((b) => <option key={b.batch_id || 'none'} value={b.batch_id || ''}>{b.batch_no || 'no batch'} ({b.qty}){b.expired ? ' expired' : ''}</option>)}</select></label>
@@ -236,8 +242,9 @@ function Reorder() {
         data.data.length ? (
           <>
             <p className="a-muted">SKUs whose available stock is below the reorder level. Suggested = the reorder quantity, or up to twice the level, in full cartons.</p>
-            <Table label="Reorder" rows={data.data} rowKey={(r) => r.sku_code}
+            <Table label="Reorder" rows={data.data} rowKey={(r) => `${r.godown_id}-${r.sku_code}`}
               columns={[
+                { key: 'godown_code', label: 'Godown', sort: true, render: (r) => <span title={r.godown}>{r.godown_code}</span> },
                 { key: 'sku_code', label: 'SKU', sort: true, render: (r) => <code>{r.sku_code}</code> },
                 { key: 'name', label: 'Product', sort: true, render: (r) => <>{r.name} <small className="a-muted">{r.size_label}</small></> },
                 { key: 'available', label: 'Available', num: true, sort: true, render: (r) => <span className="a-bad">{r.available}</span> },
@@ -256,7 +263,7 @@ function Movements() {
   const [f, setF] = useState({ sku: '', type: '', from: '', to: '', emp: '', batch: '' });
   const qs = Object.entries(f).filter(([, v]) => v).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
   const data = useLoad(`/commerce/movements${qs ? `?${qs}` : ''}`);
-  const canExport = useCan('inventory', 'edit');
+  const canExport = useCan('inventory', 'export');
   const act = useAction();
   const d = data.data;
   // the filter choices stay while the list reloads
@@ -282,10 +289,11 @@ function Movements() {
           <Table label="Movements" className="a-moves" rows={d.rows} rowKey={(m) => m.move_id} empty={{ icon: 'arrow-up-down', title: 'No movement matches.' }}
             columns={[
               { key: 'created_at', label: 'When', sort: true, render: (m) => fmtDate(m.created_at) },
-              { key: 'sku_code', label: 'SKU', sort: true, render: (m) => <code>{m.sku_code}{m.stock_kind === 'returned' ? ' (R)' : ''}</code> },
+              { key: 'godown_code', label: 'Godown', sort: true },
+              { key: 'sku_code', label: 'SKU', sort: true, render: (m) => <code>{m.sku_code}{m.stock_kind === 'ret' ? ' (R)' : ''}</code> },
               { key: 'type_label', label: 'Type', sort: true },
               { key: 'delta', label: 'Change', num: true, sort: true, render: (m) => <span className={m.delta < 0 ? 'a-bad' : undefined}>{m.delta > 0 ? `+${m.delta}` : m.delta}</span> },
-              { key: 'stock_kind', label: 'Stock', render: (m) => KIND[m.stock_kind] },
+              { key: 'stock_kind', label: 'Shelf', render: (m) => m.shelf_label },
               { key: 'batch_no', label: 'Batch', render: (m) => m.batch_no || '' },
               cost && { key: 'unit_cost', label: 'Cost / pack', num: true, render: (m) => (m.unit_cost == null ? '' : rs(m.unit_cost)) },
               { key: 'note', label: 'Reference / note', render: (m) => <>{m.ref_type ? <small className="a-muted">{m.ref_type} {m.ref_id} </small> : null}{m.note}</> },

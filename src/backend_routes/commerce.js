@@ -40,6 +40,7 @@ const commerceSettings = require('./commerce-settings');
 const invoices = require('./invoices');
 const promotions = require('./promotions');
 const stock = require('./stock');
+const godowns = require('./godowns');
 const stockLib = stock; // (prepare has a local named stock)
 const wallet = require('./wallet');
 const numbering = require('./numbering');
@@ -193,9 +194,12 @@ async function prepare(q, data, opts = {}) {
   const customerId = editing ? editing.customer_id : Number(data.customer_id);
   // the customer is locked first: two orders of one customer at the same moment are made one after the other, so the
   // wallet, the credit limit and a coupon's per-customer limit are checked against the latest rows (security review H2)
-  const [[cust]] = await q.query(`SELECT customer_id, customer_no, name, business_name, phone, type_key, status, hold_reason, credit_days, credit_limit, merged_into
+  const [[cust]] = await q.query(`SELECT customer_id, customer_no, name, business_name, phone, type_key, godown_id, status, hold_reason, credit_days, credit_limit, merged_into
       FROM customers WHERE customer_id = ? FOR UPDATE`, [customerId]);
   if (!cust) throw new CommerceError('Choose a customer');
+  // the order's godown: an order keeps the godown it was made in; a new one takes its customer's (phase 12a, D8)
+  const godown = editing ? Number(editing.godown_id) : Number(cust.godown_id);
+  if (opts.admin && !godowns.covers(opts.admin, godown)) throw new CommerceError('This customer belongs to a godown you do not work at', 403);
   if (cust.merged_into) throw new CommerceError(`${cust.customer_no} was merged into another customer: choose that one`);
   if (cust.status === 'inactive' && !editing && !opts.replacement) throw new CommerceError(`${cust.name} is inactive: no new orders (Customers: make it active first)`);
   const terms = String(data.payment_terms || (editing ? editing.payment_terms : 'cod'));
@@ -230,7 +234,7 @@ async function prepare(q, data, opts = {}) {
   const settings = await commerceSettings.read(q);
   const inclusive = settings.prices_include_gst === 'inclusive';
   await stockLib.lockSkus(q, keys);
-  const stock = await availability(q, keys, editing ? editing.order_id : 0, { lock: true });
+  const stock = await availability(q, keys, editing ? editing.order_id : 0, { lock: true, godown });
   const problems = [];
   const short = [];
   const lines = [...merged.values()].map((i) => {
@@ -263,7 +267,7 @@ async function prepare(q, data, opts = {}) {
   }
   const allLines = [...offers.lines, ...freeLines];
   const allKeys = [...new Set(allLines.map((l) => l.sku_code))];
-  const stockAll = allKeys.some((k) => !stock.has(k)) ? await availability(q, allKeys, editing ? editing.order_id : 0) : stock;
+  const stockAll = allKeys.some((k) => !stock.has(k)) ? await availability(q, allKeys, editing ? editing.order_id : 0, { godown }) : stock;
   for (const k of allKeys) {
     const want = allLines.filter((l) => l.sku_code === k).reduce((a, l) => a + l.qty, 0);
     const st = stockAll.get(k);
@@ -401,7 +405,7 @@ async function prepare(q, data, opts = {}) {
       if (!ct) throw new CommerceError(`That contact is not one of ${cust.name}'s`);
     }
   }
-  return { cust, list, terms, creditDays: Number(cust.credit_days) || 0, lines: t.lines, contactId, totals: t, coupon: coupon ? coupon.code : null, couponInfo: coupon, offers: offers.applied,
+  return { cust, godown, list, terms, creditDays: Number(cust.credit_days) || 0, lines: t.lines, contactId, totals: t, coupon: coupon ? coupon.code : null, couponInfo: coupon, offers: offers.applied,
     manualReason, walletUsed, walletGst: walletUsed > 0 ? walletGst : null, walletCap, walletPlan, discountTotal, discountPct, deliveryWaived: waived,
     billAddressId: chose('bill') || !editing ? (billAddr ? billAddr.address_id : null) : editing.bill_address_id, shipAddressId: chose('ship') || !editing ? (shipAddr ? shipAddr.address_id : null) : editing.ship_address_id,
     bill: bill.values, ship: ship.values, pos, posReason: posInfo.reason, gstType, holds, settings, method, area: delivery.area };
@@ -417,14 +421,16 @@ async function release(q, orderId) {
 }
 async function reserve(q, orderId) {
   await release(q, orderId);
+  const [[o]] = await q.query('SELECT godown_id FROM orders WHERE order_id = ?', [orderId]);
   const [items] = await q.query('SELECT sku_code, SUM(qty) AS qty FROM order_items WHERE order_id = ? GROUP BY sku_code ORDER BY sku_code', [orderId]);
-  for (const i of items) await q.query('INSERT INTO stock_reservations (order_id, sku_code, qty) VALUES (?, ?, ?)', [orderId, i.sku_code, Number(i.qty)]);
+  for (const i of items) await q.query('INSERT INTO stock_reservations (order_id, sku_code, location_id, qty) VALUES (?, ?, ?, ?)', [orderId, i.sku_code, o.godown_id, Number(i.qty)]);
 }
 const reservesNow = (status, settings) => (status === 'new' && settings.stock_reserve_at !== 'packing') || status === 'packing' || status === 'packed';
 
 /** pick an order's SKUs: batch-tracked ones by batch, earliest expiry first, leaving out what other open orders picked */
 async function pickFor(q, orderId) {
   await q.query('DELETE FROM order_picks WHERE order_id = ?', [orderId]);
+  const [[ord]] = await q.query('SELECT godown_id FROM orders WHERE order_id = ?', [orderId]);
   const [sums] = await q.query('SELECT sku_code, SUM(qty) AS qty FROM order_items WHERE order_id = ? GROUP BY sku_code ORDER BY sku_code', [orderId]);
   const items = sums.map((x) => ({ sku_code: x.sku_code, qty: Number(x.qty) }));
   const tr = await stock.tracked(q, items.map((i) => i.sku_code));
@@ -433,10 +439,10 @@ async function pickFor(q, orderId) {
     if (!tr.has(i.sku_code)) { picks.push({ sku_code: i.sku_code, batch_id: null, qty: i.qty }); continue; }
     const [taken] = await q.query(
       `SELECT pk.batch_id, SUM(pk.qty) AS qty FROM order_picks pk JOIN orders o ON o.order_id = pk.order_id
-        WHERE pk.sku_code = ? AND o.status IN ('packing', 'packed') AND o.dispatched_at IS NULL AND o.order_id <> ? GROUP BY pk.batch_id`, [i.sku_code, orderId]);
+        WHERE pk.sku_code = ? AND o.godown_id = ? AND o.status IN ('packing', 'packed') AND o.dispatched_at IS NULL AND o.order_id <> ? GROUP BY pk.batch_id`, [i.sku_code, ord.godown_id, orderId]);
     const used = new Map(taken.map((t) => [t.batch_id, Number(t.qty)]));
     let left = i.qty;
-    for (const b of (await stock.batchStock(q, i.sku_code)).filter((x) => x.qty > 0 && !x.expired)) {
+    for (const b of (await stock.batchStock(q, i.sku_code, 'good', { godown: ord.godown_id })).filter((x) => x.qty > 0 && !x.expired)) {
       const free = b.qty - (used.get(b.batch_id) || 0);
       if (free <= 0 || !left) continue;
       const take = Math.min(free, left);
@@ -484,10 +490,10 @@ async function withdrawHolds(q, orderNo, why) {
     await audit(q, { empId: 'system', action: 'withdraw', entity: 'approval', entityId: String(r.approval_id), after: { status: 'withdrawn', note: why } });
   }
 }
-async function requestHolds(q, orderNo, custName, holds, empId) {
+async function requestHolds(q, orderNo, custName, holds, empId, godownId, customerId) {
   const ids = [];
   for (const h of holds) {
-    ids.push(await approvals.request(q, { kind: h.kind, refType: 'order', refId: orderNo, summary: `${orderNo} for ${custName}: ${h.what}`, amount: h.amount, payload: { order_no: orderNo, lines: h.lines || null } }, empId));
+    ids.push(await approvals.request(q, { kind: h.kind, godownId, target: customerId ? `cust:${customerId}` : null, refType: 'order', refId: orderNo, summary: `${orderNo} for ${custName}: ${h.what}`, amount: h.amount, payload: { order_no: orderNo, lines: h.lines || null } }, empId));
   }
   return ids;
 }
@@ -525,13 +531,13 @@ async function createOrder(q, data, empId, opts = {}) {
   const orderNo = `${p.settings.order_prefix}-${yy}${numbering.pad(await numbering.next(q, `${p.settings.order_prefix}-${yy}`, 1))}`;
   const status = p.holds.length ? 'approval' : 'new';
   const [ins] = await q.query(
-    `INSERT INTO orders (order_no, customer_id, price_list, status, payment_terms, credit_days, delivery_method_id, delivery_kind, delivery_area_id,
+    `INSERT INTO orders (order_no, customer_id, godown_id, price_list, status, payment_terms, credit_days, delivery_method_id, delivery_kind, delivery_area_id,
        bill_name, bill_gstin, bill_address, bill_town, bill_state_code, bill_pincode, bill_phone, bill_address_id,
        ship_name, ship_address, ship_town, ship_state_code, ship_pincode, ship_phone, ship_address_id, contact_id, place_of_supply, gst_type,
        coupon_code, subtotal, discount, offer_discount, manual_discount, manual_discount_reason, delivery_charge, delivery_gst, delivery_waived, taxable, cgst, sgst, igst, gst, round_off, total,
        wallet_used, wallet_discount, wallet_gst, amount_due, note, emp_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [orderNo, p.cust.customer_id, p.list.key, status, p.terms, p.creditDays, p.method.method_id, p.method.kind, p.area ? p.area.area_id : null, ...addrCols(p), p.pos, p.gstType,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [orderNo, p.cust.customer_id, p.godown, p.list.key, status, p.terms, p.creditDays, p.method.method_id, p.method.kind, p.area ? p.area.area_id : null, ...addrCols(p), p.pos, p.gstType,
       p.coupon, t.subtotal, t.discount, t.offer_discount, t.manual_discount, p.manualReason, t.delivery_charge, t.delivery_gst, p.deliveryWaived, t.taxable, t.cgst, t.sgst, t.igst, t.gst, t.round_off, t.total,
       p.walletUsed, t.wallet_discount, p.walletGst, round2(t.total - (p.walletUsed - t.wallet_discount)), data.note ? String(data.note).slice(0, 255) : null, empId]
   );
@@ -540,7 +546,7 @@ async function createOrder(q, data, empId, opts = {}) {
   if (p.coupon) await promotions.redeem(q, orderId, p.cust.customer_id, p.coupon, p.couponInfo.discount || p.couponInfo.delivery_waived);
   if (p.walletUsed > 0) await wallet.use(q, p.cust.customer_id, p.walletUsed, orderId, orderNo, empId);
   await history(q, orderId, null, status, p.holds.length ? `Waits for: ${p.holds.map((h) => approvals.KINDS[h.kind].label).join(', ')}` : null, empId);
-  const ids = await requestHolds(q, orderNo, p.cust.name, p.holds, empId);
+  const ids = await requestHolds(q, orderNo, p.cust.name, p.holds, empId, p.godown, p.cust.customer_id);
   if (status === 'new') await confirmed(q, orderId, empId, p.settings);
   await refreshPayment(q, orderId);
   await audit(q, { empId, action: 'create', entity: 'order', entityId: orderNo,
@@ -586,7 +592,7 @@ async function previewOrder(q, data, empId, opts = {}) {
   };
 }
 
-const ORDER_COLS = `order_id, order_no, customer_id, status, payment_terms, credit_days, delivery_method_id, delivery_area_id, coupon_code, wallet_used, version, total,
+const ORDER_COLS = `order_id, order_no, customer_id, godown_id, status, payment_terms, credit_days, delivery_method_id, delivery_area_id, coupon_code, wallet_used, version, total,
   bill_name, bill_gstin, bill_address, bill_town, bill_state_code, bill_pincode, bill_phone, bill_address_id,
   ship_name, ship_address, ship_town, ship_state_code, ship_pincode, ship_phone, ship_address_id, contact_id`;
 
@@ -632,7 +638,7 @@ async function updateOrder(q, orderNo, data, empId, opts = {}) {
       t.delivery_charge, t.delivery_gst, p.deliveryWaived, t.taxable, t.cgst, t.sgst, t.igst, t.gst, t.round_off, t.total, p.walletUsed, t.wallet_discount, p.walletGst,
       String(data.note || '').trim().slice(0, 255) || null, empId, o.order_id]
   );
-  await requestHolds(q, orderNo, p.cust.name, p.holds, empId);
+  await requestHolds(q, orderNo, p.cust.name, p.holds, empId, p.godown, p.cust.customer_id);
   if (status === 'approval') await release(q, o.order_id);
   else if (o.status === 'approval' && status === 'new') await confirmed(q, o.order_id, empId, p.settings);
   else if (reservesNow(status, p.settings)) await reserve(q, o.order_id);
@@ -673,7 +679,7 @@ async function doCancel(q, orderId, reason, empId) {
 async function cancelOrder(q, orderNo, reason, empId) {
   const why = String(reason || '').trim().slice(0, 255);
   if (!why) throw new CommerceError('Say why the order is cancelled');
-  const [[o]] = await q.query('SELECT order_id, order_no, status, total, customer_id FROM orders WHERE order_no = ? FOR UPDATE', [orderNo]);
+  const [[o]] = await q.query('SELECT order_id, order_no, status, total, customer_id, godown_id FROM orders WHERE order_no = ? FOR UPDATE', [orderNo]);
   if (!o) throw new CommerceError(`No order ${orderNo}`, 404);
   if (o.status === 'cancelled') throw new CommerceError(`${orderNo} is already cancelled`, 409);
   if (o.status === 'delivered') throw new CommerceError(`${orderNo} is delivered: use Returns`, 409);
@@ -681,7 +687,7 @@ async function cancelOrder(q, orderNo, reason, empId) {
     const [[had]] = await q.query("SELECT approval_id FROM approvals WHERE kind = 'cancel_after_dispatch' AND ref_type = 'order' AND ref_id = ? AND status = 'pending'", [orderNo]);
     if (had) throw new CommerceError(`Cancelling ${orderNo} already waits for approval (request #${had.approval_id})`, 409);
     const [[c]] = await q.query('SELECT name FROM customers WHERE customer_id = ?', [o.customer_id]);
-    const id = await approvals.request(q, { kind: 'cancel_after_dispatch', refType: 'order', refId: orderNo, summary: `Cancel ${orderNo} for ${c.name} after dispatch: ${why}`, amount: Number(o.total), payload: { order_no: orderNo, reason: why } }, empId);
+    const id = await approvals.request(q, { kind: 'cancel_after_dispatch', godownId: o.godown_id, target: `cust:${o.customer_id}`, refType: 'order', refId: orderNo, summary: `Cancel ${orderNo} for ${c.name} after dispatch: ${why}`, amount: Number(o.total), payload: { order_no: orderNo, reason: why } }, empId);
     await history(q, o.order_id, o.status, o.status, `Cancel asked (approval #${id}): ${why}`, empId);
     return { order_no: orderNo, pending: true, approval_id: id };
   }

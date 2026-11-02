@@ -7,7 +7,10 @@ done on screen on 21 Oct 2026 with the demo just seeded; the numbers in *italics
 ## Before sir arrives (5 minutes, not part of the 15)
 
 1. A fresh demo: `node scripts/commerce-demo-seed.js` after rebuilding `dfresh_commerce` (or keep yesterday's if no
-   demo order was made since). The seed leaves the lead **DFL-269001 DEMO Saravana Bhavan** waiting.
+   demo order was made since). The seed leaves the lead **DFL-269001 DEMO Saravana Bhavan** waiting. Since phase 12a
+   it also adds a second godown, **Chennai godown (example)** (code C) with a little stock, one customer (CUS-0018),
+   one order (DFO-260029) and a write-off waiting there, so the demo's own numbers start one later; the header's
+   godown picker shows only Kanchipuram or only Chennai.
 2. `.env`: `DB_NAME=dfresh_commerce`, `MAIL_ENABLED=true`, `MAIL_TEST_TO=` the test inbox (every mail goes there,
    with the real recipient in the subject). Then `npm run dev`.
 3. Two browser windows, both on http://localhost:3000/admin:
@@ -27,14 +30,14 @@ owed by customers, stock value, wallets. (The "sales today" tile can be negative
 dated today.)
 
 **2. A lead becomes a customer (1 min)** - *Sales > Leads*, open **DFL-269001**, button **Convert to customer**.
-The customer *CUS-0018 DEMO Saravana Bhavan* is made from the lead (name, phone, e-mail, type Hotel) and the lead's
+The customer *CUS-0019 DEMO Saravana Bhavan* is made from the lead (name, phone, e-mail, type Hotel) and the lead's
 history stays with it.
 
 **3. An order that needs approval (2 min)** - *Sales > Orders*, **New order**.
-Customer *CUS-0018*, SKU `DF001-M100` (Table Napkins), quantity `48` (2 cartons), Delivery: Own vehicle (the form runs
+Customer *CUS-0019*, SKU `DF001-M100` (Table Napkins), quantity `48` (2 cartons), Delivery: Own vehicle (the form runs
 customer > addresses > items > discounts > delivery > payment). In Price,
 type a price 10 % below the list (*list Rs 37, type 33.30*). The form says at once: *"Waits for approval: Price below
-the list - 10 % below"*. Button **Save - send for approval**: the order is *DFO-260029, Waiting for approval*. Point
+the list - 10 % below"*. Button **Save - send for approval**: the order is *DFO-260030, Waiting for approval*. Point
 out: the customer gets nothing yet; the approver gets a mail.
 
 **4. Approval (1 min)** - window B, *Approvals* (top of the menu, with its count): the request with the order, the price and the list price.
@@ -50,7 +53,7 @@ from the same screen. The customer gets "Order packed".
 Tick the order, choose the vehicle and the driver (*DEMO Murugan*), **New trip with 1 stop(s)**. Tab **Trips**, open
 it, **Start trip**: *"out for delivery, Rs 1,886.00 to collect"*. Starting the trip takes the stock out by batch and
 issues the tax invoice (*DFI/26-27/0015*); the customer gets "Out for delivery" and the invoice as a PDF. On the stop,
-**Delivered**, received by `Saravanan`, save: *"DFO-260029 delivered to Saravanan"*. (The driver does the same on
+**Delivered**, received by `Saravanan`, save: *"DFO-260030 delivered to Saravanan"*. (The driver does the same on
 a phone in *Fulfilment > My trips*, with a photo and, if switched on, the customer's OTP.)
 
 **7. Invoice and payment (1 min)** - *Sales > Orders*, open the order.

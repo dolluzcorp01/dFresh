@@ -1,6 +1,8 @@
 // The admin header (v23 .head): sticky, 60 px. Left: the menu button (children) and the godown picker; right: the
 // website link, the approvals count, the alerts bell and who is signed in (their menu has Sign out).
-// - Godown picker: shows "All godowns" only for now (godowns and scoping come in phase 12).
+// - Godown picker (phase 12a): the godowns the person works at; "All godowns" (all of theirs) when they work at more than
+//   one. The choice is remembered per person (localStorage) and sent with every API call (adminApi setGodown, header
+//   X-Godown), which narrows every list and figure; changing it reloads the page so everything on it follows.
 // - Alerts bell: what needs a look today from the counts the admin already loads (new enquiries, approvals waiting);
 //   the full alerts list comes in phase 23.
 import { useEffect, useRef, useState } from 'react';
@@ -8,6 +10,17 @@ import { Link } from 'react-router-dom';
 import LIcon from './ui/LIcon';
 import { Avatar } from './ui';
 import { can } from '../shared/permissions';
+import { setGodown } from './adminApi';
+
+const GODOWN_KEY = 'dfresh-admin-godown:'; // + emp_id
+const savedRaw = (emp) => { try { return window.localStorage.getItem(GODOWN_KEY + emp); } catch { return null; } };
+/** the godown picked before (still one the person works at), their only godown, or null = all of theirs */
+export function savedGodown(me) {
+  const list = (me && me.godown_list) || [];
+  const id = Number(savedRaw(me && me.emp_id));
+  if (id && list.some((g) => Number(g.godown_id) === id)) return id;
+  return me && me.godowns !== 'ALL' && list.length === 1 ? Number(list[0].godown_id) : null;
+}
 
 function useDropdown() {
   const [open, setOpen] = useState(false);
@@ -24,6 +37,27 @@ function useDropdown() {
 
 const Dot = ({ n }) => (n > 0 ? <span className="a-dot2" aria-hidden="true">{n > 99 ? '99+' : n}</span> : null);
 
+function GodownPicker({ me }) {
+  const list = me.godown_list || [];
+  const all = me.godowns === 'ALL' || list.length > 1;
+  const now = savedGodown(me);
+  const pick = (v) => {
+    try { if (v) window.localStorage.setItem(GODOWN_KEY + me.emp_id, v); else window.localStorage.removeItem(GODOWN_KEY + me.emp_id); } catch { /* storage off: this tab only */ }
+    setGodown(v || null);
+    window.location.reload();
+  };
+  return (
+    <label className="a-hchip a-no-phone" title="Which godown you are working in">
+      <LIcon name="warehouse" size="sm" />
+      <select aria-label="Godown" value={now ? String(now) : ''} onChange={(e) => pick(e.target.value)} disabled={!all && list.length <= 1}>
+        {all && <option value="">All godowns</option>}
+        {list.map((g) => <option key={g.godown_id} value={String(g.godown_id)}>{g.name}</option>)}
+        {!list.length && <option value="">No godown</option>}
+      </select>
+    </label>
+  );
+}
+
 export default function HeaderBar({ me, newLeads, approvals, onLogout, children }) {
   const bell = useDropdown();
   const who = useDropdown();
@@ -37,10 +71,7 @@ export default function HeaderBar({ me, newLeads, approvals, onLogout, children 
   return (
     <header className="a-head">
       {children}
-      <label className="a-hchip a-no-phone" title="Which godown you are working in">
-        <LIcon name="warehouse" size="sm" />
-        <select aria-label="Godown" defaultValue="all"><option value="all">All godowns</option></select>
-      </label>
+      <GodownPicker me={me} />
       <span className="a-sp" />
       <a className="a-iconbtn" href="/en" target="_blank" rel="noopener noreferrer" aria-label="User Interface - opens the website in a new tab" title="User Interface (opens the website in a new tab)">
         <LIcon name="globe" />

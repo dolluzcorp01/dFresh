@@ -39,6 +39,8 @@ const commerceSettings = require('./commerce-settings');
 const pricing = require('./pricing');
 const priceExcel = require('./price-excel');
 const invoices = require('./invoices');
+const godowns = require('./godowns');
+const { inScope } = require('./scope-sql');
 const MB = 1024 * 1024;
 const upload = (maxMb) => multer({ storage: multer.memoryStorage(), limits: { fileSize: maxMb * MB, files: 1 } }).single('file');
 
@@ -277,7 +279,7 @@ function leadFilterText(query) {
   return parts.length ? parts.join(', ') : null;
 }
 
-route('get', '/leads/export.csv', 'leads:edit', async (req, res) => {
+route('get', '/leads/export.csv', 'leads:export', async (req, res) => {
   const rows = await leadsForExport(req.query);
   const head = ['lead_ref', 'created_at_ist', 'form_type', 'status', 'full_name', 'first_name', 'last_name', 'business_name',
     'business_type', 'town', 'phone', 'email', 'products', 'monthly_quantity', 'message', 'details', 'lang', 'source_page',
@@ -293,7 +295,7 @@ route('get', '/leads/export.csv', 'leads:edit', async (req, res) => {
 
 // Same leads and filters as the CSV, as a branded Excel file: phones and GST as text, received as a real date,
 // the distributor details in their own columns.
-route('get', '/leads/export.xlsx', 'leads:edit', async (req, res) => {
+route('get', '/leads/export.xlsx', 'leads:export', async (req, res) => {
   const rows = await leadsForExport(req.query);
   const detail = (r, k) => {
     const d = r.details_json ? (typeof r.details_json === 'string' ? JSON.parse(r.details_json) : r.details_json) : {};
@@ -448,7 +450,7 @@ route('get', '/assignees', 'leads:view', async () => {
 // ---------------------------------------------------------------------------------------------
 // Products: Excel and images (registered before the generic /products/:id routes)
 // ---------------------------------------------------------------------------------------------
-route('get', '/products/export.xlsx', 'products:edit', async (req, res) => {
+route('get', '/products/export.xlsx', 'products:export', async (req, res) => {
   const wb = await excel.buildWorkbook(db, { who: await exportedBy(req) });
   const bytes = await theme.send(res, wb, `dFresh_Product_List_${theme.istStamp(new Date(), false)}.xlsx`);
   await audit(null, { empId: by(req), action: 'export', entity: 'product', after: { file: 'products.xlsx', bytes } });
@@ -847,7 +849,7 @@ route('get', '/ui-text', 'content:view', async () => {
   return { languages: langs.codes, default: langs.def, keys: await uiTextGrid() };
 });
 
-route('get', '/ui-text/export.csv', 'content:edit', async (req, res) => {
+route('get', '/ui-text/export.csv', 'content:export', async (req, res) => {
   const langs = await entities.languages();
   const rows = await uiTextGrid();
   const body = csv.stringify([['key', 'group', 'description', ...langs.codes],
@@ -858,7 +860,7 @@ route('get', '/ui-text/export.csv', 'content:edit', async (req, res) => {
 });
 
 // The same grid as a branded Excel file, for reading and review (the import stays CSV).
-route('get', '/ui-text/export.xlsx', 'content:edit', async (req, res) => {
+route('get', '/ui-text/export.xlsx', 'content:export', async (req, res) => {
   const langs = await entities.languages();
   const [langRows] = await db.query('SELECT lang_code, name_en FROM languages');
   const nameOf = Object.fromEntries(langRows.map((l) => [l.lang_code, l.name_en]));
@@ -1307,7 +1309,7 @@ function withNames(rows, names) {
 async function activeAdmins(q, exceptEmpId) {
   const [[r]] = await q.query(
     `SELECT COUNT(*) AS n FROM admin_users a JOIN \`${auth.DADMIN}\`.employee e ON e.emp_id = a.emp_id AND e.deleted_time IS NULL AND e.active = 1
-      WHERE a.is_active = 1 AND a.role_id = ? AND a.emp_id <> ?`, [permissions.ADMIN_ROLE_ID, exceptEmpId || '']
+      WHERE a.is_active = 1 AND a.role_id IN (?, ?) AND a.emp_id <> ?`, [permissions.ADMIN_ROLE_ID, permissions.SUPERADMIN_ROLE_ID, exceptEmpId || '']
   );
   return Number(r.n);
 }
@@ -1343,7 +1345,12 @@ route('post', '/users', 'users:create', async (req) => tx(async (q) => {
   if (!emp) throw new InputError('No active dAdmin employee with that emp_id');
   const [[already]] = await q.query('SELECT emp_id FROM admin_users WHERE emp_id = ?', [emp.emp_id]);
   if (already) throw new InputError(`${emp.emp_id} is already a dFresh admin user`);
-  await q.query("INSERT INTO admin_users (emp_id, role, role_id, is_active, created_by) VALUES (?, 'viewer', ?, 1, ?)", [emp.emp_id, role.role_id, by(req)]);
+  const giveWhy = await foundation.roleGiveProblem(q, req.admin, role.role_id); // phase 12a: nobody gives a role above their own
+  if (giveWhy) throw new InputError(giveWhy, 403);
+  // a new person works where the person adding them works (every godown, or their godowns); Staff changes it
+  const allG = req.admin.godowns === 'ALL';
+  await q.query("INSERT INTO admin_users (emp_id, role, role_id, godowns_all, is_active, created_by) VALUES (?, 'viewer', ?, ?, 1, ?)", [emp.emp_id, role.role_id, allG ? 1 : 0, by(req)]);
+  if (!allG) for (const g of req.admin.godowns) await q.query('INSERT INTO admin_user_godowns (emp_id, godown_id) VALUES (?, ?)', [emp.emp_id, g]);
   const [[after]] = await q.query(`${USER_SELECT} WHERE a.emp_id = ?`, [emp.emp_id]);
   await audit(q, { empId: by(req), action: 'create', entity: 'admin_user', entityId: emp.emp_id, after: { role: after.role_name, is_active: after.is_active } });
   return withNames([after], await dadminNames(q))[0];
@@ -1365,13 +1372,21 @@ route('put', '/users/:empId', 'users:edit', async (req) => tx(async (q) => {
     set.notify_email = m || null;
   }
   if (!Object.keys(set).length) throw new InputError('Nothing to change');
+  // phase 12a: a role or active change follows the Staff rules (foundation.js): who may change whom, nobody gives more
+  if ((set.role_id && set.role_id !== before.role_id) || 'is_active' in set) {
+    const target = (await approvals.people(q)).find((p) => p.emp_id === before.emp_id);
+    const rowWhy = target && before.emp_id !== by(req) ? foundation.rowProblem(req.admin, target) : '';
+    if (rowWhy) throw new InputError(rowWhy, 403);
+    const giveWhy = set.role_id && set.role_id !== before.role_id ? await foundation.roleGiveProblem(q, req.admin, set.role_id) : '';
+    if (giveWhy) throw new InputError(giveWhy, 403);
+  }
   // nobody changes their own role or switches themselves off (ask another Admin)
   if (before.emp_id === by(req) && (set.is_active === 0 || (set.role_id && set.role_id !== before.role_id))) {
     throw new InputError('You cannot change your own role or deactivate yourself (ask another Admin)', 403);
   }
   // there must always be at least one active Admin who can sign in
-  const losesAdmin = before.role_id === permissions.ADMIN_ROLE_ID && Number(before.is_active) === 1
-    && (set.is_active === 0 || (set.role_id && set.role_id !== permissions.ADMIN_ROLE_ID));
+  const losesAdmin = permissions.isAdminRole(before.role_id) && Number(before.is_active) === 1
+    && (set.is_active === 0 || (set.role_id && !permissions.isAdminRole(set.role_id)));
   if (losesAdmin && (await activeAdmins(q, before.emp_id)) === 0) {
     throw new InputError('There must always be at least one active Admin. Make someone else Admin first.', 409);
   }
@@ -1427,34 +1442,50 @@ const SKU_JOIN = `JOIN products p ON p.product_id = s.product_id
        LEFT JOIN product_translations t ON t.product_id = s.product_id AND t.lang_code = 'en'
        LEFT JOIN product_translations pt ON pt.product_id = p.variant_of AND pt.lang_code = 'en'`;
 const stock = require('./stock');
-const seesCost = (req) => canDo(req, 'reports') || canDo(req, 'products');
+const seesCost = (req) => Boolean(req.admin && req.admin.seesCost); // the role's See cost (Admin > Roles)
 const asStock = (e) => (e instanceof stock.StockError ? new InputError(e.message, e.status) : e);
+/** the godowns a stock screen shows: the header picker's one, else every active godown the person works at */
+async function stockGodowns(req) {
+  const s = godowns.viewScope(req);
+  return (await godowns.list(db)).filter((g) => g.is_active && (s === null || s.includes(g.godown_id)));
+}
 
+// Godowns (phase 12a): one row per godown and SKU (the screen groups or filters them); shelves good / hold / dmg /
+// ret / rej / disp (stock.KIND_LABEL). Reorder levels are per godown (stock_levels.location_id).
 route('get', '/commerce/stock', 'inventory:view', async (req) => {
   const cs = await commerceSettings.read(db);
-  const [rows] = await db.query(
-    `SELECT s.sku_code, s.product_id, s.size_label, s.packs_per_carton, s.avg_cost, s.bin_location, p.category_key, p.track_batches, ${SKU_NAME} AS name,
-            COALESCE(l.reorder_level, ?) AS reorder_level, COALESCE(l.reorder_qty, ?) AS reorder_qty,
-            COALESCE(SUM(CASE WHEN m.stock_kind = 'returned' THEN m.delta END), 0) AS returned,
-            COALESCE(SUM(CASE WHEN m.stock_kind = 'damaged' THEN m.delta END), 0) AS damaged,
-            COALESCE(SUM(CASE WHEN m.stock_kind = 'expired' THEN m.delta END), 0) AS expired_back,
-            MAX(m.created_at) AS last_move,
-            (SELECT COUNT(DISTINCT b.batch_id) FROM batches b JOIN stock_movements bm ON bm.batch_id = b.batch_id AND bm.stock_kind = 'good' WHERE b.sku_code = s.sku_code) AS batches
-       FROM skus s ${SKU_JOIN}
-       LEFT JOIN stock_levels l ON l.sku_code = s.sku_code AND l.location_id = 1
-       LEFT JOIN stock_movements m ON m.sku_code = s.sku_code
-      GROUP BY s.sku_code, s.product_id, s.size_label, s.packs_per_carton, s.avg_cost, s.bin_location, p.category_key, p.track_batches, t.name, pt.name, l.reorder_level, l.reorder_qty
-      ORDER BY s.sku_code`, [Number(cs.low_level_default) || 20, Number(cs.reorder_qty_default) || 0]
-  );
-  const av = await stock.availability(db, rows.map((r) => r.sku_code));
+  const gs = await stockGodowns(req);
   const cost = seesCost(req);
-  const out = rows.map(({ avg_cost: ac, ...r }) => {
-    const a = av.get(r.sku_code);
-    return { ...r, ...a, returned: Number(r.returned), damaged: Number(r.damaged), expired_back: Number(r.expired_back), reorder_level: Number(r.reorder_level), reorder_qty: Number(r.reorder_qty),
-      track_batches: Number(r.track_batches) === 1, batches: Number(r.batches), low: a.available < Number(r.reorder_level),
-      ...(cost ? { avg_cost: ac === null ? null : Number(ac), value: ac === null ? null : Math.round(a.good * Number(ac) * 100) / 100 } : {}) };
-  });
-  return { rows: out, seesCost: cost, totalValue: cost ? Math.round(out.reduce((x, r) => x + (r.value || 0), 0) * 100) / 100 : null, warnDays: Number(cs.expiry_warn_days) || 60,
+  const out = [];
+  for (const g of gs) {
+    const [rows] = await db.query(
+      `SELECT s.sku_code, s.product_id, s.size_label, s.packs_per_carton, s.avg_cost, s.bin_location, p.category_key, p.track_batches, ${SKU_NAME} AS name,
+              COALESCE(l.reorder_level, ?) AS reorder_level, COALESCE(l.reorder_qty, ?) AS reorder_qty,
+              COALESCE(SUM(CASE WHEN m.stock_kind = 'hold' THEN m.delta END), 0) AS hold,
+              COALESCE(SUM(CASE WHEN m.stock_kind = 'dmg' THEN m.delta END), 0) AS damaged,
+              COALESCE(SUM(CASE WHEN m.stock_kind = 'ret' THEN m.delta END), 0) AS returned,
+              COALESCE(SUM(CASE WHEN m.stock_kind = 'rej' THEN m.delta END), 0) AS rejected,
+              COALESCE(SUM(CASE WHEN m.stock_kind = 'disp' THEN m.delta END), 0) AS display,
+              MAX(m.created_at) AS last_move,
+              (SELECT COUNT(DISTINCT b.batch_id) FROM batches b JOIN stock_movements bm ON bm.batch_id = b.batch_id AND bm.stock_kind = 'good' AND bm.location_id = ? WHERE b.sku_code = s.sku_code) AS batches
+         FROM skus s ${SKU_JOIN}
+         LEFT JOIN stock_levels l ON l.sku_code = s.sku_code AND l.location_id = ?
+         LEFT JOIN stock_movements m ON m.sku_code = s.sku_code AND m.location_id = ?
+        GROUP BY s.sku_code, s.product_id, s.size_label, s.packs_per_carton, s.avg_cost, s.bin_location, p.category_key, p.track_batches, t.name, pt.name, l.reorder_level, l.reorder_qty
+        ORDER BY s.sku_code`, [Number(cs.low_level_default) || 20, Number(cs.reorder_qty_default) || 0, g.godown_id, g.godown_id, g.godown_id]
+    );
+    const av = await stock.availability(db, rows.map((r) => r.sku_code), 0, { godown: g.godown_id });
+    for (const { avg_cost: ac, ...r } of rows) {
+      const a = av.get(r.sku_code);
+      out.push({ ...r, ...a, godown_id: g.godown_id, godown: g.name, godown_code: g.code,
+        hold: Number(r.hold), damaged: Number(r.damaged), returned: Number(r.returned), rejected: Number(r.rejected), display: Number(r.display),
+        reorder_level: Number(r.reorder_level), reorder_qty: Number(r.reorder_qty),
+        track_batches: Number(r.track_batches) === 1, batches: Number(r.batches), low: a.available < Number(r.reorder_level),
+        ...(cost ? { avg_cost: ac === null ? null : Number(ac), value: ac === null ? null : Math.round(a.good * Number(ac) * 100) / 100 } : {}) });
+    }
+  }
+  return { rows: out, godowns: gs.map((g) => ({ godown_id: g.godown_id, code: g.code, name: g.name })), shelves: stock.KIND_LABEL, seesCost: cost,
+    totalValue: cost ? Math.round(out.reduce((x, r) => x + (r.value || 0), 0) * 100) / 100 : null, warnDays: Number(cs.expiry_warn_days) || 60,
     resell: Boolean(cs.returned_resell) };
 });
 
@@ -1470,17 +1501,19 @@ route('put', '/commerce/stock/:sku/levels', 'inventory:edit', async (req) => {
     if (bin && !/^[A-Z0-9 /-]{1,30}$/.test(bin)) throw new InputError('Bin: letters, digits, space, - or /, e.g. R2-S3');
     await db.query('UPDATE skus SET bin_location = ? WHERE sku_code = ?', [bin, s.sku_code]);
   }
-  const [[before]] = await db.query('SELECT reorder_level, reorder_qty FROM stock_levels WHERE sku_code = ? AND location_id = 1', [s.sku_code]);
-  await db.query(`INSERT INTO stock_levels (sku_code, location_id, reorder_level, reorder_qty, updated_by, updated_at) VALUES (?, 1, ?, ?, ?, UTC_TIMESTAMP())
-     ON DUPLICATE KEY UPDATE reorder_level = VALUES(reorder_level), reorder_qty = VALUES(reorder_qty), updated_by = VALUES(updated_by), updated_at = VALUES(updated_at)`, [s.sku_code, level, qty, by(req)]);
-  await audit(null, { empId: by(req), action: 'update', entity: 'stock_level', entityId: s.sku_code, before: before || null, after: { reorder_level: level, reorder_qty: qty, ...(bin !== undefined ? { bin_location: bin } : {}) } });
-  return { sku_code: s.sku_code, reorder_level: level, reorder_qty: qty };
+  const godown = await godowns.resolve(db, req, req.body.godown_id); // reorder levels are per godown
+  const [[before]] = await db.query('SELECT reorder_level, reorder_qty FROM stock_levels WHERE sku_code = ? AND location_id = ?', [s.sku_code, godown]);
+  await db.query(`INSERT INTO stock_levels (sku_code, location_id, reorder_level, reorder_qty, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, UTC_TIMESTAMP())
+     ON DUPLICATE KEY UPDATE reorder_level = VALUES(reorder_level), reorder_qty = VALUES(reorder_qty), updated_by = VALUES(updated_by), updated_at = VALUES(updated_at)`, [s.sku_code, godown, level, qty, by(req)]);
+  await audit(null, { empId: by(req), action: 'update', entity: 'stock_level', entityId: s.sku_code, before: before || null, after: { godown, reorder_level: level, reorder_qty: qty, ...(bin !== undefined ? { bin_location: bin } : {}) } });
+  return { sku_code: s.sku_code, godown_id: godown, reorder_level: level, reorder_qty: qty };
 });
 
 // Movement log: filters sku, type, from / to (India days), emp, batch (batch no.); newest first, at most 1000.
 async function movementRows(req, limit) {
-  const where = [];
-  const params = [];
+  const [gw, gp] = godowns.where('m.location_id', godowns.viewScope(req));
+  const where = [gw];
+  const params = [...gp];
   if (req.query.sku) { where.push('m.sku_code = ?'); params.push(String(req.query.sku).toUpperCase()); }
   if (req.query.type) { where.push('m.move_type = ?'); params.push(String(req.query.type)); }
   if (req.query.emp) { where.push('m.emp_id = ?'); params.push(String(req.query.emp)); }
@@ -1491,39 +1524,41 @@ async function movementRows(req, limit) {
     where.push(`DATE(CONVERT_TZ(m.created_at, '+00:00', '+05:30')) ${op} ?`); params.push(String(req.query[k]));
   }
   const [rows] = await db.query(
-    `SELECT m.move_id, m.sku_code, m.move_type, m.stock_kind, m.delta, m.unit_cost, m.ref_type, m.ref_id, m.note, m.emp_id, m.created_at, b.batch_no,
+    `SELECT m.move_id, m.location_id AS godown_id, g.code AS godown_code, m.sku_code, m.move_type, m.stock_kind, m.delta, m.unit_cost, m.ref_type, m.ref_id, m.note, m.emp_id, m.created_at, b.batch_no,
             TRIM(CONCAT(COALESCE(e.emp_first_name, ''), ' ', COALESCE(e.emp_last_name, ''))) AS emp_name
-       FROM stock_movements m LEFT JOIN batches b ON b.batch_id = m.batch_id LEFT JOIN \`${auth.DADMIN}\`.employee e ON e.emp_id = m.emp_id
-      ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY m.move_id DESC LIMIT ?`, [...params, limit]
+       FROM stock_movements m JOIN locations g ON g.location_id = m.location_id LEFT JOIN batches b ON b.batch_id = m.batch_id LEFT JOIN \`${auth.DADMIN}\`.employee e ON e.emp_id = m.emp_id
+      WHERE ${where.join(' AND ')} ORDER BY m.move_id DESC LIMIT ?`, [...params, limit]
   );
   const cost = seesCost(req);
-  return rows.map(({ unit_cost: uc, ...r }) => ({ ...r, type_label: stock.MOVE_LABEL[r.move_type] || r.move_type, ...(cost ? { unit_cost: uc === null ? null : Number(uc) } : {}) }));
+  return rows.map(({ unit_cost: uc, ...r }) => ({ ...r, type_label: stock.MOVE_LABEL[r.move_type] || r.move_type, shelf_label: stock.KIND_LABEL[r.stock_kind] || r.stock_kind,
+    ...(cost ? { unit_cost: uc === null ? null : Number(uc) } : {}) }));
 }
 route('get', '/commerce/movements', 'inventory:view', async (req) => {
   const rows = await movementRows(req, 1000);
+  const [gw, gp] = godowns.where('m.location_id', godowns.viewScope(req));
   const [who] = await db.query(`SELECT DISTINCT m.emp_id, TRIM(CONCAT(COALESCE(e.emp_first_name, ''), ' ', COALESCE(e.emp_last_name, ''))) AS name
-      FROM stock_movements m LEFT JOIN \`${auth.DADMIN}\`.employee e ON e.emp_id = m.emp_id ORDER BY m.emp_id`);
-  return { rows, types: stock.MOVE_LABEL, who };
+      FROM stock_movements m LEFT JOIN \`${auth.DADMIN}\`.employee e ON e.emp_id = m.emp_id WHERE ${gw} ORDER BY m.emp_id`, gp);
+  return { rows, types: stock.MOVE_LABEL, shelves: stock.KIND_LABEL, godowns: (await stockGodowns(req)).map((g) => ({ godown_id: g.godown_id, code: g.code, name: g.name })), who };
 });
-route('get', '/commerce/movements/export.xlsx', 'inventory:edit', async (req, res) => {
+route('get', '/commerce/movements/export.xlsx', 'inventory:export', async (req, res) => {
   const rows = await movementRows(req, 20000);
   const cost = seesCost(req);
   const wb = theme.newWorkbook('dFresh Stock movements');
   const filters = ['sku', 'type', 'from', 'to', 'emp', 'batch'].filter((k) => req.query[k]).map((k) => `${k}: ${req.query[k]}`).join(', ') || null;
   theme.tableSheet(wb, 'Movements', {
     title: 'dFresh Stock movements', exportedBy: await exportedBy(req), filters,
-    columns: [{ header: 'When', type: 'date' }, { header: 'SKU' }, { header: 'Type' }, { header: 'Stock' }, { header: 'Change', type: 'number' }, { header: 'Batch' },
+    columns: [{ header: 'When', type: 'date' }, { header: 'Godown' }, { header: 'SKU' }, { header: 'Type' }, { header: 'Shelf' }, { header: 'Change', type: 'number' }, { header: 'Batch' },
       ...(cost ? [{ header: 'Cost / pack (Rs)', type: 'number' }] : []), { header: 'Reference' }, { header: 'Note' }, { header: 'Who' }],
-    rows: rows.map((r) => [r.created_at, r.sku_code, r.type_label, stock.KIND_LABEL[r.stock_kind], r.delta, r.batch_no, ...(cost ? [r.unit_cost] : []),
+    rows: rows.map((r) => [r.created_at, r.godown_code, r.sku_code, r.type_label, r.shelf_label, r.delta, r.batch_no, ...(cost ? [r.unit_cost] : []),
       r.ref_type ? `${r.ref_type} ${r.ref_id}` : null, r.note, `${r.emp_name || ''} (${r.emp_id})`]),
   });
   const bytes = await theme.send(res, wb, `dFresh_Stock_Movements_${theme.istStamp(new Date(), false)}.xlsx`);
   await audit(null, { empId: by(req), action: 'export', entity: 'stock', after: { filters, rows: rows.length, file: 'movements.xlsx', bytes } });
 });
 
-// Record form: good -> damaged, or packs back into Returned (R) stock. Stock in, write-off and counts have their own tabs.
+// Record form: good -> damaged, or packs back into Returned (R) stock, in one godown. Stock in, write-off and counts have their own tabs.
 route('post', '/commerce/movements', 'inventory:create', async (req) => {
-  try { return await tx((q) => stock.recordMove(q, req.body || {}, by(req))); } catch (e) { throw asStock(e); }
+  try { return await tx(async (q) => stock.recordMove(q, { ...req.body, godown_id: await godowns.resolve(q, req, req.body.godown_id) }, by(req))); } catch (e) { throw asStock(e); }
 });
 
 // Suppliers
@@ -1559,10 +1594,11 @@ route('put', '/commerce/suppliers/:id', 'inventory:edit', async (req) => {
 
 // Stock in
 route('get', '/commerce/stock-ins', 'inventory:view', async (req) => {
-  const [ins] = await db.query(`SELECT i.stock_in_id, i.kind, i.supplier_id, sp.name AS supplier, DATE_FORMAT(i.received_on, '%Y-%m-%d') AS received_on, i.reference, i.note, i.emp_id, i.created_at,
+  const [gw, gp] = godowns.where('i.godown_id', godowns.viewScope(req));
+  const [ins] = await db.query(`SELECT i.stock_in_id, i.kind, i.godown_id, g.code AS godown_code, g.name AS godown, i.supplier_id, sp.name AS supplier, DATE_FORMAT(i.received_on, '%Y-%m-%d') AS received_on, i.reference, i.note, i.emp_id, i.created_at,
       TRIM(CONCAT(COALESCE(e.emp_first_name, ''), ' ', COALESCE(e.emp_last_name, ''))) AS emp_name
-      FROM stock_ins i LEFT JOIN suppliers sp ON sp.supplier_id = i.supplier_id LEFT JOIN \`${auth.DADMIN}\`.employee e ON e.emp_id = i.emp_id
-      ORDER BY i.stock_in_id DESC LIMIT 200`);
+      FROM stock_ins i JOIN locations g ON g.location_id = i.godown_id LEFT JOIN suppliers sp ON sp.supplier_id = i.supplier_id LEFT JOIN \`${auth.DADMIN}\`.employee e ON e.emp_id = i.emp_id
+      WHERE ${gw} ORDER BY i.stock_in_id DESC LIMIT 200`, gp);
   const [lines] = ins.length ? await db.query(`SELECT l.stock_in_id, l.sku_code, l.qty, l.unit_cost, l.avg_before, l.avg_after, b.batch_no, DATE_FORMAT(b.expiry_date, '%Y-%m-%d') AS expiry_date
       FROM stock_in_lines l LEFT JOIN batches b ON b.batch_id = l.batch_id WHERE l.stock_in_id IN (?) ORDER BY l.line_id`, [ins.map((i) => i.stock_in_id)]) : [[]];
   const cost = seesCost(req);
@@ -1573,25 +1609,30 @@ route('get', '/commerce/stock-ins', 'inventory:view', async (req) => {
 });
 route('post', '/commerce/stock-ins', 'inventory:create', async (req) => {
   try {
-    const r = await tx((q) => stock.stockIn(q, req.body || {}, by(req)));
+    const r = await tx(async (q) => stock.stockIn(q, { ...req.body, godown_id: await godowns.resolve(q, req, req.body.godown_id) }, by(req)));
     return seesCost(req) ? r : { stock_in_id: r.stock_in_id, lines: r.lines.map(({ avg_before: ab, avg_after: aa, ...l }) => l) }; // eslint-disable-line no-unused-vars
   } catch (e) { throw asStock(e); }
 });
 
-// Batches: expired / near expiry / ok with their good stock; the batches of one SKU with stock (write-off picker)
+// Batches: expired / near expiry / ok with their good stock (the godowns in view); the batches of one SKU on one shelf
+// of one godown with stock (write-off and recheck pickers: godown_id, else the person's default godown)
 route('get', '/commerce/batches', 'inventory:view', async (req) => {
   if (req.query.sku) {
     const kind = stock.KIND_LABEL[req.query.kind] ? req.query.kind : 'good';
-    return { rows: (await stock.batchStock(db, String(req.query.sku).toUpperCase(), kind)).filter((b) => b.qty > 0) };
+    const godown = req.query.godown_id ? Number(req.query.godown_id) : await godowns.defaultFor(db, req);
+    godowns.assertSees(req, godown);
+    return { rows: (await stock.batchStock(db, String(req.query.sku).toUpperCase(), kind, { godown })).filter((b) => b.qty > 0) };
   }
-  return stock.batchList(db);
+  return stock.batchList(db, godowns.viewScope(req));
 });
 
 // Write-offs (photo optional, kept in the database and shown only here)
 route('get', '/commerce/write-offs', 'inventory:view', async (req) => {
-  const [rows] = await db.query(`SELECT w.write_off_id, w.sku_code, w.stock_kind, w.qty, w.reason_type, w.reason, w.value, w.status, w.approval_id, w.emp_id, w.created_at, w.posted_at,
+  const [gw, gp] = godowns.where('w.godown_id', godowns.viewScope(req));
+  const [rows] = await db.query(`SELECT w.write_off_id, w.godown_id, g.code AS godown_code, w.sku_code, w.stock_kind, w.qty, w.reason_type, w.reason, w.value, w.status, w.approval_id, w.emp_id, w.created_at, w.posted_at,
       w.photo IS NOT NULL AS has_photo, b.batch_no, a.status AS approval_status, a.decided_by, a.note AS approval_note
-      FROM write_offs w LEFT JOIN batches b ON b.batch_id = w.batch_id LEFT JOIN approvals a ON a.approval_id = w.approval_id ORDER BY w.write_off_id DESC LIMIT 200`);
+      FROM write_offs w JOIN locations g ON g.location_id = w.godown_id LEFT JOIN batches b ON b.batch_id = w.batch_id LEFT JOIN approvals a ON a.approval_id = w.approval_id
+      WHERE ${gw} ORDER BY w.write_off_id DESC LIMIT 200`, gp);
   const cost = seesCost(req);
   const cs = await commerceSettings.read(db);
   return { types: stock.WRITE_OFF_TYPES, kinds: stock.KIND_LABEL, rule: { on: Boolean(cs.approve_writeoff_on), value: Number(cs.approve_writeoff_value_above), qty: Number(cs.approve_writeoff_qty_above) },
@@ -1599,7 +1640,7 @@ route('get', '/commerce/write-offs', 'inventory:view', async (req) => {
 });
 route('post', '/commerce/write-offs', 'inventory:create', async (req) => {
   try {
-    const r = await tx((q) => stock.requestWriteOff(q, req.body || {}, by(req), req.file ? { buffer: req.file.buffer, mimetype: req.file.mimetype } : null));
+    const r = await tx(async (q) => stock.requestWriteOff(q, { ...req.body, godown_id: await godowns.resolve(q, req, req.body.godown_id) }, by(req), req.file ? { buffer: req.file.buffer, mimetype: req.file.mimetype } : null));
     return seesCost(req) ? r : { ...r, value: undefined };
   } catch (e) { throw asStock(e); }
 }, { before: [upload(5)] });
@@ -1611,19 +1652,20 @@ route('get', '/commerce/write-offs/:id/photo', 'inventory:view', async (req, res
 });
 
 // Stock counts
-route('get', '/commerce/counts', 'inventory:view', async () => {
-  const [rows] = await db.query(`SELECT c.count_id, c.scope, c.status, c.approval_id, c.started_by, c.started_at, c.submitted_by, c.submitted_at, c.closed_at,
+route('get', '/commerce/counts', 'inventory:view', async (req) => {
+  const [gw, gp] = godowns.where('c.godown_id', godowns.viewScope(req));
+  const [rows] = await db.query(`SELECT c.count_id, c.godown_id, (SELECT g.code FROM locations g WHERE g.location_id = c.godown_id) AS godown_code, c.scope, c.status, c.approval_id, c.started_by, c.started_at, c.submitted_by, c.submitted_at, c.closed_at,
       COALESCE(ct.name, c.scope) AS scope_label, a.decided_by, a.note AS approval_note,
       (SELECT COUNT(*) FROM stock_count_lines l WHERE l.count_id = c.count_id) AS line_count,
       (SELECT COUNT(*) FROM stock_count_lines l WHERE l.count_id = c.count_id AND l.counted IS NOT NULL) AS counted,
       (SELECT COUNT(*) FROM stock_count_lines l WHERE l.count_id = c.count_id AND l.expected IS NOT NULL AND l.counted <> l.expected) AS differences
       FROM stock_counts c LEFT JOIN category_translations ct ON ct.category_key = c.scope AND ct.lang_code = 'en' LEFT JOIN approvals a ON a.approval_id = c.approval_id
-      ORDER BY c.count_id DESC LIMIT 100`);
+      WHERE ${gw} ORDER BY c.count_id DESC LIMIT 100`, gp);
   const [cats] = await db.query("SELECT c.category_key, COALESCE(t.name, c.category_key) AS label FROM categories c LEFT JOIN category_translations t ON t.category_key = c.category_key AND t.lang_code = 'en' ORDER BY c.sort_order");
   return { rows: rows.map((r) => ({ ...r, scope_label: r.scope === 'all' ? 'All SKUs' : r.scope_label })), categories: cats };
 });
 route('post', '/commerce/counts', 'inventory:create', async (req) => {
-  try { return await tx((q) => stock.startCount(q, req.body.scope, by(req))); } catch (e) { throw asStock(e); }
+  try { return await tx(async (q) => stock.startCount(q, req.body.scope, by(req), await godowns.resolve(q, req, req.body.godown_id))); } catch (e) { throw asStock(e); }
 }, { status: 201 });
 route('get', '/commerce/counts/:id', 'inventory:view', async (req) => {
   try { return await stock.countDetail(db, Number(req.params.id)); } catch (e) { throw asStock(e); }
@@ -1635,7 +1677,7 @@ route('post', '/commerce/counts/:id/submit', 'inventory:edit', async (req) => {
   try { return await tx((q) => stock.submitCount(q, Number(req.params.id), by(req))); } catch (e) { throw asStock(e); }
 });
 
-route('get', '/commerce/reorder', 'inventory:view', async () => stock.reorderList(db));
+route('get', '/commerce/reorder', 'inventory:view', async (req) => stock.reorderList(db, (await stockGodowns(req)).map((g) => g.godown_id)));
 
 // Orders (migration 20261021_commerce_07_orders.sql, logic in commerce.js, invoices in invoices.js): entered in the admin;
 // prices only here. Section "orders": view = list, order, invoice; create = New order; edit = edit, status, cancel,
@@ -1652,14 +1694,16 @@ route('get', '/commerce/order-form', 'orders:view', async (req) => {
   let except = 0;
   if (req.query.order) { const [[o]] = await db.query('SELECT order_id FROM orders WHERE order_no = ?', [String(req.query.order)]); except = o ? o.order_id : 0; }
   const ownEmp = await ownOnly(req);
+  const gScope = godowns.viewScope(req); // the customers of the godowns in view (an order is made in its customer's godown)
   const [custRows] = await db.query(
-    `SELECT c.customer_id, c.customer_no, c.name, c.business_name, c.phone, ct.label AS ctype, c.type_key, c.status, c.hold_reason, c.credit_days, c.credit_limit,
+    `SELECT c.customer_id, c.customer_no, c.name, c.business_name, c.phone, ct.label AS ctype, c.type_key, c.godown_id, c.status, c.hold_reason, c.credit_days, c.credit_limit,
             COALESCE(c.price_list, c.type_key) AS list_key, c.price_list IS NOT NULL AS own_list,
             (SELECT a.town FROM customer_addresses a WHERE a.customer_id = c.customer_id AND a.kind = 'shipping' AND a.is_default = 1 AND a.is_active = 1 LIMIT 1) AS town,
             (SELECT COALESCE(SUM(w.amount), 0) FROM wallet_entries w WHERE w.customer_id = c.customer_id) AS wallet,
             (SELECT COALESCE(SUM(o.amount_due), 0) FROM orders o WHERE o.customer_id = c.customer_id AND o.status <> 'cancelled' AND o.amount_due > 0) AS outstanding,
             (SELECT COUNT(*) FROM invoices i JOIN orders o ON o.order_id = i.order_id WHERE o.customer_id = c.customer_id AND ${commerce.OVERDUE_SQL}) AS overdue
-       FROM customers c JOIN customer_types ct ON ct.type_key = c.type_key WHERE c.merged_into IS NULL AND (c.status <> 'inactive' OR c.customer_id = ?) ${ownEmp ? 'AND c.owner_emp_id = ?' : ''} ORDER BY c.name`,
+       FROM customers c JOIN customer_types ct ON ct.type_key = c.type_key WHERE c.merged_into IS NULL AND (c.status <> 'inactive' OR c.customer_id = ?) ${ownEmp ? 'AND c.owner_emp_id = ?' : ''}
+        AND ${inScope('c.godown_id', gScope)} ORDER BY c.name`,
     [except ? (await db.query('SELECT customer_id FROM orders WHERE order_id = ?', [except]))[0][0].customer_id : 0, ...(ownEmp ? [ownEmp] : [])]
   );
   const [addrRows] = custRows.length ? await db.query(`SELECT address_id, customer_id, kind, label, name, gstin, contact_person, phone, address, town, state_code, pincode, delivery_area_id, is_default
@@ -1670,15 +1714,19 @@ route('get', '/commerce/order-form', 'orders:view', async (req) => {
   const today = pricing.istToday();
   const own = await pricing.ownPricesOn(db, today);
   const all = (await pricing.skuRows(db)).filter((s) => s.is_active);
-  const stock = await commerce.availability(db, all.map((s) => s.sku_code), except);
+  // the stock of each customer's godown (the form shows the chosen customer's): { godown_id: { sku: { good, reserved, available... } } }
+  const stockByGodown = {};
+  for (const g of [...new Set(custRows.map((c) => Number(c.godown_id)))]) {
+    stockByGodown[g] = Object.fromEntries(await commerce.availability(db, all.map((s) => s.sku_code), except, { godown: g }));
+  }
   const skus = all.map((s) => ({ sku_code: s.sku_code, name: s.name, size_label: s.size_label, gst_rate: s.gst_rate, packs_per_carton: s.packs_per_carton,
-    min_order_qty: s.min_order_qty, sell_unit: s.sell_unit, own: own.get(s.sku_code) || {}, ...stock.get(s.sku_code) }));
+    min_order_qty: s.min_order_qty, sell_unit: s.sell_unit, own: own.get(s.sku_code) || {} }));
   const [coupons] = await db.query(`SELECT code, description, kind, value, min_order, max_discount FROM coupons WHERE is_active = 1
       AND (valid_from IS NULL OR valid_from <= ?) AND (valid_to IS NULL OR valid_to >= ?) ORDER BY code`, [pricing.istToday(), pricing.istToday()]);
   const cs = await commerceSettings.read(db);
   return {
     customers: customers.map((c) => ({ ...c, wallet: Number(c.wallet), outstanding: Number(c.outstanding), overdue: Number(c.overdue), credit_limit: Number(c.credit_limit) })),
-    skus, coupons, terms: commerce.TERMS, lists: await pricing.lists(db), basis: await pricing.basis(db), today, states: GST_STATES,
+    skus, stockByGodown, coupons, terms: commerce.TERMS, lists: await pricing.lists(db), basis: await pricing.basis(db), today, states: GST_STATES,
     sellerState: cs.invoice_seller_state_code, posRule: cs.place_of_supply_rule, roundOff: Boolean(cs.invoice_round_off), canOverride: canDo(req, 'orders', 'approve'),
     methods: (await db.query('SELECT method_id, label, kind FROM delivery_methods WHERE is_active = 1 ORDER BY sort_order, method_id'))[0],
     areas: (await db.query('SELECT area_id, label, towns, charge, free_above FROM delivery_areas WHERE is_active = 1 ORDER BY sort_order, area_id'))[0]
@@ -1699,15 +1747,16 @@ route('post', '/commerce/orders/preview', 'orders:view', async (req) => {
   if (b0.order_no && !po) throw new InputError('Order not found', 404);
   await seeCustomer(req, po ? po.customer_id : b0.customer_id);
   try {
-    return await commerce.previewOrder(db, req.body || {}, by(req), { orderNo: req.body && req.body.order_no ? String(req.body.order_no) : null, canOverride: canDo(req, 'orders', 'approve') });
+    return await commerce.previewOrder(db, req.body || {}, by(req), { orderNo: req.body && req.body.order_no ? String(req.body.order_no) : null, canOverride: canDo(req, 'orders', 'approve'), admin: req.admin });
   } catch (e) { throw asInput(e); }
 });
 
 // List filters: status, pay (payment status), overdue=1, from / to (order day, India), type (customer type key),
 // q (DFO number, invoice number, customer name or phone).
 async function orderRows(req, limit = 500) {
-  const where = [];
-  const params = [];
+  const [gw, gp] = godowns.where('o.godown_id', godowns.viewScope(req));
+  const where = [gw];
+  const params = [...gp];
   const ownEmp = await ownOnly(req); // own customers only (Commerce setting): their orders only
   if (ownEmp) { where.push('c.owner_emp_id = ?'); params.push(ownEmp); }
   const st = String(req.query.status || '');
@@ -1729,7 +1778,7 @@ async function orderRows(req, limit = 500) {
     params.push(like, like, like, like, ...(digits.length >= 4 ? [`%${digits}%`] : []));
   }
   const [rows] = await db.query(
-    `SELECT o.order_no, o.status, o.payment_status, o.payment_terms, o.gst_type, o.place_of_supply, o.coupon_code, o.total, o.amount_due, o.created_at,
+    `SELECT o.order_no, o.godown_id, (SELECT g.code FROM locations g WHERE g.location_id = o.godown_id) AS godown_code, o.status, o.payment_status, o.payment_terms, o.gst_type, o.place_of_supply, o.coupon_code, o.total, o.amount_due, o.created_at,
             o.dispatched_at, o.delivered_at, c.name AS customer, c.phone, ct.label AS ctype, c.type_key, o.ship_town AS town,
             i.invoice_no, DATE_FORMAT(i.due_on, '%Y-%m-%d') AS due_on,
             (i.invoice_id IS NOT NULL AND ${commerce.OVERDUE_SQL}) AS overdue,
@@ -1737,7 +1786,7 @@ async function orderRows(req, limit = 500) {
        FROM orders o JOIN customers c ON c.customer_id = o.customer_id
        JOIN customer_types ct ON ct.type_key = c.type_key
        LEFT JOIN invoices i ON i.live_order_id = o.order_id
-      ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY o.order_id DESC LIMIT ?`, [...params, limit]
+      WHERE ${where.join(' AND ')} ORDER BY o.order_id DESC LIMIT ?`, [...params, limit]
   );
   return rows.map((r) => ({ ...r, total: Number(r.total), amount_due: Number(r.amount_due), overdue: Number(r.overdue) === 1, units: Number(r.units) }));
 }
@@ -1745,13 +1794,13 @@ async function orderRows(req, limit = 500) {
 route('get', '/commerce/orders', 'orders:view', async (req) => {
   const rows = await orderRows(req);
   const own = await ownOnly(req);
-  const mine = own ? ' AND o.customer_id IN (SELECT customer_id FROM customers WHERE owner_emp_id = ?)' : '';
+  const mine = `${own ? ' AND o.customer_id IN (SELECT customer_id FROM customers WHERE owner_emp_id = ?)' : ''} AND ${inScope('o.godown_id', godowns.viewScope(req))}`;
   const [counts] = await db.query(`SELECT o.status, COUNT(*) AS n FROM orders o WHERE 1 = 1${mine} GROUP BY o.status`, own ? [own] : []);
   const [[od]] = await db.query(`SELECT COUNT(*) AS n FROM orders o JOIN invoices i ON i.live_order_id = o.order_id WHERE ${commerce.OVERDUE_SQL}${mine}`, own ? [own] : []);
   return { rows, counts: Object.fromEntries(counts.map((c) => [c.status, Number(c.n)])), overdue: Number(od.n), labels: commerce.STATUS_LABEL, payLabels: commerce.PAYMENT_STATUS, lists: await pricing.lists(db) };
 });
 
-route('get', '/commerce/orders/export.xlsx', 'orders:edit', async (req, res) => {
+route('get', '/commerce/orders/export.xlsx', 'orders:export', async (req, res) => {
   const rows = await orderRows(req, 5000);
   const wb = theme.newWorkbook('dFresh Orders');
   const filters = ['status', 'pay', 'overdue', 'from', 'to', 'type', 'q'].filter((k) => req.query[k]).map((k) => `${k}: ${req.query[k]}`).join(', ') || null;
@@ -1822,7 +1871,7 @@ route('get', '/commerce/orders/:no', 'orders:view', async (req) => {
 route('post', '/commerce/orders', 'orders:create', async (req) => {
   await seeCustomer(req, (req.body || {}).customer_id);
   try {
-    return await tx((q) => commerce.createOrder(q, req.body, by(req), { canOverride: canDo(req, 'orders', 'approve') }));
+    return await tx((q) => commerce.createOrder(q, req.body, by(req), { canOverride: canDo(req, 'orders', 'approve'), admin: req.admin }));
   } catch (e) { throw asInput(e); }
 });
 
@@ -1830,11 +1879,11 @@ route('put', '/commerce/orders/:no', 'orders:edit', async (req) => {
   const [[ord]] = await db.query('SELECT customer_id FROM orders WHERE order_no = ?', [req.params.no]);
   if (ord) await seeCustomer(req, ord.customer_id);
   try {
-    return await tx((q) => commerce.updateOrder(q, req.params.no, req.body, by(req), { canOverride: canDo(req, 'orders', 'approve') }));
+    return await tx((q) => commerce.updateOrder(q, req.params.no, req.body, by(req), { canOverride: canDo(req, 'orders', 'approve'), admin: req.admin }));
   } catch (e) { throw asInput(e); }
 });
 
-route('post', '/commerce/orders/:no/cancel', 'orders:edit', async (req) => {
+route('post', '/commerce/orders/:no/cancel', 'orders:cancel', async (req) => {
   try {
     return await tx((q) => commerce.cancelOrder(q, req.params.no, req.body.reason, by(req)));
   } catch (e) { throw asInput(e); }
@@ -1856,7 +1905,7 @@ route('post', '/commerce/orders/:no/payments', 'orders:edit', async (req) => {
 const delivery = require('./delivery');
 const asDelivery = (e) => (e instanceof delivery.DeliveryError || e instanceof commerce.CommerceError ? new InputError(e.message, e.status) : e);
 const office = (req) => canDo(req, 'delivery', 'create');
-const ORDER_LIST = `SELECT o.order_no, o.status, o.delivery_kind, o.payment_terms, o.amount_due, o.total, o.cartons, o.weight_kg, o.created_at, o.packed_at, o.packing_at,
+const ORDER_LIST = `SELECT o.order_no, o.godown_id, (SELECT g.code FROM locations g WHERE g.location_id = o.godown_id) AS godown_code, o.status, o.delivery_kind, o.payment_terms, o.amount_due, o.total, o.cartons, o.weight_kg, o.created_at, o.packed_at, o.packing_at,
        o.ship_name, o.ship_address, o.ship_town, o.ship_pincode, o.ship_phone, o.delivery_area_id, o.awb_no, o.courier_id, o.failed_reason, o.failed_at, o.courier_at,
        c.name AS customer, a.label AS area, dm.label AS method, cr.name AS courier, cr.tracking_url,
        (SELECT SUM(qty) FROM order_items i WHERE i.order_id = o.order_id) AS units
@@ -1865,18 +1914,26 @@ const ORDER_LIST = `SELECT o.order_no, o.status, o.delivery_kind, o.payment_term
   LEFT JOIN couriers cr ON cr.courier_id = o.courier_id`;
 const trackLink = (r) => (r.tracking_url && r.awb_no ? r.tracking_url.replace('{awb}', encodeURIComponent(r.awb_no)) : null);
 const orderOut = (r) => ({ ...r, amount_due: Number(r.amount_due), total: Number(r.total), units: Number(r.units), tracking_link: trackLink(r) });
+/** 404 unless every one of these orders is in a godown this request may see (pick lists, start packing) */
+async function seeOrders(req, nos) {
+  if (!nos.length) return;
+  const [rows] = await db.query('SELECT order_no, godown_id FROM orders WHERE order_no IN (?)', [nos]);
+  for (const r of rows) godowns.assertSees(req, r.godown_id, `Order ${r.order_no} not found`);
+}
 
-route('get', '/commerce/packing', 'packing:view', async () => {
+route('get', '/commerce/packing', 'packing:view', async (req) => {
   const [rows] = await db.query(`${ORDER_LIST}
-      WHERE o.status IN ('new', 'packing') OR (o.status = 'packed' AND o.packed_at > UTC_TIMESTAMP() - INTERVAL 3 DAY) ORDER BY o.order_id`);
+      WHERE (o.status IN ('new', 'packing') OR (o.status = 'packed' AND o.packed_at > UTC_TIMESTAMP() - INTERVAL 3 DAY)) AND ${inScope('o.godown_id', godowns.viewScope(req))} ORDER BY o.order_id`);
   const [held] = await db.query("SELECT DISTINCT ref_id FROM approvals WHERE ref_type = 'order' AND status = 'pending' AND kind IN ('price_below_list', 'over_available', 'credit_order')");
   const waiting = new Set(held.map((h) => h.ref_id));
   return { rows: rows.map((r) => ({ ...orderOut(r), waiting: waiting.has(r.order_no) })) };
 });
 route('post', '/commerce/packing/picklist', 'packing:view', async (req) => {
+  await seeOrders(req, (req.body.order_nos || []).map(String));
   try { return await delivery.pickList(db, (req.body.order_nos || []).map(String)); } catch (e) { throw asDelivery(e); }
 });
 route('post', '/commerce/packing/start', 'packing:edit', async (req) => {
+  await seeOrders(req, (req.body.order_nos || []).map(String));
   try { return await tx((q) => delivery.startPacking(q, (req.body.order_nos || []).map(String), by(req))); } catch (e) { throw asDelivery(e); }
 });
 route('get', '/commerce/packing/:no', 'packing:view', async (req) => {
@@ -1908,23 +1965,24 @@ route('get', '/commerce/packing/:no/slip', 'packing:view', async (req) => {
 });
 
 // the Delivery screen (office): packed orders by kind, failed ones, couriers on the way, trips, setup lists
-route('get', '/commerce/delivery', 'delivery:create', async () => {
-  const [rows] = await db.query(`${ORDER_LIST} WHERE o.status IN ('packed', 'failed', 'with_courier') ORDER BY o.order_id`);
+route('get', '/commerce/delivery', 'delivery:create', async (req) => {
+  const gScope = godowns.viewScope(req);
+  const [rows] = await db.query(`${ORDER_LIST} WHERE o.status IN ('packed', 'failed', 'with_courier') AND ${inScope('o.godown_id', gScope)} ORDER BY o.order_id`);
   const [onTrip] = await db.query("SELECT s.order_id, o.order_no, t.trip_id FROM trip_stops s JOIN delivery_trips t ON t.trip_id = s.trip_id JOIN orders o ON o.order_id = s.order_id WHERE t.status = 'planned' AND s.kind = 'delivery'");
-  const [pickups] = await db.query(`SELECT r.return_no, r.status, o.order_no, c.name AS customer, o.ship_name, o.ship_address, o.ship_town, o.ship_pincode, o.ship_phone, o.delivery_area_id, a.label AS area, r.created_at,
+  const [pickups] = await db.query(`SELECT r.return_no, r.godown_id, r.status, o.order_no, c.name AS customer, o.ship_name, o.ship_address, o.ship_town, o.ship_pincode, o.ship_phone, o.delivery_area_id, a.label AS area, r.created_at,
       (SELECT GROUP_CONCAT(CONCAT(x.qty, ' x ', x.sku_code) ORDER BY x.line_id SEPARATOR ', ') FROM return_items x WHERE x.return_id = r.return_id) AS items,
       (SELECT t.trip_id FROM trip_stops s JOIN delivery_trips t ON t.trip_id = s.trip_id WHERE s.return_id = r.return_id AND s.status = 'pending' AND t.status IN ('planned', 'out') LIMIT 1) AS trip_id
       FROM returns r JOIN orders o ON o.order_id = r.order_id JOIN customers c ON c.customer_id = o.customer_id LEFT JOIN delivery_areas a ON a.area_id = o.delivery_area_id
-      WHERE r.collection = 'trip' AND r.status IN ('requested', 'collecting') AND r.picked_up_at IS NULL
+      WHERE r.collection = 'trip' AND r.status IN ('requested', 'collecting') AND r.picked_up_at IS NULL AND ${inScope('r.godown_id', gScope)}
         AND NOT EXISTS (SELECT 1 FROM approvals ap WHERE ap.ref_type = 'return' AND ap.ref_id = r.return_no AND ap.kind = 'return_window' AND ap.status = 'pending')
       ORDER BY r.return_id`);
   const planned = new Map(onTrip.map((x) => [x.order_no, x.trip_id]));
-  const [trips] = await db.query(`SELECT t.trip_id, DATE_FORMAT(t.trip_date, '%Y-%m-%d') AS trip_date, t.status, t.cash_expected, t.cash_collected, t.cash_handed, t.started_at, t.ended_at,
+  const [trips] = await db.query(`SELECT t.trip_id, t.godown_id, (SELECT g.code FROM locations g WHERE g.location_id = t.godown_id) AS godown_code, DATE_FORMAT(t.trip_date, '%Y-%m-%d') AS trip_date, t.status, t.cash_expected, t.cash_collected, t.cash_handed, t.started_at, t.ended_at,
       v.number AS vehicle, d.name AS driver, a.label AS area,
       (SELECT COUNT(*) FROM trip_stops s WHERE s.trip_id = t.trip_id) AS stops, (SELECT SUM(s.status IN ('delivered', 'picked_up')) FROM trip_stops s WHERE s.trip_id = t.trip_id) AS delivered,
       (SELECT SUM(s.status = 'failed') FROM trip_stops s WHERE s.trip_id = t.trip_id) AS failed
       FROM delivery_trips t JOIN vehicles v ON v.vehicle_id = t.vehicle_id JOIN drivers d ON d.driver_id = t.driver_id LEFT JOIN delivery_areas a ON a.area_id = t.area_id
-      ORDER BY t.trip_id DESC LIMIT 60`);
+      WHERE ${inScope('t.godown_id', gScope)} ORDER BY t.trip_id DESC LIMIT 60`);
   const [vehicles] = await db.query('SELECT vehicle_id, number, type FROM vehicles WHERE is_active = 1 ORDER BY sort_order, vehicle_id');
   const [drivers] = await db.query('SELECT driver_id, name, phone, emp_id FROM drivers WHERE is_active = 1 ORDER BY sort_order, driver_id');
   const [couriers] = await db.query('SELECT courier_id, name, tracking_url FROM couriers WHERE is_active = 1 ORDER BY sort_order, courier_id');
@@ -1937,7 +1995,7 @@ route('get', '/commerce/delivery', 'delivery:create', async () => {
   };
 });
 route('post', '/commerce/trips', 'delivery:create', async (req) => {
-  try { return await tx((q) => delivery.createTrip(q, req.body || {}, by(req))); } catch (e) { throw asDelivery(e); }
+  try { return await tx((q) => delivery.createTrip(q, { ...req.body, admin: req.admin }, by(req))); } catch (e) { throw asDelivery(e); }
 }, { status: 201 });
 
 /** a trip with its stops (an office user: any trip; a driver: only their own) */
@@ -2053,8 +2111,9 @@ const asReturn = (e) => (e instanceof returns.ReturnError || e instanceof commer
 const RETURN_OUTCOMES = { refund: 'Refund', replace: 'Replacement', none: 'No refund' };
 
 route('get', '/commerce/returns', 'returns:view', async (req) => {
-  const where = [];
-  const args = [];
+  const [gw, gp] = godowns.where('r.godown_id', godowns.viewScope(req));
+  const where = [gw];
+  const args = [...gp];
   const qv = (k) => (typeof req.query[k] === 'string' ? req.query[k].trim() : '');
   if (qv('order')) { where.push('o.order_no = ?'); args.push(qv('order')); }
   if (returns.STATUS_LABEL[qv('status')]) { where.push('r.status = ?'); args.push(qv('status')); }
@@ -2069,7 +2128,7 @@ route('get', '/commerce/returns', 'returns:view', async (req) => {
   const ownR = await ownOnly(req);
   if (ownR) { where.push('c.owner_emp_id = ?'); args.push(ownR); }
   const [rows] = await db.query(
-    `SELECT r.return_no, r.status, r.collection, r.outside_window, r.awb_no, r.created_at, r.picked_up_at, r.received_at, r.inspected_at, r.closed_at, r.requested_by,
+    `SELECT r.return_no, r.godown_id, (SELECT g.code FROM locations g WHERE g.location_id = r.godown_id) AS godown_code, r.status, r.collection, r.outside_window, r.awb_no, r.created_at, r.picked_up_at, r.received_at, r.inspected_at, r.closed_at, r.requested_by,
             o.order_no, c.name AS customer, rr.label AS reason, ro.order_no AS replacement_no, ro.status AS replacement_status,
             (SELECT GROUP_CONCAT(CONCAT(x.qty, ' x ', x.sku_code, IFNULL(CONCAT('/', b.batch_no), '')) ORDER BY x.line_id SEPARATOR ', ') FROM return_items x LEFT JOIN batches b ON b.batch_id = x.batch_id WHERE x.return_id = r.return_id) AS items,
             (SELECT SUM(x.refund_qty) FROM return_items x WHERE x.return_id = r.return_id) AS refund_qty,
@@ -2079,9 +2138,10 @@ route('get', '/commerce/returns', 'returns:view', async (req) => {
             (SELECT GROUP_CONCAT(a.kind) FROM approvals a WHERE a.ref_type = 'return' AND a.ref_id = r.return_no AND a.status = 'pending') AS waiting
        FROM returns r JOIN orders o ON o.order_id = r.order_id JOIN customers c ON c.customer_id = o.customer_id JOIN return_reasons rr ON rr.reason_id = r.reason_id
        LEFT JOIN orders ro ON ro.order_id = r.replacement_order_id
-      ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY r.return_id DESC LIMIT 300`, args);
-  const [counts] = ownR ? await db.query('SELECT r.status, COUNT(*) AS n FROM returns r JOIN orders o ON o.order_id = r.order_id JOIN customers c ON c.customer_id = o.customer_id WHERE c.owner_emp_id = ? GROUP BY r.status', [ownR])
-    : await db.query('SELECT status, COUNT(*) AS n FROM returns GROUP BY status');
+      WHERE ${where.join(' AND ')} ORDER BY r.return_id DESC LIMIT 300`, args);
+  const rIn = inScope('r.godown_id', godowns.viewScope(req));
+  const [counts] = ownR ? await db.query(`SELECT r.status, COUNT(*) AS n FROM returns r JOIN orders o ON o.order_id = r.order_id JOIN customers c ON c.customer_id = o.customer_id WHERE c.owner_emp_id = ? AND ${rIn} GROUP BY r.status`, [ownR])
+    : await db.query(`SELECT r.status, COUNT(*) AS n FROM returns r WHERE ${rIn} GROUP BY r.status`);
   const [reasons] = await db.query('SELECT reason_id, label FROM return_reasons ORDER BY sort_order, reason_id');
   return {
     rows: rows.map((r) => ({ ...r, status_label: returns.STATUS_LABEL[r.status], collection_label: returns.COLLECTION[r.collection], refunded: Number(r.refunded),
@@ -2168,7 +2228,7 @@ route('post', '/commerce/returns/:no/decide', 'returns:edit', async (req) => {
 });
 // Recheck: Returned (R) packs back to good stock (only when Commerce settings allow resale; always through approval)
 route('post', '/commerce/stock/recheck', 'inventory:edit', async (req) => {
-  try { return await tx((q) => returns.recheckRequest(q, req.body || {}, by(req))); } catch (e) { throw asReturn(e); }
+  try { return await tx(async (q) => returns.recheckRequest(q, { ...req.body, godown_id: await godowns.resolve(q, req, req.body.godown_id) }, by(req))); } catch (e) { throw asReturn(e); }
 }, { status: 201 });
 
 // A credit note for printing: the invoice snapshot (seller, buyer, GST type) and the credit note's own lines
@@ -2190,13 +2250,14 @@ route('get', '/commerce/credit-notes/:id/pdf', 'any', async (req, res) => {
 // ---------------------------------------------------------------------------------------------
 // Reports (docs/COMMERCE-SPEC.md 10; logic in reports.js). One Reports area: period (India dates), filters, totals, a
 // chart where useful, Excel and print on every report. Each report needs view on its own section; costs and margins
-// need view on Reports and on Products and prices.
+// need the role's See cost (and view on Reports for the Margin report). Every report counts the godowns in view
+// (godowns.viewScope: the header picker's one, else all of the person's).
 // ---------------------------------------------------------------------------------------------
 const reports = require('./reports');
-const seesCosts = (req) => canDo(req, 'reports') && canDo(req, 'products');
+const seesCosts = (req) => seesCost(req);
 const REPORTS = { // in the order of the business: what was sold, what it earned, its GST, what is owed, stock, delivery, returns, promotions
   sales: { label: 'Sales', section: 'Orders', can: (req) => canDo(req, 'orders'), run: (q, p) => reports.sales(q, p) },
-  margin: { label: 'Margin', section: 'Reports + Products and prices', can: seesCosts, run: (q, p) => reports.margin(q, p) },
+  margin: { label: 'Margin', section: 'Reports + See cost', can: (req) => canDo(req, 'reports') && seesCosts(req), run: (q, p) => reports.margin(q, p) },
   gst: { label: 'GST (GSTR-1)', section: 'Reports', can: (req) => canDo(req, 'reports'), run: (q, p) => reports.gst(q, p) },
   receivables: { label: 'Receivables', section: 'Customers', can: (req) => canDo(req, 'customers'), run: (q, p) => reports.receivables(q, p) },
   stock: { label: 'Stock', section: 'Inventory', can: (req) => canDo(req, 'inventory'), run: (q, p, req) => reports.stockReport(q, p, { seesCost: seesCosts(req) }) },
@@ -2212,7 +2273,7 @@ function reportParams(req) {
   const to = pricing.isDate(String(req.query.to || '')) ? String(req.query.to) : today;
   if (to < from) throw new InputError('To: on or after From');
   const pick = (k) => (typeof req.query[k] === 'string' ? req.query[k].trim().slice(0, 40) : '');
-  return { from, to, group: pick('group'), type: pick('type'), owner: pick('owner'), by: pick('by'), view: pick('view'), days: pick('days') };
+  return { from, to, group: pick('group'), type: pick('type'), owner: pick('owner'), by: pick('by'), view: pick('view'), days: pick('days'), scope: godowns.viewScope(req) };
 }
 function reportOf(req) {
   const r = REPORTS[req.params.key];
@@ -2271,7 +2332,7 @@ route('get', '/commerce/reports/:key/export.xlsx', 'any', async (req, res) => {
   await audit(null, { empId: by(req), action: 'export', entity: 'report', entityId: req.params.key, after: { ...p, bytes } });
 });
 // Accounting export: sales, receipts, credit notes (and refunds, wallet use) as a CSV journal; Tally / Zoho later (setting)
-route('get', '/commerce/reports/accounting/journal.csv', 'reports:view', async (req, res) => {
+route('get', '/commerce/reports/accounting/journal.csv', 'reports:export', async (req, res) => {
   const p = reportParams(req);
   const rows = await reports.journal(db, p);
   const head = ['Date', 'Voucher type', 'Voucher no', 'Party', 'Party GSTIN', 'Ledger', 'Debit', 'Credit', 'Narration'];
@@ -2305,34 +2366,42 @@ const asCustomer = (e) => {
   if (e.code) { err.code = e.code; err.fields = e.fields; }
   return err;
 };
-/** the emp_id this user is limited to (own customers only), or null */
-async function ownOnly(req) { return customers.ownScope(req.admin, await commerceSettings.read(db)); }
-/** 404 / 403 unless this user may see the customer */
+/** the emp_id this user is limited to (own customers only: the role's "Own customers only"), or null */
+async function ownOnly(req) { return customers.ownScope(req.admin); }
+/** 404 / 403 unless this user may see the customer (its godown in view; own customers only: theirs) */
 async function seeCustomer(req, id) {
-  const [[c]] = await db.query('SELECT customer_id, owner_emp_id FROM customers WHERE customer_id = ?', [Number(id)]);
+  const [[c]] = await db.query('SELECT customer_id, owner_emp_id, godown_id FROM customers WHERE customer_id = ?', [Number(id)]);
   if (!c) throw new InputError('Customer not found', 404);
+  godowns.assertSees(req, c.godown_id, 'Customer not found');
   const own = await ownOnly(req);
   if (own && c.owner_emp_id !== own) throw new InputError('This customer belongs to another sales owner', 403);
   return c;
 }
-// Own customers only (Commerce setting): every route keyed by an order no., return no., invoice, credit note, return
-// photo or customer id checks that the record's customer is the user's, before the route runs (security review M1). The
-// path says what the id is; a record that does not exist is left to the route (its own 404).
+// Every route keyed by an order no., return no., invoice, credit note, return photo, customer, trip, stop, count or
+// write-off id checks, before the route runs, that the record is in a godown this request may see (else 404, as if it
+// did not exist: godowns.assertSees) and, for own customers only, that its customer is the user's (security review M1).
+// The path says what the id is; a record that does not exist is left to the route (its own 404).
 const SCOPED = [
-  [/^\/admin\/commerce\/(orders|packing)\/[^/]+/, 'no', 'SELECT customer_id FROM orders WHERE order_no = ?'],
-  [/^\/admin\/commerce\/returns\/[^/]+/, 'no', 'SELECT o.customer_id FROM returns r JOIN orders o ON o.order_id = r.order_id WHERE r.return_no = ?'],
-  [/^\/admin\/commerce\/invoices\/\d+/, 'id', 'SELECT o.customer_id FROM invoices i JOIN orders o ON o.order_id = i.order_id WHERE i.invoice_id = ?'],
-  [/^\/admin\/commerce\/credit-notes\/\d+/, 'id', 'SELECT o.customer_id FROM credit_notes cn JOIN invoices i ON i.invoice_id = cn.invoice_id JOIN orders o ON o.order_id = i.order_id WHERE cn.credit_note_id = ?'],
-  [/^\/admin\/commerce\/return-photos\/\d+/, 'id', 'SELECT o.customer_id FROM return_photos p JOIN returns r ON r.return_id = p.return_id JOIN orders o ON o.order_id = r.order_id WHERE p.photo_id = ?'],
-  [/^\/admin\/commerce\/customers\/\d+/, 'id', 'SELECT customer_id FROM customers WHERE customer_id = ?'],
+  [/^\/admin\/commerce\/(orders|packing)\/[^/]+/, 'no', 'SELECT customer_id, godown_id FROM orders WHERE order_no = ?'],
+  [/^\/admin\/commerce\/returns\/[^/]+/, 'no', 'SELECT o.customer_id, r.godown_id FROM returns r JOIN orders o ON o.order_id = r.order_id WHERE r.return_no = ?'],
+  [/^\/admin\/commerce\/invoices\/\d+/, 'id', 'SELECT o.customer_id, o.godown_id FROM invoices i JOIN orders o ON o.order_id = i.order_id WHERE i.invoice_id = ?'],
+  [/^\/admin\/commerce\/credit-notes\/\d+/, 'id', 'SELECT o.customer_id, o.godown_id FROM credit_notes cn JOIN invoices i ON i.invoice_id = cn.invoice_id JOIN orders o ON o.order_id = i.order_id WHERE cn.credit_note_id = ?'],
+  [/^\/admin\/commerce\/return-photos\/\d+/, 'id', 'SELECT o.customer_id, r.godown_id FROM return_photos p JOIN returns r ON r.return_id = p.return_id JOIN orders o ON o.order_id = r.order_id WHERE p.photo_id = ?'],
+  [/^\/admin\/commerce\/customers\/\d+/, 'id', 'SELECT customer_id, godown_id FROM customers WHERE customer_id = ?'],
+  [/^\/admin\/commerce\/trips\/\d+/, 'id', 'SELECT NULL AS customer_id, godown_id FROM delivery_trips WHERE trip_id = ?'],
+  [/^\/admin\/commerce\/stops\/\d+/, 'id', 'SELECT NULL AS customer_id, t.godown_id FROM trip_stops s JOIN delivery_trips t ON t.trip_id = s.trip_id WHERE s.stop_id = ?'],
+  [/^\/admin\/commerce\/counts\/\d+/, 'id', 'SELECT NULL AS customer_id, godown_id FROM stock_counts WHERE count_id = ?'],
+  [/^\/admin\/commerce\/write-offs\/\d+/, 'id', 'SELECT NULL AS customer_id, godown_id FROM write_offs WHERE write_off_id = ?'],
 ];
 for (const name of ['no', 'id']) {
   router.param(name, async (req, res, next, value) => {
     try {
       const hit = SCOPED.find(([re, n]) => n === name && re.test(req.path));
-      if (!hit || !req.admin || !(await ownOnly(req))) return next();
+      if (!hit || !req.admin) return next();
       const [[row]] = await db.query(hit[2], [value]);
-      if (row) await seeCustomer(req, row.customer_id);
+      if (!row) return next();
+      godowns.assertSees(req, row.godown_id);
+      if (row.customer_id && await ownOnly(req)) await seeCustomer(req, row.customer_id);
       return next();
     } catch (e) { return next(e); }
   });
@@ -2347,7 +2416,7 @@ async function adminPeople(q) {
 
 // The list. Filters: q (CUS no., name, business, phone, GSTIN), type, status (default: not merged), town, tag, owner,
 // no_order_days (no order in N days, or never), outstanding_min, wallet_min, segment (saved filters).
-const CUSTOMER_LIST = `SELECT c.customer_id, c.customer_no, c.name, c.business_name, c.phone, c.email, c.type_key, ct.label AS type_label, c.status, c.hold_reason, c.source,
+const CUSTOMER_LIST = `SELECT c.customer_id, c.customer_no, c.godown_id, (SELECT g.code FROM locations g WHERE g.location_id = c.godown_id) AS godown_code, c.name, c.business_name, c.phone, c.email, c.type_key, ct.label AS type_label, c.status, c.hold_reason, c.source,
        c.owner_emp_id, c.price_list, c.credit_days, c.credit_limit, c.lead_id, c.created_at,
        (SELECT a.town FROM customer_addresses a WHERE a.customer_id = c.customer_id AND a.kind = 'shipping' AND a.is_default = 1 AND a.is_active = 1 LIMIT 1) AS town,
        (SELECT GROUP_CONCAT(g.tag ORDER BY g.tag) FROM customer_tags g WHERE g.customer_id = c.customer_id) AS tags,
@@ -2360,7 +2429,8 @@ const CUSTOMER_LIST = `SELECT c.customer_id, c.customer_no, c.name, c.business_n
   FROM customers c JOIN customer_types ct ON ct.type_key = c.type_key`;
 async function customerRows(req, filters) {
   const f = filters || {};
-  const where = []; const args = []; const having = [];
+  const [gw, gp] = godowns.where('c.godown_id', godowns.viewScope(req));
+  const where = [gw]; const args = [...gp]; const having = [];
   const own = await ownOnly(req);
   if (own) { where.push('c.owner_emp_id = ?'); args.push(own); }
   if (f.status === 'merged') where.push('c.merged_into IS NOT NULL');
@@ -2426,7 +2496,7 @@ route('delete', '/commerce/segments/:id', 'customers:edit', async (req) => {
 });
 
 // Excel: export the filtered list; import = dry run first, Apply only that file (fingerprint), checked again
-route('get', '/commerce/customers/export.xlsx', 'customers:view', async (req, res) => {
+route('get', '/commerce/customers/export.xlsx', 'customers:export', async (req, res) => {
   const filters = await filtersOf(req);
   const rows = await customerRows(req, filters);
   const wb = await customerExcel.buildWorkbook(db, rows, { who: await exportedBy(req), filters: Object.keys(filters).length ? Object.entries(filters).map(([k, v]) => `${k}: ${v}`).join(', ') : null });
@@ -2439,12 +2509,12 @@ route('post', '/commerce/customers/import', 'customers:create', async (req) => {
   const fileHash = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
   try {
     const own = await ownOnly(req); // own customers only: other owners' rows are refused, new ones are theirs
-    if (req.query.dryRun !== '0') { const { plan, ...report } = await customerExcel.diffWorkbook(db, req.file.buffer, { own }); return { dryRun: true, fileHash, ...report }; }
+    if (req.query.dryRun !== '0') { const { plan, ...report } = await customerExcel.diffWorkbook(db, req.file.buffer, { own, scope: godowns.viewScope(req) }); return { dryRun: true, fileHash, ...report }; }
     if (req.query.hash !== fileHash) throw new InputError('This file is not the one that passed the dry run. Run the dry run again.');
     return await tx(async (q) => {
-      const { plan, ...report } = await customerExcel.diffWorkbook(q, req.file.buffer, { own });
+      const { plan, ...report } = await customerExcel.diffWorkbook(q, req.file.buffer, { own, scope: godowns.viewScope(req) });
       if (!report.ok) throw new InputError(`Fix the ${report.errors.length} error(s) first (run the dry run again): ${report.errors.slice(0, 3).join(' | ')}`);
-      const applied = await customerExcel.applyPlan(q, plan, by(req));
+      const applied = await customerExcel.applyPlan(q, plan, by(req), await godowns.resolve(q, req, req.query.godown_id)); // new customers: the chosen (or default) godown
       await audit(q, { empId: by(req), action: 'import', entity: 'customer', after: { ...report.summary, created: applied.created } });
       return { dryRun: false, fileHash, applied, ...report };
     });
@@ -2456,16 +2526,18 @@ route('post', '/commerce/customers/import', 'customers:create', async (req) => {
 route('post', '/commerce/customers', 'customers:create', async (req) => {
   const own = await ownOnly(req);
   const { lead_id: _lead, ...body } = req.body || {}; // eslint-disable-line no-unused-vars
-  try { return await tx((q) => customers.createCustomer(q, { ...body, owner_emp_id: own || body.owner_emp_id }, by(req))); } catch (e) { throw asCustomer(e); }
+  try { return await tx(async (q) => customers.createCustomer(q, { ...body, owner_emp_id: own || body.owner_emp_id, godown_id: await godowns.resolve(q, req, body.godown_id) }, by(req))); } catch (e) { throw asCustomer(e); }
 }, { status: 201 });
 
 // duplicate pairs (same phone, e-mail, GSTIN or name) for the Merge tool
-route('get', '/commerce/customers/duplicates', 'customers:edit', async () => {
+route('get', '/commerce/customers/duplicates', 'customers:edit', async (req) => {
+  const gScope = godowns.viewScope(req); // both customers of a pair in the godowns in view
   const [rows] = await db.query(`SELECT a.customer_id AS a_id, a.customer_no AS a_no, a.name AS a_name, b.customer_id AS b_id, b.customer_no AS b_no, b.name AS b_name,
       CONCAT_WS(', ', IF(a.phone_digits = b.phone_digits, 'phone', NULL), IF(a.email IS NOT NULL AND a.email = b.email, 'e-mail', NULL),
         IF(LOWER(a.name) = LOWER(b.name), 'name', NULL),
         IF(EXISTS (SELECT 1 FROM customer_addresses x JOIN customer_addresses y ON y.gstin = x.gstin WHERE x.customer_id = a.customer_id AND y.customer_id = b.customer_id AND x.gstin IS NOT NULL), 'GSTIN', NULL)) AS why
       FROM customers a JOIN customers b ON b.customer_id > a.customer_id AND a.merged_into IS NULL AND b.merged_into IS NULL
+        AND ${inScope('a.godown_id', gScope)} AND ${inScope('b.godown_id', gScope)}
       WHERE a.phone_digits = b.phone_digits OR (a.email IS NOT NULL AND a.email = b.email) OR LOWER(a.name) = LOWER(b.name)
          OR EXISTS (SELECT 1 FROM customer_addresses x JOIN customer_addresses y ON y.gstin = x.gstin WHERE x.customer_id = a.customer_id AND y.customer_id = b.customer_id AND x.gstin IS NOT NULL)
       ORDER BY a.customer_no LIMIT 50`);
@@ -2484,7 +2556,7 @@ route('get', '/commerce/follow-ups', 'customers:view', async (req) => {
   const [rows] = await db.query(`SELECT f.follow_up_id, f.customer_id, f.assignee, DATE_FORMAT(f.due_on, '%Y-%m-%d') AS due_on, f.note, f.status, f.snoozes, f.created_by, f.created_at,
       c.customer_no, c.name AS customer, c.phone, f.due_on < ${IST_TODAY_DATE} AS overdue, f.due_on = ${IST_TODAY_DATE} AS today
       FROM follow_ups f JOIN customers c ON c.customer_id = f.customer_id
-      WHERE f.status = 'open' ${all ? '' : 'AND f.assignee = ?'} ${own ? 'AND c.owner_emp_id = ?' : ''} ORDER BY f.due_on, f.follow_up_id`, [...(all ? [] : [by(req)]), ...(own ? [own] : [])]);
+      WHERE f.status = 'open' ${all ? '' : 'AND f.assignee = ?'} ${own ? 'AND c.owner_emp_id = ?' : ''} AND ${inScope('c.godown_id', godowns.viewScope(req))} ORDER BY f.due_on, f.follow_up_id`, [...(all ? [] : [by(req)]), ...(own ? [own] : [])]);
   return { rows: rows.map((r) => ({ ...r, overdue: Number(r.overdue) === 1, today: Number(r.today) === 1 })), all, people: await adminPeople(db) };
 });
 route('put', '/commerce/follow-ups/:id', 'customers:view', async (req) => {
@@ -2557,6 +2629,7 @@ route('put', '/commerce/customers/:id', 'customers:edit', custTx(async (q, req) 
   const own = await ownOnly(req);
   const body = { ...(req.body || {}) };
   if (own) delete body.owner_emp_id; // a limited user cannot give the customer away
+  if (body.godown_id !== undefined && body.godown_id !== null && body.godown_id !== '') body.godown_id = await godowns.resolve(q, req, body.godown_id); // moved only to a godown they work at
   const r = await customers.updateCore(q, Number(req.params.id), body, by(req));
   if (Array.isArray(body.tags)) await customers.setTags(q, Number(req.params.id), body.tags, by(req));
   return r;
@@ -2585,11 +2658,11 @@ route('put', '/commerce/customers/:id/credit', 'customers:edit', async (req) => 
   if (!Number.isInteger(days) || days < 0 || days > 365) throw new InputError('Credit days: 0 to 365');
   if (!/^\d{1,9}(\.\d{1,2})?$/.test(String(req.body.credit_limit ?? '').trim())) throw new InputError('Credit limit: Rs, 0 or more');
   return tx(async (q) => {
-    const [[c]] = await q.query('SELECT customer_id, customer_no, name, credit_days, credit_limit FROM customers WHERE customer_id = ? FOR UPDATE', [Number(req.params.id)]);
-    if (limit > Number(c.credit_limit) && await approvals.needed(q, 'credit_raise')) {
+    const [[c]] = await q.query('SELECT customer_id, customer_no, name, godown_id, credit_days, credit_limit FROM customers WHERE customer_id = ? FOR UPDATE', [Number(req.params.id)]);
+    if (limit > Number(c.credit_limit) && await approvals.needed(q, 'credit_raise', { amount: limit, target: `cust:${c.customer_id}` })) {
       const [[had]] = await q.query("SELECT approval_id FROM approvals WHERE kind = 'credit_raise' AND ref_type = 'customer' AND ref_id = ? AND status = 'pending'", [String(c.customer_id)]);
       if (had) throw new InputError(`A credit change for ${c.name} already waits for approval (#${had.approval_id})`, 409);
-      const id = await approvals.request(q, { kind: 'credit_raise', refType: 'customer', refId: String(c.customer_id),
+      const id = await approvals.request(q, { kind: 'credit_raise', godownId: c.godown_id, target: `cust:${c.customer_id}`, refType: 'customer', refId: String(c.customer_id),
         summary: `${c.customer_no} ${c.name}: credit limit Rs ${Number(c.credit_limit)} -> Rs ${limit}, ${c.credit_days} -> ${days} days`, amount: limit,
         payload: { customer_id: c.customer_id, credit_days: days, credit_limit: limit } }, by(req));
       return { pending: true, approval_id: id };
@@ -2602,7 +2675,10 @@ route('put', '/commerce/customers/:id/credit', 'customers:edit', async (req) => 
 // A lead becomes a customer (once): name, phone, e-mail, town, its contact person, billing and shipping address.
 route('post', '/commerce/customers/from-lead/:leadId', 'customers:create', async (req) => {
   const own = await ownOnly(req);
-  try { return await tx((q) => customers.fromLead(q, Number(req.params.leadId), { ...(req.body || {}), owner_emp_id: own || (req.body || {}).owner_emp_id }, by(req))); } catch (e) { throw asCustomer(e); }
+  try {
+    return await tx(async (q) => customers.fromLead(q, Number(req.params.leadId), { ...(req.body || {}), owner_emp_id: own || (req.body || {}).owner_emp_id,
+      godown_id: await godowns.resolve(q, req, (req.body || {}).godown_id) }, by(req)));
+  } catch (e) { throw asCustomer(e); }
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -2623,16 +2699,17 @@ const moneyOf = (v, label, { allowNull = false, min = 0 } = {}) => {
   if (!/^\d{1,7}(\.\d{1,2})?$/.test(t) || Number(t) < min) throw new InputError(`${label}: an amount like 500 or 499.50`);
   return Number(t);
 };
-async function promoLists(q) {
+async function promoLists(q, req = null) { // req: the customers of the godowns in view only
   const [types] = await q.query('SELECT type_key, label FROM customer_types ORDER BY sort_order, label');
   const [cats] = await q.query("SELECT DISTINCT category_key FROM products WHERE category_key IS NOT NULL AND category_key <> '' ORDER BY category_key");
   const [skus] = await q.query(`SELECT s.sku_code, ${SKU_NAME} AS name, s.size_label FROM skus s ${SKU_JOIN} WHERE s.is_active = 1 ORDER BY s.sku_code`);
-  const [custs] = await q.query("SELECT c.customer_id, c.name, ct.label AS ctype FROM customers c JOIN customer_types ct ON ct.type_key = c.type_key WHERE c.merged_into IS NULL ORDER BY c.name");
+  const gw = req ? godowns.where('c.godown_id', godowns.viewScope(req)) : ['1 = 1', []];
+  const [custs] = await q.query(`SELECT c.customer_id, c.name, ct.label AS ctype FROM customers c JOIN customer_types ct ON ct.type_key = c.type_key WHERE c.merged_into IS NULL AND ${gw[0]} ORDER BY c.name`, gw[1]);
   return { types, categories: cats.map((c) => c.category_key), skus, customers: custs };
 }
 const fixedDates = (from, to) => { if (from && to && to < from) throw new InputError('Valid to: on or after Valid from'); };
 
-route('get', '/commerce/promotions', 'promotions:view', async () => {
+route('get', '/commerce/promotions', 'promotions:view', async (req) => {
   const [coupons] = await db.query(`SELECT c.code, c.description, c.kind, c.value, c.min_order, c.max_discount, DATE_FORMAT(c.valid_from, '%Y-%m-%d') AS valid_from,
       DATE_FORMAT(c.valid_to, '%Y-%m-%d') AS valid_to, c.total_limit, c.per_customer_limit, c.is_active, c.created_by, c.updated_by,
       (SELECT COUNT(*) FROM coupon_redemptions r WHERE r.code = c.code AND r.status = 'active') AS uses,
@@ -2656,7 +2733,7 @@ route('get', '/commerce/promotions', 'promotions:view', async () => {
     offers: offers.map((o) => ({ ...o, pct: Number(o.pct), orders: Number(o.orders), is_active: Number(o.is_active) === 1, types: otypes.filter((t) => t.offer_id === o.offer_id).map((t) => t.type_key),
       text: o.kind === 'slab' ? promotions.slabText(o) : promotions.bxgyText(o) })),
     rules: rules.map((r) => ({ ...r, pct: Number(r.pct), min_order: Number(r.min_order), max_per_order: num(r.max_per_order), is_active: Number(r.is_active) === 1 })),
-    kinds: promotions.KINDS, offerKinds: promotions.OFFER_KINDS, ...(await promoLists(db)),
+    kinds: promotions.KINDS, offerKinds: promotions.OFFER_KINDS, ...(await promoLists(db, req)),
     settings: { offers_with_coupon: Boolean(cs.offers_with_coupon), cashback_credit_at: cs.cashback_credit_at, return_window_days: Number(cs.return_window_days), wallet_max_use_pct: Number(cs.wallet_max_use_pct),
       expiry: { cashback: Number(cs.wallet_expiry_cashback_days), manual: Number(cs.wallet_expiry_manual_days), refund: Number(cs.wallet_expiry_refund_days) }, gst: cs.cashback_gst_treatment,
       discount_limit: cs.approve_discount_on ? Number(cs.approve_discount_pct_above) : null, manual_wallet_approval: Boolean(cs.approve_goodwill_credit) },
@@ -2717,7 +2794,8 @@ route('put', '/commerce/coupons/:code', 'promotions:edit', async (req) => tx(asy
 }));
 route('get', '/commerce/coupons/:code/usage', 'promotions:view', async (req) => {
   const [rows] = await db.query(`SELECT r.id, r.amount, r.status, r.created_at, r.released_at, o.order_no, o.status AS order_status, o.total, c.name AS customer, ct.label AS ctype
-      FROM coupon_redemptions r JOIN orders o ON o.order_id = r.order_id JOIN customers c ON c.customer_id = r.customer_id JOIN customer_types ct ON ct.type_key = c.type_key WHERE r.code = ? ORDER BY r.id DESC`, [String(req.params.code).toUpperCase()]);
+      FROM coupon_redemptions r JOIN orders o ON o.order_id = r.order_id JOIN customers c ON c.customer_id = r.customer_id JOIN customer_types ct ON ct.type_key = c.type_key
+      WHERE r.code = ? AND ${inScope('o.godown_id', godowns.viewScope(req))} ORDER BY r.id DESC`, [String(req.params.code).toUpperCase()]);
   return rows.map((r) => ({ ...r, amount: Number(r.amount), total: Number(r.total) }));
 });
 
@@ -2828,26 +2906,29 @@ route('get', '/commerce/ops', 'any', async (req) => {
   if (!await commerceOn()) throw new InputError('Commerce is switched off (Settings > Commerce settings)', 404);
   const can = { orders: canDo(req, 'orders'), pack: canDo(req, 'orders') || canDo(req, 'packing'), dispatch: canDo(req, 'orders') || canDo(req, 'delivery'),
     stock: canDo(req, 'inventory'), returns: canDo(req, 'returns'), wallet: canDo(req, 'customers') };
-  const [[today]] = await db.query(`SELECT COUNT(*) AS n, COALESCE(SUM(total), 0) AS value FROM orders WHERE created_at >= ${IST_TODAY_UTC} AND status NOT IN ('cancelled', 'approval')`);
-  const [[st]] = await db.query("SELECT SUM(status = 'new') AS to_pack, SUM(status = 'packed') AS to_dispatch FROM orders");
+  const gScope = godowns.viewScope(req); // every figure: the godowns in view
+  const oIn = inScope('godown_id', gScope);
+  const cIn = `customer_id IN (SELECT sc.customer_id FROM customers sc WHERE ${inScope('sc.godown_id', gScope)})`;
+  const [[today]] = await db.query(`SELECT COUNT(*) AS n, COALESCE(SUM(total), 0) AS value FROM orders WHERE created_at >= ${IST_TODAY_UTC} AND status NOT IN ('cancelled', 'approval') AND ${oIn}`);
+  const [[st]] = await db.query(`SELECT SUM(status = 'new') AS to_pack, SUM(status = 'packed') AS to_dispatch FROM orders WHERE ${oIn}`);
   const [[w]] = await db.query(`SELECT COALESCE(SUM(amount), 0) AS total, COALESCE(SUM(CASE WHEN source = 'cashback' THEN amount END), 0) AS cashback,
-      COALESCE(SUM(CASE WHEN source = 'refund' THEN amount END), 0) AS refunds FROM wallet_entries`);
-  const low = can.stock ? await stock.reorderList(db) : [];
-  const dc = await delivery.opsCounts(db);
+      COALESCE(SUM(CASE WHEN source = 'refund' THEN amount END), 0) AS refunds FROM wallet_entries WHERE ${cIn}`);
+  const low = can.stock ? await stock.reorderList(db, (await stockGodowns(req)).map((g) => g.godown_id)) : [];
+  const dc = await delivery.opsCounts(db, gScope);
   const seeInspect = can.returns || canDo(req, 'inventory', 'edit');
-  const [[fu]] = await db.query(`SELECT COUNT(*) AS overdue, SUM(assignee = ?) AS mine FROM follow_ups WHERE status = 'open' AND due_on < ${IST_TODAY_DATE}`, [by(req)]);
+  const [[fu]] = await db.query(`SELECT COUNT(*) AS overdue, SUM(assignee = ?) AS mine FROM follow_ups WHERE status = 'open' AND due_on < ${IST_TODAY_DATE} AND ${cIn}`, [by(req)]);
   const seePack = canDo(req, 'packing') || canDo(req, 'orders');
   const seeDeliver = canDo(req, 'delivery') || canDo(req, 'orders');
-  const exp = can.stock ? (await stock.batchList(db)).rows.filter((b) => b.good > 0 && b.state !== 'ok') : [];
-  const [next] = await db.query("SELECT o.order_no, o.created_at, c.name AS customer FROM orders o JOIN customers c ON c.customer_id = o.customer_id WHERE o.status = 'new' ORDER BY o.order_id LIMIT 5");
+  const exp = can.stock ? (await stock.batchList(db, gScope)).rows.filter((b) => b.good > 0 && b.state !== 'ok') : [];
+  const [next] = await db.query(`SELECT o.order_no, o.created_at, c.name AS customer FROM orders o JOIN customers c ON c.customer_id = o.customer_id WHERE o.status = 'new' AND ${inScope('o.godown_id', gScope)} ORDER BY o.order_id LIMIT 5`);
   return {
     today: can.orders ? { n: Number(today.n), value: Number(today.value) } : null,
     toPack: can.pack ? Number(st.to_pack) || 0 : null, toDispatch: can.dispatch ? Number(st.to_dispatch) || 0 : null,
     returns: seeInspect ? { toCollect: can.returns ? dc.returnsToCollect : null, toInspect: dc.returnsToInspect, toDecide: can.returns ? dc.returnsToDecide : null } : null,
-    business: seesCosts(req) ? await reports.business(db) : null, // the Business view: Reports + Products and prices
+    business: seesCosts(req) ? await reports.business(db, gScope) : null, // the Business view: a role with See cost
     followUps: can.wallet ? { overdue: Number(fu.overdue) || 0, mine: Number(fu.mine) || 0 } : null,
     walletGiven: can.wallet ? { total: Number(w.total), cashback: Number(w.cashback), refunds: Number(w.refunds) } : null, // total = owed to customers now
-    lowStock: can.stock ? low.map((r) => ({ sku_code: r.sku_code, name: r.name, available: r.available, reorder_level: r.reorder_level, suggested: r.suggested })) : null,
+    lowStock: can.stock ? low.map((r) => ({ godown_code: r.godown_code, sku_code: r.sku_code, name: r.name, available: r.available, reorder_level: r.reorder_level, suggested: r.suggested })) : null,
     expiry: can.stock ? { expired: exp.filter((b) => b.state === 'expired').length, near: exp.filter((b) => b.state === 'near').length } : null,
     nextToPack: can.pack ? next : null,
     packing: seePack ? { toPick: dc.toPick, toPack: dc.toPack } : null,
@@ -2947,7 +3028,7 @@ route('post', '/prices/bulk', 'products:edit', async (req) => {
   } catch (e) { throw asPrice(e); }
 }, COMMERCE_ONLY);
 
-route('get', '/prices/export.xlsx', 'products:edit', async (req, res) => {
+route('get', '/prices/export.xlsx', 'products:export', async (req, res) => {
   const wb = await priceExcel.buildWorkbook(db, { who: await exportedBy(req) });
   const bytes = await theme.send(res, wb, `dFresh_Price_List_${theme.istStamp(new Date(), false)}.xlsx`);
   await audit(null, { empId: by(req), action: 'export', entity: 'sku_price', after: { file: 'prices.xlsx', bytes } });
@@ -2979,7 +3060,9 @@ route('post', '/prices/import', 'products:edit', async (req) => {
 // ---------------------------------------------------------------------------------------------
 // Roles and permissions (docs/COMMERCE-SPEC.md 1; migration 20261021_commerce_01_access.sql)
 // ---------------------------------------------------------------------------------------------
-/** a permission grid from the admin -> clean { section: { action: bool } } (create / edit / approve / delete imply view) */
+const foundation = require('./foundation');
+const approvalEngine = require('./approval-engine');
+/** a permission grid from the admin -> clean { section: { action: bool } } (every other action implies view) */
 function cleanGrid(raw) {
   const out = {};
   for (const sec of permissions.SECTION_KEYS) {
@@ -2992,16 +3075,37 @@ function cleanGrid(raw) {
 }
 async function roleGrid(q, role) {
   if (permissions.BUILTIN[role.role_id]) return permissions.permsFor(role.role_id);
-  const [rows] = await q.query('SELECT section, can_view, can_create, can_edit, can_approve, can_delete FROM role_permissions WHERE role_id = ?', [role.role_id]);
+  const [rows] = await q.query('SELECT section, can_view, can_create, can_edit, can_approve, can_cancel, can_export, can_delete FROM role_permissions WHERE role_id = ?', [role.role_id]);
   return permissions.permsFor(role.role_id, rows);
 }
 async function saveGrid(q, roleId, grid) {
   await q.query('DELETE FROM role_permissions WHERE role_id = ?', [roleId]);
   for (const [sec, g] of Object.entries(grid)) {
     if (!permissions.ACTIONS.some((a) => g[a])) continue;
-    await q.query('INSERT INTO role_permissions (role_id, section, can_view, can_create, can_edit, can_approve, can_delete) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    await q.query(`INSERT INTO role_permissions (role_id, section, ${permissions.ACTIONS.map((a) => `can_${a}`).join(', ')}) VALUES (?, ?, ${permissions.ACTIONS.map(() => '?').join(', ')})`,
       [roleId, sec, ...permissions.ACTIONS.map((a) => (g[a] ? 1 : 0))]);
   }
+}
+/**
+ * role extras from the admin (phase 12a): See cost, Own customers only, the default approval limit -> columns. A person
+ * who is not an Admin gives no right, limit or See cost they do not have themselves (foundation.js rules).
+ */
+function roleExtras(body, before) {
+  const out = {
+    see_cost: 'see_cost' in body ? (body.see_cost ? 1 : 0) : Number(before ? before.see_cost : 0),
+    own_customers_only: 'own_customers_only' in body ? (body.own_customers_only ? 1 : 0) : Number(before ? before.own_customers_only : 0),
+  };
+  const l = 'limit' in body ? foundation.cleanLimit(body.limit, { InputError }) : { kind: before ? before.limit_kind : 'none', amount: before && before.limit_amount !== null ? Number(before.limit_amount) : null };
+  return { ...out, limit_kind: l.kind, limit_amount: l.kind === 'amount' ? l.amount : null };
+}
+function roleWithinMe(req, grid, extras) {
+  const me = req.admin;
+  if (me.is_admin) return;
+  const miss = foundation.missingRights(grid, me);
+  if (miss.length) throw new InputError(`You cannot give rights you do not have: ${miss.slice(0, 3).join(', ')}${miss.length > 3 ? ` and ${miss.length - 3} more` : ''}`, 403);
+  const l = { kind: extras.limit_kind, amount: extras.limit_amount };
+  if (approvalEngine.limitNum(l) > approvalEngine.limitNum(me.limit)) throw new InputError(`Limit: at most your own ${approvalEngine.limitText(me.limit)}`, 403);
+  if (extras.see_cost && !me.seesCost) throw new InputError('You cannot give See cost: you do not have it', 403);
 }
 const roleName = (v) => {
   const n = String(v || '').trim();
@@ -3009,12 +3113,23 @@ const roleName = (v) => {
   return n;
 };
 
-route('get', '/roles', 'users:view', async () => {
-  const [roles] = await db.query(`SELECT r.role_id, r.name, r.description, r.is_builtin, r.updated_by, r.updated_at,
+route('get', '/roles', 'users:view', async (req) => {
+  const [roles] = await db.query(`SELECT r.role_id, r.name, r.description, r.is_builtin, r.limit_kind, r.limit_amount, r.see_cost, r.own_customers_only, r.updated_by, r.updated_at,
       (SELECT COUNT(*) FROM admin_users a WHERE a.role_id = r.role_id AND a.is_active = 1) AS users
-      FROM roles r ORDER BY r.is_builtin DESC, r.role_id`);
+      FROM roles r ORDER BY r.is_builtin DESC, FIELD(r.role_id, 8, 1, 2), r.role_id`); // Super admin, Admin, Sub-admin, then the others
   const out = [];
-  for (const r of roles) out.push({ ...r, is_builtin: Number(r.is_builtin) === 1, users: Number(r.users), perms: await roleGrid(db, r) });
+  for (const r of roles) {
+    const builtin = Number(r.is_builtin) === 1;
+    const top = permissions.isAdminRole(r.role_id);
+    const limit = top ? { kind: 'any', amount: null } : { kind: r.limit_kind, amount: r.limit_amount === null ? null : Number(r.limit_amount) };
+    // what this person may change on it: '' = everything they could give; else why not (shown on the role)
+    const lock = Number(r.role_id) === Number(req.admin.role_id) ? 'Nobody changes a role they hold, so nobody can raise their own limit or rights. Ask an Admin.'
+      : top ? `${r.name} has every right, always: it never changes.`
+        : Number(r.role_id) === permissions.SUBADMIN_ROLE_ID && !req.admin.is_admin ? 'Only an Admin can change the Sub-admin role.' : '';
+    out.push({ ...r, is_builtin: builtin, users: Number(r.users), perms: await roleGrid(db, r), limit, limit_text: approvalEngine.limitText(limit),
+      see_cost: builtin || Number(r.see_cost) === 1, own_customers_only: !builtin && Number(r.own_customers_only) === 1, lock: lock || null,
+      grid_fixed: builtin }); // a built-in grid is fixed in code (Sub-admin: only its limit can change)
+  }
   return { roles: out, sections: permissions.SECTIONS, actions: permissions.ACTIONS, viewOnly: permissions.VIEW_ONLY };
 });
 
@@ -3023,25 +3138,39 @@ route('post', '/roles', 'users:create', async (req) => tx(async (q) => {
   const [[dup]] = await q.query('SELECT role_id FROM roles WHERE name = ?', [name]);
   if (dup) throw new InputError(`A role called ${name} exists already`, 409);
   const grid = cleanGrid(req.body.perms);
-  const [ins] = await q.query('INSERT INTO roles (name, description, is_builtin, created_by) VALUES (?, ?, 0, ?)', [name, String(req.body.description || '').trim().slice(0, 255) || null, by(req)]);
+  const extras = roleExtras(req.body, null);
+  roleWithinMe(req, grid, extras);
+  const [ins] = await q.query('INSERT INTO roles (name, description, limit_kind, limit_amount, see_cost, own_customers_only, is_builtin, created_by) VALUES (?, ?, ?, ?, ?, ?, 0, ?)',
+    [name, String(req.body.description || '').trim().slice(0, 255) || null, extras.limit_kind, extras.limit_amount, extras.see_cost, extras.own_customers_only, by(req)]);
   await saveGrid(q, ins.insertId, grid);
-  await audit(q, { empId: by(req), action: 'create', entity: 'role', entityId: String(ins.insertId), after: { name, perms: grid } });
+  await audit(q, { empId: by(req), action: 'create', entity: 'role', entityId: String(ins.insertId), after: { name, perms: grid, ...extras } });
   return { role_id: ins.insertId, name };
 }), { status: 201 });
 
 route('put', '/roles/:id', 'users:edit', async (req) => tx(async (q) => {
-  const [[role]] = await q.query('SELECT role_id, name, description, is_builtin FROM roles WHERE role_id = ? FOR UPDATE', [Number(req.params.id)]);
+  const [[role]] = await q.query('SELECT role_id, name, description, is_builtin, limit_kind, limit_amount, see_cost, own_customers_only FROM roles WHERE role_id = ? FOR UPDATE', [Number(req.params.id)]);
   if (!role) throw new InputError('No such role', 404);
-  if (Number(role.is_builtin)) throw new InputError(`${role.name} is built in and cannot be changed`, 409);
+  if (Number(role.role_id) === Number(req.admin.role_id)) throw new InputError('Nobody changes a role they hold, so nobody can raise their own limit or rights. Ask an Admin.', 403);
+  if (permissions.isAdminRole(role.role_id)) throw new InputError(`${role.name} is built in and cannot be changed`, 409);
+  const sub = Number(role.role_id) === permissions.SUBADMIN_ROLE_ID;
+  if (sub && !req.admin.is_admin) throw new InputError('Only an Admin can change the Sub-admin role.', 403);
+  if (Number(role.is_builtin) && !sub) throw new InputError(`${role.name} is built in and cannot be changed`, 409);
+  // Sub-admin: built in, only its default limit changes (its rights are fixed in code)
+  if (sub && ['name', 'description', 'perms', 'see_cost', 'own_customers_only'].some((k) => k in req.body)) throw new InputError('Sub-admin is built in: only its default limit can change', 409);
   const name = 'name' in req.body ? roleName(req.body.name) : role.name;
   const [[dup]] = await q.query('SELECT role_id FROM roles WHERE name = ? AND role_id <> ?', [name, role.role_id]);
   if (dup) throw new InputError(`A role called ${name} exists already`, 409);
   const beforeGrid = await roleGrid(q, role);
   const grid = 'perms' in req.body ? cleanGrid(req.body.perms) : beforeGrid;
+  const extras = roleExtras(req.body, role);
+  roleWithinMe(req, sub ? {} : grid, extras);
   const description = 'description' in req.body ? String(req.body.description || '').trim().slice(0, 255) || null : role.description;
-  await q.query('UPDATE roles SET name = ?, description = ?, updated_by = ?, updated_at = UTC_TIMESTAMP() WHERE role_id = ?', [name, description, by(req), role.role_id]);
-  await saveGrid(q, role.role_id, grid);
-  await audit(q, { empId: by(req), action: 'update', entity: 'role', entityId: String(role.role_id), before: { name: role.name, description: role.description, perms: beforeGrid }, after: { name, description, perms: grid } });
+  await q.query('UPDATE roles SET name = ?, description = ?, limit_kind = ?, limit_amount = ?, see_cost = ?, own_customers_only = ?, updated_by = ?, updated_at = UTC_TIMESTAMP() WHERE role_id = ?',
+    [name, description, extras.limit_kind, extras.limit_amount, extras.see_cost, extras.own_customers_only, by(req), role.role_id]);
+  if (!sub) await saveGrid(q, role.role_id, grid);
+  const beforeExtras = { limit_kind: role.limit_kind, limit_amount: role.limit_amount === null ? null : Number(role.limit_amount), see_cost: Number(role.see_cost), own_customers_only: Number(role.own_customers_only) };
+  await audit(q, { empId: by(req), action: 'update', entity: 'role', entityId: String(role.role_id), before: { name: role.name, description: role.description, perms: beforeGrid, ...beforeExtras },
+    after: { name, description, perms: grid, ...extras } });
   return { role_id: role.role_id, name };
 }));
 
@@ -3058,13 +3187,14 @@ route('delete', '/roles/:id', 'users:delete', async (req) => tx(async (q) => {
 }));
 
 // ---------------------------------------------------------------------------------------------
-// Approvals (docs/COMMERCE-SPEC.md 2; logic in approvals.js). Open to every signed-in user: the queue only lists what
-// the user may see, and approvals.decide checks approver role, "approve" on the section and "not your own request".
+// Approvals (docs/COMMERCE-SPEC.md 2; logic in approvals.js, approval-engine.js). Open to every signed-in user: the
+// queue only lists what the user may see (their godowns, the header picker), and approvals.decide checks the ladder
+// (Approve on the section, the godown, the limit, not their own request, not on leave, or as someone's stand-in).
 // ---------------------------------------------------------------------------------------------
 const asApproval = (e) => (e instanceof approvals.ApprovalError ? new InputError(e.message, e.status) : e);
 route('get', '/approvals', 'any', async (req) => {
   const status = ['pending', 'decided', 'mine'].includes(req.query.status) ? req.query.status : 'pending';
-  return { rows: await approvals.list(req.admin, status), kinds: approvals.KINDS };
+  return { rows: await approvals.list(req, status), kinds: approvals.KINDS };
 });
 route('post', '/approvals/:id/decide', 'any', async (req) => {
   try { return await tx((q) => approvals.decide(q, Number(req.params.id), req.body.decision, req.body.note, req.admin)); } catch (e) { throw asApproval(e); }
@@ -3072,6 +3202,10 @@ route('post', '/approvals/:id/decide', 'any', async (req) => {
 route('post', '/approvals/:id/withdraw', 'any', async (req) => {
   try { return await tx((q) => approvals.withdraw(q, Number(req.params.id), req.admin)); } catch (e) { throw asApproval(e); }
 });
+
+// Foundation (phase 12a): godowns, staff, approval rules, stand-ins - in foundation.js, on the same route helper (before
+// the error handler below, so their messages reach the screen, and inside the start-up check of every declaration)
+foundation.register({ route, tx, db, by, InputError, canDo });
 
 // ---------------------------------------------------------------------------------------------
 // Notifications (docs/COMMERCE-SPEC.md 5.5f; notifications.js). Settings section (Setup > Notifications): view = events,
@@ -3277,7 +3411,7 @@ route('delete', '/commerce-settings/lists/:list/:id', 'settings:delete', async (
 }));
 
 router.use('/admin', (err, req, res, next) => { // eslint-disable-line no-unused-vars
-  if (err instanceof InputError || err instanceof media.UploadError) {
+  if (err instanceof InputError || err instanceof media.UploadError || err instanceof godowns.GodownError) {
     return res.status(err.status).json({ success: false, message: err.message, ...(err.code ? { code: err.code } : {}), ...(err.fields ? { fields: err.fields } : {}) });
   }
   if (err instanceof multer.MulterError) {

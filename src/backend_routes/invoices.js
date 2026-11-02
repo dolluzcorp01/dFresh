@@ -17,7 +17,7 @@ class InvoiceError extends Error {
 /** issue the invoice of an order (q inside a transaction) -> { invoice_id, invoice_no } */
 async function issue(q, orderId, empId, { at = null } = {}) {
   const [[o]] = await q.query(
-    `SELECT order_id, order_no, status, payment_terms, credit_days, place_of_supply, gst_type, taxable, delivery_charge, delivery_gst, cgst, sgst, igst, round_off, total,
+    `SELECT order_id, order_no, godown_id, status, payment_terms, credit_days, place_of_supply, gst_type, taxable, delivery_charge, delivery_gst, cgst, sgst, igst, round_off, total,
             bill_name, bill_gstin, bill_address, bill_town, bill_state_code, bill_pincode, bill_phone,
             ship_name, ship_address, ship_town, ship_state_code, ship_pincode, ship_phone
        FROM orders WHERE order_id = ? FOR UPDATE`, [orderId]
@@ -28,8 +28,9 @@ async function issue(q, orderId, empId, { at = null } = {}) {
   const cs = await commerceSettings.read(q);
   const when = at ? new Date(at) : new Date();
   const fy = numbering.fyOf(when);
-  const seq = await numbering.next(q, `${cs.invoice_prefix}-${fy.fy}`, cs.invoice_start_no || 1);
-  const invoiceNo = `${cs.invoice_prefix}/${fy.short}/${numbering.pad(seq)}`;
+  const g = await numbering.godownSegment(q, o.godown_id);
+  const seq = await numbering.next(q, `${cs.invoice_prefix}-${g.key}${fy.fy}`, g.key ? 1 : cs.invoice_start_no || 1);
+  const invoiceNo = `${cs.invoice_prefix}/${g.seg}${fy.short}/${numbering.pad(seq)}`;
   const day = numbering.istParts(when).ymd;
   const dueDays = o.payment_terms === 'credit' ? Number(o.credit_days) || 0 : 0;
   const buyer = {
@@ -49,6 +50,12 @@ async function issue(q, orderId, empId, { at = null } = {}) {
   return { invoice_id: ins.insertId, invoice_no: invoiceNo };
 }
 
+/** the godown of an invoice (its order's): credit notes are numbered per godown like invoices */
+async function godownOfInvoice(q, invoiceId) {
+  const [[r]] = await q.query('SELECT o.godown_id FROM invoices i JOIN orders o ON o.order_id = i.order_id WHERE i.invoice_id = ?', [invoiceId]);
+  return r.godown_id;
+}
+
 /** cancel the live invoice of an order and issue its credit note -> { invoice_no, credit_note_no } | null (none) */
 async function cancelForOrder(q, orderId, reason, empId) {
   const [[inv]] = await q.query('SELECT invoice_id, invoice_no, taxable, cgst, sgst, igst, round_off, total FROM invoices WHERE live_order_id = ? FOR UPDATE', [orderId]);
@@ -58,8 +65,9 @@ async function cancelForOrder(q, orderId, reason, empId) {
     [why, empId, inv.invoice_id]);
   const cs = await commerceSettings.read(q);
   const fy = numbering.fyOf(new Date());
-  const seq = await numbering.next(q, `${cs.credit_note_prefix}-${fy.fy}`, 1);
-  const cnNo = `${cs.credit_note_prefix}/${fy.short}/${numbering.pad(seq)}`;
+  const g = await numbering.godownSegment(q, await godownOfInvoice(q, inv.invoice_id));
+  const seq = await numbering.next(q, `${cs.credit_note_prefix}-${g.key}${fy.fy}`, 1);
+  const cnNo = `${cs.credit_note_prefix}/${g.seg}${fy.short}/${numbering.pad(seq)}`;
   await q.query(
     `INSERT INTO credit_notes (credit_note_no, fy, seq, invoice_id, reason, taxable, cgst, sgst, igst, round_off, total, issued_at, emp_id)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(), ?)`,
@@ -100,8 +108,9 @@ async function creditNoteForReturn(q, orderId, lines, reason, returnId, empId) {
   const ro = cs.invoice_round_off ? r2(Math.round(before) - before) : 0;
   const total = r2(before + ro);
   const fy = numbering.fyOf(new Date());
-  const seq = await numbering.next(q, `${cs.credit_note_prefix}-${fy.fy}`, 1);
-  const cnNo = `${cs.credit_note_prefix}/${fy.short}/${numbering.pad(seq)}`;
+  const g = await numbering.godownSegment(q, await godownOfInvoice(q, inv.invoice_id));
+  const seq = await numbering.next(q, `${cs.credit_note_prefix}-${g.key}${fy.fy}`, 1);
+  const cnNo = `${cs.credit_note_prefix}/${g.seg}${fy.short}/${numbering.pad(seq)}`;
   const why = String(reason || '').trim().slice(0, 255) || 'Goods returned';
   const [ins] = await q.query(
     `INSERT INTO credit_notes (credit_note_no, fy, seq, invoice_id, return_id, reason, taxable, cgst, sgst, igst, round_off, total, issued_at, emp_id)

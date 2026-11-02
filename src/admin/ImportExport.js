@@ -12,6 +12,7 @@ const langOf = (field) => { const m = /_([A-Z]{2,3})$/.exec(field || ''); return
 
 export default function ImportExport() {
   const isAdmin = useCan('products', 'edit'); // import
+  const canExport = useCan('products', 'export');
   const act = useAction();
   const up = useUpload();
   const inputRef = useRef(null);
@@ -64,7 +65,7 @@ export default function ImportExport() {
       <div className="a-card">
         <h2>Export</h2>
         <p>Product List in the v0.2 layout (Products, Categories, UI_Text): one column per language for every text, plus Spec status (internal, the red column).</p>
-        <button type="button" className="a-btn" onClick={exportXlsx} disabled={act.busy}>Download products .xlsx</button>
+        {canExport ? <button type="button" className="a-btn" onClick={exportXlsx} disabled={act.busy}>Download products .xlsx</button> : <p className="a-muted">Downloading needs Export on Products and prices.</p>}
       </div>
       <div className="a-card">
         <h2>Import</h2>
@@ -73,7 +74,7 @@ export default function ImportExport() {
           <Notice kind="ok">
             Applied: {applied.added} added, {applied.changed} changed, {applied.removed} deactivated
             {applied.categories ? `, ${applied.categories} category change(s)` : ''}.{' '}
-            <button type="button" className="a-link" onClick={exportXlsx} disabled={act.busy}>Download the updated list</button>
+            {canExport && <button type="button" className="a-link" onClick={exportXlsx} disabled={act.busy}>Download the updated list</button>}
           </Notice>
         )}
         <div className="a-toolbar">

@@ -81,27 +81,51 @@ async function isRevoked(empId, issuedAtS) {
 }
 
 /**
- * { emp_id, role_id, role_name, perms } for a valid, unrevoked session of an active admin user; else null.
- * The role and its permissions are read on EVERY request, so a change applies to the user's next click.
- * perms = { section: { view, create, edit, approve, delete } } (src/shared/permissions.js; built-in roles from code).
+ * The signed-in person for a valid, unrevoked session of an active admin user; else null. Read on EVERY request, so a
+ * change of role, rights, limit, godowns or leave applies to the person's next click:
+ * { emp_id, role_id, role_name, perms (src/shared/permissions.js; built-in roles from code), is_admin (Super admin or
+ *   Admin), seesCost, ownOnly (own customers only), limit: { kind: none | any | amount, amount } (the personal one, else
+ *   the role's; Super admin and Admin: anything), godowns: 'ALL' | [godown ids], leave: { from, to, standIn, setBy } | null }
  */
 async function readSession(req) {
   const claims = verify(req.cookies && req.cookies[SESSION_COOKIE], 'session');
   if (!claims) return null;
   // the employee must still be active in dAdmin too: someone who left the company loses access at once
   const [[user]] = await db.query(
-    `SELECT a.emp_id, a.role_id, r.name AS role_name, r.is_builtin FROM admin_users a
+    `SELECT a.emp_id, a.role_id, r.name AS role_name, r.is_builtin, r.limit_kind AS role_limit_kind, r.limit_amount AS role_limit_amount,
+            r.see_cost, r.own_customers_only, a.limit_kind, a.limit_amount, a.godowns_all,
+            DATE_FORMAT(a.leave_from, '%Y-%m-%d') AS leave_from, DATE_FORMAT(a.leave_to, '%Y-%m-%d') AS leave_to, a.stand_in, a.leave_set_by
+       FROM admin_users a
        JOIN \`${DADMIN}\`.employee e ON e.emp_id = a.emp_id AND e.deleted_time IS NULL AND e.active = 1
        JOIN roles r ON r.role_id = a.role_id
       WHERE a.emp_id = ? AND a.is_active = 1`, [claims.sub]
   );
   if (!user) return null;
   if (await isRevoked(user.emp_id, claims.iat)) return null;
+  return buildAdmin(db, user);
+}
+
+/** the person object of readSession from their admin_users + roles row (also used by the approval ladder for others) */
+async function buildAdmin(q, user) {
   const builtin = Boolean(permissions.BUILTIN[user.role_id]);
-  const [rows] = builtin ? [[]] : await db.query(
-    'SELECT section, can_view, can_create, can_edit, can_approve, can_delete FROM role_permissions WHERE role_id = ?', [user.role_id]
+  const [rows] = builtin ? [[]] : await q.query(
+    'SELECT section, can_view, can_create, can_edit, can_approve, can_cancel, can_export, can_delete FROM role_permissions WHERE role_id = ?', [user.role_id]
   );
-  return { emp_id: user.emp_id, role_id: user.role_id, role_name: user.role_name, perms: permissions.permsFor(user.role_id, rows) };
+  const isAdmin = permissions.isAdminRole(user.role_id);
+  const roleLimit = isAdmin ? { kind: 'any', amount: null } : { kind: user.role_limit_kind || 'none', amount: user.role_limit_amount === null ? null : Number(user.role_limit_amount) };
+  const own = !isAdmin && user.limit_kind && user.limit_kind !== 'role'
+    ? { kind: user.limit_kind, amount: user.limit_amount === null ? null : Number(user.limit_amount), personal: true } : null;
+  let godowns = 'ALL';
+  if (!Number(user.godowns_all)) {
+    const [g] = await q.query('SELECT godown_id FROM admin_user_godowns WHERE emp_id = ? ORDER BY godown_id', [user.emp_id]);
+    godowns = g.map((x) => Number(x.godown_id));
+  }
+  return {
+    emp_id: user.emp_id, role_id: user.role_id, role_name: user.role_name, perms: permissions.permsFor(user.role_id, rows),
+    is_admin: isAdmin, seesCost: builtin || Number(user.see_cost) === 1, ownOnly: !builtin && Number(user.own_customers_only) === 1,
+    limit: own || roleLimit, roleLimit, godowns,
+    leave: user.leave_from && user.leave_to ? { from: user.leave_from, to: user.leave_to, standIn: user.stand_in || null, setBy: user.leave_set_by || null } : null,
+  };
 }
 
 async function requireAuth(req, res, next) {
@@ -130,5 +154,5 @@ function requirePerm(perm) {
 
 module.exports = {
   APP_KEY, DADMIN,
-  setChallenge, readChallenge, startSession, endSession, readSession, requireAuth, requirePerm,
+  setChallenge, readChallenge, startSession, endSession, readSession, requireAuth, requirePerm, buildAdmin,
 };

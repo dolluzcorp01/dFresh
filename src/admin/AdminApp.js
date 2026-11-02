@@ -10,12 +10,16 @@ import Sidebar, { MenuToggle, saveCollapsed, savedCollapsed, useNarrow } from '.
 import Placeholder from './Placeholder';
 import HeaderBar from './HeaderBar';
 import useLeadPulse from './useLeadPulse';
-import { api } from './adminApi';
+import { api, setGodown } from './adminApi';
+import { savedGodown } from './HeaderBar';
 import { mediaUrl } from '../utils/api';
 import { AdminContext, ConfirmProvider, Need, Notice, ToastProvider, UploadGuard } from './ui';
 import { can } from '../shared/permissions';
 import Roles from './Roles';
 import Approvals from './Approvals';
+import Godowns from './Godowns';
+import ApprovalRules from './ApprovalRules';
+import StandIns from './StandIns';
 import CommerceSettings from './CommerceSettings';
 import Notifications from './Notifications';
 import Login from './Login';
@@ -95,7 +99,7 @@ export default function AdminApp() {
 
   const check = useCallback(() => {
     api.get('/me').then(
-      (data) => { setMe(data); loadLanguages(); },
+      (data) => { setGodown(savedGodown(data)); setMe(data); loadLanguages(); }, // the picked godown before any screen loads
       (err) => { if (err.status === 401) setMe(null); else setError(err.message); }
     );
   }, [loadLanguages]);
@@ -176,6 +180,9 @@ export default function AdminApp() {
             <Route path="users" element={<Need section="users"><Users /></Need>} />
             <Route path="roles" element={<Need section="users"><Roles /></Need>} />
             <Route path="approvals" element={<Approvals onChanged={refreshCounts} />} />
+            <Route path="godowns" element={<Need section="settings" commerce><Godowns /></Need>} />
+            <Route path="approval-rules" element={<Need section="settings" commerce><ApprovalRules /></Need>} />
+            <Route path="stand-ins" element={<Need section="users" commerce><StandIns /></Need>} />
             <Route path="audit" element={<Need section="audit"><AuditLog /></Need>} />
             <Route path="p/*" element={<Placeholder />} />
             <Route path="*" element={<Navigate to="/admin" replace />} />

@@ -185,6 +185,11 @@ const css = `
 .a-ladder { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 13px; color: var(--muted); margin-top: 8px; }
 .a-ladder-who { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border: 1px solid var(--line); border-radius: 999px; color: var(--text); background: var(--surface-2); }
 .a-ladder-who.next { border-color: var(--accent-line); background: var(--accent-soft); font-weight: 600; }
+.a-ladder-why { flex-basis: 100%; font-size: 12.5px; }
+.a-rqc-split { margin: 6px 0 0; }
+/* Staff panel: the godowns a person works at (phase 12a) */
+.adm .a-rules input.a-ruleval { width: 12ch; text-align: right; }
+.a-chkgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px 16px; }
 .a-racts { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; flex-wrap: wrap; }
 .a-rqc-decide { margin-top: 10px; }
 .a-fld { display: flex; flex-direction: column; gap: 6px; }
@@ -849,6 +854,7 @@ td.a-pending { background: #fff8e1; box-shadow: inset 3px 0 0 #e3b44f; }
   .a-tw .a-table td:first-child { min-width: 8em; }
   .a-drawer header .a-pill { display: none; }
   .a-dl div { grid-template-columns: 1fr; gap: 0; }
+  .a-rules td.a-num { white-space: normal; } .a-rules .a-above { white-space: normal; flex-wrap: wrap; } .a-rules .a-numin { width: 60px; } .a-rules tr:not(.a-grp-row) td { padding-left: 10px; padding-right: 10px; }
 }
 @media (prefers-reduced-motion: reduce) { .adm * { transition: none !important; animation: none !important; } }
 /* Setup > Notifications: channels, the template editor with its live preview, the log; the order / customer messages */
@@ -862,6 +868,65 @@ td.a-pending { background: #fff8e1; box-shadow: inset 3px 0 0 #e3b44f; }
 .a-nlog td { overflow-wrap: anywhere; }
 .a-timeline .a-tl-notification { border-color: #2a78d6; }
 @media (max-width: 1100px) { .a-tpl { grid-template-columns: minmax(0, 1fr); } .a-tpl-prev { position: static; } .a-mailprev { height: 520px; } }
+/* Foundation screens (phase 12a, v23 Godowns / Staff / Roles / Approval rules / Stand-ins): the lead line, godown cards,
+   the count line above a list, role cards, the roles grid */
+.a-lead { color: var(--text-2); margin: -4px 0 16px; max-width: 900px; }
+.a-kitgrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--gap); }
+.a-kitcard { padding: 16px; margin: 0; display: flex; flex-direction: column; gap: 10px; }
+.a-kitcard.dim { opacity: .7; }
+.a-kh { display: flex; gap: 12px; align-items: center; }
+.a-kh .a-sp { flex: 1; }
+.a-kh b { display: block; font: 700 16px var(--font-head); }
+.a-kh span.a-kh-sub { display: block; font-size: 13px; color: var(--muted); }
+.a-kh .a-thumb2 { width: 52px; height: 52px; color: var(--text-2); }
+.adm .a-kvs { grid-template-columns: 96px 1fr; font-size: 13.5px; gap: 6px 12px; }
+.adm .a-kvs dd { font-weight: 500; }
+.a-kfoot { display: flex; gap: 6px; flex-wrap: wrap; margin-top: auto; }
+.a-hint-s { font-size: 12.5px; color: var(--muted); margin: 10px 0 0; }
+.a-countline { padding: 10px 16px; font-size: 13.5px; color: var(--muted); border-bottom: 1px solid var(--line); background: var(--surface); }
+.a-countline b { color: var(--text); }
+.a-listcard { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); box-shadow: var(--shadow); margin-bottom: var(--gap); overflow: hidden; }
+.a-listcard .a-tw { border: 0; border-radius: 0; box-shadow: none; margin: 0; }
+.a-person2 { display: flex; align-items: center; gap: 10px; }
+.a-person2 b { display: block; font-weight: 600; line-height: 1.3; }
+.a-person2 small { color: var(--muted); font-size: 12.5px; }
+.a-sub-l { display: block; font-size: 12.5px; color: var(--muted); }
+.a-rolecards { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.adm .a-rolecards button { box-sizing: border-box; cursor: pointer; border: 1px solid var(--line); border-radius: var(--r-sm); padding: 9px 14px; background: var(--surface); min-width: 130px; text-align: left; font: inherit; color: var(--text); }
+.adm .a-rolecards button:hover { border-color: var(--line-2); }
+.adm .a-rolecards button[aria-pressed="true"] { border-color: var(--brand); box-shadow: inset 0 0 0 1px var(--brand); background: var(--accent-soft); }
+.a-rolecards b { display: block; font-size: 14.5px; }
+.a-rolecards small { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
+.a-cardh { display: flex; align-items: center; gap: 10px; padding: 16px 20px; border-bottom: 1px solid var(--line); }
+.adm .a-cardh h2 { font: 700 var(--fs-h2) var(--font-head); margin: 0; flex: 1; }
+.a-cardb { padding: 20px; }
+.a-grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px 18px; }
+.a-rolegrid td, .a-rolegrid th { text-align: center; }
+.a-rolegrid td:first-child, .a-rolegrid th:first-child { text-align: left; }
+.a-rolegrid td.chg { background: var(--warn-bg); }
+.a-rolegrid tbody tr { cursor: default; }
+.a-rolegrid td { height: auto; padding-top: 9px; padding-bottom: 9px; }
+.a-signers { font-size: 13.5px; }
+.a-signers small { color: var(--muted); font-size: 12px; }
+.a-rules td { height: auto; padding-top: 10px; padding-bottom: 10px; }
+.a-rules tr.a-grp-row td { background: var(--surface-2); font-weight: 700; font-size: 12.5px; height: 34px; padding-top: 0; padding-bottom: 0; letter-spacing: .3px; text-transform: uppercase; color: var(--text-2); }
+.a-rules .a-note-l { display: block; font-size: 12.5px; color: var(--muted); font-weight: 400; }
+.a-numin { width: 92px; height: 34px; min-height: 34px; text-align: right; }
+.a-above { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.adm .a-roleedit { padding: 0; overflow: hidden; }
+.a-roleedit .a-field input + input, .a-roleedit .a-field select + input { margin-top: 6px; }
+.a-roleedit .a-tw, .a-roleedit .a-scroll { border-top: 1px solid var(--line); }
+.adm .a-rolepeople { padding: 6px 12px; display: inline-block; margin-bottom: var(--gap); }
+.a-rolepeople summary { cursor: pointer; font-weight: 600; font-size: 14px; }
+.a-rolepeople p { margin: 8px 0 0; font-size: 13.5px; }
+.a-cardh .a-btn { flex: none; }
+.adm .a-listcard .a-card-flush { border: 0; border-radius: 0; box-shadow: none; margin: 0; }
+.a-addstaff { display: grid; gap: 16px; }
+@media (max-width: 900px) {
+  .a-kitgrid { grid-template-columns: minmax(0, 1fr); }
+  .a-grid3 { grid-template-columns: minmax(0, 1fr); }
+  .adm .a-kvs { grid-template-columns: 1fr; gap: 0; } .adm .a-kvs dd { margin-bottom: 6px; }
+}
 `;
 
 export default css;

@@ -59,7 +59,7 @@ export default function Leads() {
   const params = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const setParams = (next) => navigate({ search: next.toString() ? `?${next}` : '' }, { replace: true });
   const { me, languages, leadsVersion } = useAdmin();
-  const canEdit = useCan('leads', 'edit');
+  const canExport = useCan('leads', 'export');
   const query = useMemo(() => {
     const q = new URLSearchParams();
     FILTERS.forEach((k) => params.get(k) && q.set(k, params.get(k)));
@@ -148,8 +148,8 @@ export default function Leads() {
         {CHIPS.filter(([k, v]) => params.get(k) === v).map(([k, , label]) => (
           <button key={k} type="button" className="a-btn a-btn-ghost" onClick={() => setFilter(k, '')} aria-label={`Remove filter: ${label}`}>{label} ×</button>
         ))}
-        {canEdit && <button type="button" className="a-btn" onClick={exportXlsx} disabled={dl.busy}>Export Excel</button>}
-        {canEdit && <button type="button" className="a-btn a-btn-ghost" onClick={exportCsv} disabled={dl.busy}>Export CSV</button>}
+        {canExport && <button type="button" className="a-btn" onClick={exportXlsx} disabled={dl.busy}>Export Excel</button>}
+        {canExport && <button type="button" className="a-btn a-btn-ghost" onClick={exportCsv} disabled={dl.busy}>Export CSV</button>}
       </div>
       {dl.note}
       <Loading state={list}>

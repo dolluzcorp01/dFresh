@@ -6,7 +6,7 @@ paths = the first one the user may open. "(live)" = also shown while Commerce is
 site's screens); every other entry shows only while Commerce is on. A placeholder shows the guide's texts and
 the phase that builds it (gap map build order; Website entries with no screen: phase 24, agreed 2 Nov 2026).
 
-148 menu lines = 13 groups + Online store + 23 sub-groups + 111 pages. Of the 112 entries that open something (pages and Online store), 64 open a screen and 48 the placeholder.
+148 menu lines = 13 groups + Online store + 23 sub-groups + 111 pages. Of the 112 entries that open something (pages and Online store), 65 open a screen and 47 the placeholder.
 
 | Menu page | Opens |
 |---|---|
@@ -106,14 +106,14 @@ the phase that builds it (gap map build order; Website entries with no screen: p
 | Website / Google and sharing | /admin/settings#cs-s-sharing-and-seo (live) |
 | Website / Site settings | /admin/settings (live) |
 | Admin / Organisation / Company | /admin/settings#cs-s-company (live) |
-| Admin / Organisation / Godowns | /admin/commerce-settings#cs-l-locations |
+| Admin / Organisation / Godowns | /admin/godowns |
 | Admin / Organisation / Numbering | /admin/commerce-settings#cs-g-numbering |
 | Admin / Organisation / Financial year lock | placeholder: Not built yet - phase 13 |
 | Admin / Organisation / Print templates | placeholder: Not built yet - phase 13 |
 | Admin / Users and security / Staff | /admin/users (live) |
 | Admin / Users and security / Roles | /admin/roles (live) |
-| Admin / Users and security / Approval rules | /admin/commerce-settings#cs-g-approvals |
-| Admin / Users and security / Stand-ins | placeholder: Not built yet - phase 13 |
+| Admin / Users and security / Approval rules | /admin/approval-rules |
+| Admin / Users and security / Stand-ins | /admin/stand-ins |
 | Admin / Users and security / Audit log | /admin/audit (live) |
 | Admin / Devices / Label printer | placeholder: Not built yet - phase 13 |
 | Admin / Devices / Scanner | placeholder: Not built yet - phase 13 |

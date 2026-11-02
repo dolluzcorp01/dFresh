@@ -1,13 +1,15 @@
 // Roles and permissions (docs/COMMERCE-SPEC.md section 1), shared by the API (route guards, roles screen data) and
 // the admin (menus, buttons). CommonJS: the server requires it, the admin imports it.
-// A role is a grid of SECTIONS x ACTIONS. Built-in roles are defined HERE and are not editable: Admin (everything),
-// Sub-admin (everything except Roles and users and Settings). Custom roles live in role_permissions.
-const ACTIONS = ['view', 'create', 'edit', 'approve', 'delete'];
+// A role is a grid of SECTIONS x ACTIONS (gap map D5: view, create, edit, approve, cancel, export; delete where it is
+// used). Built-in roles are defined HERE and are not editable: Super admin (the owner) and Admin (everything),
+// Sub-admin (everything except Roles and users and Settings). Custom roles live in role_permissions. Rights that are
+// not a section (See cost, Own customers only) and the approval limit are columns of the role (roles table).
+const ACTIONS = ['view', 'create', 'edit', 'approve', 'cancel', 'export', 'delete'];
 
 // key, label, commerce (hidden and 404 while Settings commerce_enabled is off), what it covers (Roles screen help)
 const SECTIONS = [
-  { key: 'leads', label: 'Leads', covers: 'Leads list, drawer, status and notes, exports (export needs edit)' },
-  { key: 'orders', label: 'Orders', commerce: true, covers: 'Orders, New order, edit, cancel, invoice, payments' },
+  { key: 'leads', label: 'Leads', covers: 'Leads list, drawer, status and notes, exports (Export)' },
+  { key: 'orders', label: 'Orders', commerce: true, covers: 'Orders, New order, edit, cancel (Cancel), invoice, payments, Excel (Export)' },
   { key: 'packing', label: 'Packing', commerce: true, covers: 'Packing queue, pick list, scan-to-pack' },
   { key: 'delivery', label: 'Delivery', commerce: true, covers: 'Dispatch, delivery runs, proof of delivery' },
   { key: 'inventory', label: 'Inventory', commerce: true, covers: 'Stock, movements, adjustments, write-off, SKUs and labels' },
@@ -26,14 +28,16 @@ const VIEW_ONLY = ['audit']; // sections where only "view" means anything
 
 const ADMIN_ROLE_ID = 1;
 const SUBADMIN_ROLE_ID = 2;
+const SUPERADMIN_ROLE_ID = 8;
 const BUILTIN = {
+  [SUPERADMIN_ROLE_ID]: { name: 'Super admin', description: 'The owner. Everything, everywhere. Cannot be changed.', grants: () => true },
   [ADMIN_ROLE_ID]: { name: 'Admin', description: 'Everything, in every section.', grants: () => true },
   [SUBADMIN_ROLE_ID]: { name: 'Sub-admin', description: 'Everything except Roles and users and Settings.', grants: (section) => !['users', 'settings'].includes(section) },
 };
 
 const empty = () => Object.fromEntries(ACTIONS.map((a) => [a, false]));
 
-/** { section: { view, create, edit, approve, delete } } for a built-in role, or from role_permissions rows. */
+/** { section: { view, create, edit, approve, cancel, export, delete } } for a built-in role, or from role_permissions rows. */
 function permsFor(roleId, rows = []) {
   const out = {};
   const builtin = BUILTIN[roleId];
@@ -47,7 +51,7 @@ function permsFor(roleId, rows = []) {
     for (const r of rows) {
       if (!out[r.section]) continue;
       for (const a of ACTIONS) out[r.section][a] = Boolean(Number(r[`can_${a}`]));
-      // create / edit / approve / delete imply view
+      // every other action implies view
       if (ACTIONS.slice(1).some((a) => out[r.section][a])) out[r.section].view = true;
     }
   }
@@ -63,5 +67,7 @@ function parsePerm(perm) {
 }
 
 const can = (perms, section, action = 'view') => Boolean(perms && perms[section] && perms[section][action]);
+/** Super admin or Admin (every right, always; they sign anything) */
+const isAdminRole = (roleId) => Number(roleId) === SUPERADMIN_ROLE_ID || Number(roleId) === ADMIN_ROLE_ID;
 
-module.exports = { ACTIONS, SECTIONS, SECTION_KEYS, VIEW_ONLY, ADMIN_ROLE_ID, SUBADMIN_ROLE_ID, BUILTIN, permsFor, parsePerm, can };
+module.exports = { ACTIONS, SECTIONS, SECTION_KEYS, VIEW_ONLY, ADMIN_ROLE_ID, SUBADMIN_ROLE_ID, SUPERADMIN_ROLE_ID, BUILTIN, permsFor, parsePerm, can, isAdminRole };

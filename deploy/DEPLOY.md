@@ -165,7 +165,7 @@ for f in $(ls database/migrations/*.sql | sort); do
   echo "== $f"; sudo mysql --default-character-set=utf8mb4 dfresh < "$f" || { echo "FAILED: $f"; break; }
 done
 ```
-The 40 migrations, in the order they must run (tick each; a later update applies only the new ones):
+The 44 migrations, in the order they must run (tick each; a later update applies only the new ones):
 
 - [ ] `20261009_phase3_home_ui_text.sql`
 - [ ] `20261009_phase4_products_ui_text.sql`
@@ -217,13 +217,27 @@ The 40 migrations, in the order they must run (tick each; a later update applies
 - [ ] `20261021_commerce_10_promotions_wallet.sql` - coupons, offers, cashback rules, the wallet (all empty)
 - [ ] `20261021_commerce_11_notifications.sql` - notification templates (EN for every event, TA / HI for the customer
       events, marked "check the wording"), notification log, daily job runs; mail outbox gets `attachments`
+- [ ] `20261102_stage2_12a_01_godowns.sql` - (Stage 2) the stock location becomes the godown table: code (location 1
+      = Kanchipuram, code K, keeps today's document numbers), state, GSTIN, person in charge, phone; every customer,
+      order, return, stock-in, write-off, count, trip and approval gets its godown (today's rows: Kanchipuram)
+- [ ] `20261102_stage2_12a_02_shelves.sql` - stock kinds become shelves: good, hold, dmg, ret, rej, disp (returned ->
+      ret, damaged -> dmg, expired -> ret: expiry is the batch's date); no quantity changes
+- [ ] `20261102_stage2_12a_03_rights_staff.sql` - Cancel and Export rights (each role keeps what it could do), role
+      limits, See cost and Own customers only on the role (the two Commerce settings go), the Super admin role (8) for
+      DZIND002, per person: limit, godowns (today's users: every godown), leave and stand-in
+- [ ] `20261102_stage2_12a_04_approval_rules.sql` - approval rules in one table (the 17 kinds from today's settings,
+      which go, plus three locked rules), "Days that count together" (split_days, 3), per request: godown, target,
+      record date, excluded signers, who a stand-in signed for
 
 The 11 commerce files replace the 12 of the commerce branch's phases (consolidated on 21 Oct 2026, never applied on
 any database but the `dfresh_commerce` demo): each table in its final shape, no file patches another. Built on a
 copy of the main-state database, they give exactly the schema and defaults of the old set (89 tables, columns, 270
 indexes, 84 foreign keys and every default row compared), plus `trip_stops.otp_fails`.
 
-This exact sequence (schema, seed, 40 migrations) was run on an empty database on 21 Oct 2026 without an error.
+This exact sequence (schema, seed, 40 migrations) was run on an empty database on 21 Oct 2026 without an error; with
+the four Stage 2 files (44) again on 2 Nov 2026 (92 tables, godown K, 20 approval rules, Super admin role 8), and the
+four were also run on a copy of the demo database: every row count and every stock figure per godown, SKU, shelf and
+batch the same before and after.
 `database/demo/` is never applied here: it is demo data for the `dfresh_commerce` copy only.
 
 ```bash

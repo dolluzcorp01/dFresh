@@ -6,7 +6,7 @@
 // 2. Collection: the customer brings it (Collecting at once), a pickup stop on a delivery trip (Collecting when on a
 //    trip; the driver marks it picked up with a photo) or a courier reverse pickup (AWB = Collecting).
 // 3. Receive and inspect at the godown: each pack scanned (SKU, SKU/BATCH, SKU#C: the pack check rules against the
-//    return lines); per line OK -> Returned (R) stock, Damaged -> damaged, Expired -> expired (blocked), Not received;
+//    return lines); per line OK -> Returned (R) shelf, Damaged -> Damaged shelf, Expired -> Returned shelf (its batch is expired: blocked), Not received;
 //    stock movements keep the batch. Inspector, time and notes kept.
 // 4. Decide per line: refund, replacement or no refund. A refund issues the credit note (the invoice's own tax) first,
 //    then: to the wallet, to the original payment (mode and reference typed) or less to pay on an unpaid order. Above
@@ -83,7 +83,7 @@ async function returnable(q, orderId) {
  * -> { return_no, status, outside_window, approval_id }
  */
 async function createReturn(q, orderNo, data, empId) {
-  const [[o]] = await q.query(`SELECT order_id, order_no, status, DATE_FORMAT(CONVERT_TZ(delivered_at, '+00:00', '+05:30'), '%Y-%m-%d') AS delivered_on,
+  const [[o]] = await q.query(`SELECT order_id, order_no, customer_id, godown_id, status, DATE_FORMAT(CONVERT_TZ(delivered_at, '+00:00', '+05:30'), '%Y-%m-%d') AS delivered_on,
       DATEDIFF(${IST_TODAY}, DATE(CONVERT_TZ(delivered_at, '+00:00', '+05:30'))) AS days FROM orders WHERE order_no = ? FOR UPDATE`, [orderNo]);
   if (!o) throw new ReturnError(`No order ${orderNo}`, 404);
   if (o.status !== 'delivered') throw new ReturnError(`${orderNo} is ${commerce.STATUS_LABEL[o.status]}: only a delivered order can be returned`, 409);
@@ -111,15 +111,15 @@ async function createReturn(q, orderNo, data, empId) {
   const returnNo = `${s.return_prefix}-${yy}${numbering.pad(await numbering.next(q, `${s.return_prefix}-${yy}`, 1))}`;
   const status = !outside && data.collection === 'bring' ? 'collecting' : 'requested';
   const [ins] = await q.query(
-    `INSERT INTO returns (return_no, order_id, status, reason_id, reason_note, delivered_on, window_days, outside_window, collection, requested_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [returnNo, o.order_id, status, reason.reason_id, String(data.reason_note || '').trim().slice(0, 255) || null, o.delivered_on, windowDays, outside ? 1 : 0, data.collection, empId]);
+    `INSERT INTO returns (return_no, order_id, godown_id, status, reason_id, reason_note, delivered_on, window_days, outside_window, collection, requested_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [returnNo, o.order_id, o.godown_id, status, reason.reason_id, String(data.reason_note || '').trim().slice(0, 255) || null, o.delivered_on, windowDays, outside ? 1 : 0, data.collection, empId]);
   for (const l of lines) await q.query('INSERT INTO return_items (return_id, sku_code, batch_id, qty) VALUES (?, ?, ?, ?)', [ins.insertId, l.sku_code, l.batch_id, l.qty]);
   await history(q, ins.insertId, 'requested', `${reason.label}; ${COLLECTION[data.collection]}${outside ? `; ${o.days} days after delivery (window ${windowDays})` : ''}`, empId);
   let approvalId = null;
   if (outside) {
     const [[c]] = await q.query('SELECT name FROM customers c JOIN orders o ON o.customer_id = c.customer_id WHERE o.order_id = ?', [o.order_id]);
-    approvalId = await approvals.request(q, { kind: 'return_window', refType: 'return', refId: returnNo,
+    approvalId = await approvals.request(q, { kind: 'return_window', godownId: o.godown_id, target: `cust:${o.customer_id}`, refType: 'return', refId: returnNo,
       summary: `${returnNo} on ${orderNo} (${c.name}): ${o.days} days after delivery, the window is ${windowDays} days - ${lines.map((l) => `${l.qty} x ${l.sku_code}`).join(', ')}`,
       payload: { return_no: returnNo } }, empId);
   }
@@ -177,13 +177,14 @@ async function pickupFailed(q, returnNo, tripId, reason, empId) {
 }
 
 /** the Operations cards: returns to collect (no window approval pending, not picked up) and to inspect */
-async function opsCounts(q) {
+async function opsCounts(q, scope = null) {
+  const g = scope === null ? ['1 = 1', []] : [scope.length ? 'r.godown_id IN (?)' : '1 = 0', scope.length ? [scope] : []];
   const [[r]] = await q.query(
     `SELECT SUM(r.status IN ('requested', 'collecting') AND r.picked_up_at IS NULL
                 AND NOT EXISTS (SELECT 1 FROM approvals a WHERE a.ref_type = 'return' AND a.ref_id = r.return_no AND a.kind = 'return_window' AND a.status = 'pending')) AS to_collect,
             SUM(r.status = 'received' OR (r.status = 'collecting' AND r.picked_up_at IS NOT NULL)) AS to_inspect,
             SUM(r.status = 'inspected') AS to_decide
-       FROM returns r WHERE r.status IN ('requested', 'collecting', 'received', 'inspected')`);
+       FROM returns r WHERE r.status IN ('requested', 'collecting', 'received', 'inspected') AND ${g[0]}`, g[1]);
   return { returnsToCollect: Number(r.to_collect) || 0, returnsToInspect: Number(r.to_inspect) || 0, returnsToDecide: Number(r.to_decide) || 0 };
 }
 
@@ -253,10 +254,11 @@ async function inspect(q, returnNo, b, empId) {
   const note = String(b.note || '').trim().slice(0, 255) || null;
   for (const x of plan) {
     await q.query('UPDATE return_items SET qty_ok = ?, qty_damaged = ?, qty_expired = ?, qty_missing = ? WHERE line_id = ?', [x.ok, x.damaged, x.expired, x.missing, x.l.line_id]);
-    for (const [kind, n] of [['returned', x.ok], ['damaged', x.damaged], ['expired', x.expired]]) {
+    // shelves (phase 12a): OK -> Returned (ret), damaged -> Damaged (dmg), expired -> Returned too (its batch has
+    // expired, so it stays blocked there until written off)
+    for (const [shelf, n, label] of [['ret', x.ok, 'OK -> Returned (R)'], ['dmg', x.damaged, 'damaged'], ['ret', x.expired, 'expired (blocked)']]) {
       if (!n) continue;
-      await q.query(`INSERT INTO stock_movements (sku_code, stock_kind, move_type, delta, batch_id, ref_type, ref_id, note, emp_id) VALUES (?, ?, 'return', ?, ?, 'return', ?, ?, ?)`,
-        [x.l.sku_code, kind, n, x.l.batch_id, returnNo, `${returnNo} inspected: ${kind === 'returned' ? 'OK -> Returned (R)' : kind === 'damaged' ? 'damaged' : 'expired (blocked)'}`, empId]);
+      await stock.moveStock(q, { sku: x.l.sku_code, godown: r.godown_id, shelf, qty: n, batch: x.l.batch_id, what: 'return', doc: { type: 'return', id: returnNo }, note: `${returnNo} inspected: ${label}` }, empId);
     }
   }
   await setStatus(q, r, 'inspected', empId, `${plan.map((x) => `${x.l.sku_code}${x.l.batch_no ? `/${x.l.batch_no}` : ''}: ${x.ok} OK, ${x.damaged} damaged, ${x.expired} expired, ${x.missing} not received`).join('; ')}${note ? ` - ${note}` : ''}`,
@@ -310,12 +312,16 @@ async function decide(q, returnNo, b, empId) {
     const [ins] = await q.query('INSERT INTO refunds (return_id, order_id, method, mode, reference, amount, status, emp_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
       [r.return_id, r.order_id, method, mode, reference, amount, 'approval', empId]);
     refund = { refund_id: ins.insertId, amount, method };
-    if (await approvals.needed(q, 'refund', { amount })) {
-      const id = await approvals.request(q, { kind: 'refund', refType: 'return', refId: returnNo, summary: `${returnNo}: refund Rs ${amount.toFixed(2)} (${METHODS[method].toLowerCase()}) for ${refundLines.map((x) => `${x.qty} x ${x.sku_code}`).join(', ')}`,
+    const target = `cust:${r.customer_id}`;
+    if (await approvals.needed(q, 'refund', { amount, target })) {
+      const id = await approvals.request(q, { kind: 'refund', godownId: r.godown_id, target, refType: 'return', refId: returnNo, summary: `${returnNo}: refund Rs ${amount.toFixed(2)} (${METHODS[method].toLowerCase()}) for ${refundLines.map((x) => `${x.qty} x ${x.sku_code}`).join(', ')}`,
         amount, payload: { return_no: returnNo, refund_id: ins.insertId, lines: refundLines } }, empId);
       await q.query('UPDATE refunds SET approval_id = ? WHERE refund_id = ?', [id, ins.insertId]);
       pending.push('refund');
-    } else await payRefund(q, ins.insertId, empId);
+    } else {
+      await payRefund(q, ins.insertId, empId);
+      await approvals.direct(q, 'refund', { amount, target }, empId);
+    }
   }
   if (replaceLines.length) {
     for (const x of replaceLines) await q.query('UPDATE return_items SET replace_qty = COALESCE(replace_qty, 0) + ? WHERE line_id = ?', [x.qty, x.line_id]);
@@ -336,7 +342,7 @@ async function decide(q, returnNo, b, empId) {
     for (const x of noneLines) await q.query('UPDATE return_items SET none_qty = COALESCE(none_qty, 0) + ? WHERE line_id = ?', [x.qty, x.line_id]);
     await q.query('UPDATE returns SET no_refund_reason = ? WHERE return_id = ?', [why, r.return_id]);
     if (await approvals.needed(q, 'no_refund', {})) {
-      await approvals.request(q, { kind: 'no_refund', refType: 'return', refId: returnNo, summary: `${returnNo}: no refund for ${noneLines.map((x) => `${x.qty} x ${x.sku_code}`).join(', ')} - ${why}`, payload: { return_no: returnNo, lines: noneLines } }, empId);
+      await approvals.request(q, { kind: 'no_refund', godownId: r.godown_id, target: `cust:${r.customer_id}`, refType: 'return', refId: returnNo, summary: `${returnNo}: no refund for ${noneLines.map((x) => `${x.qty} x ${x.sku_code}`).join(', ')} - ${why}`, payload: { return_no: returnNo, lines: noneLines } }, empId);
       pending.push('no_refund');
     } else await history(q, r.return_id, 'no_refund', why, empId);
   }
@@ -446,24 +452,37 @@ async function recheckRequest(q, b, empId) {
   const sku = String(b.sku_code || '').trim().toUpperCase();
   const qty = Number(b.qty);
   const batchId = b.batch_id ? Number(b.batch_id) : null;
+  const godown = Number(b.godown_id);
+  if (!godown) throw new ReturnError('Choose the godown');
   if (!Number.isInteger(qty) || qty < 1) throw new ReturnError('Packs: a whole number from 1');
-  const [[st]] = await q.query(`SELECT COALESCE(SUM(delta), 0) AS n FROM stock_movements WHERE sku_code = ? AND stock_kind = 'returned' AND ${batchId ? 'batch_id = ?' : 'batch_id IS NULL'}`, batchId ? [sku, batchId] : [sku]);
-  if (Number(st.n) < qty) throw new ReturnError(`Only ${Number(st.n)} packs of ${sku} in Returned (R)${batchId ? ' for that batch' : ' without a batch'}`);
-  const [[bn]] = batchId ? await q.query('SELECT batch_no FROM batches WHERE batch_id = ?', [batchId]) : [[{}]];
+  const there = await retThere(q, sku, godown, batchId);
+  if (there < qty) throw new ReturnError(`Only ${there} packs of ${sku} in Returned (R)${batchId ? ' for that batch' : ' without a batch'} at this godown`);
+  const [[bn]] = batchId ? await q.query(`SELECT batch_no, (expiry_date < ${IST_TODAY}) AS expired FROM batches WHERE batch_id = ?`, [batchId]) : [[{}]];
+  if (Number(bn.expired) === 1) throw new ReturnError(`${sku} batch ${bn.batch_no} has expired: it cannot go back to good stock`, 409);
   const note = String(b.note || '').trim().slice(0, 200);
   if (!note) throw new ReturnError('What did the recheck find? (e.g. sealed, clean, sellable)');
-  const id = await approvals.request(q, { kind: 'restock', refType: 'stock', refId: sku, summary: `Recheck: ${qty} packs of ${sku}${bn.batch_no ? ` batch ${bn.batch_no}` : ''} from Returned (R) back to good stock - ${note}`,
-    payload: { sku_code: sku, batch_id: batchId, qty, note } }, empId);
-  await audit(q, { empId, action: 'recheck_request', entity: 'stock', entityId: sku, after: { qty, batch_id: batchId, note, approval: id } });
+  const id = await approvals.request(q, { kind: 'restock', godownId: godown, refType: 'stock', refId: sku, summary: `Recheck: ${qty} packs of ${sku}${bn.batch_no ? ` batch ${bn.batch_no}` : ''} from Returned (R) back to good stock - ${note}`,
+    payload: { sku_code: sku, godown_id: godown, batch_id: batchId, qty, note } }, empId);
+  await audit(q, { empId, action: 'recheck_request', entity: 'stock', entityId: sku, after: { godown, qty, batch_id: batchId, note, approval: id } });
   return { approval_id: id };
 }
+/** packs of a SKU on the Returned shelf of a godown: of one batch, or (no batch) those without a batch */
+async function retThere(q, sku, godown, batchId) {
+  const [[st]] = await q.query(`SELECT COALESCE(SUM(delta), 0) AS n FROM stock_movements WHERE location_id = ? AND sku_code = ? AND stock_kind = 'ret' AND ${batchId ? 'batch_id = ?' : 'batch_id IS NULL'}`,
+    batchId ? [godown, sku, batchId] : [godown, sku]);
+  return Number(st.n);
+}
+// requests raised before phase 12a carry no godown: they were all at Kanchipuram (godown 1)
+approvals.onRecheck('restock', async (q, p) => {
+  const there = await retThere(q, p.sku_code, p.godown_id || 1, p.batch_id);
+  return there < p.qty ? `only ${there} packs of ${p.sku_code} are left in Returned (R)` : '';
+});
 approvals.onApproved('restock', async (q, p, empId) => {
-  const [[st]] = await q.query(`SELECT COALESCE(SUM(delta), 0) AS n FROM stock_movements WHERE sku_code = ? AND stock_kind = 'returned' AND ${p.batch_id ? 'batch_id = ?' : 'batch_id IS NULL'}`, p.batch_id ? [p.sku_code, p.batch_id] : [p.sku_code]);
-  if (Number(st.n) < p.qty) throw new ReturnError(`Only ${Number(st.n)} packs left in Returned (R): the recheck cannot post`, 409);
-  for (const [kind, d] of [['returned', -p.qty], ['good', p.qty]]) {
-    await q.query("INSERT INTO stock_movements (sku_code, stock_kind, move_type, delta, batch_id, ref_type, note, emp_id) VALUES (?, ?, 'recheck', ?, ?, 'recheck', ?, ?)", [p.sku_code, kind, d, p.batch_id, `Recheck: ${p.note}`, empId]);
-  }
-  await audit(q, { empId, action: 'recheck', entity: 'stock', entityId: p.sku_code, after: { qty: p.qty, batch_id: p.batch_id } });
+  const godown = p.godown_id || 1;
+  const there = await retThere(q, p.sku_code, godown, p.batch_id);
+  if (there < p.qty) throw new ReturnError(`Only ${there} packs left in Returned (R): the recheck cannot post`, 409);
+  await stock.moveShelf(q, { sku: p.sku_code, godown, from: 'ret', to: 'good', qty: p.qty, batch: p.batch_id, what: 'recheck', doc: { type: 'recheck', id: null }, note: `Recheck: ${p.note}` }, empId);
+  await audit(q, { empId, action: 'recheck', entity: 'stock', entityId: p.sku_code, after: { godown, qty: p.qty, batch_id: p.batch_id } });
 });
 
 module.exports = { STATUS_LABEL, COLLECTION, METHODS, ReturnError, returnable, createReturn, addPhoto, setCourier, onTrip, pickedUp, pickupFailed, opsCounts, receiveState, receiveScan, inspect, decide, leftOf, recheckRequest, finalize };

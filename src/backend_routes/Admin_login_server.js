@@ -311,7 +311,16 @@ router.get('/admin/me', auth.requireAuth, async (req, res) => {
       const [[d]] = await db.query('SELECT driver_id FROM drivers WHERE emp_id = ? AND is_active = 1 LIMIT 1', [req.admin.emp_id]);
       isDriver = Boolean(d);
     } catch { /* table not there yet */ }
-    res.json({ success: true, data: { ...req.admin, name, commerce_enabled: commerceEnabled, is_driver: isDriver } });
+    // phase 12a: the godowns this person works at (the header picker), their limit as text, See cost
+    let godownList = [];
+    try {
+      const [gs] = await db.query('SELECT location_id AS godown_id, code, name, is_active FROM locations ORDER BY sort_order, location_id');
+      godownList = gs.filter((g) => Number(g.is_active) === 1 && (req.admin.godowns === 'ALL' || (req.admin.godowns || []).includes(Number(g.godown_id))))
+        .map((g) => ({ godown_id: g.godown_id, code: g.code, name: g.name }));
+    } catch { /* table not there yet */ }
+    const { limitText } = require('./approval-engine'); // eslint-disable-line global-require
+    res.json({ success: true, data: { ...req.admin, name, commerce_enabled: commerceEnabled, is_driver: isDriver, see_cost: Boolean(req.admin.seesCost),
+      limit_text: limitText(req.admin.limit), godown_list: godownList } });
   } catch (err) {
     console.error('admin me failed:', err.code || err.message);
     res.status(500).json({ success: false, message: 'Server error' });

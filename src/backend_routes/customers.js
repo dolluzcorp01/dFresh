@@ -3,7 +3,7 @@
 // is audited.
 // - CUS-0001 numbers (setting customer_prefix; never DFC, the credit note series). Status: active, on hold (a new order
 //   waits for the customer_hold approval), inactive (no new orders). A sales owner (admin user); with the setting
-//   own_customers_only the listed roles see only their own customers and those customers' orders.
+//   own customers only (a right of the role, Admin > Roles): its people see only their own customers and their orders.
 // - Duplicates: the same mobile (last 10 digits), e-mail or GSTIN (any billing address) as another customer is refused
 //   on create and edit with that customer named; Merge moves everything of one customer to another (approval).
 // - Addresses: billing ones (each with its own GSTIN, which must belong to its state) and shipping ones (contact,
@@ -137,12 +137,15 @@ async function insertAddress(q, customerId, v, isDefault) {
 }
 
 /**
- * data = { name, business_name, type_key, phone, email, source, owner_emp_id, bill: address, ship: address | null (= the
- * billing one), contacts: [contact], tags: [tag], lead_id } -> { customer_id, customer_no, name }
+ * data = { godown_id (resolved by the caller: a godown the person works at), name, business_name, type_key, phone, email,
+ * source, owner_emp_id, bill: address, ship: address | null (= the billing one), contacts: [contact], tags: [tag], lead_id }
+ * -> { customer_id, customer_no, name }
  */
 async function createCustomer(q, data, empId, { allowDuplicate = false } = {}) {
   const core = await checkCore(q, { source: 'Phone', ...data });
   const errors = { ...core.errors };
+  const godown = await checkGodown(q, data.godown_id);
+  if (!godown) errors.godown_id = 'Choose the godown';
   const bill = await checkAddress(q, data.bill || {}, 'billing');
   Object.assign(errors, bill.errors);
   const shipRaw = data.ship && t(data.ship, 'name') ? data.ship : { ...(data.bill || {}), contact_person: (data.bill || {}).contact_person || core.values.name, phone: (data.bill || {}).phone || core.values.phone };
@@ -159,9 +162,9 @@ async function createCustomer(q, data, empId, { allowDuplicate = false } = {}) {
   const [[ct]] = await q.query('SELECT default_credit_days, default_credit_limit FROM customer_types WHERE type_key = ?', [core.values.type_key]);
   const no = `${s.customer_prefix || 'CUS'}-${numbering.pad(await numbering.next(q, s.customer_prefix || 'CUS', 1))}`;
   const v = core.values;
-  const [ins] = await q.query(`INSERT INTO customers (customer_no, name, business_name, type_key, phone, phone_digits, email, source, owner_emp_id, credit_days, credit_limit, lead_id, created_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  [no, v.name, v.business_name, v.type_key, v.phone, v.phone_digits, v.email, v.source, v.owner_emp_id, ct ? ct.default_credit_days : 0, ct ? ct.default_credit_limit : 0, data.lead_id || null, empId]);
+  const [ins] = await q.query(`INSERT INTO customers (customer_no, name, business_name, type_key, godown_id, phone, phone_digits, email, source, owner_emp_id, credit_days, credit_limit, lead_id, created_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  [no, v.name, v.business_name, v.type_key, godown, v.phone, v.phone_digits, v.email, v.source, v.owner_emp_id, ct ? ct.default_credit_days : 0, ct ? ct.default_credit_limit : 0, data.lead_id || null, empId]);
   const id = ins.insertId;
   await insertAddress(q, id, bill.values, true);
   await insertAddress(q, id, ship.values, true);
@@ -185,8 +188,12 @@ const CORE_COLS = ['name', 'business_name', 'type_key', 'phone', 'phone_digits',
 async function updateCore(q, id, raw, empId) {
   const c = await lockCustomer(q, id);
   const { values, errors } = await checkCore(q, raw, { partial: true });
+  if (raw.godown_id !== undefined && raw.godown_id !== null && raw.godown_id !== '') {
+    const g = await checkGodown(q, raw.godown_id);
+    if (!g) errors.godown_id = 'Choose the godown'; else values.godown_id = g;
+  }
   if (Object.keys(errors).length) fail(errors);
-  const changed = Object.fromEntries(Object.entries(values).filter(([k, v]) => CORE_COLS.includes(k) && String(c[k] ?? '') !== String(v ?? '')));
+  const changed = Object.fromEntries(Object.entries(values).filter(([k, v]) => (CORE_COLS.includes(k) || k === 'godown_id') && String(c[k] ?? '') !== String(v ?? '')));
   if (!Object.keys(changed).length) return { customer_id: c.customer_id, changed: 0 };
   const d = await duplicates(q, { phone_digits: changed.phone_digits, email: changed.email }, c.customer_id);
   if (d.length) throw dupError(d);
@@ -204,6 +211,14 @@ async function setStatus(q, id, status, reason, empId) {
   await q.query('UPDATE customers SET status = ?, hold_reason = ?, updated_by = ?, updated_at = UTC_TIMESTAMP() WHERE customer_id = ?', [status, status === 'active' ? null : why, empId, c.customer_id]);
   await audit(q, { empId, action: 'status', entity: 'customer', entityId: c.customer_no, before: { status: c.status }, after: { status, reason: why } });
   return { status };
+}
+
+/** an active godown id, or null (the caller checks the person works there: godowns.resolve / assertWorks) */
+async function checkGodown(q, raw) {
+  const id = Number(raw);
+  if (!Number.isInteger(id) || id < 1) return null;
+  const [[g]] = await q.query('SELECT location_id FROM locations WHERE location_id = ? AND is_active = 1', [id]);
+  return g ? id : null;
 }
 
 /** add (addressId null) or change an address; default = the one orders take first; is_active false = removed */
@@ -336,7 +351,7 @@ async function requestPriceList(q, id, listKey, empId) {
   const [[had]] = await q.query("SELECT approval_id FROM approvals WHERE kind = 'price_list' AND ref_type = 'customer' AND ref_id = ? AND status = 'pending'", [String(c.customer_id)]);
   if (had) throw new CustomerError(`A price list change for ${c.name} already waits for approval (#${had.approval_id})`, 409);
   if (key && await approvals.needed(q, 'price_list')) {
-    const id2 = await approvals.request(q, { kind: 'price_list', refType: 'customer', refId: String(c.customer_id),
+    const id2 = await approvals.request(q, { kind: 'price_list', godownId: c.godown_id, target: `cust:${c.customer_id}`, refType: 'customer', refId: String(c.customer_id),
       summary: `${c.customer_no} ${c.name} (${c.type_key}): prices from the ${key} list instead of the ${c.type_key} list`, payload: { customer_id: c.customer_id, price_list: key } }, empId);
     return { pending: true, approval_id: id2 };
   }
@@ -353,7 +368,7 @@ async function requestMerge(q, keepId, mergeId, reason, empId) {
   if (!why) throw new CustomerError('Say why they are the same customer');
   const [[had]] = await q.query("SELECT approval_id FROM approvals WHERE kind = 'customer_merge' AND status = 'pending' AND (ref_id = ? OR ref_id = ?)", [String(keep.customer_id), String(gone.customer_id)]);
   if (had) throw new CustomerError(`A merge of one of them already waits for approval (#${had.approval_id})`, 409);
-  const id = await approvals.request(q, { kind: 'customer_merge', refType: 'customer', refId: String(keep.customer_id),
+  const id = await approvals.request(q, { kind: 'customer_merge', godownId: keep.godown_id, target: `cust:${keep.customer_id}`, refType: 'customer', refId: String(keep.customer_id),
     summary: `Merge ${gone.customer_no} ${gone.name} into ${keep.customer_no} ${keep.name}: ${why}`, payload: { keep_id: keep.customer_id, merge_id: gone.customer_id, reason: why } }, empId);
   return { approval_id: id };
 }
@@ -381,11 +396,9 @@ async function doMerge(q, keepId, mergeId, reason, empId) {
 approvals.onApproved('customer_merge', async (q, p, empId) => { await doMerge(q, p.keep_id, p.merge_id, p.reason, empId); });
 
 // ---------------------------------------------------------------- visibility, defaults for orders
-/** the emp_id a user is limited to (own customers only), or null when they see everyone */
-function ownScope(admin, settings) {
-  if (!settings.own_customers_only || !admin) return null;
-  const roles = Array.isArray(settings.own_customers_role_ids) ? settings.own_customers_role_ids.map(Number) : [];
-  return roles.includes(Number(admin.role_id)) ? admin.emp_id : null;
+/** the emp_id a user is limited to (their role's right "Own customers only", phase 12a), or null when they see everyone */
+function ownScope(admin) {
+  return admin && admin.ownOnly ? admin.emp_id : null;
 }
 
 /** the addresses of a customer (active ones; defaults first) */
@@ -477,7 +490,7 @@ async function fromLead(q, leadId, raw, empId) {
   const state = raw.state_code || (gstin ? gstin.slice(0, 2) : '33');
   const addr = { name, gstin, address: raw.address || null, town: l.town, state_code: state, pincode: raw.pincode || null, phone: l.phone };
   const r = await createCustomer(q, {
-    name, business_name: l.business_name || null, type_key: raw.type_key || type, phone: l.phone, email: l.email, source: 'Lead', owner_emp_id: raw.owner_emp_id || l.assigned_to || null, lead_id: l.lead_id,
+    godown_id: raw.godown_id, name, business_name: l.business_name || null, type_key: raw.type_key || type, phone: l.phone, email: l.email, source: 'Lead', owner_emp_id: raw.owner_emp_id || l.assigned_to || null, lead_id: l.lead_id,
     bill: addr, ship: { ...addr, gstin: null, contact_person: l.full_name || name },
     contacts: l.full_name ? [{ name: l.full_name, role: l.business_name ? 'Contact from the website' : null, phone: l.phone, email: l.email, whatsapp: true, gets_invoices: Boolean(l.email) }] : [],
   }, empId);

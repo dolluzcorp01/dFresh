@@ -323,15 +323,15 @@ const walletCredited = (q, entryId) => safely('wallet_credited', async () => {
   await toCustomer(q, 'wallet_credited', { customerId: w.customer_id, orderId: w.order_id, vars: { amount: money(w.amount), reason: w.reason, balance: money(b.bal) }, ref: `wallet ${w.entry_id}` });
 });
 
-/** approvals.request: to the users who may decide it */
+/** approvals.request: to the people on its ladder (who can sign it today) */
 const approvalWaiting = (q, approvalId) => safely('approval', async () => {
   if (!(await isOn(q, 'approval'))) return;
   const [[a]] = await q.query('SELECT approval_id, kind, section, ref_type, ref_id, summary, requested_by FROM approvals WHERE approval_id = ?', [approvalId]);
   if (!a) return;
-  const cs = await commerceSettings.read(q);
-  const roles = (cs.approver_role_ids || []).map(Number);
-  const KINDS = require('./approvals').KINDS; // eslint-disable-line global-require
-  const users = (await staffUsers(q)).filter((u) => roles.includes(u.role_id) && permissions.can(u.perms, a.section, 'approve') && u.emp_id !== a.requested_by);
+  const approvals = require('./approvals'); // eslint-disable-line global-require
+  const KINDS = approvals.KINDS;
+  const can = new Set((await approvals.signers(q, a.approval_id)).map((s) => s.emp_id));
+  const users = (await staffUsers(q)).filter((u) => can.has(u.emp_id));
   const by = (await staffUsers(q)).find((u) => u.emp_id === a.requested_by);
   const [[o]] = a.ref_type === 'order' ? await q.query('SELECT order_id, customer_id FROM orders WHERE order_no = ?', [a.ref_id]) : [[null]];
   await toStaff(q, 'approval', users, () => ({ kind: (KINDS[a.kind] || {}).label || a.kind, summary: a.summary, requested_by: by ? `${by.name} (${by.emp_id})` : a.requested_by, link: link('approvals') }),
@@ -404,13 +404,15 @@ async function jobWalletExpiring(q) {
 
 async function jobStock(q) {
   const stock = require('./stock'); // eslint-disable-line global-require
-  const low = await stock.reorderList(q);
-  const b = await stock.batchList(q);
+  // every active godown (phase 12a): one digest, each low line names its godown
+  const [gs] = await q.query('SELECT location_id FROM locations WHERE is_active = 1');
+  const low = await stock.reorderList(q, gs.map((g) => g.location_id));
+  const b = await stock.batchList(q, null);
   const near = b.rows.filter((r) => r.good > 0 && r.state !== 'ok');
   if (!low.length && !near.length) return 'nothing low or near expiry';
   const n = await toStaff(q, 'stock_daily', await staffWith(q, 'inventory', 'edit'), () => ({
     low_count: low.length, expiry_count: near.length, expiry_days: b.warnDays, link: link('commerce/stock'),
-    low_list: low.length ? low.map((s) => `- ${s.sku_code} ${s.name} ${s.size_label}: ${s.available} available, reorder level ${s.reorder_level}, suggested ${s.suggested}`).join('\n') : '- none',
+    low_list: low.length ? low.map((s) => `- ${s.godown_code} ${s.sku_code} ${s.name} ${s.size_label}: ${s.available} available, reorder level ${s.reorder_level}, suggested ${s.suggested}`).join('\n') : '- none',
     expiry_list: near.length ? near.map((r) => `- ${r.sku_code} batch ${r.batch_no}: ${r.good} packs, ${r.state === 'expired' ? `expired ${day(r.expiry_date)}` : `expires ${day(r.expiry_date)} (${r.days_left} days)`}`).join('\n') : '- none',
   }), { ref: istToday() });
   return `${low.length} low, ${near.length} near expiry: ${n} mail(s)`;
@@ -447,7 +449,7 @@ async function jobDailySummary(q) {
     `- Delivered: ${s.delivered}, failed: ${s.failed}`, `- New returns: ${s.returns_new}`,
     '', 'Waiting now:', `- Approvals: ${s.approvals}`, `- To pack: ${s.to_pack}, to dispatch: ${s.to_dispatch}`, `- Overdue with customers: Rs ${money(s.overdue)}`,
   ].join('\n');
-  const n = await toStaff(q, 'daily_summary', (await staffUsers(q)).filter((u) => u.role_id === permissions.ADMIN_ROLE_ID), () => ({ date: day(yday), summary, link: link('commerce/ops') }), { ref: yday });
+  const n = await toStaff(q, 'daily_summary', (await staffUsers(q)).filter((u) => permissions.isAdminRole(u.role_id)), () => ({ date: day(yday), summary, link: link('commerce/ops') }), { ref: yday });
   return `summary of ${yday}: ${n} mail(s)`;
 }
 

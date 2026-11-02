@@ -90,7 +90,7 @@ export function PageHead({ title, sub, tag, actions, rules, crumb }) {
           <h1>{name}{tag && <> <Tag kind={tag.kind || 'new'}>{tag.label || tag}</Tag></>}</h1>
           {sub && <p>{sub}</p>}
         </div>
-        {actions && <div className="a-ph-acts">{actions}</div>}
+        <div className="a-ph-acts">{actions}</div>
       </div>
       <RuleChips rules={rules} />
     </>

@@ -2,14 +2,14 @@
 // area for every report: the period (India dates; presets), the report's filters, its checks (the totals tied back to
 // the invoices, credit notes and stock), a chart where useful (ReportChart.js), every table with its totals, Excel
 // (the GST one in the GST offline tool's sheets and column order) and Print / PDF. A report shows only for a role with
-// view on its own section (listed on the report); costs and margins need Reports and Products and prices.
+// view on its own section (listed on the report); costs and margins need the role's See cost. Every report counts the godowns in view (the godown picker).
 // Reports: Sales, Margin, GST (GSTR-1), Receivables, Stock, Delivery, Returns, Promotions and wallet, Accounting export.
 // The report is in the address (?tab=<key>; the menu's Reports, GST and Money entries open their report), else the
 // first one the role may see. The period and filters stay while switching reports.
 import { useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from './adminApi';
-import { InfoCard, Loading, Notice, PageHead, Tabs, useAction, useLoad } from './ui';
+import { InfoCard, Loading, Notice, PageHead, Tabs, useAction, useCan, useLoad } from './ui';
 import { esc, printPage, rs } from './printKit';
 import ReportChart from './ReportChart';
 
@@ -49,7 +49,7 @@ export default function CommerceReports() {
       <PageHead title="Reports" sub="Sales, margin, GST, money owed, stock, delivery, returns and promotions for any period; Excel and Print." />
       <InfoCard title="Reports">
         <ul>
-          <li>Choose the report and the period; Excel and Print / PDF give exactly what is on screen. Each report shows only for a role with view on its section; costs and margins need Reports and Products and prices.</li>
+          <li>Choose the report and the period; Excel and Print / PDF give exactly what is on screen. Each report shows only for a role with view on its section; costs and margins need a role with See cost. The figures cover the godowns in view (the godown picker at the top).</li>
           <li>Sales = invoices issued in the period minus credit notes issued in it (returns and cancellations). The checks under each report tie its totals back to the invoices, credit notes and stock.</li>
         </ul>
       </InfoCard>
@@ -145,6 +145,7 @@ function Report({ rkey, label, section, p, f }) {
 function Accounting({ p, format }) {
   const r = useLoad(`/commerce/reports/accounting/preview?from=${p.from}&to=${p.to}`);
   const act = useAction();
+  const canExport = useCan('reports', 'export');
   const d = r.data;
   const download = () => act.run(() => api.download(`/commerce/reports/accounting/journal.csv?from=${p.from}&to=${p.to}`, `dfresh-journal-${p.from}-${p.to}.csv`));
   return (
@@ -157,7 +158,8 @@ function Accounting({ p, format }) {
             {d.vouchers.map((v) => <div key={v.type} className="a-stat"><b>{v.n}</b><span>{v.type}</span></div>)}
             <div className={`a-stat${Math.abs(d.debit - d.credit) > 0.01 ? ' a-stat-bad' : ''}`}><b>{rs(d.debit)}</b><span>debit = credit {rs(d.credit)}</span></div>
           </div>
-          <button type="button" className="a-btn" disabled={act.busy || !d.count} onClick={download}>Download the journal (.csv)</button>
+          {canExport ? <button type="button" className="a-btn" disabled={act.busy || !d.count} onClick={download}>Download the journal (.csv)</button>
+            : <p className="a-muted">Downloading the journal needs Export on Reports.</p>}
           <div className="a-scroll">
             <table className="a-table">
               <thead><tr><th>Date</th><th>Voucher</th><th>No.</th><th>Party</th><th>Ledger</th><th className="a-num">Debit</th><th className="a-num">Credit</th><th>Narration</th></tr></thead>

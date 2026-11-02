@@ -35,6 +35,10 @@
 // 8. a demo approval decided, and Commerce switched ON
 // 9. notifications (phase 10): MUTED while all of the above is built (months of demo history must not mail anyone);
 //    then Demo Hotel Sangam gets its mails in Tamil and Demo Distributor Vellore opts out of reminders
+// 10. godowns (phase 12a): everything above lives in the Kanchipuram godown (K). A second, example godown "Chennai
+//    godown (example)" (code C, Padur, its code in its document numbers) is added when missing, with its own stock in,
+//    a customer of that godown with an order, and a write-off there above the approval limit (waits for someone who
+//    works at Chennai)
 // Migrations never contain any of this (docs/COMMERCE-SPEC.md 9). Running it twice does nothing the second time.
 require('dotenv').config({ quiet: true });
 const fs = require('fs');
@@ -154,6 +158,19 @@ async function inTx(fn) {
   } else console.log('SQL demo data exists already: skipped');
   await raw.end();
 
+  // DEMO godowns: Kanchipuram (K, from the migration) holds the demo; the Chennai example godown (C) only if missing
+  const [[gK]] = await db.query("SELECT location_id FROM locations WHERE code = 'K'");
+  if (!gK) { console.error('commerce-demo-seed: godown K is missing (apply the 20261102_stage2_12a_* migrations first)'); process.exit(1); }
+  const K = gK.location_id;
+  const [[hasC]] = await db.query("SELECT location_id FROM locations WHERE code = 'C'");
+  if (!hasC) {
+    await db.query(`INSERT INTO locations (code, name, address, state, in_number, sort_order, is_active, updated_by, updated_at)
+        VALUES ('C', 'Chennai godown (example)', 'Padur, Chennai', 'Tamil Nadu', 1, 2, 1, 'demo-seed', UTC_TIMESTAMP())`);
+    console.log('demo godown: Chennai godown (example), code C, added');
+  } else console.log('demo godown C exists already: skipped');
+  const [[gC]] = await db.query("SELECT location_id FROM locations WHERE code = 'C'");
+  const C = gC.location_id;
+
   // DEMO prices through the same code as the admin (history, audit)
   const [[{ priced }]] = await db.query('SELECT COUNT(*) AS priced FROM price_changes');
   if (!Number(priced)) {
@@ -194,17 +211,21 @@ async function inTx(fn) {
     const qtyOf = (sku) => LOW[sku] || 80 + ([...sku].reduce((a, c) => a + c.charCodeAt(0), 0) * 37) % 200;
     const costOf = (pid, f) => Math.round(DEMO_PRICE[pid] * f * 100) / 100;
     const paper = all.filter((x) => !Number(x.track_batches) && DEMO_PRICE[x.product_id]);
-    await inTx((q) => stock.stockIn(q, { kind: 'production', received_on: dayAgo(12), reference: 'DEMO batch sheet KPM-1012', note: 'DEMO opening stock from the Kanchipuram unit',
+    await inTx((q) => stock.stockIn(q, { godown_id: K, kind: 'production', received_on: dayAgo(12), reference: 'DEMO batch sheet KPM-1012', note: 'DEMO opening stock from the Kanchipuram unit',
       lines: paper.map((x) => ({ sku_code: x.sku_code, qty: qtyOf(x.sku_code), unit_cost: costOf(x.product_id, 0.55) })) }, 'DZIND002', { allowPast: true, at: atAgo(12) }));
     const napkins = paper.filter((x) => ['DZIND-DF001', 'DZIND-DF002', 'DZIND-DF007'].includes(x.product_id));
-    await inTx((q) => stock.stockIn(q, { kind: 'purchase', supplier_id: sup1.supplier_id, received_on: dayAgo(6), reference: 'DEMO SLPT/2026/0418', note: 'DEMO top-up while the unit was on maintenance',
+    await inTx((q) => stock.stockIn(q, { godown_id: K, kind: 'purchase', supplier_id: sup1.supplier_id, received_on: dayAgo(6), reference: 'DEMO SLPT/2026/0418', note: 'DEMO top-up while the unit was on maintenance',
       lines: napkins.map((x) => ({ sku_code: x.sku_code, qty: 48, unit_cost: costOf(x.product_id, 0.66) })) }, 'DZIND148', { allowPast: true, at: atAgo(6) }));
     const wipes = all.filter((x) => Number(x.track_batches));
     for (const [batch, mfg, exp, qty, agoIn, f] of [['WW2504', -200, -5, 10, 190, 0.6], ['WW2509', -160, 20, 40, 150, 0.62], ['WW2603', -20, 345, 80, 15, 0.64]]) {
-      await inTx((q) => stock.stockIn(q, { kind: 'purchase', supplier_id: sup2.supplier_id, received_on: dayAgo(agoIn), reference: `DEMO CHP/${batch}`, note: 'DEMO wet wipes',
+      await inTx((q) => stock.stockIn(q, { godown_id: K, kind: 'purchase', supplier_id: sup2.supplier_id, received_on: dayAgo(agoIn), reference: `DEMO CHP/${batch}`, note: 'DEMO wet wipes',
         lines: wipes.map((x) => ({ sku_code: x.sku_code, qty, unit_cost: costOf(x.product_id, f), batch_no: batch, mfg_date: dayAgo(-mfg), expiry_date: dayAgo(-exp) })) }, 'DZIND002', { allowPast: true, at: atAgo(agoIn) }));
     }
-    console.log(`demo stock: 2 suppliers, production stock in for ${paper.length} SKUs, a purchase of ${napkins.length} napkin SKUs, wet wipes in 3 batches`);
+    // the Chennai example godown: its own stock from the Kanchipuram unit (napkins, rolls and towels)
+    const chennai = paper.filter((x) => /^DZIND-DF0(01|02|17|19|36)$/.test(x.product_id));
+    await inTx((q) => stock.stockIn(q, { godown_id: C, kind: 'production', received_on: dayAgo(4), reference: 'DEMO transfer sheet KPM-C-0001', note: 'DEMO opening stock of the Chennai godown',
+      lines: chennai.map((x) => ({ sku_code: x.sku_code, qty: 120, unit_cost: costOf(x.product_id, 0.56) })) }, 'DZIND002', { allowPast: true, at: atAgo(4) }));
+    console.log(`demo stock: 2 suppliers, production stock in for ${paper.length} SKUs, a purchase of ${napkins.length} napkin SKUs, wet wipes in 3 batches; Chennai godown: ${chennai.length} SKUs`);
   } else console.log('stock-ins exist already: skipped');
 
   const [[{ n }]] = await db.query('SELECT COUNT(*) AS n FROM orders');
@@ -229,7 +250,7 @@ async function inTx(fn) {
     const idx = k;
     const addr = { label: ctype === 'Home' ? 'Home' : 'Main', name: nm, gstin, address, town, state_code: state, pincode: pin };
     await inTx(async (q) => {
-      const c = await customers.createCustomer(q, { name: nm, business_name: ctype === 'Home' ? null : nm, type_key: ctype, phone, source: 'Phone', owner_emp_id: idx % 5 === 0 ? null : idx % 2 ? 'DZIND148' : 'DZIND002',
+      const c = await customers.createCustomer(q, { godown_id: K, name: nm, business_name: ctype === 'Home' ? null : nm, type_key: ctype, phone, source: 'Phone', owner_emp_id: idx % 5 === 0 ? null : idx % 2 ? 'DZIND148' : 'DZIND002',
         tags: TAGS[ctype], bill: addr, ship: { ...addr, gstin: null, contact_person: ctype === 'Home' ? nm.replace('Demo Home ', '') : 'Store keeper', phone },
         contacts: ctype === 'Home' ? [] : [{ name: `DEMO ${['Ramesh', 'Suresh', 'Anitha', 'Kumar', 'Divya'][idx % 5]}`, role: ctype === 'Hospital' ? 'Purchase officer' : 'Manager', phone, email: `demo.buyer${idx}@example.com`, whatsapp: true, gets_invoices: true }],
       }, 'demo-seed');
@@ -511,13 +532,13 @@ async function inTx(fn) {
     await fu('Demo Home Priya', 'DZIND148', 8, 'DEMO - festival offer reminder');
     await customers.setStatus(q, await cid('Demo Bank Branch'), 'on_hold', 'DEMO - invoice dispute, new orders need approval', 'DZIND002');
     // the same lodge entered twice (another number): the duplicate pair to merge
-    const d = await customers.createCustomer(q, { name: 'Demo Lodge Kamakshi', type_key: 'hotel', phone: '9800000214', email: 'demo.kamakshi@example.com', source: 'WhatsApp', owner_emp_id: 'DZIND002', tags: ['horeca'],
+    const d = await customers.createCustomer(q, { godown_id: K, name: 'Demo Lodge Kamakshi', type_key: 'hotel', phone: '9800000214', email: 'demo.kamakshi@example.com', source: 'WhatsApp', owner_emp_id: 'DZIND002', tags: ['horeca'],
       bill: { label: 'Main', name: 'Demo Lodge Kamakshi', address: 'East Raja Street', town: 'Kanchipuram', state_code: '33', pincode: '631501' },
       contacts: [{ name: 'DEMO Kamakshi reception', role: 'Reception', phone: '9800000214', whatsapp: true }] }, 'demo-seed');
     await q.query("INSERT INTO customer_activity (customer_id, kind, happened_at, note, emp_id) VALUES (?, 'whatsapp', UTC_TIMESTAMP() - INTERVAL 30 HOUR, 'DEMO - asked for the price of rolls on WhatsApp (the reception number)', 'DZIND002')", [d.customer_id]);
     // a lead converted to a customer (its history shows on the customer)
     const [[lead]] = await q.query("SELECT lead_id FROM leads WHERE business_name = 'Test Hotel Pvt Ltd' LIMIT 1");
-    if (lead) await customers.fromLead(q, lead.lead_id, { address: 'Ennaikaran Street', pincode: '631501' }, 'demo-seed');
+    if (lead) await customers.fromLead(q, lead.lead_id, { godown_id: K, address: 'Ennaikaran Street', pincode: '631501' }, 'demo-seed');
     // a fresh lead for the demo script (docs/COMMERCE-DEMO.md): converted to a customer in front of sir
     await q.query(`INSERT INTO leads (lead_ref, form_type, full_name, business_name, business_type, town, phone, email, monthly_quantity, message, lang_code, source_page, consent_given, consent_text, consent_at, status, created_at)
         VALUES ('DFL-269001', 'quote', 'DEMO Saravanan', 'DEMO Saravana Bhavan', 'hotel', 'Kanchipuram', '9800000099', 'demo.saravana@example.com', '20 cartons a month',
@@ -534,7 +555,7 @@ async function inTx(fn) {
   const cust = async (nm) => (await db.query('SELECT customer_id FROM customers WHERE name = ?', [nm]))[0][0].customer_id;
   await inTx(async (q) => {
     const cafe = await cust('Demo Cafe Thendral');
-    const id = await approvals.request(q, { kind: 'goodwill_credit', refType: 'customer', refId: String(cafe), summary: 'Wallet credit Rs 300.00 for Demo Cafe Thendral: DEMO - goodwill for a late delivery', amount: 300,
+    const id = await approvals.request(q, { kind: 'goodwill_credit', godownId: K, target: `cust:${cafe}`, refType: 'customer', refId: String(cafe), summary: 'Wallet credit Rs 300.00 for Demo Cafe Thendral: DEMO - goodwill for a late delivery', amount: 300,
       payload: { customer_id: cafe, direction: 'credit', amount: 300, reason: 'DEMO - goodwill for a late delivery' } }, 'DZIND148');
     await q.query("UPDATE approvals SET status = 'approved', decided_by = 'DZIND002', decided_at = UTC_TIMESTAMP() - INTERVAL 2 HOUR, note = 'DEMO - OK, regular customer', requested_at = UTC_TIMESTAMP() - INTERVAL 5 HOUR WHERE approval_id = ?", [id]);
     await wallet.credit(q, { customerId: cafe, source: 'manual', amount: 300, reason: 'Manual credit: DEMO - goodwill for a late delivery', approvalId: id }, 'DZIND002');
@@ -547,16 +568,28 @@ async function inTx(fn) {
   console.log(`demo wallets: Rs 300 manual credit (approved), Rs 150 expiring in 10 days, ${ex.length} expired credit taken out by the job`);
   // inventory after the orders: damaged in the godown, a small sample write-off (posts at once), the expired wet wipes
   // written off (above the threshold: waits for approval), a towels count with two differences (waits for approval)
-  await inTx((q) => stock.recordMove(q, { sku_code: 'DF019-R10', qty: 3, move_type: 'damaged', note: 'DEMO carton crushed in the godown' }, 'DZIND002'));
-  await inTx((q) => stock.requestWriteOff(q, { sku_code: 'DF001-M100', stock_kind: 'good', qty: 2, reason_type: 'sample', reason: 'DEMO samples for a hotel visit' }, 'DZIND148'));
+  await inTx((q) => stock.recordMove(q, { godown_id: K, sku_code: 'DF019-R10', qty: 3, move_type: 'damaged', note: 'DEMO carton crushed in the godown' }, 'DZIND002'));
+  await inTx((q) => stock.requestWriteOff(q, { godown_id: K, sku_code: 'DF001-M100', stock_kind: 'good', qty: 2, reason_type: 'sample', reason: 'DEMO samples for a hotel visit' }, 'DZIND148'));
   const [[expired]] = await db.query("SELECT batch_id FROM batches WHERE batch_no = 'WW2504' LIMIT 1");
-  const wo = await inTx((q) => stock.requestWriteOff(q, { sku_code: 'DF044-M100', stock_kind: 'good', batch_id: expired.batch_id, qty: 10, reason_type: 'expired', reason: 'DEMO batch WW2504 expired on the shelf' }, 'DZIND002'));
-  const cnt = await inTx((q) => stock.startCount(q, 'towels', 'DZIND002'));
+  const wo = await inTx((q) => stock.requestWriteOff(q, { godown_id: K, sku_code: 'DF044-M100', stock_kind: 'good', batch_id: expired.batch_id, qty: 10, reason_type: 'expired', reason: 'DEMO batch WW2504 expired on the shelf' }, 'DZIND002'));
+  const cnt = await inTx((q) => stock.startCount(q, 'towels', 'DZIND002', K));
   const det = await stock.countDetail(db, cnt.count_id);
   const DIFF = { 'DF036-M250': -2, 'DF040-M100': 3 };
   await inTx((q) => stock.saveCount(q, cnt.count_id, det.lines.map((l) => ({ line_id: l.line_id, counted: l.system_qty + (DIFF[l.sku_code] || 0) })), 'DZIND002'));
   const sub = await inTx((q) => stock.submitCount(q, cnt.count_id, 'DZIND002'));
   console.log(`demo inventory: damaged 3 x DF019-R10, sample write-off posted, expired write-off #${wo.write_off_id} ${wo.status}, count #${cnt.count_id} ${sub.status} (${sub.differences} differences)`);
+
+  // the Chennai example godown: a customer of that godown with an order (its stock, its number series later), and a
+  // write-off there above the approval limit (more than 50 packs: waits for someone who works at Chennai)
+  const cc = await inTx((q) => customers.createCustomer(q, { godown_id: C, name: 'Demo OMR Coworking', business_name: 'Demo OMR Coworking', type_key: 'office', phone: '9800000301', source: 'Phone',
+    owner_emp_id: 'DZIND002', tags: ['b2b'], bill: { label: 'Main', name: 'Demo OMR Coworking', address: 'OMR, Padur', town: 'Chennai', state_code: '33', pincode: '603103' },
+    contacts: [{ name: 'DEMO Front desk', role: 'Admin', phone: '9800000301', email: 'demo.omr@example.com', whatsapp: true, gets_invoices: true }] }, 'demo-seed'));
+  const [cSkus] = await db.query(`SELECT m.sku_code, s.packs_per_carton FROM stock_movements m JOIN skus s ON s.sku_code = m.sku_code WHERE m.location_id = ? AND m.stock_kind = 'good'
+    GROUP BY m.sku_code, s.packs_per_carton HAVING SUM(m.delta) >= 2 * s.packs_per_carton + 60 ORDER BY m.sku_code LIMIT 2`, [C]);
+  const co = await inTx((q) => commerce.createOrder(q, { customer_id: cc.customer_id, items: cSkus.map((x) => ({ sku_code: x.sku_code, qty: Number(x.packs_per_carton) || 12, price: null })), payment_terms: 'advance',
+    delivery_method_id: METHOD.own, note: 'DEMO order at the Chennai godown' }, 'DZIND002'));
+  const cwo = await inTx((q) => stock.requestWriteOff(q, { godown_id: C, sku_code: cSkus[0].sku_code, stock_kind: 'good', qty: 60, reason_type: 'damaged', reason: 'DEMO roof leak in the Chennai godown: 60 packs wet' }, 'DZIND148'));
+  console.log(`demo Chennai godown: customer ${cc.customer_no}, order ${co.order_no} (${co.status}), write-off #${cwo.write_off_id} ${cwo.status}`);
 
   // notifications: a Tamil customer and one that opted out of reminders (both have overdue invoices for the tests)
   await db.query("UPDATE customers SET lang_code = 'ta' WHERE name = 'Demo Hotel Sangam' AND merged_into IS NULL");

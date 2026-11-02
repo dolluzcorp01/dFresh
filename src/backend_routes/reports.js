@@ -8,12 +8,16 @@
 //   type; the Excel follows the GST offline tool's column order (b2b, b2cl, b2cs, cdnr, cdnur, hsn).
 // - Margin: goods value (taxable, after every discount, less returns) against quantity x the SKU's average cost.
 // - Stock, receivables, delivery, returns, promotions, the business view and the accounting journal.
-// Each report is gated in Admin_server.js by its own section; cost figures only for Reports + Products and prices.
+// Each report is gated in Admin_server.js by its own section; cost figures only for a role with See cost.
+// Godowns (phase 12a): every report counts only the godowns of p.scope (godowns.viewScope: null = every godown) -
+// invoices, notes, payments and refunds by their order's godown, stock by its godown, trips and returns by theirs,
+// wallets by the customer's.
 const commerceSettings = require('./commerce-settings');
 const stock = require('./stock');
 const commerce = require('./commerce');
 const wallet = require('./wallet');
 const { stateName } = require('../shared/gstStates');
+const { inScope, ordersIn, customersIn } = require('./scope-sql');
 
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 const IST_TODAY = "DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+05:30'))";
@@ -33,7 +37,7 @@ const addDays = (d, n) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 86400e3).t
 /** the previous period of the same length, just before */
 function previous(p) {
   const len = daysBetween(p.from, p.to) + 1;
-  return { from: addDays(p.from, -len), to: addDays(p.from, -1) };
+  return { ...p, from: addDays(p.from, -len), to: addDays(p.from, -1) };
 }
 
 // ---------------------------------------------------------------- the sales facts (invoices - credit notes)
@@ -44,24 +48,25 @@ function previous(p) {
  */
 async function salesFacts(q, p) {
   const S = span(p);
+  const G = inScope('o.godown_id', p.scope);
   const base = `o.order_id, o.order_no, o.customer_id, c.name AS customer, c.customer_no, c.type_key, ct.label AS type_label, c.owner_emp_id, o.ship_town AS town, a.label AS area`;
   const joins = `JOIN orders o ON o.order_id = i.order_id JOIN customers c ON c.customer_id = o.customer_id JOIN customer_types ct ON ct.type_key = c.type_key
     LEFT JOIN delivery_areas a ON a.area_id = o.delivery_area_id`;
   const [inv] = await q.query(`SELECT i.invoice_id, i.invoice_no AS doc, ${istDate('i.issued_at')} AS day, 1 AS sign, ${base},
       it.sku_code, it.is_free, it.qty, it.taxable, it.cgst, it.sgst, it.igst, it.line_total AS total, it.gst_rate, it.hsn
-    FROM invoices i ${joins} JOIN order_items it ON it.order_id = o.order_id WHERE ${IN('i.issued_at')}`, S);
+    FROM invoices i ${joins} JOIN order_items it ON it.order_id = o.order_id WHERE ${IN('i.issued_at')} AND ${G}`, S);
   const [invX] = await q.query(`SELECT i.invoice_id, i.invoice_no AS doc, ${istDate('i.issued_at')} AS day, 1 AS sign, ${base},
-      i.delivery_charge, i.delivery_gst, i.round_off, i.gst_type FROM invoices i ${joins} WHERE ${IN('i.issued_at')}`, S);
+      i.delivery_charge, i.delivery_gst, i.round_off, i.gst_type FROM invoices i ${joins} WHERE ${IN('i.issued_at')} AND ${G}`, S);
   const [cnl] = await q.query(`SELECT i.invoice_id, cn.credit_note_no AS doc, ${istDate('cn.issued_at')} AS day, -1 AS sign, ${base},
       l.sku_code, 0 AS is_free, l.qty, l.taxable, l.cgst, l.sgst, l.igst, l.line_total AS total, l.gst_rate, l.hsn
     FROM credit_notes cn JOIN invoices i ON i.invoice_id = cn.invoice_id ${joins} JOIN credit_note_lines l ON l.credit_note_id = cn.credit_note_id
-    WHERE cn.return_id IS NOT NULL AND ${IN('cn.issued_at')}`, S);
+    WHERE cn.return_id IS NOT NULL AND ${IN('cn.issued_at')} AND ${G}`, S);
   const [cnX] = await q.query(`SELECT i.invoice_id, cn.credit_note_no AS doc, ${istDate('cn.issued_at')} AS day, -1 AS sign, ${base}, cn.return_id,
-      cn.round_off, i.delivery_charge, i.delivery_gst, i.gst_type FROM credit_notes cn JOIN invoices i ON i.invoice_id = cn.invoice_id ${joins} WHERE ${IN('cn.issued_at')}`, S);
+      cn.round_off, i.delivery_charge, i.delivery_gst, i.gst_type FROM credit_notes cn JOIN invoices i ON i.invoice_id = cn.invoice_id ${joins} WHERE ${IN('cn.issued_at')} AND ${G}`, S);
   const [cancelLines] = await q.query(`SELECT i.invoice_id, cn.credit_note_no AS doc, ${istDate('cn.issued_at')} AS day, -1 AS sign, ${base},
       it.sku_code, it.is_free, it.qty, it.taxable, it.cgst, it.sgst, it.igst, it.line_total AS total, it.gst_rate, it.hsn
     FROM credit_notes cn JOIN invoices i ON i.invoice_id = cn.invoice_id ${joins} JOIN order_items it ON it.order_id = o.order_id
-    WHERE cn.return_id IS NULL AND ${IN('cn.issued_at')}`, S);
+    WHERE cn.return_id IS NULL AND ${IN('cn.issued_at')} AND ${G}`, S);
   const out = [];
   const push = (r, extra) => out.push({ ...r, ...extra, day: typeof r.day === 'string' ? r.day : r.day.toISOString().slice(0, 10) });
   inv.forEach((r) => push(r, {}));
@@ -151,7 +156,8 @@ async function sales(q, p) {
   }
   const columns = [col('label', SALES_GROUPS[group]), col('invoices', 'Invoices', 'num'), col('qty', 'Packs', 'num'), col('taxable', 'Taxable value', 'money'), col('gst', 'GST', 'money'), col('total', 'Total', 'money'),
     ...(timeGroup ? [] : [col('prev_total', 'Previous period', 'money'), col('change', 'Change', 'pct')])];
-  const [[chk]] = await q.query(`SELECT (SELECT COALESCE(SUM(total), 0) FROM invoices WHERE ${IN('issued_at')}) AS inv, (SELECT COALESCE(SUM(total), 0) FROM credit_notes WHERE ${IN('issued_at')}) AS cn`, [...span(p), ...span(p)]);
+  const [[chk]] = await q.query(`SELECT (SELECT COALESCE(SUM(total), 0) FROM invoices WHERE ${IN('issued_at')} AND ${ordersIn('order_id', p.scope)}) AS inv,
+      (SELECT COALESCE(SUM(cn.total), 0) FROM credit_notes cn JOIN invoices ci ON ci.invoice_id = cn.invoice_id WHERE ${IN('cn.issued_at')} AND ${ordersIn('ci.order_id', p.scope)}) AS cn`, [...span(p), ...span(p)]);
   const checks = (!p.type && !p.owner) ? [{ label: 'Invoices issued - credit notes issued in the period', value: round2(chk.inv - chk.cn), ok: Math.abs(round2(chk.inv - chk.cn) - totals.total) < 0.01,
     detail: `invoices Rs ${round2(chk.inv)} - credit notes Rs ${round2(chk.cn)}` }] : [];
   const rec = reconcile(filter(await salesFacts(q, p)));
@@ -166,9 +172,9 @@ const posText = (c) => `${c}-${stateName(c)}`;
 async function gst(q, p) {
   const facts = (await salesFacts(q, p)).filter((r) => r.sku_code !== '(round off)');
   const [docs] = await q.query(`SELECT 'invoice' AS kind, i.invoice_id, i.invoice_no AS doc, ${istDate('i.issued_at')} AS day, i.total, i.place_of_supply, i.gst_type, i.buyer_json, i.status, NULL AS return_id
-      FROM invoices i WHERE ${IN('i.issued_at')}
+      FROM invoices i WHERE ${IN('i.issued_at')} AND ${ordersIn('i.order_id', p.scope)}
     UNION ALL SELECT 'note', i.invoice_id, cn.credit_note_no, ${istDate('cn.issued_at')}, cn.total, i.place_of_supply, i.gst_type, i.buyer_json, i.status, cn.return_id
-      FROM credit_notes cn JOIN invoices i ON i.invoice_id = cn.invoice_id WHERE ${IN('cn.issued_at')}`, [...span(p), ...span(p)]);
+      FROM credit_notes cn JOIN invoices i ON i.invoice_id = cn.invoice_id WHERE ${IN('cn.issued_at')} AND ${ordersIn('i.order_id', p.scope)}`, [...span(p), ...span(p)]);
   const buyer = (d) => (typeof d.buyer_json === 'string' ? JSON.parse(d.buyer_json) : d.buyer_json).bill;
   const dayOf = (d) => (typeof d.day === 'string' ? d.day : d.day.toISOString().slice(0, 10));
   const rates = (doc, sign) => {
@@ -213,8 +219,9 @@ async function gst(q, p) {
   const byRate = [...rateMap.values()].sort((a, b) => a.rate - b.rate).map((r) => ({ ...r, tax: round2(r.cgst + r.sgst + r.igst) }));
   const [descs] = await q.query("SELECT DISTINCT p.hsn_code, COALESCE(t.name, p.product_id) AS name FROM products p LEFT JOIN product_translations t ON t.product_id = p.product_id AND t.lang_code = 'en'");
   const hsn = [...hsnMap.values()].map((h) => ({ ...h, desc: h.desc || (descs.find((x) => x.hsn_code === h.hsn) || { name: '' }).name })).sort((a, b) => String(a.hsn).localeCompare(String(b.hsn)));
-  const [[inv]] = await q.query(`SELECT COALESCE(SUM(cgst + sgst + igst), 0) AS gst FROM invoices WHERE ${IN('issued_at')}`, span(p));
-  const [[cn]] = await q.query(`SELECT COALESCE(SUM(cgst + sgst + igst), 0) AS gst FROM credit_notes WHERE ${IN('issued_at')}`, span(p));
+  const [[inv]] = await q.query(`SELECT COALESCE(SUM(cgst + sgst + igst), 0) AS gst FROM invoices WHERE ${IN('issued_at')} AND ${ordersIn('order_id', p.scope)}`, span(p));
+  const [[cn]] = await q.query(`SELECT COALESCE(SUM(cn.cgst + cn.sgst + cn.igst), 0) AS gst FROM credit_notes cn JOIN invoices ci ON ci.invoice_id = cn.invoice_id
+      WHERE ${IN('cn.issued_at')} AND ${ordersIn('ci.order_id', p.scope)}`, span(p));
   const regInv = round2(facts.filter((f) => f.sign > 0).reduce((a, f) => a + f.gst, 0));
   const regCn = round2(-facts.filter((f) => f.sign < 0).reduce((a, f) => a + f.gst, 0));
   const net = sumRows(byRate, ['taxable', 'cgst', 'sgst', 'igst', 'tax']);
@@ -299,8 +306,9 @@ async function stockReport(q, p, { seesCost }) {
   const view = STOCK_VIEWS[p.view] ? p.view : 'movement';
   const info = await skuInfo(q);
   const label = (k) => { const s = info.get(k); return s ? `${s.name} ${s.size_label}` : ''; };
+  const GS = inScope('location_id', p.scope);
   if (view === 'value') {
-    const [rows] = await q.query("SELECT sku_code, SUM(delta) AS qty FROM stock_movements WHERE stock_kind = 'good' GROUP BY sku_code HAVING qty <> 0");
+    const [rows] = await q.query(`SELECT sku_code, SUM(delta) AS qty FROM stock_movements WHERE stock_kind = 'good' AND ${GS} GROUP BY sku_code HAVING qty <> 0`);
     const r = rows.map((x) => { const s = info.get(x.sku_code); const c = s && s.avg_cost !== null ? Number(s.avg_cost) : null; return { sku_code: x.sku_code, name: label(x.sku_code), category: s ? s.category_key : '', qty: Number(x.qty), avg_cost: seesCost ? c : undefined, value: seesCost ? round2(Number(x.qty) * (c || 0)) : undefined }; }).sort((a, b) => (b.value || b.qty) - (a.value || a.qty));
     const cats = new Map(); r.forEach((x) => { const g = cats.get(x.category) || { category: x.category, skus: 0, qty: 0, value: 0 }; g.skus += 1; g.qty += x.qty; g.value = round2(g.value + (x.value || 0)); cats.set(x.category, g); });
     const catRows = [...cats.values()].sort((a, b) => b.value - a.value);
@@ -308,7 +316,7 @@ async function stockReport(q, p, { seesCost }) {
       { key: 'category', title: 'By category', columns: [col('category', 'Category'), col('skus', 'SKUs', 'num'), col('qty', 'Packs (good)', 'num'), ...(seesCost ? [col('value', 'Value (average cost)', 'money')] : [])], rows: catRows, totals: sumRows(catRows, ['skus', 'qty', 'value']) },
       { key: 'sku', title: 'By SKU', columns: [col('sku_code', 'SKU'), col('name', 'Product'), col('category', 'Category'), col('qty', 'Packs (good)', 'num'), ...(seesCost ? [col('avg_cost', 'Average cost', 'money'), col('value', 'Value', 'money')] : [])], rows: r, totals: sumRows(r, ['qty', 'value']) },
     ], chart: seesCost ? { kind: 'hbar', x: catRows.map((x) => x.category), series: [{ name: 'Value', values: catRows.map((x) => x.value) }], title: 'Stock value by category' } : null,
-    notes: seesCost ? ['Good stock at the weighted average cost; returned (R), damaged and expired stock are not valued here.'] : ['Costs and values show only for a role with view on Reports and on Products and prices.'], checks: [] };
+    notes: seesCost ? ['Good stock at the weighted average cost; returned (R), damaged and expired stock are not valued here.'] : ['Costs and values show only for a role with See cost (Admin > Roles).'], checks: [] };
   }
   if (view === 'movement') {
     const [rows] = await q.query(`SELECT sku_code,
@@ -319,10 +327,10 @@ async function stockReport(q, p, { seesCost }) {
         SUM(CASE WHEN ${IN('created_at')} AND move_type = 'write_off' THEN -delta ELSE 0 END) AS write_offs,
         SUM(CASE WHEN ${IN('created_at')} AND move_type NOT IN ('production', 'purchase', 'out', 'return', 'recheck', 'write_off') THEN delta ELSE 0 END) AS other,
         SUM(CASE WHEN created_at < CONVERT_TZ(DATE_ADD(?, INTERVAL 1 DAY), '+05:30', '+00:00') THEN delta ELSE 0 END) AS closing
-      FROM stock_movements WHERE stock_kind = 'good' GROUP BY sku_code ORDER BY sku_code`, [`${p.from} 00:00:00`, ...span(p), ...span(p), ...span(p), ...span(p), ...span(p), p.to]);
+      FROM stock_movements WHERE stock_kind = 'good' AND ${GS} GROUP BY sku_code ORDER BY sku_code`, [`${p.from} 00:00:00`, ...span(p), ...span(p), ...span(p), ...span(p), ...span(p), p.to]);
     const r = rows.map((x) => ({ sku_code: x.sku_code, name: label(x.sku_code), ...Object.fromEntries(['opening', 'stock_in', 'stock_out', 'returns', 'write_offs', 'other', 'closing'].map((k) => [k, Number(x[k])])) }));
     const totals = sumRows(r, ['opening', 'stock_in', 'stock_out', 'returns', 'write_offs', 'other', 'closing']);
-    const [[now]] = await q.query("SELECT COALESCE(SUM(delta), 0) AS n FROM stock_movements WHERE stock_kind = 'good'");
+    const [[now]] = await q.query(`SELECT COALESCE(SUM(delta), 0) AS n FROM stock_movements WHERE stock_kind = 'good' AND ${GS}`);
     return { tables: [{ key: 'movement', title: 'Good stock movement (packs)', columns: [col('sku_code', 'SKU'), col('name', 'Product'), col('opening', 'Opening', 'num'), col('stock_in', 'In (production, purchase)', 'num'), col('stock_out', 'Out (dispatched)', 'num'), col('returns', 'Back in (returns, recheck)', 'num'), col('write_offs', 'Written off', 'num'), col('other', 'Other (damaged, counts)', 'num'), col('closing', 'Closing', 'num')], rows: r, totals }],
       chart: { kind: 'bar', x: ['Opening', 'In', 'Out', 'Back in', 'Written off', 'Other', 'Closing'], series: [{ name: 'Packs', values: [totals.opening, totals.stock_in, -totals.stock_out, totals.returns, -totals.write_offs, totals.other, totals.closing] }], title: 'All SKUs, packs' },
       checks: p.to >= istToday() ? [{ label: 'Closing = good stock on the Inventory screen', value: totals.closing, ok: totals.closing === Number(now.n), detail: `Inventory good stock now: ${Number(now.n)} packs` }] : [],
@@ -332,21 +340,28 @@ async function stockReport(q, p, { seesCost }) {
     const s = await commerceSettings.read(q);
     const days = Number(p.days) || Number(s.slow_moving_days) || 60;
     const [rows] = await q.query(`SELECT g.sku_code, g.qty, DATE_FORMAT(CONVERT_TZ(m.last_out, '+00:00', '+05:30'), '%Y-%m-%d') AS last_sale, DATEDIFF(${IST_TODAY}, ${istDate('m.last_out')}) AS since
-        FROM (SELECT sku_code, SUM(delta) AS qty FROM stock_movements WHERE stock_kind = 'good' GROUP BY sku_code HAVING qty > 0) g
-        LEFT JOIN (SELECT sku_code, MAX(created_at) AS last_out FROM stock_movements WHERE move_type = 'out' GROUP BY sku_code) m ON m.sku_code = g.sku_code
+        FROM (SELECT sku_code, SUM(delta) AS qty FROM stock_movements WHERE stock_kind = 'good' AND ${GS} GROUP BY sku_code HAVING qty > 0) g
+        LEFT JOIN (SELECT sku_code, MAX(created_at) AS last_out FROM stock_movements WHERE move_type = 'out' AND ${GS} GROUP BY sku_code) m ON m.sku_code = g.sku_code
         WHERE m.last_out IS NULL OR m.last_out < UTC_TIMESTAMP() - INTERVAL ? DAY ORDER BY m.last_out IS NOT NULL, m.last_out`, [days]);
     const r = rows.map((x) => { const i2 = info.get(x.sku_code); return { sku_code: x.sku_code, name: label(x.sku_code), qty: Number(x.qty), last_sale: x.last_sale || 'never', since: x.since === null ? null : Number(x.since), value: seesCost && i2 && i2.avg_cost !== null ? round2(Number(x.qty) * Number(i2.avg_cost)) : undefined }; });
     return { tables: [{ key: 'slow', title: `No sale in ${days} days`, columns: [col('sku_code', 'SKU'), col('name', 'Product'), col('qty', 'Packs (good)', 'num'), col('last_sale', 'Last sale'), col('since', 'Days since', 'num'), ...(seesCost ? [col('value', 'Value tied up', 'money')] : [])], rows: r, totals: sumRows(r, ['qty', 'value']) }],
       chart: null, notes: [`Slow-moving = good stock and no dispatch for ${days} days (Commerce settings > Inventory, or the Days filter).`], checks: [] };
   }
   if (view === 'expiry') {
-    const b = await stock.batchList(q);
+    const b = await stock.batchList(q, p.scope === undefined ? null : p.scope);
     const r = b.rows.filter((x) => x.good > 0 && x.state !== 'ok').map((x) => ({ sku_code: x.sku_code, name: `${x.name} ${x.size_label}`, batch_no: x.batch_no, expiry_date: x.expiry_date, state: x.state === 'expired' ? `Expired ${-x.days_left} days ago` : `Expires in ${x.days_left} days`, good: x.good, damaged: x.damaged }));
     return { tables: [{ key: 'expiry', title: `Expired and near expiry (within ${b.warnDays} days)`, columns: [col('sku_code', 'SKU'), col('name', 'Product'), col('batch_no', 'Batch'), col('expiry_date', 'Expires', 'date'), col('state', 'State'), col('good', 'Good packs', 'num'), col('damaged', 'Damaged', 'num')], rows: r, totals: sumRows(r, ['good', 'damaged']) }], chart: null, notes: ['Expired stock is blocked from orders: write it off.'], checks: [] };
   }
-  const re = await stock.reorderList(q);
+  const re = await stock.reorderList(q, await godownIds(q, p.scope));
   const r = re.map((x) => ({ sku_code: x.sku_code, name: `${x.name} ${x.size_label || ''}`, available: x.available, reorder_level: x.reorder_level, suggested: x.suggested, cartons: `${x.cartons} x ${x.packs_per_carton}` }));
   return { tables: [{ key: 'reorder', title: 'Below the reorder level', columns: [col('sku_code', 'SKU'), col('name', 'Product'), col('available', 'Available', 'num'), col('reorder_level', 'Reorder level', 'num'), col('suggested', 'Suggested packs', 'num'), col('cartons', 'Cartons')], rows: r, totals: sumRows(r, ['suggested']) }], chart: null, notes: [], checks: [] };
+}
+
+/** the active godown ids of a scope (null = every active godown) */
+async function godownIds(q, scope) {
+  if (scope !== null && scope !== undefined) return scope;
+  const [g] = await q.query('SELECT location_id FROM locations WHERE is_active = 1');
+  return g.map((x) => x.location_id);
 }
 
 // ---------------------------------------------------------------- receivables
@@ -354,8 +369,8 @@ async function receivables(q, p) {
   const [open] = await q.query(`SELECT c.customer_id, c.customer_no, c.name, c.credit_limit, c.credit_days, o.amount_due, i.invoice_no, o.order_no, ${istDate('i.issued_at')} AS day, DATE_FORMAT(i.due_on, '%Y-%m-%d') AS due_on,
         DATEDIFF(${IST_TODAY}, ${istDate('i.issued_at')}) AS age, DATEDIFF(${IST_TODAY}, i.due_on) AS late, (${commerce.OVERDUE_SQL}) AS overdue
       FROM invoices i JOIN orders o ON o.order_id = i.order_id JOIN customers c ON c.customer_id = o.customer_id
-      WHERE i.status = 'issued' AND o.status <> 'cancelled' AND o.amount_due > 0.005 ORDER BY c.name, i.issued_at`);
-  const [uninv] = await q.query(`SELECT customer_id, SUM(amount_due) AS due FROM orders o WHERE o.status <> 'cancelled' AND o.amount_due > 0.005
+      WHERE i.status = 'issued' AND o.status <> 'cancelled' AND o.amount_due > 0.005 AND ${inScope('o.godown_id', p.scope)} ORDER BY c.name, i.issued_at`);
+  const [uninv] = await q.query(`SELECT customer_id, SUM(amount_due) AS due FROM orders o WHERE o.status <> 'cancelled' AND o.amount_due > 0.005 AND ${inScope('o.godown_id', p.scope)}
       AND NOT EXISTS (SELECT 1 FROM invoices i WHERE i.live_order_id = o.order_id) GROUP BY customer_id`);
   const m = new Map();
   for (const o of open) {
@@ -375,14 +390,15 @@ async function receivables(q, p) {
   const overdue = open.filter((o) => Number(o.overdue)).map((o) => ({ customer: `${o.customer_no} ${o.name}`, invoice_no: o.invoice_no, order_no: o.order_no, day: typeof o.day === 'string' ? o.day : o.day.toISOString().slice(0, 10), due_on: o.due_on, late: Number(o.late), amount: Number(o.amount_due) }));
   const S = span(p);
   const [modes] = await q.query(`SELECT mode, SUM(CASE WHEN kind = 'payment' THEN amount ELSE 0 END) AS received, SUM(CASE WHEN kind = 'refund' THEN amount ELSE 0 END) AS refunded, COUNT(*) AS n
-      FROM payments WHERE received_on BETWEEN ? AND ? GROUP BY mode ORDER BY received DESC`, [p.from, p.to]);
+      FROM payments WHERE received_on BETWEEN ? AND ? AND ${ordersIn('order_id', p.scope)} GROUP BY mode ORDER BY received DESC`, [p.from, p.to]);
   const modeRows = modes.map((x) => ({ mode: commerce.MODES[x.mode] || x.mode, n: Number(x.n), received: Number(x.received), refunded: Number(x.refunded), net: round2(x.received - x.refunded) }));
   const [drivers] = await q.query(`SELECT d.name AS driver, COUNT(DISTINCT t.trip_id) AS trips, COALESCE(SUM(s.cash_collected), 0) AS collected,
-        (SELECT COALESCE(SUM(t2.cash_handed), 0) FROM delivery_trips t2 WHERE t2.driver_id = d.driver_id AND t2.status = 'ended' AND ${IN('t2.started_at')}) AS handed
-      FROM delivery_trips t JOIN drivers d ON d.driver_id = t.driver_id LEFT JOIN trip_stops s ON s.trip_id = t.trip_id WHERE ${IN('t.started_at')} GROUP BY d.driver_id, d.name ORDER BY collected DESC`, [...S, ...S]);
+        (SELECT COALESCE(SUM(t2.cash_handed), 0) FROM delivery_trips t2 WHERE t2.driver_id = d.driver_id AND t2.status = 'ended' AND ${IN('t2.started_at')} AND ${inScope('t2.godown_id', p.scope)}) AS handed
+      FROM delivery_trips t JOIN drivers d ON d.driver_id = t.driver_id LEFT JOIN trip_stops s ON s.trip_id = t.trip_id WHERE ${IN('t.started_at')} AND ${inScope('t.godown_id', p.scope)}
+      GROUP BY d.driver_id, d.name ORDER BY collected DESC`, [...S, ...S]);
   const drvRows = drivers.map((x) => ({ driver: x.driver, trips: Number(x.trips), collected: Number(x.collected), handed: Number(x.handed), difference: round2(Number(x.handed) - Number(x.collected)) }));
   const aT = sumRows(byCust, ['d0_30', 'd31_60', 'd61_90', 'd90', 'invoiced', 'not_invoiced', 'total', 'overdue']);
-  const [[due]] = await q.query("SELECT COALESCE(SUM(amount_due), 0) AS n FROM orders WHERE status <> 'cancelled' AND amount_due > 0.005");
+  const [[due]] = await q.query(`SELECT COALESCE(SUM(amount_due), 0) AS n FROM orders WHERE status <> 'cancelled' AND amount_due > 0.005 AND ${inScope('godown_id', p.scope)}`);
   return {
     tables: [
       { key: 'ageing', title: 'Outstanding by customer with ageing (by invoice date, now)', columns: [col('customer', 'Customer'), col('d0_30', '0-30 days', 'money'), col('d31_60', '31-60', 'money'), col('d61_90', '61-90', 'money'), col('d90', '90+', 'money'), col('invoiced', 'Invoiced, open', 'money'), col('not_invoiced', 'Not invoiced yet', 'money'), col('total', 'Total owed', 'money'), col('overdue', 'Of it overdue', 'money'), col('credit_limit', 'Credit limit', 'money'), col('use', 'Limit used', 'pct')], rows: byCust, totals: aT },
@@ -401,7 +417,7 @@ async function deliveryReport(q, p) {
   const S = span(p);
   const [stops] = await q.query(`SELECT d.name AS driver, COALESCE(a.label, '(no area)') AS area, s.kind, s.status, TIMESTAMPDIFF(MINUTE, t.started_at, s.done_at) <= 1440 AS in_time, t.trip_id
       FROM trip_stops s JOIN delivery_trips t ON t.trip_id = s.trip_id JOIN drivers d ON d.driver_id = t.driver_id LEFT JOIN orders o ON o.order_id = s.order_id LEFT JOIN delivery_areas a ON a.area_id = o.delivery_area_id
-      WHERE t.started_at IS NOT NULL AND ${IN('t.started_at')}`, S);
+      WHERE t.started_at IS NOT NULL AND ${IN('t.started_at')} AND ${inScope('t.godown_id', p.scope)}`, S);
   const agg = (keyFn) => {
     const m = new Map();
     for (const s of stops) {
@@ -418,7 +434,7 @@ async function deliveryReport(q, p) {
   const byDriver = agg((s) => s.driver); const byArea = agg((s) => s.area);
   const [trips] = await q.query(`SELECT t.trip_id, DATE_FORMAT(t.trip_date, '%Y-%m-%d') AS trip_date, d.name AS driver, v.number AS vehicle, t.status, t.cash_expected, t.cash_collected, t.cash_handed,
       (SELECT COUNT(*) FROM trip_stops s WHERE s.trip_id = t.trip_id) AS stops FROM delivery_trips t JOIN drivers d ON d.driver_id = t.driver_id JOIN vehicles v ON v.vehicle_id = t.vehicle_id
-      WHERE t.started_at IS NOT NULL AND ${IN('t.started_at')} ORDER BY t.trip_id`, S);
+      WHERE t.started_at IS NOT NULL AND ${IN('t.started_at')} AND ${inScope('t.godown_id', p.scope)} ORDER BY t.trip_id`, S);
   const tRows = trips.map((t) => ({ trip: `T-${t.trip_id}`, trip_date: t.trip_date, driver: t.driver, vehicle: t.vehicle, status: t.status, stops: Number(t.stops), cash_expected: Number(t.cash_expected || 0),
     cash_collected: t.cash_collected === null ? null : Number(t.cash_collected), cash_handed: t.cash_handed === null ? null : Number(t.cash_handed), difference: t.cash_handed === null ? null : round2(Number(t.cash_handed) - Number(t.cash_collected)) }));
   const T = (rows) => sumRows(rows, ['trips', 'stops', 'delivered', 'on_time', 'failed', 'pickups', 'pending']);
@@ -438,15 +454,15 @@ async function deliveryReport(q, p) {
 // ---------------------------------------------------------------- returns
 async function returnsReport(q, p) {
   const S = span(p);
-  const W = `r.created_at >= CONVERT_TZ(?, '+05:30', '+00:00') AND r.created_at < CONVERT_TZ(DATE_ADD(?, INTERVAL 1 DAY), '+05:30', '+00:00') AND r.status <> 'rejected'`;
+  const W = `r.created_at >= CONVERT_TZ(?, '+05:30', '+00:00') AND r.created_at < CONVERT_TZ(DATE_ADD(?, INTERVAL 1 DAY), '+05:30', '+00:00') AND r.status <> 'rejected' AND ${inScope('r.godown_id', p.scope)}`;
   const [reason] = await q.query(`SELECT rr.label AS reason, COUNT(DISTINCT r.return_id) AS returns, COALESCE(SUM(x.qty), 0) AS packs FROM returns r JOIN return_reasons rr ON rr.reason_id = r.reason_id
       JOIN return_items x ON x.return_id = r.return_id WHERE ${W} GROUP BY rr.reason_id, rr.label ORDER BY packs DESC`, S);
   const [sku] = await q.query(`SELECT x.sku_code, COUNT(DISTINCT r.return_id) AS returns, SUM(x.qty) AS packs, COALESCE(SUM(x.qty_damaged), 0) AS damaged FROM returns r JOIN return_items x ON x.return_id = r.return_id
       WHERE ${W} GROUP BY x.sku_code ORDER BY packs DESC`, S);
-  const [sold] = await q.query(`SELECT i.sku_code, SUM(i.qty) AS packs FROM orders o JOIN order_items i ON i.order_id = o.order_id WHERE ${IN('o.delivered_at')} AND o.status = 'delivered' GROUP BY i.sku_code`, S);
+  const [sold] = await q.query(`SELECT i.sku_code, SUM(i.qty) AS packs FROM orders o JOIN order_items i ON i.order_id = o.order_id WHERE ${IN('o.delivered_at')} AND o.status = 'delivered' AND ${inScope('o.godown_id', p.scope)} GROUP BY i.sku_code`, S);
   const [cust] = await q.query(`SELECT c.customer_no, c.name, COUNT(DISTINCT r.return_id) AS returns, SUM(x.qty) AS packs FROM returns r JOIN orders o ON o.order_id = r.order_id JOIN customers c ON c.customer_id = o.customer_id
       JOIN return_items x ON x.return_id = r.return_id WHERE ${W} GROUP BY c.customer_id, c.customer_no, c.name ORDER BY packs DESC`, S);
-  const [ref] = await q.query(`SELECT f.method, COALESCE(f.mode, '') AS mode, COUNT(*) AS n, SUM(f.amount) AS amount FROM refunds f WHERE f.status = 'paid' AND ${IN('f.paid_at')} GROUP BY f.method, f.mode ORDER BY amount DESC`, S);
+  const [ref] = await q.query(`SELECT f.method, COALESCE(f.mode, '') AS mode, COUNT(*) AS n, SUM(f.amount) AS amount FROM refunds f WHERE f.status = 'paid' AND ${IN('f.paid_at')} AND ${ordersIn('f.order_id', p.scope)} GROUP BY f.method, f.mode ORDER BY amount DESC`, S);
   const info = await skuInfo(q);
   const del = new Map(sold.map((x) => [x.sku_code, Number(x.packs)]));
   const n = (x) => Number(x) || 0;
@@ -472,16 +488,17 @@ async function promotionsReport(q, p) {
   const S = span(p);
   const n = (x) => Number(x) || 0;
   const [coupons] = await q.query(`SELECT r.code, c.kind, COUNT(*) AS orders, COUNT(DISTINCT r.customer_id) AS customers, SUM(r.amount) AS amount FROM coupon_redemptions r JOIN coupons c ON c.code = r.code
-      WHERE r.status = 'active' AND ${IN('r.created_at')} GROUP BY r.code, c.kind ORDER BY amount DESC`, S);
+      WHERE r.status = 'active' AND ${IN('r.created_at')} AND ${ordersIn('r.order_id', p.scope)} GROUP BY r.code, c.kind ORDER BY amount DESC`, S);
   const [offers] = await q.query(`SELECT f.name, f.kind, COUNT(DISTINCT i.order_id) AS orders, SUM(i.offer_discount) AS discount, SUM(CASE WHEN i.is_free = 1 THEN i.qty ELSE 0 END) AS free_packs,
       SUM(CASE WHEN i.is_free = 1 THEN i.qty * COALESCE(i.list_price, 0) ELSE 0 END) AS free_value FROM order_items i JOIN offers f ON f.offer_id = i.offer_id JOIN orders o ON o.order_id = i.order_id
-      WHERE o.status <> 'cancelled' AND ${IN('o.created_at')} GROUP BY f.offer_id, f.name, f.kind ORDER BY orders DESC`, S);
+      WHERE o.status <> 'cancelled' AND ${IN('o.created_at')} AND ${inScope('o.godown_id', p.scope)} GROUP BY f.offer_id, f.name, f.kind ORDER BY orders DESC`, S);
   const [months] = await q.query(`SELECT DATE_FORMAT(CONVERT_TZ(created_at, '+00:00', '+05:30'), '%Y-%m') AS month, COUNT(*) AS orders, SUM(subtotal) AS goods, SUM(offer_discount) AS offers, SUM(discount) AS coupons,
-      SUM(manual_discount) AS manual, SUM(delivery_waived) AS delivery, SUM(wallet_discount) AS wallet FROM orders WHERE status <> 'cancelled' AND ${IN('created_at')} GROUP BY month ORDER BY month`, S);
-  const [[cb]] = await q.query(`SELECT COALESCE(SUM(CASE WHEN source = 'cashback' THEN amount END), 0) AS credited, COALESCE(-SUM(CASE WHEN source = 'reversed' THEN amount END), 0) AS reversed FROM wallet_entries WHERE ${IN('created_at')}`, S);
+      SUM(manual_discount) AS manual, SUM(delivery_waived) AS delivery, SUM(wallet_discount) AS wallet FROM orders WHERE status <> 'cancelled' AND ${IN('created_at')} AND ${inScope('godown_id', p.scope)} GROUP BY month ORDER BY month`, S);
+  const [[cb]] = await q.query(`SELECT COALESCE(SUM(CASE WHEN source = 'cashback' THEN amount END), 0) AS credited, COALESCE(-SUM(CASE WHEN source = 'reversed' THEN amount END), 0) AS reversed FROM wallet_entries WHERE ${IN('created_at')} AND ${customersIn('customer_id', p.scope)}`, S);
   const [took] = await q.query(`SELECT d.source, SUM(a.amount) AS amount FROM wallet_allocations a JOIN wallet_entries d ON d.entry_id = a.debit_entry_id JOIN wallet_entries c ON c.entry_id = a.credit_entry_id
-      WHERE c.source = 'cashback' AND a.given_back = 0 AND d.source IN ('used', 'expired') AND ${IN('d.created_at')} GROUP BY d.source`, S);
-  const [owed] = await q.query('SELECT c.customer_no, c.name, SUM(w.amount) AS balance FROM wallet_entries w JOIN customers c ON c.customer_id = w.customer_id GROUP BY c.customer_id, c.customer_no, c.name HAVING balance > 0.005 ORDER BY balance DESC');
+      WHERE c.source = 'cashback' AND a.given_back = 0 AND d.source IN ('used', 'expired') AND ${IN('d.created_at')} AND ${customersIn('d.customer_id', p.scope)} GROUP BY d.source`, S);
+  const [owed] = await q.query(`SELECT c.customer_no, c.name, SUM(w.amount) AS balance FROM wallet_entries w JOIN customers c ON c.customer_id = w.customer_id WHERE ${inScope('c.godown_id', p.scope)}
+      GROUP BY c.customer_id, c.customer_no, c.name HAVING balance > 0.005 ORDER BY balance DESC`);
   const KIND = { percent: 'Percent off', fixed: 'Fixed amount off', free_delivery: 'Free delivery', slab: 'Quantity slab', bxgy: 'Buy X get Y free' };
   const rC = coupons.map((c) => ({ code: c.code, kind: KIND[c.kind], orders: n(c.orders), customers: n(c.customers), amount: n(c.amount) }));
   const rO = offers.map((o) => ({ name: o.name, kind: KIND[o.kind], orders: n(o.orders), discount: n(o.discount), free_packs: n(o.free_packs), free_value: n(o.free_value) }));
@@ -502,15 +519,16 @@ async function promotionsReport(q, p) {
 }
 
 // ---------------------------------------------------------------- business view (Operations, Admin)
-async function business(q) {
+/** the business at a glance for the godowns of scope (null = every godown) */
+async function business(q, scope = null) {
   const today = istToday();
-  const month = { from: `${today.slice(0, 8)}01`, to: today };
+  const month = { from: `${today.slice(0, 8)}01`, to: today, scope };
   const facts = await salesFacts(q, month);
   const todayTotal = round2(facts.filter((f) => f.day === today).reduce((a, f) => a + f.total, 0));
   const monthTotal = round2(facts.reduce((a, f) => a + f.total, 0));
   const m = await margin(q, month);
-  const [[due]] = await q.query("SELECT COALESCE(SUM(amount_due), 0) AS n FROM orders WHERE status <> 'cancelled' AND amount_due > 0.005");
-  const [[sv]] = await q.query("SELECT COALESCE(SUM(m.delta * COALESCE(s.avg_cost, 0)), 0) AS v FROM stock_movements m JOIN skus s ON s.sku_code = m.sku_code WHERE m.stock_kind = 'good'");
+  const [[due]] = await q.query(`SELECT COALESCE(SUM(amount_due), 0) AS n FROM orders WHERE status <> 'cancelled' AND amount_due > 0.005 AND ${inScope('godown_id', scope)}`);
+  const [[sv]] = await q.query(`SELECT COALESCE(SUM(m.delta * COALESCE(s.avg_cost, 0)), 0) AS v FROM stock_movements m JOIN skus s ON s.sku_code = m.sku_code WHERE m.stock_kind = 'good' AND ${inScope('m.location_id', scope)}`);
   const info = await skuInfo(q);
   const bySku = new Map(); const byCust = new Map();
   for (const f of facts) {
@@ -519,9 +537,9 @@ async function business(q) {
   }
   const top = (map, label) => [...map.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([k, v]) => ({ name: label(k), total: v }));
   return { today: todayTotal, month: monthTotal, monthFrom: month.from, margin: m.tables[0].totals.margin, marginPct: m.tables[0].totals.pct, outstanding: round2(due.n), stockValue: round2(sv.v),
-    topSkus: top(bySku, (k) => { const s = info.get(k); return s ? `${k} ${s.name} ${s.size_label}` : k; }), topCustomers: top(byCust, (k) => k), wallet: await walletOwed(q) };
+    topSkus: top(bySku, (k) => { const s = info.get(k); return s ? `${k} ${s.name} ${s.size_label}` : k; }), topCustomers: top(byCust, (k) => k), wallet: await walletOwed(q, scope) };
 }
-async function walletOwed(q) { const [rows] = await q.query('SELECT customer_id FROM wallet_entries GROUP BY customer_id'); let t = 0; for (const r of rows) { const b = await wallet.balance(q, r.customer_id); if (b > 0) t += b; } return round2(t); }
+async function walletOwed(q, scope = null) { const [rows] = await q.query(`SELECT customer_id FROM wallet_entries WHERE ${customersIn('customer_id', scope)} GROUP BY customer_id`); let t = 0; for (const r of rows) { const b = await wallet.balance(q, r.customer_id); if (b > 0) t += b; } return round2(t); }
 
 // ---------------------------------------------------------------- accounting journal (CSV)
 /** sales, receipts, credit notes, refunds and wallet use as balanced journal vouchers -> [{ date, type, no, party, gstin, ledger, debit, credit, narration }] */
@@ -531,7 +549,7 @@ async function journal(q, p) {
   const add = (v, ledger, dr, cr, narration = '') => { if (Math.abs(dr) < 0.005 && Math.abs(cr) < 0.005) return; lines.push({ ...v, ledger, debit: dr ? round2(dr) : '', credit: cr ? round2(cr) : '', narration }); };
   const party = (r) => `${r.customer_no} ${r.customer}`;
   const [inv] = await q.query(`SELECT i.invoice_no, ${istDate('i.issued_at')} AS day, i.taxable, i.cgst, i.sgst, i.igst, i.round_off, i.total, i.buyer_json, o.order_no, o.wallet_used - o.wallet_discount AS wallet_paid, c.customer_no, c.name AS customer
-      FROM invoices i JOIN orders o ON o.order_id = i.order_id JOIN customers c ON c.customer_id = o.customer_id WHERE ${IN('i.issued_at')} ORDER BY i.issued_at`, S);
+      FROM invoices i JOIN orders o ON o.order_id = i.order_id JOIN customers c ON c.customer_id = o.customer_id WHERE ${IN('i.issued_at')} AND ${inScope('o.godown_id', p.scope)} ORDER BY i.issued_at`, S);
   const d10 = (d) => (typeof d === 'string' ? d : d.toISOString().slice(0, 10));
   for (const r of inv) {
     const b = (typeof r.buyer_json === 'string' ? JSON.parse(r.buyer_json) : r.buyer_json).bill;
@@ -542,7 +560,7 @@ async function journal(q, p) {
     if (Number(r.wallet_paid) > 0.005) { const w = { ...v, type: 'Journal (wallet)', no: `${r.invoice_no}/W` }; add(w, 'Customer wallets (liability)', Number(r.wallet_paid), 0, `Paid from the wallet on ${r.order_no}`); add(w, `Sundry debtors - ${party(r)}`, 0, Number(r.wallet_paid)); }
   }
   const [cns] = await q.query(`SELECT cn.credit_note_no, ${istDate('cn.issued_at')} AS day, cn.taxable, cn.cgst, cn.sgst, cn.igst, cn.round_off, cn.total, cn.reason, i.invoice_no, i.buyer_json, c.customer_no, c.name AS customer
-      FROM credit_notes cn JOIN invoices i ON i.invoice_id = cn.invoice_id JOIN orders o ON o.order_id = i.order_id JOIN customers c ON c.customer_id = o.customer_id WHERE ${IN('cn.issued_at')} ORDER BY cn.issued_at`, S);
+      FROM credit_notes cn JOIN invoices i ON i.invoice_id = cn.invoice_id JOIN orders o ON o.order_id = i.order_id JOIN customers c ON c.customer_id = o.customer_id WHERE ${IN('cn.issued_at')} AND ${inScope('o.godown_id', p.scope)} ORDER BY cn.issued_at`, S);
   for (const r of cns) {
     const b = (typeof r.buyer_json === 'string' ? JSON.parse(r.buyer_json) : r.buyer_json).bill;
     const v = { date: d10(r.day), type: 'Credit note', no: r.credit_note_no, party: party(r), gstin: b.gstin || '' };
@@ -551,14 +569,14 @@ async function journal(q, p) {
     add(v, `Sundry debtors - ${party(r)}`, 0, Number(r.total));
   }
   const [pays] = await q.query(`SELECT p.payment_id, p.kind, p.mode, p.amount, DATE_FORMAT(p.received_on, '%Y-%m-%d') AS day, p.reference, o.order_no, c.customer_no, c.name AS customer
-      FROM payments p JOIN orders o ON o.order_id = p.order_id JOIN customers c ON c.customer_id = o.customer_id WHERE p.received_on BETWEEN ? AND ? ORDER BY p.received_on, p.payment_id`, [p.from, p.to]);
+      FROM payments p JOIN orders o ON o.order_id = p.order_id JOIN customers c ON c.customer_id = o.customer_id WHERE p.received_on BETWEEN ? AND ? AND ${inScope('o.godown_id', p.scope)} ORDER BY p.received_on, p.payment_id`, [p.from, p.to]);
   for (const r of pays) {
     const cash = r.mode === 'cash' ? 'Cash' : `Bank (${commerce.MODES[r.mode] || r.mode})`;
     const v = { date: r.day, type: r.kind === 'refund' ? 'Payment (refund)' : 'Receipt', no: `RCPT-${r.payment_id}`, party: party(r), gstin: '' };
     if (r.kind === 'refund') { add(v, `Sundry debtors - ${party(r)}`, Number(r.amount), 0, `Refund on ${r.order_no}${r.reference ? `, ${r.reference}` : ''}`); add(v, cash, 0, Number(r.amount)); } else { add(v, cash, Number(r.amount), 0, `${r.order_no}${r.reference ? `, ${r.reference}` : ''}`); add(v, `Sundry debtors - ${party(r)}`, 0, Number(r.amount)); }
   }
   const [wr] = await q.query(`SELECT f.refund_id, ${istDate('f.paid_at')} AS day, f.amount, r.return_no, c.customer_no, c.name AS customer FROM refunds f JOIN returns r ON r.return_id = f.return_id JOIN orders o ON o.order_id = f.order_id
-      JOIN customers c ON c.customer_id = o.customer_id WHERE f.method = 'wallet' AND f.status = 'paid' AND ${IN('f.paid_at')}`, S);
+      JOIN customers c ON c.customer_id = o.customer_id WHERE f.method = 'wallet' AND f.status = 'paid' AND ${IN('f.paid_at')} AND ${inScope('o.godown_id', p.scope)}`, S);
   for (const r of wr) { const v = { date: d10(r.day), type: 'Journal (wallet)', no: `REF-${r.refund_id}`, party: party(r), gstin: '' }; add(v, `Sundry debtors - ${party(r)}`, Number(r.amount), 0, `Refund to the wallet, return ${r.return_no}`); add(v, 'Customer wallets (liability)', 0, Number(r.amount)); }
   return lines;
 }

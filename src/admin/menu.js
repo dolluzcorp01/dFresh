@@ -1367,11 +1367,10 @@ export const MENU = [
       use: "add a godown or change the person in charge. │",
       to: [
        {
-        path: "commerce-settings",
+        path: "godowns",
         section: "settings",
         action: "view",
-        commerce: true,
-        hash: "cs-l-locations"
+        commerce: true
        }
       ]
      },
@@ -1449,11 +1448,10 @@ export const MENU = [
       use: "switch a rule on or set its limit; loosening a rule needs a second Admin. │",
       to: [
        {
-        path: "commerce-settings",
+        path: "approval-rules",
         section: "settings",
         action: "view",
-        commerce: true,
-        hash: "cs-g-approvals"
+        commerce: true
        }
       ]
      },
@@ -1462,8 +1460,14 @@ export const MENU = [
       label: "Stand-ins",
       see: "who approves for whom while someone is on leave.",
       use: "set a stand-in and the leave dates. │",
-      section: "users",
-      phase: 13
+      to: [
+       {
+        path: "stand-ins",
+        section: "users",
+        action: "view",
+        commerce: true
+       }
+      ]
      },
      {
       id: "admin/users-and-security/audit-log",

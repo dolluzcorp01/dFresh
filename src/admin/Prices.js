@@ -329,6 +329,7 @@ function ExcelDrawer({ meta, onClose, onApplied }) {
   const [applied, setApplied] = useState(null);
   const reset = () => { setFile(null); setReport(null); if (inputRef.current) inputRef.current.value = ''; };
   const exportXlsx = () => act.run(() => api.download('/prices/export.xlsx', 'dFresh_Price_List.xlsx'));
+  const canExport = useCan('products', 'export');
   const dryRun = () => act.run(async () => {
     setApplied(null);
     const r = await up.send('dry', `/prices/import?dryRun=1&effective=${effective}`, file);
@@ -352,7 +353,7 @@ function ExcelDrawer({ meta, onClose, onApplied }) {
       {act.note}
       <h3>Export</h3>
       <p>Every SKU with HSN, GST rate, carton size, minimum order, how it is sold and one Price_ column per list (today&apos;s own prices; empty = uses Default).</p>
-      <button type="button" className="a-btn" disabled={act.busy} onClick={exportXlsx}>Download prices .xlsx</button>
+      {canExport ? <button type="button" className="a-btn" disabled={act.busy} onClick={exportXlsx}>Download prices .xlsx</button> : <p className="a-muted">Downloading needs Export on Products and prices.</p>}
       <h3>Import</h3>
       <p className="a-muted">Run the dry run: it lists every change and every error. Apply is offered only for that same file and date with 0 errors.</p>
       {applied && <Notice kind="ok">Applied: {applied.prices} price(s), {applied.skus} SKU(s), {applied.products} product tax change(s).</Notice>}

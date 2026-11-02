@@ -1,7 +1,7 @@
 // Approvals (docs/COMMERCE-SPEC.md 2): the pending queue (red badge in the menu: what you can decide),
 // decided requests, and your own, one ApprovalCard each. Approve (note optional) or Reject (note required) on the card; a
-// request you cannot decide says why (you raised it, your role is not an approver, no "approve" on that section). The thresholds
-// and approver roles are in Commerce settings > Approvals.
+// request you cannot decide says why. Each card shows who can sign it (the ladder of approvals.js: Approve on the section, the
+// godown, a limit that covers the amount, not on leave; "Approve for X" as X's stand-in). Rules: Admin > Approval rules.
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from './adminApi';
@@ -30,8 +30,8 @@ export default function Approvals({ onChanged }) {
       <InfoCard title="Actions that wait for a second person">
         <ul>
           <li>Large refunds, returns outside the window, "No refund" decisions, rechecks of returned stock, stock write-offs, big discounts, cancelling after dispatch, goodwill wallet credit, credit limit raises and prices below the list can need approval.</li>
-          <li>The approver needs an approver role and &quot;approve&quot; on the section. Nobody approves their own request. A reject needs a note.</li>
-          <li>Thresholds and approver roles: <Link to="/admin/commerce-settings#cs-g-approvals">Commerce settings &gt; Approvals</Link>. Requests expire after the days set there.</li>
+          <li>A request waits for the people whose role can Approve its section, who work at its godown, and whose limit covers the amount (the card shows them, smallest limit first). Nobody signs their own request; someone on leave signs nothing and their stand-in signs for them. A reject needs a note.</li>
+          <li>Requests of one kind for one customer, supplier or payee count together over a few days before a limit. What needs approval and above what: <Link to="/admin/approval-rules">Approval rules</Link>; who signs how much: <Link to="/admin/roles">Roles</Link> and <Link to="/admin/users">Staff</Link>.</li>
         </ul>
       </InfoCard>
       <Tabs tabs={TABS.map(([key, label]) => ({ key, label, count: key === 'pending' && tab === 'pending' ? rows.length : 0 }))} value={tab} onChange={setTab} label="Requests" />
