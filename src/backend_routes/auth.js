@@ -107,7 +107,7 @@ async function readSession(req) {
 
 /** the person object of readSession from their admin_users + roles row (also used by the approval ladder for others) */
 async function buildAdmin(q, user) {
-  const builtin = Boolean(permissions.BUILTIN[user.role_id]);
+  const builtin = permissions.isAdminRole(user.role_id); // Super admin and Admin: every right in code; others (Sub-admin too) from rows
   const [rows] = builtin ? [[]] : await q.query(
     'SELECT section, can_view, can_create, can_edit, can_approve, can_cancel, can_export, can_delete FROM role_permissions WHERE role_id = ?', [user.role_id]
   );

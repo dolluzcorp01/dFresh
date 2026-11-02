@@ -14,9 +14,18 @@
 //   a second-Admin rule is never signed through a stand-in), when they could stand in for that person, and that person
 //   is not the requester or excluded. The audit log then names both (decided_via).
 // The ladder = everyone who can sign it today, smallest limit first; the first is "next".
+// Second Admin (phase 12b): a rule change or a company bank change is signed only by an Admin (Super admin or Admin)
+// other than the one who asked, never through a stand-in, at any godown. Override: when every other Admin is away
+// (on leave, or marked as left long enough ago, never by an absence the overrider recorded), an Admin may override a
+// waiting rule change with a reason; it applies 24 hours later (approvals.js). Never for a bank change or anything
+// that changes who can sign (staff, roles, limits, godowns).
 const permissions = require('../shared/permissions');
 
 const LOCKED_KINDS = ['rule_change', 'company_bank', 'supplier_bank'];
+const SECOND_ADMIN_KINDS = ['rule_change', 'company_bank'];
+const NO_GODOWN_KINDS = ['rule_change', 'company_bank', 'after_export']; // company-wide: no godown scope
+// rule changes that decide who can sign: never overridden (v23 N12)
+const NEVER_OVERRIDE = ['staffadd', 'staffback', 'stafflim', 'staffscope', 'staffrole', 'staffadm', 'roleperm'];
 const SECTION_LABEL = Object.fromEntries(permissions.SECTIONS.map((s) => [s.key, s.label]));
 const labelOf = (s) => SECTION_LABEL[s] || s;
 const INF = Number.POSITIVE_INFINITY;
@@ -86,8 +95,9 @@ function addDays(d, n) { return new Date(Date.parse(`${d}T00:00:00Z`) + n * 864e
  */
 function tryAs(actor, rightsOf, q, ctx) {
   const label = (ctx.sectionLabel || labelOf)(q.section);
+  if (SECOND_ADMIN_KINDS.includes(q.kind) && !rightsOf.is_admin) return { ok: false, why: 'A second Admin (Super admin or Admin) signs this.' };
   if (!permissions.can(rightsOf.perms, q.section, 'approve')) return { ok: false, why: `${rightsOf.role_name || 'This role'} cannot approve ${label}.` };
-  if (!worksAt(rightsOf, q.godown_id)) return { ok: false, why: `${rightsOf.name} works at ${godownsText(rightsOf, ctx.godownNames)}, not ${(ctx.godownNames || {})[q.godown_id] || `godown ${q.godown_id}`}.` };
+  if (!NO_GODOWN_KINDS.includes(q.kind) && !worksAt(rightsOf, q.godown_id)) return { ok: false, why: `${rightsOf.name} works at ${godownsText(rightsOf, ctx.godownNames)}, not ${(ctx.godownNames || {})[q.godown_id] || `godown ${q.godown_id}`}.` };
   const split = ctx.split || { total: 0, count: 1 };
   const amount = Math.max(Number(q.amount) || 0, Number(split.total) || 0);
   if (!covers(rightsOf.limit, amount)) {
@@ -102,6 +112,7 @@ function tryAs(actor, rightsOf, q, ctx) {
 function decide(p, q, ctx) {
   const today = ctx.today;
   const excluded = q.excluded || [];
+  if (p.pending) return { ok: false, why: `${p.name} is waiting to be added (a second Admin approves the access) and cannot sign yet.` };
   if (p.active === false) return { ok: false, why: `${p.name} has left and cannot sign anything.` };
   if (q.status !== 'pending') return { ok: false, why: `It is already ${q.status}.` };
   if (excluded.includes(p.emp_id)) return { ok: false, why: `${p.name} is part of this record (e.g. sent or received it), so cannot sign it.` };
@@ -138,6 +149,38 @@ function ladder(q, ctx) {
   return out.sort((a, b) => limitNum(a.limit) - limitNum(b.limit) || String(a.person.name).localeCompare(String(b.person.name)));
 }
 
+// ---------------------------------------------------------------- override (phase 12b)
+/** x is on leave today, and not by a leave that p (the would-be overrider) entered for them (v23 N2) */
+const awayFor = (x, p, today) => onLeave(x, today) && !(x.leave.setBy && x.leave.setBy !== x.emp_id && p && x.leave.setBy === p.emp_id);
+/** x was marked as left long enough ago to count: by themselves (or unknown) at once; by p only after 7 days; by anyone else after 2 */
+function leftLongEnough(x, p, today) {
+  if (x.active !== false) return false;
+  if (!x.left || !x.left.at || x.left.by === x.emp_id) return true;
+  const d = dayDiff(String(x.left.at).slice(0, 10), today);
+  return p && x.left.by === p.emp_id ? d >= 7 : d >= 2;
+}
+/** every Admin other than p is away (on leave, or left long enough ago); there must be at least one other */
+function othersAway(p, people, today) {
+  const others = (people || []).filter((x) => x.is_admin && x.emp_id !== p.emp_id && !x.pending);
+  return others.length > 0 && others.every((x) => (x.active === false ? leftLongEnough(x, p, today) : awayFor(x, p, today)));
+}
+/**
+ * why p cannot override request q now ('' = they can). q.payload = the rule change ({ t, ... }); waiting = an override
+ * already waiting on it. Nobody else may be able to sign it today, and every other Admin must be away.
+ */
+function overrideProblem(p, q, ctx, waiting = null) {
+  if (q.status !== 'pending') return `It is already ${q.status}.`;
+  if (q.kind !== 'rule_change') return q.kind === 'company_bank' ? 'A bank change is never overridden: it waits for a second Admin.' : 'Only a rule change can be overridden.';
+  const t = q.payload && q.payload.t;
+  if (NEVER_OVERRIDE.includes(t)) return 'A change to who can sign (staff, roles, limits, godowns) is never overridden.';
+  if (!p.is_admin) return 'Only an Admin overrides.';
+  if (onLeave(p, ctx.today)) return 'You are on leave.';
+  if (waiting) return 'An override already waits on it.';
+  if (ladder(q, ctx).some((x) => x.person.emp_id !== p.emp_id)) return 'Somebody else can sign it today.';
+  if (!othersAway(p, ctx.people, ctx.today)) return 'Every other Admin must be on leave or marked as left (an absence you recorded yourself does not count).';
+  return '';
+}
+
 /**
  * does an action need approval under its rule? rule = approval_rules row; facts = { amount, qty, pct };
  * past = { total, count } of the same kind and target in the last "Days that count together" days (not this one)
@@ -160,4 +203,4 @@ function splitNote(split, days) {
   return `Counts together with ${split.count - 1} other request(s) of the same kind in the last ${days} days: ${rs(split.total)} in all.`;
 }
 
-module.exports = { LOCKED_KINDS, limitNum, limitText, covers, worksAt, onLeave, expired, standInProblem, leaveProblem, tryAs, decide, ladder, needs, splitNote, addDays, dayDiff };
+module.exports = { LOCKED_KINDS, SECOND_ADMIN_KINDS, NO_GODOWN_KINDS, NEVER_OVERRIDE, awayFor, leftLongEnough, othersAway, overrideProblem, limitNum, limitText, covers, worksAt, onLeave, expired, standInProblem, leaveProblem, tryAs, decide, ladder, needs, splitNote, addDays, dayDiff };

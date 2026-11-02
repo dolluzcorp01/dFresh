@@ -112,7 +112,7 @@ the phase that builds it (gap map build order; Website entries with no screen: p
 | Admin / Organisation / Print templates | placeholder: Not built yet - phase 13 |
 | Admin / Users and security / Staff | /admin/users (live) |
 | Admin / Users and security / Roles | /admin/roles (live) |
-| Admin / Users and security / Approval rules | /admin/approval-rules |
+| Admin / Users and security / Approval rules | /admin/approval-rules; /admin/approval-rules |
 | Admin / Users and security / Stand-ins | /admin/stand-ins |
 | Admin / Users and security / Audit log | /admin/audit (live) |
 | Admin / Devices / Label printer | placeholder: Not built yet - phase 13 |

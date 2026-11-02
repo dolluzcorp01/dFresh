@@ -4,14 +4,18 @@
 // can sign it today (Approve on its section, a limit that covers it, not on leave). The three locked rules (a company
 // bank change, a supplier bank change, weakening a rule) are always on. Only an Admin changes a rule; changes wait in
 // the Save bar (Save / Cancel changes) and each one is audited. Who can sign up to how much: Roles and Staff.
+// Phase 12b: open to View on Roles and users or on Settings (view only unless can_edit). Weakening a rule (switching it
+// off, raising its limit) waits for a second Admin: nothing changes yet, the server answers `waiting` (a warn toast)
+// and the rule shows its waiting line until it is decided in Approvals.
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from './adminApi';
-import { InfoCard, Loading, Notice, PageHead, useAction, useLeaveGuard, useLoad } from './ui';
+import { InfoCard, Loading, Notice, PageHead, useAction, useLeaveGuard, useLoad, useToast } from './ui';
 
 export default function ApprovalRules() {
   const data = useLoad('/approval-rules');
   const act = useAction();
+  const toast = useToast();
   const [pending, setPending] = useState({}); // kind -> { is_on, limit_value, limit_packs }
   const changes = Object.keys(pending);
   useLeaveGuard(changes.length > 0);
@@ -24,8 +28,9 @@ export default function ApprovalRules() {
     if (same) delete n[r.kind]; else n[r.kind] = next;
     return n;
   });
-  // one PUT per changed rule, in order; a refused rule stays pending with the server's reason
+  // one PUT per changed rule, in order; a refused rule stays pending with the server's reason; a weakening waits
   const save = () => act.run(async () => {
+    let saved = 0;
     for (const kind of changes) {
       const r = d.rules.find((x) => x.kind === kind);
       const v = pending[kind];
@@ -33,7 +38,8 @@ export default function ApprovalRules() {
       if (r.unit !== 'all') body.limit_value = v.limit_value;
       if (r.limit_packs !== null) body.limit_packs = v.limit_packs;
       try {
-        await api.send('PUT', `/approval-rules/${kind}`, body);
+        const out = await api.send('PUT', `/approval-rules/${kind}`, body);
+        if (out && out.waiting) { if (toast) toast('warn', 'Waiting for a second Admin', `${r.label}: ${out.waiting}`); } else saved += 1;
       } catch (e) {
         data.reload();
         throw new Error(`${r.label}: ${e.message}`);
@@ -41,7 +47,8 @@ export default function ApprovalRules() {
       setPending((p) => { const n = { ...p }; delete n[kind]; return n; });
     }
     data.reload();
-  }, `${changes.length} rule${changes.length === 1 ? '' : 's'} saved`);
+    if (saved) act.setMsg({ kind: 'ok', text: `${saved} rule${saved === 1 ? '' : 's'} saved` });
+  });
   const sections = d ? d.sections.filter((s) => d.rules.some((r) => r.section === s.key)) : [];
   const ro = !d || !d.can_edit || act.busy;
   return (
@@ -49,6 +56,7 @@ export default function ApprovalRules() {
       <PageHead sub="What needs a second person's yes, up to what amount"
         rules={['Off = done straight away, with a line in the audit log', d ? `${d.rules.length} rules` : 'Rules', 'Only an Admin changes these']} />
       <p className="a-lead">Which actions need a second person, and from what size. Who may sign is decided by roles (the Approve tick) and limits (the money): <Link to="/admin/roles">Roles</Link>, <Link to="/admin/users">Staff</Link>.</p>
+      <p className="a-hint">Switching a rule off or raising its limit waits for a second Admin; switching one on or lowering its limit is at once. The three locked rules can never be switched off.</p>
       {act.note}
       {d && !d.can_edit && <Notice kind="info">View only: only an Admin changes the approval rules.</Notice>}
       <Loading state={data}>
@@ -64,7 +72,8 @@ export default function ApprovalRules() {
                       const v = valueOf(r);
                       return (
                         <tr key={r.kind} className={pending[r.kind] ? 'a-pending' : undefined}>
-                          <td><b>{r.label}</b>{r.limit_packs !== null && <span className="a-note-l">Needs approval above the amount, or above the number of packs</span>}</td>
+                          <td><b>{r.label}</b>{r.limit_packs !== null && <span className="a-note-l">Needs approval above the amount, or above the number of packs</span>}
+                            {(r.waiting || []).map((w) => <span key={w.approval_id} className="a-note-l a-rule-wait">Waits for a second Admin: {w.summary} (request {w.approval_id})</span>)}</td>
                           <td>
                             <span className="a-switch-row">
                               <button type="button" role="switch" aria-checked={Boolean(r.locked || v.is_on)} aria-label={`${r.label}: needs approval`} className="a-switch"

@@ -183,6 +183,7 @@ const server = app.listen(PORT, (err) => {
   outboxWorker.start();
   promotionsJobs.startJobs(); // hourly: wallet expiry, cashback once the return window has passed
   require('./src/backend_routes/notifications').startJobs(); // every 10 min: the daily notification mails, once per India day
+  require('./src/backend_routes/approvals').startOverrideJob(); // every minute: overrides due after 24 hours, Admin-left notices
   fontManager.init(); // script font subsets: checked now and after every content change (font-manager.js)
 });
 server.on('error', failListen);

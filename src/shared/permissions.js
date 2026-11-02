@@ -1,8 +1,10 @@
 // Roles and permissions (docs/COMMERCE-SPEC.md section 1), shared by the API (route guards, roles screen data) and
 // the admin (menus, buttons). CommonJS: the server requires it, the admin imports it.
 // A role is a grid of SECTIONS x ACTIONS (gap map D5: view, create, edit, approve, cancel, export; delete where it is
-// used). Built-in roles are defined HERE and are not editable: Super admin (the owner) and Admin (everything),
-// Sub-admin (everything; Roles and users and Settings view only, as v23). Custom roles live in role_permissions. Rights that are
+// used). Super admin (the owner) and Admin are built in HERE and never change (everything). Sub-admin is built in (it
+// always exists, nobody deletes it) but its grid is rows like any role: everything, Roles and users and Settings view
+// only (migration 12b_01), and an Admin may change it (a widening waits for a second Admin, as v23). Custom roles live
+// in role_permissions. Rights that are
 // not a section (See cost, Own customers only) and the approval limit are columns of the role (roles table).
 const ACTIONS = ['view', 'create', 'edit', 'approve', 'cancel', 'export', 'delete'];
 
@@ -30,9 +32,9 @@ const ADMIN_ROLE_ID = 1;
 const SUBADMIN_ROLE_ID = 2;
 const SUPERADMIN_ROLE_ID = 8;
 const BUILTIN = {
-  [SUPERADMIN_ROLE_ID]: { name: 'Super admin', description: 'The owner. Everything, everywhere. Cannot be changed.', grants: () => true },
-  [ADMIN_ROLE_ID]: { name: 'Admin', description: 'Everything, in every section.', grants: () => true },
-  [SUBADMIN_ROLE_ID]: { name: 'Sub-admin', description: 'Everything. Roles and users and Settings view only.', grants: (section, action) => !['users', 'settings'].includes(section) || action === 'view' },
+  [SUPERADMIN_ROLE_ID]: { name: 'Super admin', description: 'The owner. Everything, everywhere. Cannot be changed.', fixed: true },
+  [ADMIN_ROLE_ID]: { name: 'Admin', description: 'Everything, in every section.', fixed: true },
+  [SUBADMIN_ROLE_ID]: { name: 'Sub-admin', description: 'Everything; Roles and users and Settings view only, unless an Admin gives more.' },
 };
 
 const empty = () => Object.fromEntries(ACTIONS.map((a) => [a, false]));
@@ -40,13 +42,12 @@ const empty = () => Object.fromEntries(ACTIONS.map((a) => [a, false]));
 /** { section: { view, create, edit, approve, cancel, export, delete } } for a built-in role, or from role_permissions rows. */
 function permsFor(roleId, rows = []) {
   const out = {};
-  const builtin = BUILTIN[roleId];
+  const fixed = isAdminRole(roleId); // Super admin and Admin: every right, always
   for (const s of SECTION_KEYS) {
-    if (builtin) {
-      out[s] = Object.fromEntries(ACTIONS.map((a) => [a, builtin.grants(s, a) && (!VIEW_ONLY.includes(s) || a === 'view')]));
-    } else out[s] = empty();
+    if (fixed) out[s] = Object.fromEntries(ACTIONS.map((a) => [a, !VIEW_ONLY.includes(s) || a === 'view']));
+    else out[s] = empty();
   }
-  if (!builtin) {
+  if (!fixed) {
     for (const r of rows) {
       if (!out[r.section]) continue;
       for (const a of ACTIONS) out[r.section][a] = Boolean(Number(r[`can_${a}`]));

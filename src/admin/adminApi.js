@@ -62,9 +62,9 @@ export const api = {
     xhr.onabort = () => fail('The upload was stopped.', 0);
     xhr.send(fd);
   }),
-  /** Downloads a file response (CSV, XLSX, PDF) through the browser. */
-  download: async (path, fallbackName) => {
-    const res = await fetchAdmin(path);
+  /** Downloads a file response (CSV, XLSX, PDF) through the browser. body: sent as a JSON POST (e.g. Export and lock). */
+  download: async (path, fallbackName, body) => {
+    const res = await fetchAdmin(path, body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     if (!res.ok) await handle(res);
     const name = (/filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') || '') || [])[1] || fallbackName;
     const url = URL.createObjectURL(await res.blob());

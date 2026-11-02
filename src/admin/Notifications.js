@@ -19,8 +19,8 @@ const TO = { order: 'The order contact', invoice: 'Contacts with "gets invoices"
 const STAFF_TO = { approval: 'Approvers who may decide it', stock_daily: 'Users with edit on Inventory', follow_ups: 'Each follow-up owner',
   delivery_failed: 'Users who plan trips', cash_difference: 'Users who plan trips', daily_summary: 'Admin users' };
 const ATTACH = { invoice: 'Invoice PDF', credit_note: 'Credit note PDF', statement: 'Statement PDF' };
-const STATUS = { queued: 'Queued', sent: 'Sent', failed: 'Failed', skipped: 'Not sent', cancelled: 'Cancelled' };
-const STATUS_TONE = { queued: 'warn', sent: 'good', failed: 'bad', skipped: 'gray', cancelled: 'gray' };
+const STATUS = { queued: 'Queued', sent: 'Sent', failed: 'Failed', skipped: 'Not sent', cancelled: 'Cancelled', prepared: 'Prepared' };
+const STATUS_TONE = { queued: 'warn', sent: 'good', failed: 'bad', skipped: 'gray', cancelled: 'gray', prepared: 'gray' };
 
 export function NoteStatus({ row }) {
   return (
@@ -301,7 +301,7 @@ function Log({ d }) {
               { key: 'event', label: 'Event', render: (r) => <>{r.event_label}<small className="a-muted a-person-sub">{r.audience}{r.lang_code ? `, ${r.lang_code.toUpperCase()}` : ''}{r.attachments.length ? `, ${r.attachments.map((a) => ATTACH[a]).join(', ')}` : ''}</small></> },
               { key: 'to', label: 'To', render: (r) => <>{r.recipient_name}<small className="a-muted a-person-sub">{r.recipient || '(no address)'}</small></> },
               { key: 'subject', label: 'Subject', render: (r) => r.subject || '-' },
-              { key: 'status', label: 'Status', render: (r) => <><NoteStatus row={r} />{r.status === 'skipped' && <small className="a-muted a-person-sub">{r.skip_reason}</small>}
+              { key: 'status', label: 'Status', render: (r) => <><NoteStatus row={r} />{['skipped', 'prepared'].includes(r.status) && <small className="a-muted a-person-sub">{r.skip_reason}</small>}
                 {r.status === 'failed' && <small className="a-bad a-person-sub">{r.last_error}</small>}
                 {r.mail_id && <small className="a-muted a-person-sub">mail #{r.mail_id}, {r.attempts || 0} attempt(s){r.sent_at ? `, sent ${fmtDate(r.sent_at)}` : ''}</small>}</> },
               { key: 'about', label: 'About', render: (r) => <>{r.order_no && <span>{r.order_no}</span>}{r.customer_no && <small className="a-muted a-person-sub">{r.customer_no} {r.customer}</small>}{r.ref && !r.order_no && <small className="a-muted a-person-sub">{r.ref}</small>}</> },

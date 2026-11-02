@@ -17,10 +17,15 @@ const grid = (spec) => { // { section: 'vca' } letters: v view, c create, e edit
   for (const [s, t] of Object.entries(spec)) out[s] = { ...out[s], view: t.includes('v'), create: t.includes('c'), edit: t.includes('e'), approve: t.includes('a') };
   return out;
 };
+// the Sub-admin grid as migration 20261102_stage2_12b_01 seeds it: everything; Roles and users and Settings view only
+const SUB_ROWS = permissions.SECTION_KEYS.map((section) => {
+  const full = ['users', 'settings', 'audit'].includes(section) ? 0 : 1;
+  return { section, can_view: 1, can_create: full, can_edit: full, can_approve: full, can_cancel: full, can_export: full, can_delete: full };
+});
 const ROLE = {
   super: { role_id: 8, role_name: 'Super admin', perms: permissions.permsFor(8), is_admin: true, limit: { kind: 'any' } },
   admin: { role_id: 1, role_name: 'Admin', perms: permissions.permsFor(1), is_admin: true, limit: { kind: 'any' } },
-  sub: { role_id: 2, role_name: 'Sub-admin', perms: permissions.permsFor(2), limit: { kind: 'amount', amount: 25000 } },
+  sub: { role_id: 2, role_name: 'Sub-admin', perms: permissions.permsFor(2, SUB_ROWS), limit: { kind: 'amount', amount: 25000 } },
   supervisor: { role_id: 3, role_name: 'Supervisor', perms: grid({ inventory: 'vcea', packing: 'vcea', returns: 'vcea', orders: 'v' }), limit: { kind: 'amount', amount: 2000 } },
   warehouse: { role_id: 4, role_name: 'Warehouse', perms: grid({ inventory: 'vc', packing: 'vce', returns: 'vc' }), limit: { kind: 'none' } },
   delivery: { role_id: 5, role_name: 'Delivery', perms: grid({ delivery: 've' }), limit: { kind: 'none' } },
@@ -227,7 +232,7 @@ test('a second-Admin rule is never signed through a stand-in', () => {
   const q = req({ kind: 'rule_change', section: 'settings', godown_id: K, amount: 0, requested_by: 'DZIND002' });
   const d = E.decide(byId(ps, 'DFMGR01'), q, ctx(ps));
   assert.equal(Boolean(d.via), false);
-  const sub = { ...byId(ps, 'DFMGR01'), perms: permissions.permsFor(2) }; // Sub-admin: no Approve on Settings itself
+  const sub = { ...byId(ps, 'DFMGR01'), perms: permissions.permsFor(2, SUB_ROWS) }; // Sub-admin: no Approve on Settings itself
   assert.equal(E.decide(sub, q, ctx(ps.map((p) => (p.emp_id === 'DFMGR01' ? sub : p)))).ok, false);
 });
 

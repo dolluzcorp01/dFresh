@@ -165,7 +165,7 @@ for f in $(ls database/migrations/*.sql | sort); do
   echo "== $f"; sudo mysql --default-character-set=utf8mb4 dfresh < "$f" || { echo "FAILED: $f"; break; }
 done
 ```
-The 44 migrations, in the order they must run (tick each; a later update applies only the new ones):
+The 46 migrations, in the order they must run (tick each; a later update applies only the new ones):
 
 - [ ] `20261009_phase3_home_ui_text.sql`
 - [ ] `20261009_phase4_products_ui_text.sql`
@@ -228,6 +228,12 @@ The 44 migrations, in the order they must run (tick each; a later update applies
 - [ ] `20261102_stage2_12a_04_approval_rules.sql` - approval rules in one table (the 17 kinds from today's settings,
       which go, plus three locked rules), "Days that count together" (split_days, 3), per request: godown, target,
       record date, excluded signers, who a stand-in signed for
+- [ ] `20261102_stage2_12b_01_second_admin.sql` - per person: waiting to be added (a second Admin approves), when and
+      by whom marked as left; overrides (apply 24 hours later unless cancelled); "Send again" link; the Sub-admin grid
+      as rows (everything; Roles and users and Settings view only) and See cost; the "after export" rule; the Admin
+      alert template
+- [ ] `20261102_stage2_12b_02_month_lock.sql` - "Books closed up to" (empty: not closed), months exported to the CA,
+      records allowed to change after export, Export history events
 
 The 11 commerce files replace the 12 of the commerce branch's phases (consolidated on 21 Oct 2026, never applied on
 any database but the `dfresh_commerce` demo): each table in its final shape, no file patches another. Built on a

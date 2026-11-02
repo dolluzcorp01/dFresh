@@ -181,7 +181,7 @@ export default function AdminApp() {
             <Route path="roles" element={<Need section="users"><Roles /></Need>} />
             <Route path="approvals" element={<Approvals onChanged={refreshCounts} />} />
             <Route path="godowns" element={<Need section="settings" commerce><Godowns /></Need>} />
-            <Route path="approval-rules" element={<Need section="settings" commerce><ApprovalRules /></Need>} />
+            <Route path="approval-rules" element={<Need section={['settings', 'users']} commerce><ApprovalRules /></Need>} />
             <Route path="stand-ins" element={<Need section="users" commerce><StandIns /></Need>} />
             <Route path="audit" element={<Need section="audit"><AuditLog /></Need>} />
             <Route path="p/*" element={<Placeholder />} />

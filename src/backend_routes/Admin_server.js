@@ -35,6 +35,8 @@ const db = getDBConnection(process.env.DB_NAME || 'dfresh').promise();
 const { InputError } = entities;
 const permissions = require('../shared/permissions');
 const approvals = require('./approvals');
+const books = require('./books');
+const secondAdmin = require('./second-admin');
 const commerceSettings = require('./commerce-settings');
 const pricing = require('./pricing');
 const priceExcel = require('./price-excel');
@@ -1272,7 +1274,8 @@ route('post', '/mail-logo/test-mail', 'settings:edit', async (req) => {
 
 // dAdmin employee (read only; named columns only, never the rest of that table): name, e-mail, active, photo, and
 // job_position / emp_department, which are ids into dadmin.job_position_config / department_config.
-const USER_SELECT = `SELECT a.emp_id, a.role_id, r.name AS role_name, r.is_builtin, a.is_active, a.notify_email, a.created_by, a.created_at,
+const USER_SELECT = `SELECT a.emp_id, a.role_id, r.name AS role_name, r.is_builtin, a.is_active, a.pending_add, a.left_by,
+  DATE_FORMAT(CONVERT_TZ(a.left_at, '+00:00', '+05:30'), '%Y-%m-%d') AS left_on, a.notify_email, a.created_by, a.created_at,
   TRIM(CONCAT(COALESCE(e.emp_first_name, ''), ' ', COALESCE(e.emp_last_name, ''))) AS name, e.emp_mail_id AS email,
   e.job_position, e.emp_department, e.emp_profile_img AS photo,
   (e.emp_id IS NOT NULL AND (e.deleted_time IS NOT NULL OR e.active <> 1)) AS left_company,
@@ -1285,6 +1288,11 @@ async function roleExists(q, roleId) {
 
 // Job title and department names. Production needs SELECT on these two dadmin tables (database/README.md); without it
 // the names are simply left out.
+/** a person's name from dAdmin (read only), else the emp_id */
+async function empName(q, empId) {
+  const [[e]] = await q.query(`SELECT emp_first_name, emp_last_name FROM \`${auth.DADMIN}\`.employee WHERE emp_id = ?`, [empId]);
+  return (e && [e.emp_first_name, e.emp_last_name].filter(Boolean).join(' ')) || empId;
+}
 async function dadminNames(q) {
   const out = { jobs: new Map(), depts: new Map() };
   try {
@@ -1349,11 +1357,21 @@ route('post', '/users', 'users:create', async (req) => tx(async (q) => {
   if (giveWhy) throw new InputError(giveWhy, 403);
   // a new person works where the person adding them works (every godown, or their godowns); Staff changes it
   const allG = req.admin.godowns === 'ALL';
-  await q.query("INSERT INTO admin_users (emp_id, role, role_id, godowns_all, is_active, created_by) VALUES (?, 'viewer', ?, ?, 1, ?)", [emp.emp_id, role.role_id, allG ? 1 : 0, by(req)]);
+  // phase 12b: someone who can sign (an Approve right, a limit, See cost) waits for a second Admin, inactive until then
+  const info = await foundation.roleInfo(q, role.role_id);
+  const waits = foundation.signs(info, info.limit);
+  await q.query("INSERT INTO admin_users (emp_id, role, role_id, godowns_all, is_active, pending_add, created_by) VALUES (?, 'viewer', ?, ?, ?, ?, ?)",
+    [emp.emp_id, role.role_id, allG ? 1 : 0, waits ? 0 : 1, waits ? 1 : 0, by(req)]);
   if (!allG) for (const g of req.admin.godowns) await q.query('INSERT INTO admin_user_godowns (emp_id, godown_id) VALUES (?, ?)', [emp.emp_id, g]);
+  let waiting = null;
+  if (waits) {
+    const nm = await empName(q, emp.emp_id);
+    waiting = (await secondAdmin.ask(q, { t: 'staffadd', dk: `staffadd:${emp.emp_id}`, payload: { emp_id: emp.emp_id },
+      summary: `Give ${nm} access as ${info.name} at ${allG ? 'every godown' : 'your godowns'}, signs up to ${approvalEngine.limitText(info.limit)}` }, by(req))).message;
+  }
   const [[after]] = await q.query(`${USER_SELECT} WHERE a.emp_id = ?`, [emp.emp_id]);
-  await audit(q, { empId: by(req), action: 'create', entity: 'admin_user', entityId: emp.emp_id, after: { role: after.role_name, is_active: after.is_active } });
-  return withNames([after], await dadminNames(q))[0];
+  await audit(q, { empId: by(req), action: 'create', entity: 'admin_user', entityId: emp.emp_id, after: { role: after.role_name, is_active: after.is_active, waiting_for_second_admin: waits } });
+  return { ...withNames([after], await dadminNames(q))[0], waiting };
 }), { status: 201 });
 
 route('put', '/users/:empId', 'users:edit', async (req) => tx(async (q) => {
@@ -1372,6 +1390,8 @@ route('put', '/users/:empId', 'users:edit', async (req) => tx(async (q) => {
     set.notify_email = m || null;
   }
   if (!Object.keys(set).length) throw new InputError('Nothing to change');
+  // phase 12b: someone waiting to be added (or brought back) is decided in Approvals, never here (v23 N1)
+  if (Number(before.pending_add) === 1 && 'is_active' in set) throw new InputError('Waiting for a second Admin: decide it in Approvals', 409);
   // phase 12a: a role or active change follows the Staff rules (foundation.js): who may change whom, nobody gives more
   if ((set.role_id && set.role_id !== before.role_id) || 'is_active' in set) {
     const target = (await approvals.people(q)).find((p) => p.emp_id === before.emp_id);
@@ -1390,12 +1410,43 @@ route('put', '/users/:empId', 'users:edit', async (req) => tx(async (q) => {
   if (losesAdmin && (await activeAdmins(q, before.emp_id)) === 0) {
     throw new InputError('There must always be at least one active Admin. Make someone else Admin first.', 409);
   }
-  await q.query(`UPDATE admin_users SET ${Object.keys(set).map((c) => `${c} = ?`).join(', ')} WHERE emp_id = ?`, [...Object.values(set), before.emp_id]);
+  // phase 12b: a role that signs more, or taking the Admin role away, waits for a second Admin; so does bringing back
+  // someone who can sign. Marking someone as left records when and by whom (an override never uses it at once).
+  const waiting = [];
+  if (set.role_id && set.role_id !== before.role_id) {
+    const now = await foundation.roleInfo(q, before.role_id);
+    const next = await foundation.roleInfo(q, set.role_id);
+    const demote = permissions.isAdminRole(before.role_id) && !permissions.isAdminRole(set.role_id);
+    if (foundation.roleWider(now, next) || demote) {
+      waiting.push((await secondAdmin.ask(q, { t: 'staffrole', dk: `staffrole:role:${before.emp_id}`, payload: { emp_id: before.emp_id, role_id: set.role_id },
+        summary: `${before.name || before.emp_id}: role ${now.name} to ${next.name}${demote ? ' (takes the Admin role away)' : ''}` }, by(req))).message);
+      delete set.role_id;
+    }
+  }
+  if (set.is_active === 1 && Number(before.is_active) === 0) {
+    const info = await foundation.roleInfo(q, set.role_id || before.role_id);
+    const [[lim]] = await q.query('SELECT limit_kind, limit_amount FROM admin_users WHERE emp_id = ?', [before.emp_id]);
+    const own = lim.limit_kind === 'role' ? info.limit : { kind: lim.limit_kind, amount: lim.limit_amount === null ? null : Number(lim.limit_amount) };
+    if (foundation.signs(info, own)) {
+      await q.query('UPDATE admin_users SET pending_add = 1 WHERE emp_id = ?', [before.emp_id]);
+      waiting.push((await secondAdmin.ask(q, { t: 'staffback', dk: `staffback:${before.emp_id}`, payload: { emp_id: before.emp_id },
+        summary: `Bring back ${before.name || before.emp_id} as ${info.name}, signs up to ${approvalEngine.limitText(own)}` }, by(req))).message);
+      delete set.is_active;
+    } else { set.left_at = null; set.left_by = null; }
+  }
+  if (set.is_active === 0 && Number(before.is_active) === 1) { set.left_at = new Date(); set.left_by = by(req); }
+  if (Object.keys(set).length) await q.query(`UPDATE admin_users SET ${Object.keys(set).map((c) => `${c} = ?`).join(', ')} WHERE emp_id = ?`, [...Object.values(set), before.emp_id]);
+  if (set.is_active === 0 && permissions.isAdminRole(before.role_id)) { // every Admin is told at once
+    const gone = await empName(q, before.emp_id);
+    const marker = await empName(q, by(req));
+    await notifications.adminAlert(q, { subject: `${gone} marked as left`, ref: `left ${before.emp_id}`, by: by(req),
+      body: `${marker} marked ${gone} (${before.role_name}) as left. An override by ${marker} cannot use this absence for 7 days; anyone else's after 2 days.` });
+  }
   const [[after]] = await q.query(`${USER_SELECT} WHERE a.emp_id = ?`, [before.emp_id]);
   const action = set.role_id && set.role_id !== before.role_id ? 'role_change' : set.is_active === 0 ? 'deactivate' : set.is_active === 1 ? 'reactivate' : 'update';
   await audit(q, { empId: by(req), action, entity: 'admin_user', entityId: before.emp_id, before: { role: before.role_name, is_active: before.is_active, notify_email: before.notify_email },
-    after: { role: after.role_name, is_active: after.is_active, notify_email: after.notify_email } });
-  return withNames([after], await dadminNames(q))[0];
+    after: { role: after.role_name, is_active: after.is_active, notify_email: after.notify_email, ...(waiting.length ? { waiting } : {}) } });
+  return { ...withNames([after], await dadminNames(q))[0], waiting };
 }));
 
 route('get', '/audit', 'audit:view', async (req) => {
@@ -3074,7 +3125,7 @@ function cleanGrid(raw) {
   return out;
 }
 async function roleGrid(q, role) {
-  if (permissions.BUILTIN[role.role_id]) return permissions.permsFor(role.role_id);
+  if (permissions.isAdminRole(role.role_id)) return permissions.permsFor(role.role_id);
   const [rows] = await q.query('SELECT section, can_view, can_create, can_edit, can_approve, can_cancel, can_export, can_delete FROM role_permissions WHERE role_id = ?', [role.role_id]);
   return permissions.permsFor(role.role_id, rows);
 }
@@ -3123,12 +3174,13 @@ route('get', '/roles', 'users:view', async (req) => {
     const top = permissions.isAdminRole(r.role_id);
     const limit = top ? { kind: 'any', amount: null } : { kind: r.limit_kind, amount: r.limit_amount === null ? null : Number(r.limit_amount) };
     // what this person may change on it: '' = everything they could give; else why not (shown on the role)
+    const [[wait]] = await db.query("SELECT approval_id, summary FROM approvals WHERE kind = 'rule_change' AND status = 'pending' AND JSON_UNQUOTE(JSON_EXTRACT(payload, '$.dk')) = ?", [`roleperm:${r.role_id}`]);
     const lock = Number(r.role_id) === Number(req.admin.role_id) ? 'Nobody changes a role they hold, so nobody can raise their own limit or rights. Ask an Admin.'
       : top ? `${r.name} has every right, always: it never changes.`
         : Number(r.role_id) === permissions.SUBADMIN_ROLE_ID && !req.admin.is_admin ? 'Only an Admin can change the Sub-admin role.' : '';
     out.push({ ...r, is_builtin: builtin, users: Number(r.users), perms: await roleGrid(db, r), limit, limit_text: approvalEngine.limitText(limit),
-      see_cost: builtin || Number(r.see_cost) === 1, own_customers_only: !builtin && Number(r.own_customers_only) === 1, lock: lock || null,
-      grid_fixed: builtin }); // a built-in grid is fixed in code (Sub-admin: only its limit can change)
+      see_cost: top || Number(r.see_cost) === 1, own_customers_only: !top && Number(r.own_customers_only) === 1, lock: lock || null,
+      grid_fixed: top, waiting: wait || null }); // Super admin and Admin: fixed in code; Sub-admin and the others: rows
   }
   return { roles: out, sections: permissions.SECTIONS, actions: permissions.ACTIONS, viewOnly: permissions.VIEW_ONLY };
 });
@@ -3155,19 +3207,32 @@ route('put', '/roles/:id', 'users:edit', async (req) => tx(async (q) => {
   const sub = Number(role.role_id) === permissions.SUBADMIN_ROLE_ID;
   if (sub && !req.admin.is_admin) throw new InputError('Only an Admin can change the Sub-admin role.', 403);
   if (Number(role.is_builtin) && !sub) throw new InputError(`${role.name} is built in and cannot be changed`, 409);
-  // Sub-admin: built in, only its default limit changes (its rights are fixed in code)
-  if (sub && ['name', 'description', 'perms', 'see_cost', 'own_customers_only'].some((k) => k in req.body)) throw new InputError('Sub-admin is built in: only its default limit can change', 409);
+  // Sub-admin: built in (its name stays); an Admin changes its rights and limit like any role's (phase 12b, as v23)
+  if (sub && ['name', 'description'].some((k) => k in req.body)) throw new InputError('Sub-admin is built in: its name stays', 409);
   const name = 'name' in req.body ? roleName(req.body.name) : role.name;
   const [[dup]] = await q.query('SELECT role_id FROM roles WHERE name = ? AND role_id <> ?', [name, role.role_id]);
   if (dup) throw new InputError(`A role called ${name} exists already`, 409);
   const beforeGrid = await roleGrid(q, role);
   const grid = 'perms' in req.body ? cleanGrid(req.body.perms) : beforeGrid;
   const extras = roleExtras(req.body, role);
-  roleWithinMe(req, sub ? {} : grid, extras);
+  roleWithinMe(req, grid, extras);
   const description = 'description' in req.body ? String(req.body.description || '').trim().slice(0, 255) || null : role.description;
+  // phase 12b: wider rights (any Approve, a higher limit, See cost) wait for a second Admin; the whole change waits
+  const nowInfo = await foundation.roleInfo(q, role.role_id);
+  const nextInfo = { perms: grid, limit: { kind: extras.limit_kind, amount: extras.limit_amount }, see_cost: Boolean(extras.see_cost) };
+  if (foundation.roleWider(nowInfo, nextInfo)) {
+    const wider = [
+      ...permissions.SECTION_KEYS.filter((s) => grid[s] && grid[s].approve && !permissions.can(nowInfo.perms, s, 'approve')).map((s) => `Approve on ${(permissions.SECTIONS.find((x) => x.key === s) || {}).label || s}`),
+      approvalEngine.limitNum(nextInfo.limit) > approvalEngine.limitNum(nowInfo.limit) ? `limit ${approvalEngine.limitText(nowInfo.limit)} to ${approvalEngine.limitText(nextInfo.limit)}` : '',
+      nextInfo.see_cost && !nowInfo.see_cost ? 'See cost' : '',
+    ].filter(Boolean);
+    const w = await secondAdmin.ask(q, { t: 'roleperm', dk: `roleperm:${role.role_id}`, summary: `Role ${role.name}: ${wider.join(', ')}`,
+      payload: { role_id: role.role_id, name, description, perms: grid, extras } }, by(req));
+    return { role_id: role.role_id, name, waiting: w.message };
+  }
   await q.query('UPDATE roles SET name = ?, description = ?, limit_kind = ?, limit_amount = ?, see_cost = ?, own_customers_only = ?, updated_by = ?, updated_at = UTC_TIMESTAMP() WHERE role_id = ?',
     [name, description, extras.limit_kind, extras.limit_amount, extras.see_cost, extras.own_customers_only, by(req), role.role_id]);
-  if (!sub) await saveGrid(q, role.role_id, grid);
+  await saveGrid(q, role.role_id, grid);
   const beforeExtras = { limit_kind: role.limit_kind, limit_amount: role.limit_amount === null ? null : Number(role.limit_amount), see_cost: Number(role.see_cost), own_customers_only: Number(role.own_customers_only) };
   await audit(q, { empId: by(req), action: 'update', entity: 'role', entityId: String(role.role_id), before: { name: role.name, description: role.description, perms: beforeGrid, ...beforeExtras },
     after: { name, description, perms: grid, ...extras } });
@@ -3202,6 +3267,52 @@ route('post', '/approvals/:id/decide', 'any', async (req) => {
 route('post', '/approvals/:id/withdraw', 'any', async (req) => {
   try { return await tx((q) => approvals.withdraw(q, Number(req.params.id), req.admin)); } catch (e) { throw asApproval(e); }
 });
+// phase 12b: the person who raised an expired request sends it again (a fresh request with the same details)
+route('post', '/approvals/:id/again', 'any', async (req) => {
+  try { return await tx((q) => approvals.sendAgain(q, Number(req.params.id), req.admin)); } catch (e) { throw asApproval(e); }
+});
+// phase 12b: an Admin overrides a waiting rule change while every other Admin is away (applies 24 hours later)
+route('post', '/approvals/:id/override', 'any', async (req) => {
+  try { return await tx((q) => approvals.setOverride(q, Number(req.params.id), req.body && req.body.reason, req.admin)); } catch (e) { throw asApproval(e); }
+});
+route('post', '/approvals/:id/override/cancel', 'any', async (req) => {
+  try { return await tx((q) => approvals.cancelOverride(q, Number(req.params.id), req.admin, req.body && req.body.note)); } catch (e) { throw asApproval(e); }
+});
+
+// phase 12b: the role changes a second Admin approves (the same save as PUT /roles/:id, made then)
+secondAdmin.on('roleperm', {
+  async recheck(q, p) { const [[r]] = await q.query('SELECT role_id FROM roles WHERE role_id = ?', [p.role_id]); return r ? '' : 'the role is gone'; },
+  async apply(q, p, empId) {
+    const [[role]] = await q.query('SELECT role_id, name, description, limit_kind, limit_amount, see_cost, own_customers_only FROM roles WHERE role_id = ? FOR UPDATE', [p.role_id]);
+    if (!role || permissions.isAdminRole(role.role_id)) return;
+    const beforeGrid = await roleGrid(q, role);
+    const x = p.extras;
+    await q.query('UPDATE roles SET name = ?, description = ?, limit_kind = ?, limit_amount = ?, see_cost = ?, own_customers_only = ?, updated_by = ?, updated_at = UTC_TIMESTAMP() WHERE role_id = ?',
+      [p.name, p.description, x.limit_kind, x.limit_amount, x.see_cost, x.own_customers_only, empId, role.role_id]);
+    await saveGrid(q, role.role_id, p.perms);
+    await audit(q, { empId, action: 'update', entity: 'role', entityId: String(role.role_id), before: { name: role.name, perms: beforeGrid, limit_kind: role.limit_kind, limit_amount: role.limit_amount, see_cost: role.see_cost },
+      after: { name: p.name, perms: p.perms, ...x, approved: true } });
+  },
+});
+
+// ---------------------------------------------------------------------------------------------
+// Export to the CA and the month lock (phase 12b, books.js): a finished month only, nothing in it still waiting;
+// exporting locks it. Export history lists every month sent and every change allowed after it.
+// ---------------------------------------------------------------------------------------------
+route('get', '/books', 'reports:view', async (req) => {
+  const today = pricing.istToday();
+  const prev = new Date(Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)) - 2, 1)).toISOString().slice(0, 7);
+  const month = books.isMonth(req.query.month) ? String(req.query.month) : prev;
+  return { ...(await books.history(db)), month, checks: await books.exportChecks(db, month), can_export: canDo(req, 'reports', 'export') };
+});
+route('post', '/books/export', 'reports:export', async (req, res) => {
+  const month = String((req.body && req.body.month) || '');
+  const out = await tx((q) => books.exportMonth(q, month, by(req), reports.journal));
+  const head = ['Date', 'Voucher type', 'Voucher no', 'Party', 'Party GSTIN', 'Ledger', 'Debit', 'Credit', 'Narration'];
+  const body = csv.stringify([head, ...out.rows.map((x) => [x.date, x.type, x.no, x.party, x.gstin, x.ledger, x.debit, x.credit, x.narration])]);
+  res.set({ 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="${out.file}"`, 'Cache-Control': 'no-store' });
+  res.send(`\ufeff${body}`);
+});
 
 // Foundation (phase 12a): godowns, staff, approval rules, stand-ins - in foundation.js, on the same route helper (before
 // the error handler below, so their messages reach the screen, and inside the start-up check of every declaration)
@@ -3213,7 +3324,7 @@ foundation.register({ route, tx, db, by, InputError, canDo });
 // event and the numbers are Commerce settings (PUT /commerce-settings/:key, audited). Every change is audited.
 // ---------------------------------------------------------------------------------------------
 const notifications = require('./notifications');
-const NOTE_STATUS = `CASE WHEN n.status = 'skipped' THEN 'skipped' WHEN m.status IN ('pending', 'sending') THEN 'queued' ELSE COALESCE(m.status, 'queued') END`;
+const NOTE_STATUS = `CASE WHEN n.status IN ('skipped', 'prepared') THEN n.status WHEN m.status IN ('pending', 'sending') THEN 'queued' ELSE COALESCE(m.status, 'queued') END`;
 /** notification_log rows with the state of their mail row */
 async function notificationRows(where, args, limit = 200) {
   const [rows] = await db.query(`SELECT n.log_id, n.event_key, n.audience, n.channel, n.recipient, n.recipient_name, n.emp_id, n.lang_code, n.subject, ${NOTE_STATUS} AS status, n.skip_reason,
@@ -3350,6 +3461,27 @@ route('put', '/commerce-settings/:key', 'settings:edit', async (req) => tx(async
   const checked = commerceSettings.check(row, req.body.value, roles.map((r) => r.role_id));
   if (checked.error) throw new InputError(checked.error);
   if (checked.value === row.value) return { setting_key: row.setting_key, value: row.value };
+  // phase 12b: sensible ranges; a looser control, a bank detail or reopening the books waits for a second Admin
+  const range = secondAdmin.RANGE[row.setting_key];
+  if (range && (Number(checked.value) < range[0] || Number(checked.value) > range[1])) throw new InputError(`From ${range[0]} to ${range[1]}`);
+  const label = (await q.query('SELECT label FROM commerce_settings WHERE setting_key = ?', [row.setting_key]))[0][0].label;
+  const shown = (v) => (row.value_type === 'bool' ? (v === '1' ? 'on' : 'off') : v === '' ? 'empty' : v);
+  if (row.setting_key === 'books_closed_to') {
+    if (!req.admin.is_admin) throw new InputError('Only an Admin closes or reopens the books', 403);
+    if (checked.value && !pricing.isDate(checked.value)) throw new InputError('A date like 2026-03-31, or empty');
+    const firstOfMonth = `${pricing.istToday().slice(0, 8)}01`;
+    if (checked.value && checked.value >= firstOfMonth) throw new InputError('Only a finished month can be closed: a date before this month');
+    if (row.value && (!checked.value || checked.value < row.value)) {
+      const w = await secondAdmin.ask(q, { t: 'books', dk: 'books', summary: `Reopen the books: closed up to ${row.value} to ${checked.value || 'not closed'}`, payload: { value: checked.value } }, by(req));
+      return { setting_key: row.setting_key, value: row.value, waiting: w.message };
+    }
+  } else if (secondAdmin.BANK_KEYS.includes(row.setting_key)) {
+    const w = await secondAdmin.ask(q, { kind: 'company_bank', t: 'bank', dk: `bank:${row.setting_key}`, summary: `${label}: change (bank details on invoices)`, payload: { key: row.setting_key, value: checked.value } }, by(req));
+    return { setting_key: row.setting_key, value: row.value, waiting: `${w.message} A bank change is never overridden.` };
+  } else if (secondAdmin.settingLoosens(row.setting_key, row.value, checked.value)) {
+    const w = await secondAdmin.ask(q, { t: 'switch', dk: `switch:${row.setting_key}`, summary: `Switch ${label}: ${shown(row.value)} to ${shown(checked.value)}`, payload: { key: row.setting_key, value: checked.value } }, by(req));
+    return { setting_key: row.setting_key, value: row.value, waiting: `${w.message} It loosens a control.` };
+  }
   await q.query('UPDATE commerce_settings SET value = ?, updated_by = ?, updated_at = UTC_TIMESTAMP() WHERE setting_key = ?', [checked.value, by(req), row.setting_key]);
   await audit(q, { empId: by(req), action: 'update', entity: 'commerce_setting', entityId: row.setting_key, before: { value: row.value }, after: { value: checked.value } });
   return { setting_key: row.setting_key, value: checked.value };
@@ -3411,7 +3543,8 @@ route('delete', '/commerce-settings/lists/:list/:id', 'settings:delete', async (
 }));
 
 router.use('/admin', (err, req, res, next) => { // eslint-disable-line no-unused-vars
-  if (err instanceof InputError || err instanceof media.UploadError || err instanceof godowns.GodownError) {
+  if (err instanceof InputError || err instanceof media.UploadError || err instanceof godowns.GodownError || err instanceof books.BooksError
+    || err instanceof secondAdmin.GateError || err instanceof approvals.ApprovalError) {
     return res.status(err.status).json({ success: false, message: err.message, ...(err.code ? { code: err.code } : {}), ...(err.fields ? { fields: err.fields } : {}) });
   }
   if (err instanceof multer.MulterError) {

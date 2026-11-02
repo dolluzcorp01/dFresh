@@ -58,7 +58,7 @@ const PARTS = {
     ['tabs', '.drawer .dtabs', '.a-drawer .a-tabs'], ['foot', '.drawer .df', '.a-drawer > footer'], ['foot button', '.drawer .df .btn', '.a-drawer > footer .a-btn'],
   ]],
   // phase 12a pages: the same parts on v23's page and ours (PAGES below)
-  ...Object.fromEntries(['godowns', 'staff', 'roles', 'approval rules', 'stand-ins'].map((k) => [`${k} page`, [['#page', '.a-main'], [
+  ...Object.fromEntries(['godowns', 'staff', 'roles', 'approval rules', 'stand-ins', 'approvals', 'export'].map((k) => [`${k} page`, [['#page', '.a-main'], [
     ['page', '#page', '.a-main'], ['crumb', '.crumb', '.a-crumb'], ['title', '.ph h1', '.a-ph h1'], ['subtitle', '.ph p', '.a-ph p'],
     ['rule chips', '.rchips', '.a-rchips'], ['rule chip', '.rchips .pill', '.a-rchips .a-pill'], ['primary button', '.ph .acts .btn.primary', '.a-ph-acts .a-btn:not(.a-btn-ghost)'],
     ['card', '#page .card', k === 'roles' ? '.a-main .a-roleedit' : '.a-main .a-listcard, .a-main .a-card'], ['th', '#page table.t th', '.a-main .a-table th'], ['td', '#page table.t tbody td', '.a-main .a-table tbody td'],
@@ -101,10 +101,12 @@ async function v23Page(browser, w, h, part) {
   return p;
 }
 // our page per part: the list page is Orders (a list with tabs, like v23's Customer list); the rest on the Customer list
-const OUR_PATH = { 'list page': 'commerce/orders', 'godowns page': 'godowns', 'staff page': 'users', 'roles page': 'roles', 'approval rules page': 'approval-rules', 'stand-ins page': 'stand-ins' };
+const OUR_PATH = { 'list page': 'commerce/orders', 'godowns page': 'godowns', 'staff page': 'users', 'roles page': 'roles', 'approval rules page': 'approval-rules', 'stand-ins page': 'stand-ins',
+  'approvals page': 'approvals', 'export page': 'commerce/reports?tab=accounting' }; // phase 12b
 // v23's page per part (default: the Customer list)
 const V23_PAGE = { 'godowns page': 'admin/organisation/godowns', 'staff page': 'admin/users-and-security/staff', 'roles page': 'admin/users-and-security/roles',
-  'approval rules page': 'admin/users-and-security/approval-rules', 'stand-ins page': 'admin/users-and-security/stand-ins' };
+  'approval rules page': 'admin/users-and-security/approval-rules', 'stand-ins page': 'admin/users-and-security/stand-ins',
+  'approvals page': 'home/approvals', 'export page': 'money/accounting-export/export-to-accountant' }; // phase 12b
 // ONLY=part,part limits the run (e.g. ONLY="godowns page,staff page")
 const ONLY = process.env.ONLY ? process.env.ONLY.split(',').map((x) => x.trim()) : null;
 async function ourPage(browser, w, h, part) {

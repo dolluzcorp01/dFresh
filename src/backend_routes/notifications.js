@@ -55,6 +55,7 @@ const EVENTS = {
   delivery_failed: { audience: 'staff', label: 'Failed delivery', vars: ['name', 'order_no', 'customer', 'trip', 'reason', 'link'] },
   cash_difference: { audience: 'staff', label: 'Cash handover difference', vars: ['name', 'trip', 'driver', 'collected', 'handed', 'difference', 'note', 'link'] },
   daily_summary: { audience: 'staff', label: 'Daily summary for Admin', vars: ['name', 'date', 'summary', 'link'] },
+  admin_alert: { audience: 'staff', label: 'Admin alert (override, Admin left, leave for an Admin)', vars: ['name', 'subject', 'body', 'link'] },
 };
 const settingKey = (event) => `notify_ev_${event}`;
 const DAILY = ['overdue', 'wallet_expiring', 'stock_daily', 'follow_ups', 'daily_summary'];
@@ -336,6 +337,26 @@ const approvalWaiting = (q, approvalId) => safely('approval', async () => {
   const [[o]] = a.ref_type === 'order' ? await q.query('SELECT order_id, customer_id FROM orders WHERE order_no = ?', [a.ref_id]) : [[null]];
   await toStaff(q, 'approval', users, () => ({ kind: (KINDS[a.kind] || {}).label || a.kind, summary: a.summary, requested_by: by ? `${by.name} (${by.emp_id})` : a.requested_by, link: link('approvals') }),
     { ref: `approval ${a.approval_id}`, orderId: o ? o.order_id : null, customerId: o ? o.customer_id : (a.ref_type === 'customer' ? Number(a.ref_id) : null) });
+});
+
+/**
+ * phase 12b: an alert to every Super admin and Admin (an override set / applied / cancelled / stopped, an Admin marked
+ * as left, leave entered for another Admin). Always queued, whatever the event switches say (it guards the company):
+ * an e-mail through the outbox, and a WhatsApp copy prepared in notification_log (no provider: never sent).
+ * The phone is read from dAdmin (read only).
+ */
+const adminAlert = (q, { subject, body, ref = null, by = 'system' }) => safely('admin_alert', async () => {
+  const admins = (await staffUsers(q)).filter((u) => permissions.isAdminRole(u.role_id));
+  await toStaff(q, 'admin_alert', admins, () => ({ subject, body, link: link('approvals') }), { ref, by });
+  const [phones] = admins.length ? await q.query(`SELECT emp_id, emp_mobile_no FROM \`${DADMIN}\`.employee WHERE emp_id IN (?)`, [admins.map((u) => u.emp_id)]) : [[]];
+  for (const u of admins) {
+    const ph = (phones.find((x) => x.emp_id === u.emp_id) || {}).emp_mobile_no || null;
+    await q.query(
+      `INSERT INTO notification_log (event_key, audience, channel, recipient, recipient_name, emp_id, lang_code, subject, status, skip_reason, ref, is_test, created_by)
+       VALUES ('admin_alert', 'staff', 'whatsapp', ?, ?, ?, 'en', ?, 'prepared', 'no WhatsApp provider is set up, so it is not sent', ?, 0, ?)`,
+      [ph ? String(ph).slice(0, 150) : null, String(u.name || '').slice(0, 150) || null, u.emp_id, `dFresh: ${subject}`.slice(0, 255), ref ? String(ref).slice(0, 60) : null, by]
+    );
+  }
 });
 
 async function deliveryFailed(q, orderId, note) {
@@ -624,6 +645,6 @@ async function sendTest(q, event, lang, draft, me) {
 
 module.exports = {
   EVENTS, DAILY, settingKey, setMuted, isOn, template, unknownVars, compose, customerRecipients, staffUsers, staffWith, record,
-  orderConfirmed, orderStatus, invoiceIssued, paymentReceived, returnAccepted, returnPicked, returnRefunded, walletCredited, approvalWaiting, cashDifference,
+  orderConfirmed, orderStatus, invoiceIssued, paymentReceived, returnAccepted, returnPicked, returnRefunded, walletCredited, approvalWaiting, cashDifference, adminAlert,
   runDaily, startJobs, stopJobs, preview, sendTest, JOBS,
 };

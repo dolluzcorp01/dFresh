@@ -20,6 +20,7 @@ const { audit } = require('./audit');
 const approvals = require('./approvals');
 const commerceSettings = require('./commerce-settings');
 const pricing = require('./pricing');
+const books = require('./books');
 const { storable } = require('./photo-check');
 
 const MOVE_LABEL = {
@@ -128,6 +129,7 @@ async function moveStock(q, { sku, godown, shelf = 'good', qty, batch = null, st
   const n = Number(qty);
   if (!Number.isInteger(n) || n === 0) throw new StockError('Quantity: a whole number of packs');
   if (!what) throw new Error('stock: what moves the stock (move type) is required');
+  await books.assertOpen(q, at ? new Date(new Date(at).getTime() + 5.5 * 3600e3).toISOString().slice(0, 10) : pricing.istToday()); // phase 12b month lock
   const batchId = batch ? Number(batch) : null;
   const isStrict = strict === undefined ? Boolean(batchId) : Boolean(strict);
   const base = { sku, godown: g, shelf, what, unitCost, note, at, doc };
@@ -194,6 +196,7 @@ async function stockIn(q, data, empId, opts = {}) {
   const today = pricing.istToday();
   const day = String(data.received_on || today);
   if (!isDate(day) || day > today) throw new StockError('Date: today or earlier');
+  await books.assertOpen(q, day);
   if (!opts.allowPast && day < new Date(Date.now() + 5.5 * 3600e3 - 60 * 86400e3).toISOString().slice(0, 10)) throw new StockError('Date: at most 60 days back');
   const reference = String(data.reference || '').trim().slice(0, 60) || null;
   if (kind === 'purchase' && !reference) throw new StockError("Reference: the supplier's bill number");
@@ -363,6 +366,7 @@ async function requestWriteOff(q, data, empId, photo = null) {
   const there = await onShelf(q, { sku, godown, shelf: kind, batch: batchId });
   if (there < qty) throw new StockError(`Only ${there} ${KIND_LABEL[kind].toLowerCase()} packs of ${sku}${batchId ? ' in that batch' : ''} at this godown`);
   const value = s.avg_cost === null ? null : round2(qty * Number(s.avg_cost));
+  await books.assertOpen(q, pricing.istToday());
   const check = await approvals.check(q, 'write_off', { amount: value || 0, qty, by: empId });
   const [ins] = await q.query(
     'INSERT INTO write_offs (sku_code, godown_id, stock_kind, batch_id, qty, reason_type, reason, value, photo, photo_type, status, emp_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
@@ -387,6 +391,16 @@ approvals.onRecheck('write_off', async (q, p) => {
   if (!w || w.status !== 'pending') return 'the write-off is no longer waiting';
   const there = await onShelf(q, { sku: w.sku_code, godown: w.godown_id, shelf: w.stock_kind, batch: w.batch_id });
   return there < w.qty ? `only ${there} ${KIND_LABEL[w.stock_kind].toLowerCase()} packs of ${w.sku_code} are there now, ${w.qty} to write off` : '';
+});
+// Send again (phase 12b): an expired write-off waits again, while the packs are still there
+approvals.onAgain('write_off', async (q, p) => {
+  const [[w]] = await q.query('SELECT godown_id, sku_code, stock_kind, batch_id, qty, status FROM write_offs WHERE write_off_id = ? FOR UPDATE', [p.write_off_id]);
+  if (!w) return 'the write-off is gone';
+  if (w.status !== 'rejected') return `the write-off is ${w.status}`;
+  const there = await onShelf(q, { sku: w.sku_code, godown: w.godown_id, shelf: w.stock_kind, batch: w.batch_id });
+  if (there < w.qty) return `only ${there} ${KIND_LABEL[w.stock_kind].toLowerCase()} packs of ${w.sku_code} are there now, ${w.qty} to write off`;
+  await q.query("UPDATE write_offs SET status = 'pending' WHERE write_off_id = ?", [p.write_off_id]);
+  return '';
 });
 approvals.onClosed('write_off', async (q, p, status, empId) => {
   if (!p || !p.write_off_id) return;
@@ -517,6 +531,13 @@ async function postCount(q, id, empId) {
   await audit(q, { empId, action: 'count_post', entity: 'stock_count', entityId: String(id), after: { adjusted: lines.map((l) => `${l.sku_code} ${Number(l.counted) - Number(l.expected)}`) } });
 }
 approvals.onApproved('stock_count', async (q, p, empId) => { if (p && p.count_id) await postCount(q, p.count_id, empId); });
+approvals.onAgain('stock_count', async (q, p) => {
+  const [[c]] = await q.query('SELECT status FROM stock_counts WHERE count_id = ? FOR UPDATE', [p.count_id]);
+  if (!c) return 'the stock take is gone';
+  if (c.status !== 'rejected') return `the stock take is ${c.status}`;
+  await q.query("UPDATE stock_counts SET status = 'pending', closed_at = NULL WHERE count_id = ?", [p.count_id]);
+  return '';
+});
 approvals.onClosed('stock_count', async (q, p, status, empId) => {
   if (!p || !p.count_id) return;
   await q.query("UPDATE stock_counts SET status = 'rejected', closed_at = UTC_TIMESTAMP() WHERE count_id = ? AND status = 'pending'", [p.count_id]);

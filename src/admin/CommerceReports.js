@@ -6,10 +6,13 @@
 // Reports: Sales, Margin, GST (GSTR-1), Receivables, Stock, Delivery, Returns, Promotions and wallet, Accounting export.
 // The report is in the address (?tab=<key>; the menu's Reports, GST and Money entries open their report), else the
 // first one the role may see. The period and filters stay while switching reports.
+// Phase 12b, Accounting: "Send a month to the CA" (books.js): a finished month with nothing dated in it still waiting
+// is exported (the journal CSV) and locked for everybody; Export history lists each month sent and each change
+// allowed after it (the CA is told).
 import { useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from './adminApi';
-import { InfoCard, Loading, Notice, PageHead, Tabs, useAction, useCan, useLoad } from './ui';
+import { InfoCard, Loading, Notice, PageHead, Tabs, useAction, useCan, useConfirm, useLoad } from './ui';
 import { esc, printPage, rs } from './printKit';
 import ReportChart from './ReportChart';
 
@@ -153,6 +156,7 @@ function Accounting({ p, format }) {
       {d && (
         <>
           {act.note}
+          <BooksCard />
           <Notice kind="info">Accounting software: {format === 'csv' ? 'CSV journal' : format} (Commerce settings &gt; Accounting; Tally and Zoho are to be confirmed by sir). The CSV opens in Excel and has one line per ledger entry.</Notice>
           <div className="a-stats">
             {d.vouchers.map((v) => <div key={v.type} className="a-stat"><b>{v.n}</b><span>{v.type}</span></div>)}
@@ -171,5 +175,63 @@ function Accounting({ p, format }) {
         </>
       )}
     </Loading>
+  );
+}
+
+/** Send a month to the CA: its checks, Export and lock (the CSV downloads, the month locks), then Export history */
+function BooksCard() {
+  const [month, setMonth] = useState(null); // null = the API's default (last month)
+  const r = useLoad(`/books${month ? `?month=${month}` : ''}`);
+  const act = useAction();
+  const confirm = useConfirm();
+  const d = r.data;
+  const m = month || (d && d.month) || '';
+  const maxMonth = (() => { const t = ist(); return new Date(Date.UTC(Number(t.slice(0, 4)), Number(t.slice(5, 7)) - 2, 1)).toISOString().slice(0, 7); })();
+  const go = async () => {
+    if (!(await confirm({ title: `Export ${m} and lock it?`, message: `The journal of ${m} downloads as a CSV for the CA, and ${m} is locked for everybody: nothing can be dated in it any more. A change after this needs an approval, and the CA is told.`, action: 'Export and lock' }))) return;
+    act.run(async () => { await api.download('/books/export', `dfresh-journal-${m}.csv`, { month: m }); r.reload(); }, `${m} exported and locked`);
+  };
+  return (
+    <div className="a-card a-books">
+      <div className="a-cardh"><h2>Send a month to the CA</h2></div>
+      <div className="a-cardb">
+        {act.note}
+        <Loading state={r}>
+          {d && (
+            <>
+              <p className="a-hint">Books closed up to: <b>{d.books_closed_to ? day(d.books_closed_to) : 'not closed'}</b> (Commerce settings &gt; Accounting)</p>
+              <div className="a-filters">
+                <label>Month <input type="month" value={m} max={maxMonth} aria-label="Month to export" onChange={(e) => e.target.value && setMonth(e.target.value)} /></label>
+                {d.can_export
+                  ? <button type="button" className="a-btn" disabled={act.busy || d.checks.length > 0} onClick={go}>Export and lock</button>
+                  : <span className="a-muted">Exporting needs Export on Reports.</span>}
+              </div>
+              {d.checks.length ? d.checks.map((c) => <Notice key={c} kind="error">{c}</Notice>)
+                : <Notice kind="ok">Ready: exporting locks the month for everybody.</Notice>}
+              <h3>Export history</h3>
+              {d.months.length ? (
+                <div className="a-scroll">
+                  <table className="a-table">
+                    <thead><tr><th>Month</th><th>Sent</th><th>By</th><th className="a-num">Lines</th><th>File</th></tr></thead>
+                    <tbody>{d.months.map((x) => <tr key={x.month}><td><b>{x.month}</b></td><td>{x.exported_at}</td><td>{x.exported_by}</td><td className="a-num">{x.lines}</td><td>{x.file_name}</td></tr>)}</tbody>
+                  </table>
+                </div>
+              ) : <p className="a-muted">No month sent to the CA yet.</p>}
+              {d.events.length > 0 && (
+                <>
+                  <p className="a-hint">What the CA is told: each export, and each change allowed after it.</p>
+                  <div className="a-scroll">
+                    <table className="a-table">
+                      <thead><tr><th>When</th><th>Month</th><th>What</th><th>By</th></tr></thead>
+                      <tbody>{d.events.map((x) => <tr key={x.event_id}><td>{x.at}</td><td>{x.month}</td><td>{x.kind === 'unlock' ? 'Changed after export: ' : ''}{x.label}{x.record_key ? <small className="a-muted a-person-sub">{x.record_key}</small> : null}</td><td>{x.emp_id}</td></tr>)}</tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+            </>
+          )}
+        </Loading>
+      </div>
+    </div>
   );
 }

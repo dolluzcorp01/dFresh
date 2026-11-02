@@ -4,31 +4,53 @@
 // highlighted, Save / Cancel) until saved; every save is audited. The lists (customer types, return reasons, delivery
 // methods and areas, stock locations) are edited in their own tables. A role with only "view" on Settings sees it all,
 // greyed out.
+// Phase 12b: a change that loosens a control (LOOSENS below), any bank detail change and moving "Books closed up to"
+// back wait for a second Admin: the server answers `waiting` with the old value, the field shows the old value again
+// and a warn toast says what waits. Those fields carry a small hint.
 import { useState } from 'react';
 import { api } from './adminApi';
-import { Drawer, InfoCard, Loading, Notice, PageHead, Pill, fmtDate, useAction, useCan, useConfirm, useHashScroll, useLeaveGuard, useLoad } from './ui';
+import { Drawer, InfoCard, Loading, Notice, PageHead, Pill, fmtDate, useAction, useCan, useConfirm, useHashScroll, useLeaveGuard, useLoad, useToast } from './ui';
 
 // groups in the order of the admin menu (products and prices, stock, sales, fulfilment, reports, setup); a group not
 // listed here is shown at the end, never hidden
 const ORDER = ['General', 'Orders and pricing', 'Promotions', 'Inventory', 'Customers', 'Payments', 'Invoice', 'GST and compliance', 'Numbering',
   'Delivery', 'Returns', 'Accounting', 'Notifications', 'Staff notifications', 'Approvals'];
 // a list is shown after the group named next to it
+// switches whose loosening waits for a second Admin (as the server's second-admin.js LOOSEN), and the hint each shows
+const LOOSENS = ['approval_expiry_days', 'split_days', 'wallet_max_use_pct', 'return_window_days', 'eway_bill_above', 'manual_discount_allowed',
+  'returned_resell', 'delivery_otp', 'eway_bill_required', 'return_outside_window', 'cashback_credit_at'];
+const WAIT_HINT = {
+  invoice_bank_details: 'A bank change waits for a second Admin and is never overridden.',
+  books_closed_to: 'Only an Admin changes it.', // its help (the DB) says moving it back waits for a second Admin
+};
+const waitHint = (key) => WAIT_HINT[key] || (LOOSENS.includes(key) ? 'Loosening waits for a second Admin.' : '');
+// ranges the server enforces (second-admin.js RANGE)
+const RANGE = { approval_expiry_days: [1, 30], split_days: [1, 30], wallet_max_use_pct: [0, 100], return_window_days: [0, 60] };
+/** the last day of last month (India date): the latest "Books closed up to" can be */
+const lastMonthEnd = () => {
+  const t = new Date(Date.now() + 5.5 * 3600e3);
+  return new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), 0)).toISOString().slice(0, 10);
+};
 const LISTS_AFTER = { Inventory: ['locations'], Customers: ['customer_types'], Delivery: ['delivery_methods', 'delivery_areas', 'vehicles', 'drivers', 'couriers'], Returns: ['return_reasons'] };
 
 export default function CommerceSettings() {
   const data = useLoad('/commerce-settings');
   const canEdit = useCan('settings', 'edit');
   const act = useAction();
+  const toast = useToast();
   const [pending, setPending] = useState({});
   useLeaveGuard(Object.keys(pending).length > 0);
   const d = data.data;
   const set = (row, v) => setPending((p) => { const n = { ...p }; if (v === row.value) delete n[row.setting_key]; else n[row.setting_key] = v; return n; });
   const drop = (key) => setPending((p) => { const n = { ...p }; delete n[key]; return n; });
+  // a waiting answer: nothing changed, the field shows the old value again (drop the typed one) and a warn toast
   const save = (row) => act.run(async () => {
-    await api.send('PUT', `/commerce-settings/${row.setting_key}`, { value: pending[row.setting_key] });
+    const out = await api.send('PUT', `/commerce-settings/${row.setting_key}`, { value: pending[row.setting_key] });
     drop(row.setting_key);
     data.reload();
-  }, `${row.label}: saved`);
+    if (out && out.waiting) { if (toast) toast('warn', 'Waiting for a second Admin', `${row.label}: ${out.waiting}`); return; }
+    act.setMsg({ kind: 'ok', text: `${row.label}: saved` });
+  });
   const groups = d ? [...ORDER, ...[...new Set(d.settings.map((s) => s.grp))].filter((g) => !ORDER.includes(g))].map((g) => [g, d.settings.filter((s) => s.grp === g)]).filter(([, rows]) => rows.length) : [];
   const tbc = d ? d.settings.filter((s) => s.tbc).length : 0;
   useHashScroll(Boolean(d)); // menu entries: #cs-g-<group> (Numbering, Approvals), #cs-l-<list> (Godowns, Vehicles...)
@@ -103,15 +125,20 @@ function SettingRow({ row, roles, value, pending, busy, onChange, onSave, onCanc
         ))}
       </span>
     );
+  } else if (row.setting_key === 'books_closed_to') {
+    control = <input type="date" value={value} max={lastMonthEnd()} aria-label={row.label} onChange={(e) => onChange(e.target.value)} />;
   } else {
-    control = <input type={row.value_type === 'text' ? 'text' : 'number'} min={row.value_type === 'text' ? undefined : 0} step={row.value_type === 'decimal' ? '0.01' : '1'}
+    const range = RANGE[row.setting_key];
+    control = <input type={row.value_type === 'text' ? 'text' : 'number'} min={row.value_type === 'text' ? undefined : range ? range[0] : 0} max={range ? range[1] : undefined} step={row.value_type === 'decimal' ? '0.01' : '1'}
       value={value} aria-label={row.label} onChange={(e) => onChange(e.target.value)} className={row.value_type === 'text' ? 'a-wide' : 'a-price'} />;
   }
   return (
     <tr id={`cs-${row.setting_key}`} className={pending ? 'a-pending' : undefined}>
       <td className="a-cs-label"><b>{row.label}</b>{row.tbc && <Pill tone="warn" className="a-tbp">To be confirmed</Pill>}
-        {row.help && <small className="a-muted a-person-sub">{row.help}</small>}</td>
+        {row.help && <small className="a-muted a-person-sub">{row.help}</small>}
+        {waitHint(row.setting_key) && <small className="a-muted a-person-sub">{waitHint(row.setting_key)}</small>}</td>
       <td className="a-set-val">{control}
+        {row.setting_key === 'books_closed_to' && value && <button type="button" className="a-link" onClick={() => onChange('')}>Not closed (empty)</button>}
         {row.updated_by && !pending && <small className="a-muted">Changed {fmtDate(row.updated_at)} by {row.updated_by}</small>}</td>
       <td>{pending && (
         <span className="a-pending-btns">

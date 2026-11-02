@@ -8,6 +8,10 @@
 // - a person who is not an Admin gives at most what they have: roles within their own rights and limit, a personal
 //   limit up to their own, only godowns they work at.
 // Leave and stand-ins use approval-engine.js (leaveProblem, standInProblem); the ladder lives in approvals.js.
+// Phase 12b (second-admin.js): what widens who can sign waits for a second Admin: a higher limit, a wider godown scope,
+// a role that signs more, taking the Admin role away, narrowing an Admin's godowns or lowering an Admin's limit, an
+// approval rule switched off or loosened. The rest of the same save is done at once; the reply lists what waits.
+// Approval rules are shown, view only, to anyone with View on Roles and users or on Settings (v23 "Foundation").
 const { audit } = require('./audit');
 const permissions = require('../shared/permissions');
 const engine = require('./approval-engine');
@@ -16,6 +20,8 @@ const godowns = require('./godowns');
 const pricing = require('./pricing');
 const commerceSettings = require('./commerce-settings');
 const numbering = require('./numbering');
+const secondAdmin = require('./second-admin');
+const notifications = require('./notifications');
 
 const STATE_CODE = { 'Tamil Nadu': '33', Karnataka: '29', 'Andhra Pradesh': '37', Telangana: '36', Kerala: '32', Puducherry: '34', Maharashtra: '27', Delhi: '07' };
 const STATES = Object.keys(STATE_CODE);
@@ -50,7 +56,7 @@ function cleanLimit(raw, { allowRole = false, InputError }) {
 async function roleInfo(q, roleId) {
   const [[r]] = await q.query('SELECT role_id, name, limit_kind, limit_amount, see_cost, own_customers_only, is_builtin FROM roles WHERE role_id = ?', [Number(roleId)]);
   if (!r) return null;
-  const builtin = Boolean(permissions.BUILTIN[r.role_id]);
+  const builtin = permissions.isAdminRole(r.role_id);
   const [rows] = builtin ? [[]] : await q.query('SELECT section, can_view, can_create, can_edit, can_approve, can_cancel, can_export, can_delete FROM role_permissions WHERE role_id = ?', [r.role_id]);
   const isAdmin = permissions.isAdminRole(r.role_id);
   return { ...r, perms: permissions.permsFor(r.role_id, rows), is_admin: isAdmin, limit: isAdmin ? { kind: 'any', amount: null } : limitFrom(r.limit_kind, r.limit_amount), see_cost: builtin || Number(r.see_cost) === 1 };
@@ -85,6 +91,19 @@ function rowProblem(me, target, { leaveOnly = false } = {}) {
   }
   return '';
 }
+
+/** does role b sign more than role a? (an Approve a lacks, a higher limit, See cost: v23 roleWider) */
+function roleWider(a, b) {
+  if (!a || !b) return false;
+  if (engine.limitNum(b.limit) > engine.limitNum(a.limit)) return true;
+  if (b.see_cost && !a.see_cost) return true;
+  return permissions.SECTION_KEYS.some((s) => permissions.can(b.perms, s, 'approve') && !permissions.can(a.perms, s, 'approve'));
+}
+/** can this person sign anything? (an Approve right, a limit above nothing, or See cost: v23 staffSigns) */
+function signs(role, limit) {
+  return permissions.SECTION_KEYS.some((s) => permissions.can(role.perms, s, 'approve')) || engine.limitNum(limit) >= 0 || Boolean(role.see_cost);
+}
+const limitWords = (l) => (l === 'role' ? 'role default' : engine.limitText(l));
 
 function register({ route, tx, db, by, InputError, canDo }) {
   const people = async (q) => approvals.people(q);
@@ -243,15 +262,24 @@ function register({ route, tx, db, by, InputError, canDo }) {
       leave: row.leave_from ? { from: row.leave_from, to: row.leave_to, stand_in: row.stand_in, set_by: row.leave_set_by } : null };
     const set = {};
     const after = { ...before };
-    if ('role_id' in body) {
+    const waiting = []; // what waits for a second Admin (phase 12b)
+    const hold = async (t, what, summary, payload) => { waiting.push(await secondAdmin.ask(q, { t, dk: `${t}:${what}:${target.emp_id}`, summary, payload: { emp_id: target.emp_id, ...payload } }, by(req))); };
+    const roleNow = await roleInfo(q, row.role_id);
+    if ('role_id' in body && Number(body.role_id) !== Number(row.role_id)) {
       const why = await roleGiveProblem(q, me, body.role_id);
       if (why) throw new InputError(why, 403);
       // there must always be at least one active Admin (Super admin or Admin) who can sign in
       if (target.is_admin && !permissions.isAdminRole(body.role_id) && list.filter((p) => p.active && p.is_admin && p.emp_id !== target.emp_id).length === 0) {
         throw new InputError('There must always be at least one active Admin. Make someone else Admin first.', 409);
       }
-      set.role_id = Number(body.role_id);
-      after.role_id = set.role_id;
+      const roleNew = await roleInfo(q, body.role_id);
+      const demote = target.is_admin && !permissions.isAdminRole(body.role_id); // v23 N13
+      if (roleWider(roleNow, roleNew) || demote) {
+        await hold('staffrole', 'role', `${target.name}: role ${roleNow.name} to ${roleNew.name}${demote ? ' (takes the Admin role away)' : ''}`, { role_id: Number(body.role_id) });
+      } else {
+        set.role_id = Number(body.role_id);
+        after.role_id = set.role_id;
+      }
     }
     if ('limit' in body) {
       const l = cleanLimit(body.limit, { allowRole: true, InputError });
@@ -259,9 +287,19 @@ function register({ route, tx, db, by, InputError, canDo }) {
         const effective = l.kind === 'role' ? (await roleInfo(q, set.role_id || row.role_id)).limit : l;
         if (engine.limitNum(effective) > engine.limitNum(me.limit)) throw new InputError(`Limit: at most your own ${engine.limitText(me.limit)}`, 403);
       }
-      set.limit_kind = l.kind;
-      set.limit_amount = l.kind === 'amount' ? l.amount : null;
-      after.limit = l.kind === 'role' ? 'role' : l;
+      const nowL = row.limit_kind === 'role' ? roleNow.limit : limitFrom(row.limit_kind, row.limit_amount);
+      const newL = l.kind === 'role' ? (await roleInfo(q, set.role_id || row.role_id)).limit : l;
+      const isSuperTarget = isSuper(target);
+      const nowEff = target.is_admin && row.limit_kind === 'role' ? { kind: 'any', amount: null } : nowL;
+      const newEff = target.is_admin && l.kind === 'role' ? { kind: 'any', amount: null } : newL;
+      const words = `${target.name}: approval limit ${row.limit_kind === 'role' ? 'role default' : limitWords(nowL)} to ${limitWords(l.kind === 'role' ? 'role' : l)}`;
+      if (!isSuperTarget && engine.limitNum(newEff) > engine.limitNum(nowEff)) await hold('stafflim', 'limit', words, { limit: l }); // v23 F1
+      else if (target.is_admin && engine.limitNum(newEff) < engine.limitNum(nowEff)) await hold('staffadm', 'limit', `${words} (an Admin)`, { limit: l }); // v23 N14
+      else {
+        set.limit_kind = l.kind;
+        set.limit_amount = l.kind === 'amount' ? l.amount : null;
+        after.limit = l.kind === 'role' ? 'role' : l;
+      }
     }
     let newGodowns = null;
     if ('godowns' in body) {
@@ -277,9 +315,18 @@ function register({ route, tx, db, by, InputError, canDo }) {
         const outside = ids.filter((id) => !godowns.covers(me, id));
         if (outside.length) throw new InputError('Godowns: only the godowns you work at', 403);
       }
-      set.godowns_all = all ? 1 : 0;
-      newGodowns = all ? [] : ids;
-      after.godowns = all ? 'ALL' : ids;
+      const old = before.godowns;
+      const wider = old !== 'ALL' && (all || ids.some((id) => !old.includes(id)));
+      const narrower = old === 'ALL' ? !all : !all && old.some((id) => !ids.includes(id));
+      const names = async (g) => (g === 'ALL' ? 'every godown' : (await godowns.list(q)).filter((x) => g.includes(x.godown_id)).map((x) => x.name).join(', '));
+      const words = `${target.name}: godowns ${await names(old)} to ${await names(all ? 'ALL' : ids)}`;
+      if (wider) await hold('staffscope', 'godowns', words, { godowns: all ? 'ALL' : ids }); // v23 F1
+      else if (narrower && target.is_admin) await hold('staffadm', 'godowns', `${words} (an Admin)`, { godowns: all ? 'ALL' : ids }); // v23 N14
+      else {
+        set.godowns_all = all ? 1 : 0;
+        newGodowns = all ? [] : ids;
+        after.godowns = all ? 'ALL' : ids;
+      }
     }
     if ('leave' in body) {
       const lv = body.leave;
@@ -298,14 +345,22 @@ function register({ route, tx, db, by, InputError, canDo }) {
       for (const id of newGodowns) await q.query('INSERT INTO admin_user_godowns (emp_id, godown_id) VALUES (?, ?)', [target.emp_id, id]);
     }
     const sp = after.leave && after.leave.stand_in ? list.find((x) => x.emp_id === after.leave.stand_in) : null;
-    await audit(q, { empId: by(req), action: leaveOnly ? 'leave' : 'update', entity: 'admin_user', entityId: target.emp_id, before,
-      after: { ...after, ...(sp ? { stand_in_name: sp.name } : {}) } });
+    if (cols.length || newGodowns) {
+      await audit(q, { empId: by(req), action: leaveOnly ? 'leave' : 'update', entity: 'admin_user', entityId: target.emp_id, before,
+        after: { ...after, ...(sp ? { stand_in_name: sp.name } : {}) } });
+    }
+    // phase 12b: leave entered for another Admin is told to every Admin at once
+    if ('leave' in body && target.is_admin && target.emp_id !== me.emp_id && after.leave) {
+      await notifications.adminAlert(q, { subject: `Leave entered for ${target.name}`, ref: `leave ${target.emp_id}`, by: by(req),
+        body: `${me.name} entered leave for ${target.name}: ${after.leave.from} to ${after.leave.to}${sp ? `, ${sp.name} standing in` : ''}. An override never uses a leave entered by the Admin who overrides.` });
+    }
     const fresh = (await people(q)).find((x) => x.emp_id === target.emp_id);
-    return asStaff(fresh, await people(q));
+    return { ...asStaff(fresh, await people(q)), waiting: waiting.map((w) => w.message) };
   }));
 
   // ------------------------------------------------------------------------------------------- approval rules
-  route('get', '/approval-rules', 'settings:view', async (req) => {
+  route('get', '/approval-rules', 'any', async (req) => {
+    if (!canDo(req, 'users', 'view') && !canDo(req, 'settings', 'view')) throw new InputError('This needs view on Roles and users or on Settings', 403);
     const cs = await commerceSettings.read(db);
     const list = (await people(db)).filter((p) => p.active);
     const today = pricing.istToday();
@@ -315,7 +370,9 @@ function register({ route, tx, db, by, InputError, canDo }) {
       .filter((p) => permissions.can(p.perms, r.section, 'approve') && !engine.onLeave(p, today) && engine.covers(p.limit, r.unit === 'Rs' ? Number(r.limit_value) || 0 : 0))
       .sort((a, b) => engine.limitNum(a.limit) - engine.limitNum(b.limit) || a.name.localeCompare(b.name))
       .map((p) => ({ emp_id: p.emp_id, name: p.name, limit_text: engine.limitText(p.limit) })) }));
-    return { rules, sections: permissions.SECTIONS, can_edit: canDo(req, 'settings', 'edit') && Boolean(req.admin.is_admin),
+    const [waits] = await db.query("SELECT approval_id, JSON_UNQUOTE(JSON_EXTRACT(payload, '$.kind')) AS kind, summary FROM approvals WHERE kind = 'rule_change' AND status = 'pending' AND JSON_UNQUOTE(JSON_EXTRACT(payload, '$.t')) = 'rule'");
+    return { rules: rules.map((r) => ({ ...r, waiting: waits.filter((w) => w.kind === r.kind).map((w) => ({ approval_id: w.approval_id, summary: w.summary })) })),
+      sections: permissions.SECTIONS, can_edit: canDo(req, 'settings', 'edit') && Boolean(req.admin.is_admin),
       split_days: Number(cs.split_days) || 3, expiry_days: Number(cs.approval_expiry_days) || 7 };
   });
 
@@ -342,11 +399,60 @@ function register({ route, tx, db, by, InputError, canDo }) {
       if (!/^\d{1,7}$/.test(s)) throw new InputError('Packs: a whole number, 0 or more');
       packs = Number(s);
     }
+    // phase 12b: switching a rule off or raising its limit (or packs) is a weaker rule: a second Admin agrees first
+    const was = { on: Number(r.is_on), value: r.limit_value === null ? null : Number(r.limit_value), packs: r.limit_packs === null ? null : Number(r.limit_packs) };
+    const weaker = (was.on && !on) || (value !== null && was.value !== null && value > was.value) || (packs !== null && was.packs !== null && packs > was.packs);
+    if (weaker) {
+      const what = [was.on && !on ? 'switch it off' : '', value !== was.value ? `limit ${was.value} to ${value}` : '', packs !== was.packs ? `packs ${was.packs} to ${packs}` : ''].filter(Boolean).join(', ');
+      const w = await secondAdmin.ask(q, { t: 'rule', dk: `rule:${r.kind}`, summary: `${r.label}: ${what}`, payload: { kind: r.kind, on, value, packs } }, by(req));
+      return { ...(await approvals.rules(q)).find((x) => x.kind === r.kind), waiting: w.message };
+    }
     await q.query('UPDATE approval_rules SET is_on = ?, limit_value = ?, limit_packs = ?, updated_by = ?, updated_at = UTC_TIMESTAMP() WHERE kind = ?', [on, value, packs, by(req), r.kind]);
     await audit(q, { empId: by(req), action: 'update', entity: 'approval_rule', entityId: r.kind,
       before: { on: Number(r.is_on), limit: r.limit_value === null ? null : Number(r.limit_value), packs: r.limit_packs }, after: { on, limit: value, packs } });
     return (await approvals.rules(q)).find((x) => x.kind === r.kind);
   }));
+
+  // ------------------------------------------------------------------------------------------- what a second Admin approves
+  const setLimit = async (q, emp, l) => q.query('UPDATE admin_users SET limit_kind = ?, limit_amount = ? WHERE emp_id = ?', [l.kind, l.kind === 'amount' ? l.amount : null, emp]);
+  const setGodowns = async (q, emp, g) => {
+    await q.query('UPDATE admin_users SET godowns_all = ? WHERE emp_id = ?', [g === 'ALL' ? 1 : 0, emp]);
+    await q.query('DELETE FROM admin_user_godowns WHERE emp_id = ?', [emp]);
+    if (g !== 'ALL') for (const id of g) await q.query('INSERT INTO admin_user_godowns (emp_id, godown_id) VALUES (?, ?)', [emp, id]);
+  };
+  const stillThere = async (q, p) => {
+    const [[u]] = await q.query('SELECT emp_id FROM admin_users WHERE emp_id = ?', [p.emp_id]);
+    return u ? '' : 'that person is no longer a dFresh admin user';
+  };
+  const done = (what) => async (q, p, empId) => audit(q, { empId, action: 'update', entity: 'admin_user', entityId: p.emp_id, after: { ...what(p), approved: true } });
+  secondAdmin.on('staffrole', { recheck: stillThere, async apply(q, p, empId) {
+    const list = await people(q);
+    const t = list.find((x) => x.emp_id === p.emp_id);
+    if (t && t.is_admin && !permissions.isAdminRole(p.role_id) && list.filter((x) => x.active && x.is_admin && x.emp_id !== p.emp_id).length === 0) return; // never the last Admin
+    await q.query('UPDATE admin_users SET role_id = ? WHERE emp_id = ?', [p.role_id, p.emp_id]);
+    await done((x) => ({ role_id: x.role_id }))(q, p, empId);
+  } });
+  secondAdmin.on('stafflim', { recheck: stillThere, async apply(q, p, empId) { await setLimit(q, p.emp_id, p.limit); await done((x) => ({ limit: x.limit }))(q, p, empId); } });
+  secondAdmin.on('staffscope', { recheck: stillThere, async apply(q, p, empId) { await setGodowns(q, p.emp_id, p.godowns); await done((x) => ({ godowns: x.godowns }))(q, p, empId); } });
+  secondAdmin.on('staffadm', { recheck: stillThere, async apply(q, p, empId) {
+    if (p.limit) await setLimit(q, p.emp_id, p.limit);
+    if (p.godowns) await setGodowns(q, p.emp_id, p.godowns);
+    await done((x) => ({ limit: x.limit, godowns: x.godowns }))(q, p, empId);
+  } });
+  // added or brought back: active once approved; a new person refused or expired is removed again
+  const activate = async (q, p, empId) => {
+    await q.query('UPDATE admin_users SET is_active = 1, pending_add = 0, left_at = NULL, left_by = NULL WHERE emp_id = ? AND pending_add = 1', [p.emp_id]);
+    await done(() => ({ is_active: 1 }))(q, p, empId);
+  };
+  secondAdmin.on('staffadd', { recheck: stillThere, apply: activate, async closed(q, p, status, empId) {
+    await q.query('DELETE FROM admin_user_godowns WHERE emp_id = ? AND EXISTS (SELECT 1 FROM admin_users a WHERE a.emp_id = ? AND a.pending_add = 1)', [p.emp_id, p.emp_id]);
+    await q.query('DELETE FROM admin_users WHERE emp_id = ? AND pending_add = 1', [p.emp_id]);
+    await audit(q, { empId, action: `add_${status}`, entity: 'admin_user', entityId: p.emp_id });
+  } });
+  secondAdmin.on('staffback', { recheck: stillThere, apply: activate, async closed(q, p, status, empId) {
+    await q.query('UPDATE admin_users SET pending_add = 0 WHERE emp_id = ?', [p.emp_id]);
+    await audit(q, { empId, action: `back_${status}`, entity: 'admin_user', entityId: p.emp_id });
+  } });
 
   // ------------------------------------------------------------------------------------------- stand-ins
   route('get', '/stand-ins', 'users:view', async () => {
@@ -362,4 +468,4 @@ function register({ route, tx, db, by, InputError, canDo }) {
   });
 }
 
-module.exports = { register, roleGiveProblem, rowProblem, missingRights, roleInfo, cleanLimit, STATE_CODE };
+module.exports = { register, roleGiveProblem, rowProblem, missingRights, roleInfo, cleanLimit, roleWider, signs, STATE_CODE };

@@ -8,10 +8,21 @@
 // least one active Admin, and someone inactive in dAdmin cannot sign in.
 // emp_id is a string like DZIND148 (never a number). Staff notification mails (phase 10) go to the dAdmin e-mail, or to
 // the notification e-mail set here (Change, then Save; empty = back to the dAdmin e-mail; audited).
+// Phase 12b: adding or bringing back someone who can sign, a wider role, limit or godown scope waits for a second Admin
+// (the person stays as they were; a new one stays inactive with "Waiting for a second Admin"): the server answers
+// `waiting` and each message shows as a warn toast. Someone marked as left shows when.
 import { useEffect, useRef, useState } from 'react';
 import { api } from './adminApi';
 import { Link } from 'react-router-dom';
-import { Avatar, Drawer, Field, InfoCard, LIcon, Loading, Notice, PageHead, Pill, Table, fmtDate, useAction, useAdmin, useCan, useConfirm, useLoad } from './ui';
+import { Avatar, Drawer, Field, InfoCard, LIcon, Loading, Notice, PageHead, Pill, Table, fmtDate, useAction, useAdmin, useCan, useConfirm, useLoad, useToast } from './ui';
+
+const WAIT_TITLE = 'Waiting for a second Admin';
+/** the server's `waiting` (a string or a list of strings, phase 12b) as warn toasts; true when something waits */
+function toastWaiting(toast, waiting) {
+  const list = [].concat(waiting || []).filter(Boolean);
+  list.forEach((m) => (toast ? toast('warn', WAIT_TITLE, m) : null));
+  return list.length > 0;
+}
 
 
 export default function Users() {
@@ -64,6 +75,7 @@ export default function Users() {
           <li>Each person has one role. What a role may see and change, and its default limit, is set in <Link to="/admin/roles">Roles</Link>; a personal limit on the person beats it.</li>
           <li>Nobody changes their own role or deactivates themselves, and there is always at least one active Admin. Only the Super admin changes an Admin; nobody gives a role, limit or godown above their own.</li>
           <li>Someone who left the company (inactive in dAdmin) cannot sign in, whatever their role here.</li>
+          <li>Adding or bringing back someone who can sign, a role that signs more, a higher limit or more godowns waits for a second Admin (<Link to="/admin/approvals">Approvals</Link>); until then everything stays as it was.</li>
         </ul>
       </InfoCard>
       {open === 'add' && staffData.data && (
@@ -80,7 +92,8 @@ export default function Users() {
 
 const TOP_ROLES = [8, 1, 2]; // Super admin, Admin, Sub-admin: gold pills
 function stateCell(u, x) {
-  if (!u.is_active) return <Pill tone="gray">Inactive</Pill>;
+  if (Number(u.pending_add) === 1) return <Pill tone="warn">{WAIT_TITLE}</Pill>;
+  if (!u.is_active) return <><Pill tone="gray">Inactive</Pill>{u.left_on && <span className="a-sub-l">left on {u.left_on}</span>}</>;
   if (x && x.leave && x.leave.now) {
     return <><Pill tone="warn">On leave to {x.leave.to.slice(5)}</Pill>{x.leave.stand_in_name && <span className="a-sub-l">{x.leave.stand_in_name} stands in</span>}</>;
   }
@@ -96,6 +109,7 @@ function stateCell(u, x) {
 /** Add staff: an active dAdmin employee, a role, and the godowns they work at (default: where the adder works) */
 function AddStaffDrawer({ roles, me, meta, onClose, onSaved }) {
   const act = useAction();
+  const toast = useToast();
   const [pick, setPick] = useState(null);
   const [role, setRole] = useState('3'); // Viewer (read only) until another is chosen
   const mineAll = meta.me.godowns === 'ALL';
@@ -104,12 +118,14 @@ function AddStaffDrawer({ roles, me, meta, onClose, onSaved }) {
   const roleOf = (id) => roles.find((r) => String(r.role_id) === String(id));
   const tick = (id, on) => setGs((x) => (on ? [...x, id].sort((a, b) => a - b) : x.filter((y) => y !== id)));
   const add = () => act.run(async () => {
-    await api.send('POST', '/users', { emp_id: pick.emp_id, role_id: Number(role) });
-    const done = `${pick.name} added as ${(roleOf(role) || {}).name || 'the chosen role'}`;
+    const out = await api.send('POST', '/users', { emp_id: pick.emp_id, role_id: Number(role) });
+    const waits = toastWaiting(toast, out && out.waiting);
+    const done = `${pick.name} ${waits ? 'added, waiting for a second Admin,' : 'added'} as ${(roleOf(role) || {}).name || 'the chosen role'}`;
     // the server gives a new person the adder's godowns; anything else is a second step on the person
     if (all === mineAll && (all || JSON.stringify(gs) === JSON.stringify(meta.me.godowns))) { onSaved(done); return; }
     try {
-      await api.send('PUT', `/staff/${encodeURIComponent(pick.emp_id)}`, { godowns: all ? 'ALL' : gs });
+      const g = await api.send('PUT', `/staff/${encodeURIComponent(pick.emp_id)}`, { godowns: all ? 'ALL' : gs });
+      toastWaiting(toast, g && g.waiting);
       onSaved(done);
     } catch (e) {
       onSaved(`${done}, but the godowns were not saved (${e.message}). Open the person to set them.`, 'error');
@@ -147,6 +163,8 @@ const godownsText = (g, all) => (g === 'ALL' ? 'Every godown' : (g || []).map((i
 /** a person's panel: role, personal limit, godowns, leave and stand-in (each saved through PUT /staff/:emp) */
 function StaffDrawer({ person: p, user, meta, roles, onClose, onSaved, onChanged }) {
   const act = useAction();
+  const toast = useToast();
+  const waitingAdd = Boolean(user && Number(user.pending_add) === 1);
   const confirm = useConfirm();
   const canEdit = useCan('users', 'edit');
   const self = p.emp_id === meta.me.emp_id;
@@ -174,21 +192,30 @@ function StaffDrawer({ person: p, user, meta, roles, onClose, onSaved, onChanged
       if (f.all !== start.all || JSON.stringify(f.godowns) !== JSON.stringify(start.godowns)) body.godowns = f.all ? 'ALL' : f.godowns;
     }
     if (!leaveLocked && (f.from !== start.from || f.to !== start.to || f.standIn !== start.standIn)) body.leave = f.from || f.to ? { from: f.from, to: f.to, stand_in: f.standIn || null } : null;
-    await api.send('PUT', `/staff/${encodeURIComponent(p.emp_id)}`, body);
+    const out = await api.send('PUT', `/staff/${encodeURIComponent(p.emp_id)}`, body);
+    const waits = (out && out.waiting) || [];
+    toastWaiting(toast, waits);
+    if (waits.length) { onChanged(); onClose(); if (waits.length < Object.keys(body).length) toast('good', `${p.name}: the rest is saved`); return; }
     onSaved(`${p.name} saved`);
   });
   const toggle = async () => {
     const ok = await confirm(user.is_active
       ? { title: `Deactivate ${p.name}?`, message: 'They can no longer sign in to dFresh admin.', action: 'Deactivate', danger: true }
       : { title: `Reactivate ${p.name}?`, message: `They can sign in to dFresh admin again, as ${p.role_name}.`, action: 'Reactivate' });
-    if (ok) act.run(async () => { await api.send('PUT', `/users/${encodeURIComponent(p.emp_id)}`, { is_active: user.is_active ? 0 : 1 }); onSaved(`${p.name} ${user.is_active ? 'deactivated' : 'reactivated'}`); });
+    if (ok) {
+      act.run(async () => {
+        const out = await api.send('PUT', `/users/${encodeURIComponent(p.emp_id)}`, { is_active: user.is_active ? 0 : 1 });
+        if (toastWaiting(toast, out && out.waiting)) { onChanged(); onClose(); return; }
+        onSaved(`${p.name} ${user.is_active ? 'deactivated' : 'reactivated'}`);
+      });
+    }
   };
-  const canToggle = canEdit && !self && Boolean(user) && !p.locked;
+  const canToggle = canEdit && !self && Boolean(user) && !p.locked && !waitingAdd; // a waiting add is decided in Approvals
   const tickGodown = (id, on) => set({ godowns: on ? [...f.godowns, id].sort((a, b) => a - b) : f.godowns.filter((x) => x !== id) });
   const whose = self ? 'your' : `${p.name}'s`;
   return (
     <Drawer title={p.name} sub={`${p.emp_id} · ${p.role_name}`} onClose={onClose} dirty={dirty}
-      status={<><Pill tone={p.active ? 'good' : 'gray'}>{p.active ? 'Active' : 'Left'}</Pill><span className="a-custhead">signs up to {p.limit_text} · {godownsText(p.godowns, meta.godowns)}{p.see_cost ? ' · sees cost' : ''}</span></>}
+      status={<>{waitingAdd ? <Pill tone="warn">{WAIT_TITLE}</Pill> : <Pill tone={p.active ? 'good' : 'gray'}>{p.active ? 'Active' : user && user.left_on ? `Left on ${user.left_on}` : 'Left'}</Pill>}<span className="a-custhead">signs up to {p.limit_text} · {godownsText(p.godowns, meta.godowns)}{p.see_cost ? ' · sees cost' : ''}</span></>}
       footer={(!(locked && leaveLocked) || canToggle) ? (
         <>
           {!(locked && leaveLocked) && <button type="button" className="a-btn" disabled={act.busy || !dirty} onClick={save}>Save</button>}
@@ -196,6 +223,8 @@ function StaffDrawer({ person: p, user, meta, roles, onClose, onSaved, onChanged
         </>
       ) : null}>
       {act.note}
+      {waitingAdd && <Notice kind="warn">Waiting for a second Admin: {p.name} can sign, so their access starts when another Admin approves it in <Link to="/admin/approvals">Approvals</Link>. Until then they cannot sign in.</Notice>}
+      {!waitingAdd && user && !user.is_active && user.left_on && <Notice kind="info">Left on {user.left_on}{user.left_by ? ` (marked by ${user.left_by})` : ''}.</Notice>}
       {p.locked && <Notice kind="info">{self ? `${p.locked} You can still enter your own leave.` : p.locked}</Notice>}
       {p.stands_in_for.length > 0 && <Notice kind="info">Stands in for {p.stands_in_for.map((x) => `${x.name} (${x.from} to ${x.to})`).join(', ')}.</Notice>}
       <h3>Role and limit</h3>

@@ -9,6 +9,8 @@
 //   "expired" entry.
 // Every entry is audited.
 const { audit } = require('./audit');
+const books = require('./books');
+const pricing = require('./pricing');
 const commerceSettings = require('./commerce-settings');
 const notifications = require('./notifications');
 
@@ -57,6 +59,7 @@ async function expiryFor(q, source) {
 
 /** a credit: cashback | refund | manual -> entry_id */
 async function credit(q, { customerId, source, amount, reason, orderId = null, returnId = null, approvalId = null, expiresOn }, empId) {
+  await books.assertOpen(q, pricing.istToday()); // phase 12b month lock
   if (!CREDITS.includes(source)) throw new Error(`wallet.credit: ${source}`);
   const amt = round2(amount);
   if (amt <= 0) return null;
@@ -71,6 +74,7 @@ async function credit(q, { customerId, source, amount, reason, orderId = null, r
 
 /** a debit (used on an order, cashback reversed, manual): takes from the credits oldest first; may leave a negative balance */
 async function debit(q, { customerId, source, amount, reason, orderId = null, returnId = null, approvalId = null }, empId) {
+  await books.assertOpen(q, pricing.istToday()); // phase 12b month lock
   await q.query('SELECT customer_id FROM customers WHERE customer_id = ? FOR UPDATE', [customerId]); // one wallet change at a time per customer
   const amt = round2(amount);
   if (amt <= 0) return null;

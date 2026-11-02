@@ -106,7 +106,7 @@ MAP = {
     'admin/organisation/numbering': [T('commerce-settings', 'settings', hash='cs-g-numbering')],
     'admin/users-and-security/staff': [T('users', 'users', **LIVE)],
     'admin/users-and-security/roles': [T('roles', 'users', **LIVE)],
-    'admin/users-and-security/approval-rules': [T('approval-rules', 'settings')],
+    'admin/users-and-security/approval-rules': [T('approval-rules', 'settings'), T('approval-rules', 'users')],
     'admin/users-and-security/stand-ins': [T('stand-ins', 'users')],
     'admin/users-and-security/audit-log': [T('audit', 'audit', **LIVE)],
     'admin/communications/notifications': [T('notifications', 'settings', search='tab=events')],

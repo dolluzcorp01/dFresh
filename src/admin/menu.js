@@ -1452,6 +1452,12 @@ export const MENU = [
         section: "settings",
         action: "view",
         commerce: true
+       },
+       {
+        path: "approval-rules",
+        section: "users",
+        action: "view",
+        commerce: true
        }
       ]
      },

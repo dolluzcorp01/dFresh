@@ -35,6 +35,7 @@
 //
 // Invoice: issued at dispatch (or at confirm: setting), numbered DFI/26-27/0001 (invoices.js).
 const pricing = require('./pricing');
+const books = require('./books');
 const approvals = require('./approvals');
 const commerceSettings = require('./commerce-settings');
 const invoices = require('./invoices');
@@ -746,6 +747,7 @@ async function recordPayment(q, orderNo, b, empId, opts = {}) {
   if (!modes[b.mode]) throw new CommerceError(`Mode: ${Object.values(modes).join(', ')}`);
   const day = String(b.received_on || pricing.istToday());
   if (!pricing.isDate(day) || day > pricing.istToday()) throw new CommerceError('Date: today or earlier');
+  await books.assertOpen(q, day); // phase 12b month lock: a receipt or refund dated in a closed or exported month
   const reference = String(b.reference || '').trim().slice(0, 60) || null;
   if (['upi', 'bank', 'cheque', 'razorpay'].includes(b.mode) && !reference) throw new CommerceError(`${modes[b.mode]}: give the reference (UTR, cheque or transaction number)`);
   if (kind === 'payment') {

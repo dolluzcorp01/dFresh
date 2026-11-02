@@ -522,10 +522,12 @@ export function NoAccess({ section }) {
   );
 }
 
-/** Route guard: the page only for a role with "view" on `section`; commerce pages also need Commerce switched on. */
+/** Route guard: the page only for a role with "view" on `section` (a list: on any of them); commerce pages also need
+ * Commerce switched on. */
 export function Need({ section, action = 'view', commerce = false, children }) {
   const { me } = useAdmin();
-  if (section && !canPerm(me && me.perms, section, action)) return <NoAccess section={section} />;
+  const sections = section ? [].concat(section) : [];
+  if (sections.length && !sections.some((x) => canPerm(me && me.perms, x, action))) return <NoAccess section={sections[0]} />;
   if (commerce && !(me && me.commerce_enabled)) {
     return <section><h1>Commerce is switched off</h1><Notice kind="info">Turn it on in Setup &gt; Commerce settings (General).</Notice></section>;
   }

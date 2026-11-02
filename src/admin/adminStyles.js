@@ -187,6 +187,13 @@ const css = `
 .a-ladder-who.next { border-color: var(--accent-line); background: var(--accent-soft); font-weight: 600; }
 .a-ladder-why { flex-basis: 100%; font-size: 12.5px; }
 .a-rqc-split { margin: 6px 0 0; }
+/* phase 12b: an override of a rule change (reason box, or the waiting one with its countdown), Send again */
+.a-rqc-ovr { margin-top: 10px; padding: 10px 12px; border: 1px solid var(--warn-line); border-radius: var(--r-sm); background: var(--warn-bg); display: grid; gap: 6px; }
+.a-rqc-ovr p { margin: 0; }
+.a-rqc-ovr .a-racts { margin-top: 0; }
+.a-rqc-short { color: var(--bad); }
+.a-rqc-ovrdone { margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.a-rqc-again { margin-right: auto; align-self: center; }
 /* Staff panel: the godowns a person works at (phase 12a) */
 .adm .a-rules input.a-ruleval { width: 12ch; text-align: right; }
 .a-chkgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px 16px; }
@@ -900,6 +907,11 @@ td.a-pending { background: #fff8e1; box-shadow: inset 3px 0 0 #e3b44f; }
 .a-cardh { display: flex; align-items: center; gap: 10px; padding: 16px 20px; border-bottom: 1px solid var(--line); }
 .adm .a-cardh h2 { font: 700 var(--fs-h2) var(--font-head); margin: 0; flex: 1; }
 .a-cardb { padding: 20px; }
+/* Approvals (phase 12b): the pending queue as v23's three cards, the count right after the title */
+.a-rqgroup { margin-bottom: var(--gap); }
+.adm .a-rqgroup .a-cardh h2 { flex: none; }
+.a-rqgroup .a-approvals { margin-top: 0; }
+.a-rqgroup .a-cardb > p { margin: 0; }
 .a-grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px 18px; }
 .a-rolegrid td, .a-rolegrid th { text-align: center; }
 .a-rolegrid td:first-child, .a-rolegrid th:first-child { text-align: left; }
@@ -911,11 +923,17 @@ td.a-pending { background: #fff8e1; box-shadow: inset 3px 0 0 #e3b44f; }
 .a-rules td { height: auto; padding-top: 10px; padding-bottom: 10px; }
 .a-rules tr.a-grp-row td { background: var(--surface-2); font-weight: 700; font-size: 12.5px; height: 34px; padding-top: 0; padding-bottom: 0; letter-spacing: .3px; text-transform: uppercase; color: var(--text-2); }
 .a-rules .a-note-l { display: block; font-size: 12.5px; color: var(--muted); font-weight: 400; }
+.a-rules .a-rule-wait { color: var(--warn); font-weight: 600; }
 .a-numin { width: 92px; height: 34px; min-height: 34px; text-align: right; }
 .a-above { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .adm .a-roleedit { padding: 0; overflow: hidden; }
 .a-roleedit .a-field input + input, .a-roleedit .a-field select + input { margin-top: 6px; }
 .a-roleedit .a-tw, .a-roleedit .a-scroll { border-top: 1px solid var(--line); }
+/* phase 12b: Send a month to the CA (Reports > Accounting) */
+.adm .a-books { padding: 0; overflow: hidden; }
+.a-books .a-cardb > * + * { margin-top: 10px; }
+.a-books .a-cardb > p, .a-books .a-cardb > .a-filters { margin-bottom: 0; }
+.adm .a-books h3 { margin: 8px 0 0; }
 .adm .a-rolepeople { padding: 6px 12px; display: inline-block; margin-bottom: var(--gap); }
 .a-rolepeople summary { cursor: pointer; font-weight: 600; font-size: 14px; }
 .a-rolepeople p { margin: 8px 0 0; font-size: 13.5px; }

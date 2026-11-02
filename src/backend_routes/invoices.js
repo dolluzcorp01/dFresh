@@ -6,6 +6,8 @@
 // An invoice is never deleted: cancel() marks it cancelled and issues a credit note (DFC/26-27/0001) for its full
 // value. Every step is audited.
 const { audit } = require('./audit');
+const books = require('./books');
+const pricing = require('./pricing');
 const commerceSettings = require('./commerce-settings');
 const numbering = require('./numbering');
 const notifications = require('./notifications');
@@ -27,6 +29,7 @@ async function issue(q, orderId, empId, { at = null } = {}) {
   if (live) return { invoice_no: live.invoice_no, existed: true };
   const cs = await commerceSettings.read(q);
   const when = at ? new Date(at) : new Date();
+  await books.assertOpen(q, new Date(when.getTime() + 5.5 * 3600e3).toISOString().slice(0, 10)); // phase 12b month lock
   const fy = numbering.fyOf(when);
   const g = await numbering.godownSegment(q, o.godown_id);
   const seq = await numbering.next(q, `${cs.invoice_prefix}-${g.key}${fy.fy}`, g.key ? 1 : cs.invoice_start_no || 1);
@@ -60,6 +63,10 @@ async function godownOfInvoice(q, invoiceId) {
 async function cancelForOrder(q, orderId, reason, empId) {
   const [[inv]] = await q.query('SELECT invoice_id, invoice_no, taxable, cgst, sgst, igst, round_off, total FROM invoices WHERE live_order_id = ? FOR UPDATE', [orderId]);
   if (!inv) return null;
+  // phase 12b: cancelling an invoice of an exported month asks first (after_export), then may be done again
+  const [[d]] = await q.query("SELECT DATE_FORMAT(CONVERT_TZ(issued_at, '+00:00', '+05:30'), '%Y-%m-%d') AS day FROM invoices WHERE invoice_id = ?", [inv.invoice_id]);
+  await books.guardRecord(q, { date: d.day, key: `inv:${inv.invoice_id}`, label: `Cancel invoice ${inv.invoice_no}`, godownId: await godownOfInvoice(q, inv.invoice_id) }, empId);
+  await books.assertOpen(q, pricing.istToday()); // its credit note is dated today
   const why = String(reason || '').trim().slice(0, 255) || 'Order cancelled';
   await q.query("UPDATE invoices SET status = 'cancelled', live_order_id = NULL, cancelled_at = UTC_TIMESTAMP(), cancel_reason = ?, cancelled_by = ? WHERE invoice_id = ?",
     [why, empId, inv.invoice_id]);
@@ -86,6 +93,7 @@ async function cancelForOrder(q, orderId, reason, empId) {
 async function creditNoteForReturn(q, orderId, lines, reason, returnId, empId) {
   const [[inv]] = await q.query('SELECT invoice_id, invoice_no, gst_type FROM invoices WHERE live_order_id = ? FOR UPDATE', [orderId]);
   if (!inv) throw new InvoiceError('The order has no live tax invoice to credit', 409);
+  await books.assertOpen(q, pricing.istToday()); // phase 12b month lock: the credit note is dated today
   // per SKU over its paid and free lines (buy X get Y): a returned pack is worth its share of what was invoiced
   const [items] = await q.query(`SELECT sku_code, SUM(qty) AS qty, MAX(hsn) AS hsn, MAX(gst_rate) AS gst_rate, SUM(taxable) AS taxable, SUM(cgst) AS cgst, SUM(sgst) AS sgst, SUM(igst) AS igst
       FROM order_items WHERE order_id = ? GROUP BY sku_code`, [orderId]);
