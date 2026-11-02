@@ -64,7 +64,7 @@ export default function Roles() {
       <InfoCard title="What each role may see and change">
         <ul>
           <li>Every admin user has one role (<Link to="/admin/users">Staff</Link>). A role is a grid of sections x View / Create / Edit / Approve / Cancel / Export / Delete, plus See cost, Own customers only and a default approval limit.</li>
-          <li>Super admin and Admin (every right, sign anything) are built in and never change. Sub-admin (everything except Roles and users and Settings) is built in; only an Admin changes its limit.</li>
+          <li>Super admin and Admin (every right, sign anything) are built in and never change. Sub-admin (everything; Roles and users and Settings view only) is built in; only an Admin changes its limit.</li>
           <li>Nobody changes a role they hold, and nobody gives a right or limit they do not have.</li>
           <li>The server checks the grid on every request: a hidden button is only a convenience, a blocked action answers &quot;No access&quot;.</li>
         </ul>

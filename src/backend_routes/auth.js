@@ -85,7 +85,7 @@ async function isRevoked(empId, issuedAtS) {
  * change of role, rights, limit, godowns or leave applies to the person's next click:
  * { emp_id, role_id, role_name, perms (src/shared/permissions.js; built-in roles from code), is_admin (Super admin or
  *   Admin), seesCost, ownOnly (own customers only), limit: { kind: none | any | amount, amount } (the personal one, else
- *   the role's; Super admin and Admin: anything), godowns: 'ALL' | [godown ids], leave: { from, to, standIn, setBy } | null }
+ *   the role's; Super admin: anything; Admin: anything unless the Super admin set a personal limit), godowns: 'ALL' | [godown ids], leave: { from, to, standIn, setBy } | null }
  */
 async function readSession(req) {
   const claims = verify(req.cookies && req.cookies[SESSION_COOKIE], 'session');
@@ -113,7 +113,8 @@ async function buildAdmin(q, user) {
   );
   const isAdmin = permissions.isAdminRole(user.role_id);
   const roleLimit = isAdmin ? { kind: 'any', amount: null } : { kind: user.role_limit_kind || 'none', amount: user.role_limit_amount === null ? null : Number(user.role_limit_amount) };
-  const own = !isAdmin && user.limit_kind && user.limit_kind !== 'role'
+  // a personal limit beats the role's for everyone but the Super admin (v23 0.15: the Super admin may cap an Admin)
+  const own = Number(user.role_id) !== permissions.SUPERADMIN_ROLE_ID && user.limit_kind && user.limit_kind !== 'role'
     ? { kind: user.limit_kind, amount: user.limit_amount === null ? null : Number(user.limit_amount), personal: true } : null;
   let godowns = 'ALL';
   if (!Number(user.godowns_all)) {

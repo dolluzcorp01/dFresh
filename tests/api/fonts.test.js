@@ -5,7 +5,8 @@
 // - a test language with the Telugu script, 3 texts, switched on -> Noto Sans Telugu is served within seconds;
 //   switched off and deleted -> gone from the CSS.
 // Fonts are written to a temp folder (FONT_DIR / FONT_MANIFEST), not media/ or private/. Restores every text,
-// deletes the test language (zte) and the temporary admin ZZU-FONT.
+// deletes the test language (zte) and the borrowed admin (tests/api/test-users.js: a spare active dAdmin employee,
+// read only on dAdmin, signed in as Admin for the run).
 require('dotenv').config({ quiet: true });
 
 if (process.env.NODE_ENV === 'production') {
@@ -32,9 +33,11 @@ const fontverter = require('fontverter');
 const { getDBConnection } = require('../../config/db');
 const fontManager = require('../../src/backend_routes/font-manager');
 const contentCache = require('../../src/backend_routes/content-cache');
+const testUsers = require('./test-users');
 
 const db = getDBConnection(process.env.DB_NAME || 'dfresh').promise();
-const ADMIN = 'ZZU-FONT';
+let ADMIN; // borrowed emp_id
+let borrowed;
 const COOKIE = process.env.ADMIN_COOKIE_NAME || 'dfresh_admin_token';
 const APP = process.env.ADMIN_APP_KEY || 'dFresh';
 const TAMIL = 'Noto Sans Tamil';
@@ -83,8 +86,8 @@ async function setText(key, lang, value) {
 }
 
 before(async () => {
-  await db.query('DELETE FROM admin_users WHERE emp_id = ?', [ADMIN]);
-  await db.query("INSERT INTO admin_users (emp_id, role, is_active, created_by) VALUES (?, 'admin', 1, 'fonts test')", [ADMIN]);
+  borrowed = await testUsers.borrow(db, { admin: 1 }, 'fonts-test');
+  ADMIN = borrowed.ids.admin;
   await db.query("DELETE FROM languages WHERE lang_code = 'zte'");
   const app = express();
   app.use(express.json());
@@ -104,8 +107,7 @@ after(async () => {
     else await db.query('UPDATE ui_text SET value = ? WHERE text_key = ? AND lang_code = ?', [s.value, s.key, s.lang]);
   }
   await db.query("DELETE FROM languages WHERE lang_code = 'zte'");
-  await db.query('DELETE FROM audit_log WHERE emp_id = ?', [ADMIN]);
-  await db.query('DELETE FROM admin_users WHERE emp_id = ?', [ADMIN]);
+  if (borrowed) await borrowed.release();
   contentCache.bust();
   fontManager.stop();
   server.close();

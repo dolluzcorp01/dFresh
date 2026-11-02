@@ -41,6 +41,8 @@ DELETE FROM `commerce_settings` WHERE `setting_key` IN ('own_customers_only', 'o
 INSERT INTO `roles` (`role_id`, `name`, `description`, `limit_kind`, `see_cost`, `is_builtin`, `created_by`)
 VALUES (8, 'Super admin', 'The owner. Everything, everywhere. Cannot be changed.', 'any', 1, 1, 'migration');
 UPDATE `roles` SET `limit_kind` = 'any', `see_cost` = 1 WHERE `role_id` = 1;
+-- Sub-admin as v23: everything, Roles and users and Settings view only (src/shared/permissions.js BUILTIN)
+UPDATE `roles` SET `description` = 'Everything. Roles and users and Settings view only. Built in.' WHERE `role_id` = 2;
 UPDATE `admin_users` SET `role_id` = 8 WHERE `emp_id` = 'DZIND002' AND `role_id` = 1;
 
 ALTER TABLE `admin_users`

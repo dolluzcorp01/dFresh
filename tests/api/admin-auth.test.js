@@ -1,7 +1,9 @@
 // Admin API roles and sessions against the LOCAL dev database (spec F, phase 7 acceptance).
 // Run: npm run test:api   (needs a seeded DB: npm run db:reset)
-// Temporary admin_users rows ZZU-VIEW / ZZU-EDIT / ZZU-ADMIN get session cookies signed here with JWT_SECRET
-// (the e-mailed code step is not part of this test); they and their audit rows are removed afterwards.
+// Three spare active dAdmin employees are borrowed as admin users (tests/api/test-users.js: read only on dAdmin) with
+// the roles Viewer (read only), a test role "ZZ test editor" (Products and Content: view + edit) and Admin, and get
+// session cookies signed here with JWT_SECRET (the e-mailed code step is not part of this test); their admin_users
+// rows, the test role and the audit rows of the run are removed afterwards.
 require('dotenv').config({ quiet: true });
 
 if (process.env.NODE_ENV === 'production') {
@@ -15,11 +17,14 @@ const express = require('express');
 const cookieParser = require('cookie-parser');
 const jwt = require('jsonwebtoken');
 const { getDBConnection } = require('../../config/db');
+const testUsers = require('./test-users');
 
 const db = getDBConnection(process.env.DB_NAME || 'dfresh').promise();
 const COOKIE = process.env.ADMIN_COOKIE_NAME || 'dfresh_admin_token';
 const APP = process.env.ADMIN_APP_KEY || 'dFresh';
-const USERS = { viewer: 'ZZU-VIEW', editor: 'ZZU-EDIT', admin: 'ZZU-ADMIN' };
+const EDITOR_ROLE = 'ZZ test editor';
+const USERS = {}; // viewer / editor / admin -> borrowed emp_id
+let borrowed;
 let base;
 let server;
 
@@ -33,17 +38,10 @@ async function call(method, path, { as, cookie, body } = {}) {
   return { status: res.status, json: await res.json().catch(() => null) };
 }
 
-async function cleanup() {
-  const ids = Object.values(USERS);
-  await db.query(`DELETE FROM audit_log WHERE emp_id IN (${ids.map(() => '?').join(', ')})`, ids);
-  await db.query(`DELETE FROM admin_users WHERE emp_id IN (${ids.map(() => '?').join(', ')})`, ids);
-}
-
 before(async () => {
-  await cleanup();
-  for (const [role, id] of Object.entries(USERS)) {
-    await db.query("INSERT INTO admin_users (emp_id, role, is_active, created_by) VALUES (?, ?, 1, 'test')", [id, role]);
-  }
+  const editorRole = await testUsers.makeRole(db, EDITOR_ROLE, { products: ['view', 'edit'], content: ['view', 'edit'] });
+  borrowed = await testUsers.borrow(db, { viewer: 3, editor: editorRole, admin: 1 }, 'api-test');
+  Object.assign(USERS, borrowed.ids);
   const app = express();
   app.use(express.json());
   app.use(cookieParser());
@@ -54,7 +52,8 @@ before(async () => {
 });
 
 after(async () => {
-  await cleanup();
+  if (borrowed) await borrowed.release();
+  await testUsers.dropRole(db, EDITOR_ROLE);
   server.close();
   await db.end();
 });
@@ -69,7 +68,7 @@ test('no cookie, a challenge token or a token of another app is never a session'
   assert.equal((await call('GET', '/admin/dashboard', { cookie: `${COOKIE}=${forged}` })).status, 401);
   const me = await call('GET', '/admin/me', { as: 'admin' });
   assert.equal(me.status, 200);
-  assert.equal(me.json.data.role, 'admin');
+  assert.deepEqual([me.json.data.emp_id, me.json.data.role_id, me.json.data.is_admin], [USERS.admin, 1, true]);
 });
 
 test('code step: no challenge or no live code sends the user back to sign in (resend too)', async () => {
@@ -78,7 +77,7 @@ test('code step: no challenge or no live code sends the user back to sign in (re
     assert.equal(none.status, 401, `${path} without challenge`);
     assert.equal(none.json.data.restart, true);
     assert.match(none.json.message, /timed out\. Sign in again/);
-    // A valid challenge for an employee with no login_otp row (ZZU-ADMIN never got a code): read-only on dadmin.
+    // A valid challenge for an employee with no live dFresh code (the borrowed admin never asked for one): read-only on dadmin.
     const challenge = jwt.sign({ sub: USERS.admin, app: APP, stage: 'otp' }, process.env.JWT_SECRET, { expiresIn: '5m' });
     const stale = await call('POST', path, { cookie: `${COOKIE}_otp=${challenge}`, body: { code: '123456' } });
     assert.equal(stale.status, 401, `${path} without a code row`);
@@ -112,7 +111,9 @@ test('viewer reads but every write is 403 from the API', async () => {
   }
 });
 
-test('editor writes content but not settings, users, languages or the Excel import', async () => {
+// Since the Roles grid (Stage 2) the Excel import is part of Products and prices > Edit, and languages are part of
+// Content (Content > Edit changes a language, Create adds one, Delete removes one): this editor has neither Create nor Delete.
+test('editor writes content but not settings, users, or adding / removing a language', async () => {
   const cat = await call('GET', '/admin/categories/napkins', { as: 'editor' });
   assert.equal(cat.status, 200);
   const put = await call('PUT', '/admin/categories/napkins', { as: 'editor', body: { sort_order: cat.json.data.sort_order } });
@@ -123,9 +124,7 @@ test('editor writes content but not settings, users, languages or the Excel impo
     ['POST', '/admin/users', { emp_id: 'X', role: 'viewer' }],
     ['PUT', '/admin/users/DZIND148', { role: 'viewer' }],
     ['POST', '/admin/languages', { lang_code: 'zz' }],
-    ['PUT', '/admin/languages/ta', { sort_order: 2 }],
     ['DELETE', '/admin/languages/hi'],
-    ['POST', '/admin/products/import?dryRun=1'],
   ]) {
     const r = await call(m, p, { as: 'editor', body: b });
     assert.equal(r.status, 403, `${m} ${p} -> ${r.status}`);
@@ -186,19 +185,21 @@ test('saving mail_logo_url fetches it first: refused with the exact reason (noth
     const ok = await call('PUT', '/admin/settings/mail_logo_url', { as: 'admin', body: { value: URL } });
     assert.equal(ok.status, 200);
     assert.equal((await call('GET', '/admin/mail-logo', { as: 'admin' })).json.data.state, 'ok');
-    assert.equal((await call('GET', '/admin/dashboard', { as: 'viewer' })).json.data.mailLogo.state, 'ok');
+    // the dashboard shows the logo state to people who can see Settings (Admin here; the Viewer role cannot)
+    assert.equal((await call('GET', '/admin/dashboard', { as: 'admin' })).json.data.mailLogo.state, 'ok');
+    assert.equal((await call('GET', '/admin/dashboard', { as: 'viewer' })).json.data.mailLogo, null);
 
     // The 6-hourly re-check finds it down: the dashboard shows it (red notice in the admin) until it works.
     logoCheck.record(URL, { ok: false, reason: 'no answer within 5 s' });
-    const dash = (await call('GET', '/admin/dashboard', { as: 'viewer' })).json.data.mailLogo;
+    const dash = (await call('GET', '/admin/dashboard', { as: 'admin' })).json.data.mailLogo;
     assert.deepEqual([dash.state, dash.reason, dash.url], ['failing', 'no answer within 5 s', URL]);
 
     const off = await call('PUT', '/admin/settings/mail_logo_url', { as: 'admin', body: { value: '' } });
     assert.equal(off.status, 200);
-    assert.equal((await call('GET', '/admin/dashboard', { as: 'viewer' })).json.data.mailLogo.state, 'off');
+    assert.equal((await call('GET', '/admin/dashboard', { as: 'admin' })).json.data.mailLogo.state, 'off');
   } finally {
     logoCheck.setFetch(null);
-    // Value AND who / when: the admin Settings page shows "Changed ... by", which must not say ZZU-ADMIN.
+    // Value AND who / when: the admin Settings page shows "Changed ... by", which must not name the borrowed admin.
     await db.query("UPDATE site_settings SET setting_value = ?, updated_by = ?, updated_at = ? WHERE setting_key = 'mail_logo_url'",
       [row.setting_value, row.updated_by, row.updated_at]);
     logoCheck.record('', null);
@@ -237,14 +238,19 @@ test('"Send test mail": through the outbox to MAIL_TEST_TO locally (admin\'s own
     assert.match(sent[0].text, /Logo used: the built-in logo/);
     assert.equal((await call('POST', '/admin/mail-logo/test-mail', { as: 'editor' })).status, 403);
 
-    // Production: the signed-in admin's own dAdmin e-mail (ZZU-ADMIN has none, so it says so).
+    // Production: the mail is addressed to the signed-in admin's own dAdmin e-mail (read here, never printed). The fake
+    // transport above is still in place, and mailer.js sends to MAIL_TEST_TO while it is set, so nothing leaves.
     process.env.NODE_ENV = 'production';
+    const [[own]] = await db.query(`SELECT emp_mail_id FROM \`${process.env.DADMIN_DB_NAME || 'dadmin'}\`.employee WHERE emp_id = ?`, [USERS.admin]);
     const prod = await call('POST', '/admin/mail-logo/test-mail', { as: 'admin' });
-    assert.equal(prod.status, 400);
-    assert.equal(prod.json.message, 'Your dAdmin account has no e-mail address');
+    assert.equal(prod.status, 200);
+    const [[row]] = await db.query('SELECT to_email FROM mail_outbox WHERE mail_id = ?', [prod.json.data.mail_id]);
+    assert.ok(Boolean(own.emp_mail_id) && row.to_email === own.emp_mail_id, 'addressed to the own dAdmin e-mail of the admin');
+    assert.equal(sent.length, 2);
+    assert.equal(sent[1].to, 'test-inbox@example.com'); // the MAIL_TEST_TO redirect
 
     const [rows] = await db.query("SELECT purpose, status FROM mail_outbox WHERE mail_id > ? AND purpose = 'logo_test' ORDER BY mail_id", [before]);
-    assert.deepEqual(rows.map((r) => r.status), ['cancelled', 'sent']);
+    assert.deepEqual(rows.map((r) => r.status), ['cancelled', 'sent', 'sent']);
   } finally {
     Object.assign(process.env, keep);
     mailer.setTransport(null);

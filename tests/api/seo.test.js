@@ -95,12 +95,23 @@ test('sitemap: every active language x (home, products, each category, privacy, 
   assert.equal((xml.match(/hreflang="x-default"/g) || []).length, locs.length);
 });
 
-test('robots: admin and api disallowed, sitemap listed; SEO_NOINDEX blocks everything', () => {
-  assert.equal(seo.robots(), 'User-agent: *\nDisallow: /admin\nDisallow: /api/\nSitemap: https://site.example/sitemap.xml\n');
-  process.env.SEO_NOINDEX = 'true';
+// robots() reads Settings site_indexing (soft launch: 'off' blocks everything, like SEO_NOINDEX=true), so it is async;
+// the setting is set for each case and put back (with the content cache cleared) afterwards.
+test('robots: admin and api disallowed, sitemap listed; site_indexing off or SEO_NOINDEX blocks everything', async () => {
+  const db = getDBConnection(process.env.DB_NAME || 'dfresh').promise();
+  const cache = require('../../src/backend_routes/content-cache');
+  const [[row]] = await db.query("SELECT setting_value FROM site_settings WHERE setting_key = 'site_indexing'");
+  const set = async (v) => { await db.query("UPDATE site_settings SET setting_value = ? WHERE setting_key = 'site_indexing'", [v]); cache.bust(); };
   try {
-    assert.equal(seo.robots(), 'User-agent: *\nDisallow: /\n');
+    await set('on');
+    assert.equal(await seo.robots(), 'User-agent: *\nDisallow: /admin\nDisallow: /api/\nSitemap: https://site.example/sitemap.xml\n');
+    process.env.SEO_NOINDEX = 'true';
+    assert.equal(await seo.robots(), 'User-agent: *\nDisallow: /\n');
+    delete process.env.SEO_NOINDEX;
+    await set('off');
+    assert.equal(await seo.robots(), 'User-agent: *\nDisallow: /\n');
   } finally {
     delete process.env.SEO_NOINDEX;
+    if (row) await set(row.setting_value);
   }
 });

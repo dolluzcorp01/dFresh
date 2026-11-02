@@ -2,7 +2,7 @@
 // the admin (menus, buttons). CommonJS: the server requires it, the admin imports it.
 // A role is a grid of SECTIONS x ACTIONS (gap map D5: view, create, edit, approve, cancel, export; delete where it is
 // used). Built-in roles are defined HERE and are not editable: Super admin (the owner) and Admin (everything),
-// Sub-admin (everything except Roles and users and Settings). Custom roles live in role_permissions. Rights that are
+// Sub-admin (everything; Roles and users and Settings view only, as v23). Custom roles live in role_permissions. Rights that are
 // not a section (See cost, Own customers only) and the approval limit are columns of the role (roles table).
 const ACTIONS = ['view', 'create', 'edit', 'approve', 'cancel', 'export', 'delete'];
 
@@ -32,7 +32,7 @@ const SUPERADMIN_ROLE_ID = 8;
 const BUILTIN = {
   [SUPERADMIN_ROLE_ID]: { name: 'Super admin', description: 'The owner. Everything, everywhere. Cannot be changed.', grants: () => true },
   [ADMIN_ROLE_ID]: { name: 'Admin', description: 'Everything, in every section.', grants: () => true },
-  [SUBADMIN_ROLE_ID]: { name: 'Sub-admin', description: 'Everything except Roles and users and Settings.', grants: (section) => !['users', 'settings'].includes(section) },
+  [SUBADMIN_ROLE_ID]: { name: 'Sub-admin', description: 'Everything. Roles and users and Settings view only.', grants: (section, action) => !['users', 'settings'].includes(section) || action === 'view' },
 };
 
 const empty = () => Object.fromEntries(ACTIONS.map((a) => [a, false]));
@@ -43,8 +43,7 @@ function permsFor(roleId, rows = []) {
   const builtin = BUILTIN[roleId];
   for (const s of SECTION_KEYS) {
     if (builtin) {
-      const on = builtin.grants(s);
-      out[s] = Object.fromEntries(ACTIONS.map((a) => [a, on && (!VIEW_ONLY.includes(s) || a === 'view')]));
+      out[s] = Object.fromEntries(ACTIONS.map((a) => [a, builtin.grants(s, a) && (!VIEW_ONLY.includes(s) || a === 'view')]));
     } else out[s] = empty();
   }
   if (!builtin) {

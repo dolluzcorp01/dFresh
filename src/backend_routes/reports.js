@@ -68,7 +68,11 @@ async function salesFacts(q, p) {
     FROM credit_notes cn JOIN invoices i ON i.invoice_id = cn.invoice_id ${joins} JOIN order_items it ON it.order_id = o.order_id
     WHERE cn.return_id IS NULL AND ${IN('cn.issued_at')} AND ${G}`, S);
   const out = [];
-  const push = (r, extra) => out.push({ ...r, ...extra, day: typeof r.day === 'string' ? r.day : r.day.toISOString().slice(0, 10) });
+  // the rate as a number: item lines bring "18.00" from MySQL, delivery lines 18; one rate must group as one
+  const push = (r, extra) => {
+    const f = { ...r, ...extra, day: typeof r.day === 'string' ? r.day : r.day.toISOString().slice(0, 10) };
+    out.push({ ...f, gst_rate: f.gst_rate === null || f.gst_rate === undefined ? null : Number(f.gst_rate) });
+  };
   inv.forEach((r) => push(r, {}));
   cnl.forEach((r) => push(r, {}));
   cancelLines.forEach((r) => push(r, {}));

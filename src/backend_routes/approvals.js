@@ -217,10 +217,10 @@ function meAmong(ctx, admin) {
 }
 
 /**
- * the queue for this person (req: their godown scope and the header picker): pending they can see, decided ones,
- * or their own. A request shows when they raised it, or when they may view its section at a godown they see (or it
- * is one they could sign as someone's stand-in). Each row: can_decide / why_not, via (signing for whom), the ladder,
- * the counting-together note.
+ * the queue for this person (req: their godown scope and the header picker): pending, decided ones, or their own.
+ * As v23: a request shows when they can sign it now (also as someone's stand-in), raised it or decided it; the Super
+ * admin, Admin and Sub-admin also see every other request at the godowns they see ("Everything else waiting").
+ * Each row: can_decide / why_not, via (signing for whom), the ladder, the counting-together note.
  */
 async function list(req, status) {
   const admin = req.admin;
@@ -230,13 +230,14 @@ async function list(req, status) {
   const ctx = await context(db);
   const me = meAmong(ctx, admin);
   const scope = godowns.viewScope(req);
+  const seesAll = permissions.isAdminRole(admin.role_id) || Number(admin.role_id) === permissions.SUBADMIN_ROLE_ID;
   const out = [];
   for (const r of rows) {
     const q = asRequest(r);
     const split = await splitOf(db, r);
     const d = engine.decide(me, q, { ...ctx, split });
-    const sees = r.requested_by === admin.emp_id || d.ok
-      || (permissions.can(admin.perms, r.section, 'view') && (scope === null || scope.includes(Number(r.godown_id))));
+    const sees = r.requested_by === admin.emp_id || d.ok || r.decided_by === admin.emp_id
+      || (seesAll && (scope === null || scope.includes(Number(r.godown_id))));
     if (!sees) continue;
     const lad = r.status === 'pending' ? engine.ladder(q, { ...ctx, split }) : [];
     const via = r.decided_via ? ctx.people.find((p) => p.emp_id === r.decided_via) : null;
