@@ -78,25 +78,28 @@ export function useAction() {
   const toast = useToast();
   const [busy, setBusy] = useState(false);
   const [msg, setMsgRaw] = useState(null);
+  const [fields, setFields] = useState(null); // { field: why } of the last refused save (the server's "fields")
   const setMsg = useCallback((m) => {
     if (m && m.kind === 'ok' && toast) { toast('good', m.text); setMsgRaw(null); } else setMsgRaw(m);
   }, [toast]);
   const run = useCallback(async (fn, okText) => {
     setBusy(true);
     setMsgRaw(null);
+    setFields(null);
     try {
       const out = await fn();
       if (okText) setMsg({ kind: 'ok', text: okText });
       return out;
     } catch (err) {
       setMsgRaw({ kind: 'error', text: err.message });
+      setFields((err.data && err.data.fields) || null);
       return undefined;
     } finally {
       setBusy(false);
     }
   }, [setMsg]);
   const note = msg ? <Notice kind={msg.kind} onClose={() => setMsgRaw(null)}>{msg.text}</Notice> : null;
-  return { busy, run, note, setMsg };
+  return { busy, run, note, setMsg, fields };
 }
 
 export function Loading({ state, children }) {
@@ -167,7 +170,7 @@ export function Field({ def, value, onChange, disabled }) {
   } else if (def.type === 'textarea') {
     control = <textarea {...common} rows={def.rows || 3} value={value ?? ''} onChange={(e) => onChange(e.target.value)} />;
   } else {
-    control = <input type={def.type === 'number' ? 'number' : 'text'} step={def.step || 'any'} min={def.min} max={def.max} {...common} value={value ?? ''} onChange={(e) => onChange(e.target.value)} />;
+    control = <input type={['number', 'time', 'date'].includes(def.type) ? def.type : 'text'} step={def.step || 'any'} min={def.min} max={def.max} {...common} value={value ?? ''} onChange={(e) => onChange(e.target.value)} />;
   }
   return (
     <label className={`a-field${def.type === 'bool' ? ' a-check' : ''}${def.wide ? ' a-wide' : ''}${def.error ? ' a-err' : ''}`} htmlFor={id}>
@@ -529,7 +532,7 @@ export function Need({ section, action = 'view', commerce = false, children }) {
   const sections = section ? [].concat(section) : [];
   if (sections.length && !sections.some((x) => canPerm(me && me.perms, x, action))) return <NoAccess section={sections[0]} />;
   if (commerce && !(me && me.commerce_enabled)) {
-    return <section><h1>Commerce is switched off</h1><Notice kind="info">Turn it on in Setup &gt; Commerce settings (General).</Notice></section>;
+    return <section><h1>Commerce is switched off</h1><Notice kind="info">Turn it on in Admin &gt; Settings &gt; Switches (Turn on).</Notice></section>;
   }
   return children;
 }

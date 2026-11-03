@@ -1,5 +1,5 @@
 // Settings (spec F 10, admin; menu: Website > Site settings / Google and sharing / Home page > Home doors, and
-// Admin > Organisation > Company): every site_settings row with its description, in sections; the public flag is shown as
+// Admin > Organisation > Company until phase 13): every site_settings row with its description, in sections; the public flag is shown as
 // a badge, not editable here (a secret must never become public by a click). Typed values are pending until Save
 // (Save / Cancel on the row), checked with the API's own rules (shared/settingRules.js); whatsapp_number follows
 // whatsapp_display. The lead sheet ID gets "Open sheet" and a read-only "Test connection". share_image / about_image: preview + Upload /
@@ -8,6 +8,7 @@
 // empty), the server's last check of the saved URL, and "Send test mail" (MAIL_TEST_TO locally, the signed-in
 // admin's own e-mail in production). Saving a URL is refused by the server unless it passes the check.
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api } from './adminApi';
 import { API_BASE, mediaUrl } from '../utils/api';
 import { InfoCard, Loading, PageHead, Pill, UploadButton, fmtDate, useAction, useConfirm, useHashScroll, useLeaveGuard, useLoad, useUpload } from './ui';
@@ -26,9 +27,10 @@ const PICTURES = {
 const PRODUCT_PICKERS = ['door_home_product', 'door_biz_product'];
 
 // Sections, in this order; a setting not listed here shows under "Other".
+// Phase 13: the company facts the site shows (legal name, CIN, GSTIN, phone, e-mail, WhatsApp) are changed on the
+// Company page (Admin > Organisation > Company), which writes these same rows: one source for the site and the invoices.
+const ON_COMPANY = ['company_name', 'cin', 'gstin', 'office_phone', 'public_email', 'whatsapp_display', 'whatsapp_number'];
 const SECTIONS = [
-  ['Company', ['company_name', 'cin', 'gstin']],
-  ['Contact', ['office_phone', 'public_email', 'whatsapp_display', 'whatsapp_number']],
   ['Home page', ['about_image', 'door_home_product', 'door_biz_product']],
   ['Sharing and SEO', ['site_indexing', 'share_image', 'ga4_measurement_id']],
   ['E-mail', ['mail_logo_url', 'lead_email', 'mail_from', 'mail_from_name']],
@@ -76,7 +78,7 @@ export default function Settings() {
 
   const rows = list.data || [];
   const byKey = new Map(rows.map((r) => [r.setting_key, r]));
-  const listed = new Set([...SECTIONS.flatMap(([, keys]) => keys), ...Object.values(FOCUS_OF)]); // focus rows live in their photo's row
+  const listed = new Set([...SECTIONS.flatMap(([, keys]) => keys), ...Object.values(FOCUS_OF), ...ON_COMPANY]); // focus rows live in their photo's row
   const sections = [...SECTIONS.map(([title, keys]) => [title, keys.map((k) => byKey.get(k)).filter(Boolean)]),
     ['Other', rows.filter((r) => !listed.has(r.setting_key))]].filter(([, items]) => items.length);
   const valueOf = (key) => (key in pending ? pending[key] : ((byKey.get(key) || {}).setting_value || ''));
@@ -88,7 +90,7 @@ export default function Settings() {
         <ul>
           <li>Office and godown names and addresses: Translations, group Contact details (<code>c_office</code>, <code>c_office_a</code>, <code>c_godown</code>, <code>c_godown_a</code>), one text per language.</li>
           <li>That one copy is used in the contact section, the footer, the Google Maps search and Google business data.</li>
-          <li>The footer company line is built from <code>company_name</code>, <code>cin</code> and <code>gstin</code> below.</li>
+          <li>The company name, CIN, GSTIN, phone, e-mail and WhatsApp the site shows are changed in <Link to="/admin/company">Admin &gt; Company</Link> (the same values go on the invoices).</li>
         </ul>
       </InfoCard>
       {act.note}

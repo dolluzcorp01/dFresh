@@ -101,18 +101,18 @@ MAP = {
     'website/where-we-deliver-map': [T('towns', 'content', **LIVE)],
     'website/google-and-sharing': [T('settings', 'settings', hash='cs-s-sharing-and-seo', **LIVE)],
     'website/site-settings': [T('settings', 'settings', **LIVE)],
-    'admin/organisation/company': [T('settings', 'settings', hash='cs-s-company', **LIVE)],
+    'admin/organisation/company': [T('company', 'settings', **LIVE)],
     'admin/organisation/godowns': [T('godowns', 'settings')],
-    'admin/organisation/numbering': [T('commerce-settings', 'settings', hash='cs-g-numbering')],
+    'admin/organisation/numbering': [T('numbering', 'settings')],
     'admin/users-and-security/staff': [T('users', 'users', **LIVE)],
     'admin/users-and-security/roles': [T('roles', 'users', **LIVE)],
     'admin/users-and-security/approval-rules': [T('approval-rules', 'settings'), T('approval-rules', 'users')],
     'admin/users-and-security/stand-ins': [T('stand-ins', 'users')],
-    'admin/users-and-security/audit-log': [T('audit', 'audit', **LIVE)],
+    'admin/users-and-security/audit-log': [T('audit', None, **LIVE)],  # phase 13 (v23 0.21): everyone sees at least their own changes
     'admin/communications/notifications': [T('notifications', 'settings', search='tab=events')],
     'admin/communications/message-templates': [T('notifications', 'settings', search='tab=templates')],
     'admin/communications/outbox': [T('notifications', 'settings', search='tab=log')],
-    'admin/settings/switches': [T('commerce-settings', 'settings', **LIVE)],
+    'admin/settings/switches': [T('switches', 'settings', **LIVE)],
 }
 
 # placeholder: the permission section of an entry with no screen yet (what it will belong to), by entry id prefix
@@ -125,8 +125,9 @@ PLACE_SECTION = [
     ('admin/users-and-security/', 'users'), ('admin/', 'settings'), ('online-store', 'settings'),
 ]
 # the phase that builds an entry (gap map "Proposed build order"); website entries with no screen: phase 24
+# 'fv7' = no v23 design yet: "Later (Foundation v7)" (phase 13: My tasks, Financial year lock, Print templates, Label printer, Scanner)
 PHASE = [
-    ('home/my-tasks', 13), ('home/alerts', 23), ('sales/leads/', 19), ('sales/customers/customer-ledger', 21), ('sales/customers/', 19),
+    ('home/my-tasks', 'fv7'), ('admin/organisation/financial-year-lock', 'fv7'), ('admin/organisation/print-templates', 'fv7'), ('admin/devices/', 'fv7'), ('home/alerts', 23), ('sales/leads/', 19), ('sales/customers/customer-ledger', 21), ('sales/customers/', 19),
     ('sales/orders/', 19), ('sales/returns/', 22), ('fulfilment/', 20), ('purchase/', 16), ('production/', 17), ('inventory/', 18),
     ('money/payments/supplier-payments', 16), ('money/expenses/', 23), ('money/accounting-export/', 23), ('money/', 21), ('gst/', 21),
     ('marketing/', 22), ('reports/', 23), ('masters/catalogue/', 14), ('masters/prices/', 15), ('masters/partners/suppliers', 16),
@@ -218,7 +219,7 @@ def doc(entries):
                           + (' (drivers)' if x.get('driver') else '') + ('' if x['commerce'] else ' (live)') for x in e['to'])
             rows.append(f"| {where} | {t} |")
         else:
-            rows.append(f"| {where} | placeholder: {'Later' if e['phase'] == 'later' else 'Not built yet - phase ' + str(e['phase'])} |")
+            rows.append(f"| {where} | placeholder: {'Later' if e['phase'] == 'later' else 'Later (Foundation v7)' if e['phase'] == 'fv7' else 'Not built yet - phase ' + str(e['phase'])} |")
     return rows
 
 

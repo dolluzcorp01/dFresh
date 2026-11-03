@@ -1,7 +1,10 @@
 // Tax invoice and credit note printing (new window; print or save as PDF), shared by Orders and Returns. The DEMO
 // watermark shows while the seller GSTIN is a placeholder. A credit note for returned packs lists its lines at the
 // invoice's own tax (CGST + SGST or IGST as invoiced); a cancellation credit note shows the totals only.
+// Phase 13: the bank and UPI ID the invoice printed when issued, then the declaration, terms, signatory and signature
+// of Admin > Company > Invoice preferences (the same as the PDF, doc-pdf.js).
 import { api } from './adminApi';
+import { API_BASE } from '../utils/api';
 import { FONT_STACK, PRINT_FONTS, printWhenReady } from './printKit';
 
 const esc = (v) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -72,6 +75,12 @@ export function invoiceHtml(inv) {
     </tbody></table>
     ${cns.length ? `<p><b>Credit notes against this invoice:</b> ${cns.map((c) => `${esc(c.credit_note_no)} (${istDay(c.issued_at)}, Rs ${Number(c.total).toFixed(2)}${c.reason ? ` - ${esc(c.reason)}` : ''})`).join('; ')}</p>` : ''}
     ${inv.bank ? `<p><b>Pay to:</b> ${esc(inv.bank)}</p>` : ''}
+    ${inv.upi ? `<p><b>Pay by UPI:</b> ${esc(inv.upi)}</p>` : ''}
+    ${inv.declaration ? `<p><small><b>Declaration:</b> ${esc(inv.declaration)}</small></p>` : ''}
+    ${inv.terms ? `<p><small>${esc(inv.terms)}</small></p>` : ''}
+    ${inv.signatory || inv.has_signature ? `<div style="text-align:right;margin-top:12px"><b>For ${esc(inv.seller_name)}</b><br>
+      ${inv.has_signature ? `<img src="${API_BASE}/api/dfresh/admin/company/signature" alt="Signature" style="max-width:180px;max-height:60px;margin:6px 0">` : '<br><br>'}<br>
+      ${esc(inv.signatory ? `${inv.signatory}, authorised signatory` : 'Authorised signatory')}</div>` : ''}
     <p><small>Marketed by dFresh. Prices per pack before GST. This is a computer-generated invoice.</small></p>`;
 }
 

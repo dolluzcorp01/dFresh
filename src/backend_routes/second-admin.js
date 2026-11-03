@@ -24,8 +24,11 @@ const LOOSEN = {
   return_outside_window: ['refuse', 'approval'], cashback_credit_at: ['after_window', 'delivery'],
 };
 // ranges that stop silly values (v23 SW_RANGE)
-const RANGE = { approval_expiry_days: [1, 30], split_days: [1, 30], wallet_max_use_pct: [0, 100], return_window_days: [0, 60] };
-const BANK_KEYS = ['invoice_bank_details'];
+// (phase 13: every number on the Switches page has one; the page shows them and the PUT enforces them)
+const RANGE = {
+  approval_expiry_days: [1, 30], split_days: [1, 30], wallet_max_use_pct: [0, 100], return_window_days: [0, 60],
+  eway_bill_above: [0, 500000], order_min_value_default: [0, 100000], expiry_warn_days: [1, 365], slow_moving_days: [7, 365],
+};
 
 /** does changing setting `key` from `from` to `to` (stored text) loosen a control? */
 function settingLoosens(key, from, to) {
@@ -90,4 +93,4 @@ approvals.onApproved('company_bank', async (q, p, empId) => { if (p && handlers[
 approvals.onClosed('rule_change', async (q, p, status, empId) => { if (p && handlers[p.t] && handlers[p.t].closed) await handlers[p.t].closed(q, p, status, empId); });
 approvals.onRecheck('rule_change', async (q, p) => (p && handlers[p.t] && handlers[p.t].recheck ? handlers[p.t].recheck(q, p) : ''));
 
-module.exports = { GateError, LOOSEN, RANGE, BANK_KEYS, settingLoosens, on, ask, pending, waitingLine, NEVER_OVERRIDE: engine.NEVER_OVERRIDE };
+module.exports = { GateError, LOOSEN, RANGE, settingLoosens, on, ask, pending, waitingLine, NEVER_OVERRIDE: engine.NEVER_OVERRIDE };

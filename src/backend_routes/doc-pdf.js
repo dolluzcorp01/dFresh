@@ -4,10 +4,12 @@
 // src/admin/invoicePrint.js prints them in the browser), so the PDF and the print never disagree. A4, the dFresh logo
 // on an ink band, labels in English; names, addresses and notes print in whatever script they were typed in
 // (pdf-writer.js: pdfkit with the Noto fonts). "DEMO - not a tax invoice" while the seller GSTIN is a placeholder.
+// Phase 13: the bank and UPI ID an invoice printed are kept with it; the declaration, terms, signatory and signature
+// come from Admin > Company > Invoice preferences (company.js).
 const fs = require('fs');
 const path = require('path');
 const { Pdf, PAGE_W } = require('./pdf-writer');
-const commerceSettings = require('./commerce-settings');
+const company = require('./company');
 const customers = require('./customers');
 const { stateName, posReason } = require('../shared/gstStates');
 
@@ -30,11 +32,17 @@ async function siteContact(q) {
   return Object.fromEntries(site.map((x) => [x.setting_key, x.setting_value]));
 }
 
+/** the signing block of the invoice preferences (Admin > Company): signatory, declaration, terms, signature */
+async function signBlock(q) {
+  const f = await company.facts(q);
+  return { signatory: f.signatory || null, declaration: f.declaration || null, terms: f.terms || null, has_signature: f.has_signature };
+}
+
 /** an invoice with its lines and credit notes -> the object GET /commerce/invoices/:id returns (null when none) */
 async function invoiceData(q, id) {
   const [[inv]] = await q.query(
     `SELECT i.invoice_id, i.invoice_no, i.fy, i.status, i.issued_at, DATE_FORMAT(i.due_on, '%Y-%m-%d') AS due_on, i.place_of_supply, i.gst_type, i.taxable, i.delivery_charge, i.delivery_gst, i.cgst, i.sgst, i.igst,
-            i.round_off, i.total, i.seller_name, i.seller_gstin, i.seller_address, i.seller_state_code, i.buyer_json, i.is_demo, i.cancelled_at, i.cancel_reason,
+            i.round_off, i.total, i.seller_name, i.seller_gstin, i.seller_address, i.seller_state_code, i.seller_bank, i.seller_upi, i.buyer_json, i.is_demo, i.cancelled_at, i.cancel_reason,
             o.order_no, o.order_id, o.subtotal, o.discount, o.offer_discount, o.manual_discount, o.manual_discount_reason, o.delivery_waived, o.coupon_code, o.wallet_used, o.wallet_discount,
             o.wallet_gst, o.payment_terms
        FROM invoices i JOIN orders o ON o.order_id = i.order_id WHERE i.invoice_id = ?`, [Number(id)]
@@ -48,7 +56,8 @@ async function invoiceData(q, id) {
   const buyer = typeof inv.buyer_json === 'string' ? JSON.parse(inv.buyer_json) : inv.buyer_json;
   return { ...inv, buyer_json: undefined, buyer, lines, credit_notes: cns, is_demo: Number(inv.is_demo) === 1, seller_state: stateName(inv.seller_state_code),
     pos_state: stateName(inv.place_of_supply), pos_reason: posReason(buyer.bill.gstin, inv.place_of_supply), bill_state: stateName(buyer.bill.state_code), ship_state: stateName(buyer.ship.state_code), cin: s.cin, phone: s.office_phone, email: s.public_email,
-    bank: String((await commerceSettings.read(q)).invoice_bank_details || '').trim() || null }; // Commerce setting: printed when filled
+    // phase 13: the bank and UPI ID the invoice printed when it was issued (Admin > Company), and the invoice preferences
+    bank: inv.seller_bank || null, upi: inv.seller_upi || null, seller_bank: undefined, seller_upi: undefined, ...(await signBlock(q)) };
 }
 
 /** a credit note with the invoice snapshot and its own lines (null when none) */
@@ -70,8 +79,8 @@ async function statementData(q, customerId, { from = null, to = null } = {}) {
   const [[c]] = await q.query('SELECT customer_id, customer_no, name, business_name, phone, credit_days, credit_limit FROM customers WHERE customer_id = ?', [Number(customerId)]);
   if (!c) return null;
   const addr = (await customers.addressesOf(q, c.customer_id)).find((a) => a.kind === 'billing' && a.is_default) || null;
-  const cs = await commerceSettings.read(q);
-  return { customer: { ...c, credit_limit: Number(c.credit_limit) }, bill: addr, from, to, seller: { name: cs.invoice_seller_name, address: cs.invoice_seller_address }, ...(await customers.statement(q, c.customer_id, { from, to })) };
+  const co = await company.facts(q);
+  return { customer: { ...c, credit_limit: Number(c.credit_limit) }, bill: addr, from, to, seller: { name: co.name, address: co.address }, ...(await customers.statement(q, c.customer_id, { from, to })) };
 }
 
 // ---------------------------------------------------------------- layout
@@ -233,6 +242,18 @@ async function invoicePdf(q, id) {
   ]);
   if (inv.credit_notes.length) d.para(`Credit notes against this invoice: ${inv.credit_notes.map((c) => `${c.credit_note_no} (${istDay(c.issued_at)}, Rs ${money(c.total)}${c.reason ? ` - ${c.reason}` : ''})`).join('; ')}`, { color: INK });
   if (inv.bank) d.para(`Pay to: ${inv.bank}`, { color: INK });
+  if (inv.upi) d.para(`Pay by UPI: ${inv.upi}`, { color: INK });
+  if (inv.declaration) d.para(`Declaration: ${inv.declaration}`);
+  if (inv.terms) d.para(inv.terms);
+  if (inv.signatory || inv.has_signature) {
+    const png = inv.has_signature ? await company.signaturePng(q) : null;
+    d.need(png ? 70 : 30);
+    d.pdf.text(M, d.y + 4, `For ${inv.seller_name}`, { size: 8.5, bold: true, color: INK, align: 'right', width: CW });
+    d.y += 16;
+    if (png) { d.pdf.doc.image(png, M + CW - 150, d.y, { fit: [150, 40], align: 'right' }); d.y += 44; }
+    d.pdf.text(M, d.y, inv.signatory ? `${inv.signatory}, authorised signatory` : 'Authorised signatory', { size: 8.5, color: GREY, align: 'right', width: CW });
+    d.y += 16;
+  }
   d.para('Marketed by dFresh. Prices per pack before GST. This is a computer-generated invoice.');
   return { filename: `${inv.invoice_no.replace(/\//g, '-')}.pdf`, buffer: await d.finish() };
 }

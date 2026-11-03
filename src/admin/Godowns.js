@@ -4,9 +4,13 @@
 // a code of 1 to 4 capital letters (it goes into the numbers of its invoices and credit notes: DFI/C/26-27/0001;
 // Kanchipuram keeps today's numbers), a godown in another state needs its own GSTIN, which starts with that state's
 // code. Closing is refused while it holds stock, has open orders or someone works only there. Every change is audited.
+// Phase 13 (v23 0.48): line 2, city, PIN ("PIN to add" until it is there), opening hours, weekly days off (never every
+// day) and dates it is closed (holidays).
 import { useState } from 'react';
 import { api } from './adminApi';
 import { Drawer, Field, LIcon, Loading, Notice, PageHead, Pill, useAction, useConfirm, useLoad } from './ui';
+
+const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 export default function Godowns() {
   const data = useLoad('/godowns');
@@ -14,6 +18,7 @@ export default function Godowns() {
   const act = useAction();
   const confirm = useConfirm();
   const [open, setOpen] = useState(null); // godown_id | 'new'
+  const addressOf = (g) => [g.address, g.addr_line2, [g.city, g.pin].filter(Boolean).join(' ')].filter(Boolean).join(', ');
   const d = data.data;
   const toggle = async (g) => {
     if (g.is_active && !(await confirm({ title: `Close ${g.name}?`, message: 'Nothing new can be made there. It stays on record and can be opened again.', action: 'Close godown', danger: true }))) return;
@@ -23,7 +28,7 @@ export default function Godowns() {
     <section>
       <PageHead sub="Every godown and its code"
         actions={d && d.can_edit && <button type="button" className="a-btn" onClick={() => setOpen('new')}><LIcon name="plus" size="sm" />New godown</button>}
-        rules={['GSTIN needed if in another state', 'Its code goes into its invoice and credit note numbers', 'A godown is closed, never deleted']} />
+        rules={['GSTIN needed if in another state', 'Its code goes into its invoice and credit note numbers', 'A godown is closed, never deleted', 'Never closed every day of the week']} />
       {d && !d.can_edit && <Notice kind="info">View only: changing godowns needs Edit on Settings.</Notice>}
       <p className="a-lead">A godown is a place stock sits, not a selling shop. Adding one is a row here, and every screen that asks &quot;which godown&quot; offers it at once.</p>
       {act.note}
@@ -39,7 +44,8 @@ export default function Godowns() {
                   <Pill tone={g.is_active ? 'good' : 'gray'}>{g.is_active ? 'Open' : 'Closed'}</Pill>
                 </div>
                 <dl className="a-kv a-kvs">
-                  <dt>Address</dt><dd>{g.address || '-'}</dd>
+                  <dt>Address</dt><dd>{addressOf(g) || '-'}{g.pin_missing && <> <Pill tone="warn">PIN to add</Pill></>}</dd>
+                  <dt>Hours</dt><dd>{g.hours_text}{(g.closed_dates || []).length > 0 && <span className="a-sub-l">Closed {g.closed_dates.map((c) => `${c.from === c.to ? c.from : `${c.from} to ${c.to}`} (${c.why})`).join(', ')}</span>}</dd>
                   <dt>Phone</dt><dd>{g.phone || '-'}</dd>
                   <dt>In charge</dt><dd>{g.in_charge_name || '-'}</dd>
                   <dt>GSTIN</dt><dd>{g.gstin || (g.state === d.company_state ? 'Company GSTIN' : <span className="a-bad">Needed, another state</span>)}</dd>
@@ -73,11 +79,14 @@ function GodownDrawer({ meta, staff, godown, onClose, onSaved }) {
   const confirm = useConfirm();
   const creating = !godown;
   const canEdit = meta.can_edit;
-  const start = { code: godown ? godown.code : '', name: godown ? godown.name : '', address: godown ? godown.address || '' : '', state: godown ? godown.state : meta.company_state,
-    gstin: godown ? godown.gstin || '' : '', in_charge: godown ? godown.in_charge || '' : '', phone: godown ? godown.phone || '' : '' };
+  const g0 = godown || {};
+  const start = { code: g0.code || '', name: g0.name || '', address: g0.address || '', addr_line2: g0.addr_line2 || '', city: g0.city || '', pin: g0.pin || '',
+    state: godown ? godown.state : meta.company_state, gstin: g0.gstin || '', in_charge: g0.in_charge || '', phone: g0.phone || '',
+    open_time: g0.open_time || '09:00', close_time: g0.close_time || '18:00', weekly_off: g0.weekly_off || ['Sun'], closed_dates: g0.closed_dates || [] };
   const [f, setF] = useState(start);
   const dirty = JSON.stringify(f) !== JSON.stringify(start);
   const set = (k) => (v) => setF((x) => ({ ...x, [k]: v ?? '' }));
+  const setClosed = (i, patch) => setF((x) => ({ ...x, closed_dates: x.closed_dates.map((c, j) => (j === i ? { ...c, ...patch } : c)) }));
   const save = () => act.run(async () => {
     if (creating) { const r = await api.send('POST', '/godowns', f); onSaved(r.message); } else { await api.send('PUT', `/godowns/${godown.godown_id}`, f); onSaved(`${f.name} saved`); }
   });
@@ -99,16 +108,39 @@ function GodownDrawer({ meta, staff, godown, onClose, onSaved }) {
       {act.note}
       {!canEdit && <Notice kind="info">View only: changing godowns needs Edit on Settings.</Notice>}
       <div className="a-grid2">
-        <Field def={{ name: 'code', label: 'Code', required: true, help: 'Goes into its document numbers, e.g. C', locked: !canEdit }} value={f.code} onChange={(v) => set('code')(String(v).toUpperCase())} />
-        <Field def={{ name: 'name', label: 'Name', required: true, locked: !canEdit }} value={f.name} onChange={set('name')} />
-        <Field def={{ name: 'address', label: 'Address', wide: true, locked: !canEdit }} value={f.address} onChange={set('address')} />
-        <Field def={{ name: 'state', label: 'State', type: 'select', options: meta.states, allowEmpty: false, locked: !canEdit }} value={f.state} onChange={set('state')} />
-        <Field def={{ name: 'gstin', label: 'GSTIN', info: 'Needed for a godown in another state than the company. It starts with that state\'s code (Tamil Nadu 33, Karnataka 29...).', locked: !canEdit }}
+        <Field def={{ name: 'code', error: (act.fields || {}).code, label: 'Code', required: true, help: 'Goes into its document numbers, e.g. C', locked: !canEdit }} value={f.code} onChange={(v) => set('code')(String(v).toUpperCase())} />
+        <Field def={{ name: 'name', error: (act.fields || {}).name, label: 'Name', required: true, locked: !canEdit }} value={f.name} onChange={set('name')} />
+        <Field def={{ name: 'address', error: (act.fields || {}).address, label: 'Address line 1', wide: true, locked: !canEdit }} value={f.address} onChange={set('address')} />
+        <Field def={{ name: 'addr_line2', error: (act.fields || {}).addr_line2, label: 'Address line 2', wide: true, locked: !canEdit }} value={f.addr_line2} onChange={set('addr_line2')} />
+        <Field def={{ name: 'city', error: (act.fields || {}).city, label: 'City or town', locked: !canEdit }} value={f.city} onChange={set('city')} />
+        <Field def={{ name: 'pin', error: (act.fields || {}).pin, label: 'PIN', info: '6 digits, e.g. 631501. Until it is here the card says "PIN to add".', locked: !canEdit }} value={f.pin} onChange={set('pin')} />
+        <Field def={{ name: 'state', error: (act.fields || {}).state, label: 'State', type: 'select', options: meta.states, allowEmpty: false, locked: !canEdit }} value={f.state} onChange={set('state')} />
+        <Field def={{ name: 'gstin', error: (act.fields || {}).gstin, label: 'GSTIN', info: 'Needed for a godown in another state than the company. It starts with that state\'s code (Tamil Nadu 33, Karnataka 29...).', locked: !canEdit }}
           value={f.gstin} onChange={(v) => set('gstin')(String(v).toUpperCase())} />
-        <Field def={{ name: 'in_charge', label: 'Person in charge', type: 'select', options: people.map((p) => ({ value: p.emp_id, label: `${p.name} (${p.role_name})` })), locked: !canEdit }}
+        <Field def={{ name: 'in_charge', error: (act.fields || {}).in_charge, label: 'Person in charge', type: 'select', options: people.map((p) => ({ value: p.emp_id, label: `${p.name} (${p.role_name})` })), locked: !canEdit }}
           value={f.in_charge} onChange={set('in_charge')} />
-        <Field def={{ name: 'phone', label: 'Phone', locked: !canEdit }} value={f.phone} onChange={set('phone')} />
+        <Field def={{ name: 'phone', error: (act.fields || {}).phone, label: 'Phone', locked: !canEdit }} value={f.phone} onChange={set('phone')} />
+        <Field def={{ name: 'open_time', error: (act.fields || {}).open_time, label: 'Opens', type: 'time', locked: !canEdit }} value={f.open_time} onChange={set('open_time')} />
+        <Field def={{ name: 'close_time', error: (act.fields || {}).close_time, label: 'Closes', type: 'time', info: 'After it opens.', locked: !canEdit }} value={f.close_time} onChange={set('close_time')} />
       </div>
+      <h3>Weekly off</h3>
+      <div className="a-chkgrid">
+        {DAYS.map((day) => (
+          <label key={day} className="a-check"><input type="checkbox" disabled={!canEdit} checked={f.weekly_off.includes(day)}
+            onChange={(e) => setF((x) => ({ ...x, weekly_off: e.target.checked ? DAYS.filter((dd) => dd === day || x.weekly_off.includes(dd)) : x.weekly_off.filter((dd) => dd !== day) }))} /> {day}</label>
+        ))}
+      </div>
+      <p className="a-hint-s">A godown cannot be closed every day of the week.</p>
+      <h3>Closed dates</h3>
+      {f.closed_dates.map((c, i) => (
+        <div key={i} className="a-grid3">
+          <Field def={{ name: `cd-from-${i}`, label: 'From', type: 'date', locked: !canEdit }} value={c.from} onChange={(v) => setClosed(i, { from: v })} />
+          <Field def={{ name: `cd-to-${i}`, label: 'To', type: 'date', locked: !canEdit }} value={c.to} onChange={(v) => setClosed(i, { to: v })} />
+          <Field def={{ name: `cd-why-${i}`, label: 'Why', locked: !canEdit }} value={c.why} onChange={(v) => setClosed(i, { why: v })} />
+          {canEdit && <button type="button" className="a-btn a-btn-sm a-btn-ghost" onClick={() => setF((x) => ({ ...x, closed_dates: x.closed_dates.filter((_, j) => j !== i) }))}>Remove</button>}
+        </div>
+      ))}
+      {canEdit && <button type="button" className="a-btn a-btn-sm a-btn-ghost" onClick={() => setF((x) => ({ ...x, closed_dates: [...x.closed_dates, { from: '', to: '', why: '' }] }))}><LIcon name="plus" size="sm" />Add closed dates</button>}
     </Drawer>
   );
 }

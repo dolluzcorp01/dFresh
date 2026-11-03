@@ -20,7 +20,6 @@ const ORDER = ['General', 'Orders and pricing', 'Promotions', 'Inventory', 'Cust
 const LOOSENS = ['approval_expiry_days', 'split_days', 'wallet_max_use_pct', 'return_window_days', 'eway_bill_above', 'manual_discount_allowed',
   'returned_resell', 'delivery_otp', 'eway_bill_required', 'return_outside_window', 'cashback_credit_at'];
 const WAIT_HINT = {
-  invoice_bank_details: 'A bank change waits for a second Admin and is never overridden.',
   books_closed_to: 'Only an Admin changes it.', // its help (the DB) says moving it back waits for a second Admin
 };
 const waitHint = (key) => WAIT_HINT[key] || (LOOSENS.includes(key) ? 'Loosening waits for a second Admin.' : '');
@@ -35,6 +34,7 @@ const LISTS_AFTER = { Inventory: ['locations'], Customers: ['customer_types'], D
 
 export default function CommerceSettings() {
   const data = useLoad('/commerce-settings');
+  const sw = useLoad('/switches'); // phase 13: the switches have their own page; this one keeps the other settings and the lists
   const canEdit = useCan('settings', 'edit');
   const act = useAction();
   const toast = useToast();
@@ -51,7 +51,9 @@ export default function CommerceSettings() {
     if (out && out.waiting) { if (toast) toast('warn', 'Waiting for a second Admin', `${row.label}: ${out.waiting}`); return; }
     act.setMsg({ kind: 'ok', text: `${row.label}: saved` });
   });
-  const groups = d ? [...ORDER, ...[...new Set(d.settings.map((s) => s.grp))].filter((g) => !ORDER.includes(g))].map((g) => [g, d.settings.filter((s) => s.grp === g)]).filter(([, rows]) => rows.length) : [];
+  const onSwitches = new Set(sw.data ? sw.data.switches.map((x) => x.key) : []);
+  const groups = d && (sw.data || sw.error) ? [...ORDER, ...[...new Set(d.settings.map((s) => s.grp))].filter((g) => !ORDER.includes(g))]
+    .map((g) => [g, d.settings.filter((s) => s.grp === g && !onSwitches.has(s.setting_key))]).filter(([g, rows]) => rows.length || LISTS_AFTER[g]) : [];
   const tbc = d ? d.settings.filter((s) => s.tbc).length : 0;
   useHashScroll(Boolean(d)); // menu entries: #cs-g-<group> (Numbering, Approvals), #cs-l-<list> (Godowns, Vehicles...)
 

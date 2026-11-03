@@ -194,7 +194,7 @@ async function main() {
       if (!state.active.includes(x.name)) fail(`${where}: the highlighted menu item is "${state.active}"`);
       if (x.href.includes('/admin/p/')) {
         holders += 1;
-        const want = e && e.phase === 'later' ? 'Later' : `Not built yet - phase ${e && e.phase}`;
+        const want = e && e.phase === 'later' ? 'Later' : e && e.phase === 'fv7' ? 'Later (Foundation v7)' : `Not built yet - phase ${e && e.phase}`;
         if (!state.placeholder) fail(`${where}: placeholder page expected`);
         else if (state.pill !== want) fail(`${where}: pill "${state.pill}", expected "${want}"`);
         if (e && state.see.toLowerCase() !== String(e.see).toLowerCase()) fail(`${where}: "What you see" text differs from the guide`);

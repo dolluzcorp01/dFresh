@@ -1,5 +1,6 @@
 // Tax invoices and credit notes (docs/COMMERCE-SPEC.md 4.6, 6). An invoice is a snapshot of the order on the day it
-// is issued (at dispatch, or at confirm: Commerce setting invoice_issue_at): seller and buyer details, place of supply,
+// is issued (at dispatch, or at confirm: Commerce setting invoice_issue_at): seller and buyer details (the seller, its
+// default approved bank account and UPI ID from Admin > Company, company.js), place of supply,
 // CGST + SGST or IGST, round-off and totals; the lines are the order's lines, which can no longer change once it is
 // dispatched. Numbers: DFI/26-27/0001 per financial year (numbering.js, gap free inside the transaction).
 // While the seller GSTIN is a placeholder the invoice is marked is_demo and prints "DEMO - not a tax invoice".
@@ -9,6 +10,7 @@ const { audit } = require('./audit');
 const books = require('./books');
 const pricing = require('./pricing');
 const commerceSettings = require('./commerce-settings');
+const company = require('./company');
 const numbering = require('./numbering');
 const notifications = require('./notifications');
 
@@ -28,6 +30,7 @@ async function issue(q, orderId, empId, { at = null } = {}) {
   const [[live]] = await q.query('SELECT invoice_no FROM invoices WHERE live_order_id = ?', [orderId]);
   if (live) return { invoice_no: live.invoice_no, existed: true };
   const cs = await commerceSettings.read(q);
+  const co = await company.facts(q); // phase 13: the seller, and the bank + UPI it prints, from Admin > Company
   const when = at ? new Date(at) : new Date();
   await books.assertOpen(q, new Date(when.getTime() + 5.5 * 3600e3).toISOString().slice(0, 10)); // phase 12b month lock
   const fy = numbering.fyOf(when);
@@ -42,10 +45,10 @@ async function issue(q, orderId, empId, { at = null } = {}) {
   };
   const [ins] = await q.query(
     `INSERT INTO invoices (invoice_no, fy, seq, order_id, live_order_id, issued_at, due_on, place_of_supply, gst_type, taxable, delivery_charge, delivery_gst, cgst, sgst, igst,
-       round_off, total, seller_name, seller_gstin, seller_address, seller_state_code, buyer_json, is_demo, emp_id)
-     VALUES (?, ?, ?, ?, ?, ?, DATE_ADD(?, INTERVAL ? DAY), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       round_off, total, seller_name, seller_gstin, seller_address, seller_state_code, seller_bank, seller_upi, buyer_json, is_demo, emp_id)
+     VALUES (?, ?, ?, ?, ?, ?, DATE_ADD(?, INTERVAL ? DAY), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [invoiceNo, fy.fy, seq, o.order_id, o.order_id, when, day, dueDays, o.place_of_supply, o.gst_type, o.taxable, o.delivery_charge, o.delivery_gst, o.cgst, o.sgst, o.igst,
-      o.round_off, o.total, cs.invoice_seller_name, cs.invoice_seller_gstin, cs.invoice_seller_address, cs.invoice_seller_state_code,
+      o.round_off, o.total, co.name, co.gstin || commerceSettings.GSTIN_PLACEHOLDER, co.address, co.state_code, co.bank, co.upi,
       JSON.stringify(buyer), commerceSettings.invoiceIsDemo(cs) ? 1 : 0, empId]
   );
   await audit(q, { empId, action: 'issue', entity: 'invoice', entityId: invoiceNo, after: { order: o.order_no, total: Number(o.total), gst_type: o.gst_type, due_in_days: dueDays } });

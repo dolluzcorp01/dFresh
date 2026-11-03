@@ -165,7 +165,7 @@ for f in $(ls database/migrations/*.sql | sort); do
   echo "== $f"; sudo mysql --default-character-set=utf8mb4 dfresh < "$f" || { echo "FAILED: $f"; break; }
 done
 ```
-The 46 migrations, in the order they must run (tick each; a later update applies only the new ones):
+The 49 migrations, in the order they must run (tick each; a later update applies only the new ones):
 
 - [ ] `20261009_phase3_home_ui_text.sql`
 - [ ] `20261009_phase4_products_ui_text.sql`
@@ -234,6 +234,16 @@ The 46 migrations, in the order they must run (tick each; a later update applies
       alert template
 - [ ] `20261102_stage2_12b_02_month_lock.sql` - "Books closed up to" (empty: not closed), months exported to the CA,
       records allowed to change after export, Export history events
+- [ ] `20261103_stage2_13_01_company.sql` - the Company page: one company row (brand, type, PAN, GST type, TAN, Udyam,
+      registered office, invoice preferences, signature), bank accounts (never deleted; every change waits for a second
+      Admin) and the bank / UPI each invoice printed; moves the six invoice seller / bank / round-off Commerce settings
+      there (they go; the site keeps company_name, cin, gstin as before). Run it with the release that has company.js.
+- [ ] `20261103_stage2_13_02_numbering_switches.sql` - the Numbering page: one row per document (prefix, format,
+      godown code, restart each year; the five running series keep their prefixes, copied from the six Numbering
+      Commerce settings, which go; the counters are not touched), and the Switches page: group, unit and example on 23
+      Commerce settings (same keys, same values)
+- [ ] `20261103_stage2_13_04_godown_details.sql` - a godown's address line 2, city, PIN, opening hours (09:00 to 18:00),
+      weekly days off (Sun) and closed dates
 
 The 11 commerce files replace the 12 of the commerce branch's phases (consolidated on 21 Oct 2026, never applied on
 any database but the `dfresh_commerce` demo): each table in its final shape, no file patches another. Built on a

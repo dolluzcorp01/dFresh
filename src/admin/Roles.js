@@ -10,7 +10,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from './adminApi';
-import { InfoCard, LIcon, Loading, Notice, PageHead, useAction, useCan, useConfirm, useLeaveGuard, useLoad, useToast } from './ui';
+import { LIcon, Loading, Notice, PageHead, useAction, useCan, useConfirm, useLeaveGuard, useLoad, useToast } from './ui';
 
 const ACTION_LABEL = { view: 'View', create: 'Create', edit: 'Edit', approve: 'Approve', cancel: 'Cancel', export: 'Export', delete: 'Delete' };
 const LIMIT_OPTIONS = [{ value: 'none', label: 'Nothing (signs nothing)' }, { value: 'amount', label: 'Up to an amount' }, { value: 'any', label: 'Anything' }];
@@ -24,6 +24,7 @@ export default function Roles() {
   const [sel, setSel] = useState(null); // role_id | 'new'
   const [dirty, setDirty] = useState(false);
   const [done, setDone] = useState(''); // what the last save / delete did
+  const [showPeople, setShowPeople] = useState(false); // stays as left when another role is picked (v23 0.21)
   const d = data.data;
   const chosen = sel !== null ? sel : d && d.roles.length ? d.roles[0].role_id : null;
   const choose = async (id) => {
@@ -33,11 +34,12 @@ export default function Roles() {
   };
   const role = d && chosen !== 'new' ? d.roles.find((r) => r.role_id === chosen) : null;
   const people = ((staff.data && staff.data.staff) || []).filter((p) => role && String(p.role_id) === String(role.role_id));
+  const godownNames = (ids) => ((staff.data && staff.data.godowns) || []).filter((g) => (ids || []).includes(g.godown_id)).map((g) => g.name).join(', ') || 'no godown';
   return (
     <section>
       <PageHead sub="What each job can see and do"
         actions={canCreate && <button type="button" className="a-btn" onClick={() => choose('new')}><LIcon name="plus" size="sm" />New role</button>}
-        rules={d ? [`${d.sections.length} sections x ${d.actions.length} actions`, 'Any action switches on View', 'An Approve tick without a limit signs nothing', 'Wider rights wait for a second Admin', 'Super admin and Admin are locked'] : undefined} />
+        rules={d ? [`${d.sections.length} sections x ${d.actions.length} actions`, 'Any action switches on View', 'An Approve tick without a limit signs nothing', 'Wider rights wait for a second Admin', 'Super admin and Admin are locked', 'Nobody changes a role they hold'] : undefined} />
       {done && <Notice kind="ok" onClose={() => setDone('')}>{done}</Notice>}
       <Loading state={data}>
         {d && (
@@ -51,10 +53,22 @@ export default function Roles() {
               {chosen === 'new' && <button type="button" aria-pressed="true"><b>New role</b><small>not saved yet</small></button>}
             </div>
             {role && people.length > 0 && (
-              <details className="a-card a-rolepeople">
-                <summary>Show people in {role.name} ({people.length})</summary>
-                <p>{people.map((p) => `${p.name} (${p.emp_id})`).join(', ')}</p>
-              </details>
+              <>
+                <button type="button" className="a-btn a-btn-sm a-btn-ghost a-rolepeople-btn" aria-expanded={showPeople} onClick={() => setShowPeople((x) => !x)}>
+                  <LIcon name={showPeople ? 'chevron-down' : 'chevron-right'} size="sm" />{showPeople ? 'Hide people' : `Show people in ${role.name} (${people.length})`}
+                </button>
+                {showPeople && (
+                  <div className="a-card a-rolepeople">
+                    {people.map((p) => (
+                      <div key={p.emp_id} className="a-rolepeople-row">
+                        <span><b>{p.name}</b> <small className="a-muted">{p.emp_id}</small></span>
+                        <span className="a-muted">{p.godowns === 'ALL' ? 'every godown' : godownNames(p.godowns)}{p.leave && p.leave.now ? ` · on leave to ${p.leave.to.slice(5)}` : ''} · {p.limit_personal ? `${p.limit_text} personal` : p.limit_text}</span>
+                        <Link to={`/admin/users?open=${encodeURIComponent(p.emp_id)}`}>Open in Staff</Link>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
             )}
             {(role || chosen === 'new') && (
               <RoleEditor key={chosen} meta={d} role={role} onDirty={setDirty} onWaiting={() => { setDone(''); data.reload(); }}
@@ -63,15 +77,6 @@ export default function Roles() {
           </>
         )}
       </Loading>
-      <InfoCard title="What each role may see and change">
-        <ul>
-          <li>Every admin user has one role (<Link to="/admin/users">Staff</Link>). A role is a grid of sections x View / Create / Edit / Approve / Cancel / Export / Delete, plus See cost, Own customers only and a default approval limit.</li>
-          <li>Super admin and Admin (every right, sign anything) are built in and never change. Sub-admin is built in and keeps its name; only an Admin changes its rights and limit.</li>
-          <li>Wider rights for any role (a new Approve, a higher limit, See cost) wait for a second Admin in <Link to="/admin/approvals">Approvals</Link>; until then the role stays as it is. Narrower rights save at once.</li>
-          <li>Nobody changes a role they hold, and nobody gives a right or limit they do not have.</li>
-          <li>The server checks the grid on every request: a hidden button is only a convenience, a blocked action answers &quot;No access&quot;.</li>
-        </ul>
-      </InfoCard>
     </section>
   );
 }
@@ -148,12 +153,13 @@ function RoleEditor({ meta, role, onDirty, onSaved, onWaiting }) {
         {role && role.waiting && <Notice kind="warn">A wider change waits for a second Admin: {role.waiting.summary} (request {role.waiting.approval_id}, <Link to="/admin/approvals">Approvals</Link>).</Notice>}
         <div className="a-grid3">
           <label className="a-field"><span>Role name<span className="a-req"> *</span></span><input value={f.name} maxLength={60} disabled={!canName} onChange={(e) => set({ name: e.target.value })} /></label>
-          <label className="a-field"><span>Default limit<span className="a-req"> *</span></span>
+          <label className={`a-field${(act.fields || {}).limit ? ' a-err' : ''}`}><span>Default limit<span className="a-req"> *</span></span>
             <select value={f.limitKind} disabled={!canEdit} onChange={(e) => set({ limitKind: e.target.value })}>{LIMIT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
             {f.limitKind === 'amount'
               ? <input type="number" min="0" step="any" aria-label="Up to (Rs)" placeholder="Up to (Rs)" value={f.limitAmount} disabled={!canEdit} onChange={(e) => set({ limitAmount: e.target.value })} />
               : null}
-            <small className="a-hint">What its people sign, even where the grid says Approve; a person&apos;s own limit in Staff beats it.</small>
+            {(act.fields || {}).limit ? <small className="a-emsg" role="alert">{act.fields.limit}</small>
+              : <small className="a-hint">What its people sign, even where the grid says Approve; a person&apos;s own limit in Staff beats it.</small>}
           </label>
           <label className="a-field"><span>See cost, margin and stock value</span>
             <select value={f.seeCost ? '1' : '0'} disabled={!canEdit} onChange={(e) => set({ seeCost: e.target.value === '1' })}>{yesNo.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select>

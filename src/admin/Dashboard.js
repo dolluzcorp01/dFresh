@@ -38,7 +38,7 @@ function attentionLines(d, isAdmin) {
   }
   if (isAdmin) {
     const empty = (a.emptySettings || []);
-    if (empty.includes('gstin')) out.push({ key: 'gstin', kind: 'info', to: '/admin/settings#setting-gstin', text: 'GSTIN is still empty - the footer leaves it out until it is filled' });
+    if (empty.includes('gstin')) out.push({ key: 'gstin', kind: 'info', to: '/admin/company#tax', text: 'GSTIN is still empty - the footer leaves it out until it is filled' });
     if (empty.includes('ga4_measurement_id')) out.push({ key: 'ga4', kind: 'info', to: '/admin/settings#setting-ga4_measurement_id', text: 'Google Analytics (GA4) id is still empty - no visits are counted' });
   }
   const missing = a.noBrochure || [];

@@ -18,9 +18,12 @@ import { can } from '../shared/permissions';
 import Roles from './Roles';
 import Approvals from './Approvals';
 import Godowns from './Godowns';
+import Company from './Company';
 import ApprovalRules from './ApprovalRules';
 import StandIns from './StandIns';
 import CommerceSettings from './CommerceSettings';
+import Numbering from './Numbering';
+import Switches from './Switches';
 import Notifications from './Notifications';
 import Login from './Login';
 import Dashboard from './Dashboard';
@@ -176,14 +179,17 @@ export default function AdminApp() {
             <Route path="commerce/my-trips" element={<Need section="delivery" commerce><MyTrips /></Need>} />
             <Route path="settings" element={<Need section="settings"><Settings /></Need>} />
             <Route path="commerce-settings" element={<Need section="settings"><CommerceSettings /></Need>} />
+            <Route path="numbering" element={<Need section="settings" commerce><Numbering /></Need>} />
+            <Route path="switches" element={<Need section="settings"><Switches /></Need>} />
             <Route path="notifications" element={<Need section="settings"><Notifications /></Need>} />
             <Route path="users" element={<Need section="users"><Users /></Need>} />
             <Route path="roles" element={<Need section="users"><Roles /></Need>} />
             <Route path="approvals" element={<Approvals onChanged={refreshCounts} />} />
+            <Route path="company" element={<Need section="settings"><Company /></Need>} />
             <Route path="godowns" element={<Need section="settings" commerce><Godowns /></Need>} />
             <Route path="approval-rules" element={<Need section={['settings', 'users']} commerce><ApprovalRules /></Need>} />
             <Route path="stand-ins" element={<Need section="users" commerce><StandIns /></Need>} />
-            <Route path="audit" element={<Need section="audit"><AuditLog /></Need>} />
+            <Route path="audit" element={<Need><AuditLog /></Need>} />
             <Route path="p/*" element={<Placeholder />} />
             <Route path="*" element={<Navigate to="/admin" replace />} />
           </Routes>

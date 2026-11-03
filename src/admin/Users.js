@@ -14,7 +14,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from './adminApi';
 import { Link } from 'react-router-dom';
-import { Avatar, Drawer, Field, InfoCard, LIcon, Loading, Notice, PageHead, Pill, Table, fmtDate, useAction, useAdmin, useCan, useConfirm, useLoad, useToast } from './ui';
+import { Avatar, Drawer, Field, LIcon, Loading, Notice, PageHead, Pill, Table, fmtDate, useAction, useAdmin, useCan, useConfirm, useLoad, useToast } from './ui';
 
 const WAIT_TITLE = 'Waiting for a second Admin';
 /** the server's `waiting` (a string or a list of strings, phase 12b) as warn toasts; true when something waits */
@@ -29,7 +29,8 @@ export default function Users() {
   const list = useLoad('/users');
   const staffData = useLoad('/staff');
   const staffOf = (emp) => ((staffData.data && staffData.data.staff) || []).find((x) => x.emp_id === emp);
-  const [open, setOpen] = useState(null); // emp_id of the person's panel | 'add'
+  // emp_id of the person's panel | 'add'; ?open=<emp_id> opens that person (Roles: Open in Staff)
+  const [open, setOpen] = useState(() => new URLSearchParams(window.location.search).get('open'));
   const rolesData = useLoad('/roles');
   const roles = (rolesData.data && rolesData.data.roles) || [];
   const { me } = useAdmin();
@@ -43,7 +44,8 @@ export default function Users() {
     <section>
       <PageHead sub="Everyone with a login"
         actions={canAdd && <button type="button" className="a-btn" onClick={() => setOpen('add')}><LIcon name="plus" size="sm" />Add staff</button>}
-        rules={['Godown scope on every person', 'Role limit, with a personal override', 'Leaving blocks login at once']} />
+        rules={['People come from dAdmin', 'Godown scope on every person', 'Role limit, with a personal override', 'Who can sign waits for a second Admin', 'Leaving blocks login at once']} />
+      <p className="a-lead">Each person has one role (<Link to="/admin/roles">Roles</Link>); a personal limit beats the role&apos;s. Nobody changes their own row, only the Super admin changes an Admin, and nobody gives more than they have.</p>
       {act.note}
       <Loading state={list}>
         <div className="a-listcard">
@@ -69,15 +71,6 @@ export default function Users() {
             ]} />
         </div>
       </Loading>
-      <InfoCard title="Who can use dFresh admin">
-        <ul>
-          <li>People come from dAdmin: Add staff, pick an active employee, give a role. They sign in with their dAdmin e-mail and password.</li>
-          <li>Each person has one role. What a role may see and change, and its default limit, is set in <Link to="/admin/roles">Roles</Link>; a personal limit on the person beats it.</li>
-          <li>Nobody changes their own role or deactivates themselves, and there is always at least one active Admin. Only the Super admin changes an Admin; nobody gives a role, limit or godown above their own.</li>
-          <li>Someone who left the company (inactive in dAdmin) cannot sign in, whatever their role here.</li>
-          <li>Adding or bringing back someone who can sign, a role that signs more, a higher limit or more godowns waits for a second Admin (<Link to="/admin/approvals">Approvals</Link>); until then everything stays as it was.</li>
-        </ul>
-      </InfoCard>
       {open === 'add' && staffData.data && (
         <AddStaffDrawer roles={roles} me={me} meta={staffData.data} onClose={() => setOpen(null)}
           onSaved={(text, kind = 'ok') => { setOpen(null); act.setMsg({ kind, text }); reload(); }} />
@@ -198,15 +191,25 @@ function StaffDrawer({ person: p, user, meta, roles, onClose, onSaved, onChanged
     if (waits.length) { onChanged(); onClose(); if (waits.length < Object.keys(body).length) toast('good', `${p.name}: the rest is saved`); return; }
     onSaved(`${p.name} saved`);
   });
+  // Mark as left (v23 0.14, 0.35): their customers, open enquiries and follow-ups go to someone, and their godowns get a
+  // new person in charge (the server refuses until both are chosen when needed); their leave and stand-ins end
+  const [leaving, setLeaving] = useState(null); // null | { to, inCharge }
+  const takers = (meta.staff || []).filter((x) => x.active && !x.pending && x.emp_id !== p.emp_id);
+  const markLeft = () => act.run(async () => {
+    const out = await api.send('PUT', `/users/${encodeURIComponent(p.emp_id)}`, { is_active: 0, hand_over_to: leaving.to || undefined, in_charge_to: leaving.inCharge || undefined });
+    const h = out && out.handed_over;
+    const moved = h ? [h.customers + h.enquiries + h.follow_ups ? `${h.customers} customers, ${h.enquiries} enquiries and ${h.follow_ups} follow-ups handed over` : '',
+      h.godowns.length ? `in charge of ${h.godowns.join(', ')} changed` : '', h.stand_ins_ended ? `${h.stand_ins_ended} stand-in(s) ended` : ''].filter(Boolean).join('; ') : '';
+    onSaved(`${p.name} marked as left${moved ? `: ${moved}` : ''}`);
+  });
   const toggle = async () => {
-    const ok = await confirm(user.is_active
-      ? { title: `Deactivate ${p.name}?`, message: 'They can no longer sign in to dFresh admin.', action: 'Deactivate', danger: true }
-      : { title: `Reactivate ${p.name}?`, message: `They can sign in to dFresh admin again, as ${p.role_name}.`, action: 'Reactivate' });
+    if (user.is_active) { setLeaving({ to: '', inCharge: '' }); return; }
+    const ok = await confirm({ title: `Bring back ${p.name}?`, message: `They can sign in to dFresh admin again, as ${p.role_name}. If they can sign, this waits for a second Admin (the Super admin brings them back at once, as before).`, action: 'Bring back' });
     if (ok) {
       act.run(async () => {
-        const out = await api.send('PUT', `/users/${encodeURIComponent(p.emp_id)}`, { is_active: user.is_active ? 0 : 1 });
+        const out = await api.send('PUT', `/users/${encodeURIComponent(p.emp_id)}`, { is_active: 1 });
         if (toastWaiting(toast, out && out.waiting)) { onChanged(); onClose(); return; }
-        onSaved(`${p.name} ${user.is_active ? 'deactivated' : 'reactivated'}`);
+        onSaved(`${p.name} brought back`);
       });
     }
   };
@@ -219,7 +222,7 @@ function StaffDrawer({ person: p, user, meta, roles, onClose, onSaved, onChanged
       footer={(!(locked && leaveLocked) || canToggle) ? (
         <>
           {!(locked && leaveLocked) && <button type="button" className="a-btn" disabled={act.busy || !dirty} onClick={save}>Save</button>}
-          {canToggle && <button type="button" className="a-btn a-btn-ghost" disabled={act.busy} onClick={toggle}>{user.is_active ? 'Deactivate' : 'Reactivate'}</button>}
+          {canToggle && !leaving && <button type="button" className="a-btn a-btn-ghost" disabled={act.busy} onClick={toggle}>{user.is_active ? 'Mark as left' : 'Bring back'}</button>}
         </>
       ) : null}>
       {act.note}
@@ -227,6 +230,35 @@ function StaffDrawer({ person: p, user, meta, roles, onClose, onSaved, onChanged
       {!waitingAdd && user && !user.is_active && user.left_on && <Notice kind="info">Left on {user.left_on}{user.left_by ? ` (marked by ${user.left_by})` : ''}.</Notice>}
       {p.locked && <Notice kind="info">{self ? `${p.locked} You can still enter your own leave.` : p.locked}</Notice>}
       {p.stands_in_for.length > 0 && <Notice kind="info">Stands in for {p.stands_in_for.map((x) => `${x.name} (${x.from} to ${x.to})`).join(', ')}.</Notice>}
+      {leaving && (
+        <div className="a-card a-leaving">
+          <div className="a-cardh"><h2>Mark {p.name} as left</h2></div>
+          <div className="a-cardb">
+            <p className="a-hint">They can no longer sign in. Their customers, open enquiries and follow-ups go to the person you choose; the godowns they are in charge of get a new person in charge; their leave and any stand-in end.</p>
+            <div className="a-grid2">
+              <Field def={{ name: 'hand_over_to', label: 'Hand over to', type: 'select', options: takers.map((x) => ({ value: x.emp_id, label: `${x.name} (${x.role_name})` })),
+                info: 'Their customers, open enquiries and open follow-ups. Needed when they have any.' }} value={leaving.to} onChange={(v) => setLeaving((x) => ({ ...x, to: v || '' }))} />
+              <Field def={{ name: 'in_charge_to', label: 'New person in charge of their godowns', type: 'select', options: takers.map((x) => ({ value: x.emp_id, label: `${x.name} (${x.role_name})` })),
+                info: 'Only when they are in charge of a godown: someone who works there.' }} value={leaving.inCharge} onChange={(v) => setLeaving((x) => ({ ...x, inCharge: v || '' }))} />
+            </div>
+            <div className="a-racts">
+              <button type="button" className="a-btn a-btn-ghost" disabled={act.busy} onClick={() => setLeaving(null)}>Cancel</button>
+              <button type="button" className="a-btn a-btn-danger" disabled={act.busy} onClick={markLeft}>Hand over and mark as left</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {p.dadmin && (
+        <div className="a-dadmin">
+          <h3>From dAdmin, read only</h3>
+          <dl className="a-kv a-kvs">
+            <dt>Employee ID</dt><dd><code>{p.emp_id}</code></dd>
+            <dt>E-mail</dt><dd>{p.dadmin.email || '-'}</dd>
+            <dt>Phone</dt><dd>{p.dadmin.phone || '-'}</dd>
+            <dt>Last login</dt><dd>{p.last_login || 'Never'}</dd>
+          </dl>
+        </div>
+      )}
       <h3>Role and limit</h3>
       <div className="a-grid2">
         <Field def={{ name: 'role', label: 'Role', type: 'select', allowEmpty: false, locked, options: giveable(roles, meta.me, p.role_id).map((r) => ({ value: String(r.role_id), label: r.name })) }}

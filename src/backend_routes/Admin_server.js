@@ -1114,7 +1114,10 @@ const PRODUCT_SETTINGS = ['door_home_product', 'door_biz_product'];
 const SENDER_SETTINGS = ['mail_from', 'mail_from_name'];
 const SENDER_WARNING = 'This address is not verified in SendGrid. All e-mails (lead alerts, login codes) would stop. Verify it in SendGrid first.';
 
+// phase 13: the company's facts have one place, Admin > Company (its GSTIN, PAN and state checks); not here
+const COMPANY_KEYS = ['company_name', 'cin', 'gstin', 'office_phone', 'public_email', 'whatsapp_display', 'whatsapp_number'];
 route('put', '/settings/:key', 'settings:edit', async (req) => {
+  if (COMPANY_KEYS.includes(req.params.key)) throw new InputError('This is a company fact: change it in Admin > Company', 409);
   const raw = typeof req.body.value === 'string' ? req.body.value.trim() : '';
   if (raw.length > 20000) throw new InputError('Too long');
   if (SENDER_SETTINGS.includes(req.params.key) && !canDo(req, 'settings', 'edit')) {
@@ -1288,6 +1291,51 @@ async function roleExists(q, roleId) {
 
 // Job title and department names. Production needs SELECT on these two dadmin tables (database/README.md); without it
 // the names are simply left out.
+/**
+ * phase 13 (v23 0.14, 0.35): before someone is marked as left, what they own goes to someone else: their customers,
+ * open enquiries and open follow-ups (body.hand_over_to), the godowns they are in charge of (body.in_charge_to, someone
+ * who works there); their leave ends and nobody stands in for them any more, nor do they stand in for anyone.
+ * Refused (409, with what needs someone) until the takers are chosen. -> what moved
+ */
+async function handOver(q, empId, body, byEmp) {
+  const [[c]] = await q.query('SELECT COUNT(*) AS n FROM customers WHERE owner_emp_id = ?', [empId]);
+  const [[l]] = await q.query("SELECT COUNT(*) AS n FROM leads WHERE assigned_to = ? AND status IN ('new', 'contacted', 'qualified')", [empId]);
+  const [[f]] = await q.query("SELECT COUNT(*) AS n FROM follow_ups WHERE assignee = ? AND status = 'open'", [empId]);
+  const [gs] = await q.query('SELECT location_id, name FROM locations WHERE in_charge = ? AND is_active = 1', [empId]);
+  const owns = Number(c.n) + Number(l.n) + Number(f.n);
+  const people = await approvals.people(q);
+  const taker = async (id, what) => {
+    const p = people.find((x) => x.emp_id === String(id || '') && x.active && !x.pending);
+    if (!p || p.emp_id === empId) throw new InputError(`${what}: choose an active member of staff`, 409);
+    return p;
+  };
+  const need = [owns ? `${c.n} customer(s), ${l.n} open enquiries and ${f.n} open follow-up(s) need someone (Hand over to)` : '',
+    gs.length ? `${gs.map((g) => g.name).join(', ')} need(s) a new person in charge` : ''].filter(Boolean);
+  if ((owns && !body.hand_over_to) || (gs.length && !body.in_charge_to)) throw new InputError(`Hand over first: ${need.join('; ')}.`, 409);
+  const out = { customers: Number(c.n), enquiries: Number(l.n), follow_ups: Number(f.n), godowns: gs.map((g) => g.name) };
+  if (owns) {
+    const t = await taker(body.hand_over_to, 'Hand over to');
+    await q.query('UPDATE customers SET owner_emp_id = ? WHERE owner_emp_id = ?', [t.emp_id, empId]);
+    await q.query("UPDATE leads SET assigned_to = ? WHERE assigned_to = ? AND status IN ('new', 'contacted', 'qualified')", [t.emp_id, empId]);
+    await q.query("UPDATE follow_ups SET assignee = ? WHERE assignee = ? AND status = 'open'", [t.emp_id, empId]);
+    out.to = t.emp_id;
+  }
+  if (gs.length) {
+    const t = await taker(body.in_charge_to, 'In charge');
+    const notThere = gs.filter((g) => !approvalEngine.worksAt(t, g.location_id));
+    if (notThere.length) throw new InputError(`In charge: ${t.name} does not work at ${notThere.map((g) => g.name).join(', ')}`, 409);
+    await q.query('UPDATE locations SET in_charge = ? WHERE in_charge = ? AND is_active = 1', [t.emp_id, empId]);
+    out.in_charge_to = t.emp_id;
+  }
+  // their leave ends; nobody stands in for them, and they stand in for nobody
+  await q.query('UPDATE admin_users SET leave_from = NULL, leave_to = NULL, stand_in = NULL, leave_set_by = NULL WHERE emp_id = ?', [empId]);
+  const [[si]] = await q.query('SELECT COUNT(*) AS n FROM admin_users WHERE stand_in = ?', [empId]);
+  await q.query('UPDATE admin_users SET stand_in = NULL WHERE stand_in = ?', [empId]);
+  out.stand_ins_ended = Number(si.n);
+  await audit(q, { empId: byEmp, action: 'hand_over', entity: 'admin_user', entityId: empId, after: out });
+  return out;
+}
+
 /** a person's name from dAdmin (read only), else the emp_id */
 async function empName(q, empId) {
   const [[e]] = await q.query(`SELECT emp_first_name, emp_last_name FROM \`${auth.DADMIN}\`.employee WHERE emp_id = ?`, [empId]);
@@ -1438,7 +1486,11 @@ route('put', '/users/:empId', 'users:edit', async (req) => tx(async (q) => {
       delete set.is_active;
     } else { set.left_at = null; set.left_by = null; }
   }
-  if (set.is_active === 0 && Number(before.is_active) === 1) { set.left_at = new Date(); set.left_by = by(req); }
+  let handedOver = null;
+  if (set.is_active === 0 && Number(before.is_active) === 1) {
+    set.left_at = new Date(); set.left_by = by(req);
+    handedOver = await handOver(q, before.emp_id, req.body || {}, by(req));
+  }
   if (Object.keys(set).length) await q.query(`UPDATE admin_users SET ${Object.keys(set).map((c) => `${c} = ?`).join(', ')} WHERE emp_id = ?`, [...Object.values(set), before.emp_id]);
   if (superBack) { // every Admin is told at once
     const back = await empName(q, before.emp_id);
@@ -1456,24 +1508,102 @@ route('put', '/users/:empId', 'users:edit', async (req) => tx(async (q) => {
   const action = set.role_id && set.role_id !== before.role_id ? 'role_change' : set.is_active === 0 ? 'deactivate' : set.is_active === 1 ? 'reactivate' : 'update';
   await audit(q, { empId: by(req), action, entity: 'admin_user', entityId: before.emp_id, before: { role: before.role_name, is_active: before.is_active, notify_email: before.notify_email },
     after: { role: after.role_name, is_active: after.is_active, notify_email: after.notify_email, ...(waiting.length ? { waiting } : {}), ...(superBack ? { brought_back_by_super_admin: true } : {}) } });
-  return { ...withNames([after], await dadminNames(q))[0], waiting };
+  return { ...withNames([after], await dadminNames(q))[0], waiting, handed_over: handedOver };
 }));
 
-route('get', '/audit', 'audit:view', async (req) => {
-  const pg = page(req);
+// Audit log (phase 13, v23): filters Screen, person ("Everybody"), From / To (India dates) and search. Who sees which rows
+// is decided in audit.js (scopeOf, screensFor): Super admin and Admin everything; View on Audit log = the screens of the
+// sections the role may view, never Company; GET /audit/mine = anyone signed in, their own changes only. Export CSV is
+// for the Super admin and Admin: exactly the filtered rows, and the export itself is a row of the log.
+const auditRead = require('./audit');
+const AUDIT_DAY = /^\d{4}-\d{2}-\d{2}$/;
+function auditWhere(req, scope) {
+  const sc = auditRead.screenCase();
   const where = [];
-  const params = [];
-  if (req.query.entity) { where.push('entity_type = ?'); params.push(String(req.query.entity)); }
-  if (req.query.emp) { where.push('emp_id = ?'); params.push(String(req.query.emp)); }
-  if (req.query.id) { where.push('entity_id = ?'); params.push(String(req.query.id)); }
-  if (req.query.action) { where.push('action = ?'); params.push(String(req.query.action)); }
-  const w = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  const args = [];
+  const qv = (k, max = 80) => (typeof req.query[k] === 'string' && req.query[k].trim() ? req.query[k].trim().slice(0, max) : null);
+  if (scope === 'own') { where.push('emp_id = ?'); args.push(by(req)); }
+  if (scope === 'sections') { where.push(`${sc.sql} IN (?)`); args.push(...sc.args, auditRead.screensFor(req.admin, scope).map((s) => s.key)); }
+  if (qv('screen')) { where.push(`${sc.sql} = ?`); args.push(...sc.args, qv('screen', 40)); }
+  if (scope !== 'own' && qv('emp')) { where.push('emp_id = ?'); args.push(qv('emp', 20)); }
+  if (qv('entity')) { where.push('entity_type = ?'); args.push(qv('entity', 40)); }
+  if (qv('id')) { where.push('entity_id = ?'); args.push(qv('id')); }
+  if (qv('action')) { where.push('action = ?'); args.push(qv('action', 40)); }
+  const from = qv('from', 10);
+  const to = qv('to', 10);
+  for (const [k, v] of [['From', from], ['To', to]]) if (v && !AUDIT_DAY.test(v)) throw new InputError(`${k}: a date as YYYY-MM-DD`);
+  if (from && to && from > to) throw new InputError('From is after To');
+  // created_at is UTC; the dates are India days (00:00 IST = 18:30 UTC the day before)
+  if (from) { where.push('created_at >= CAST(? AS DATETIME) - INTERVAL 330 MINUTE'); args.push(`${from} 00:00:00`); }
+  if (to) { where.push('created_at < CAST(? AS DATETIME) + INTERVAL 1 DAY - INTERVAL 330 MINUTE'); args.push(`${to} 00:00:00`); }
+  if (qv('q')) {
+    where.push("CONCAT_WS(' ', action, entity_type, entity_id, CAST(before_json AS CHAR) COLLATE utf8mb4_unicode_ci, CAST(after_json AS CHAR) COLLATE utf8mb4_unicode_ci) LIKE ?");
+    args.push(`%${qv('q').replace(/[%_\\]/g, (x) => `\\${x}`)}%`);
+  }
+  return { sql: where.length ? `WHERE ${where.join(' AND ')}` : '', args, from, to };
+}
+/** emp_id -> name from dAdmin (read only); the emp_id itself when dAdmin cannot be read or does not know them */
+async function auditNames(ids) {
+  const out = new Map();
+  const list = [...new Set(ids.filter(Boolean))];
+  if (!list.length) return out;
+  try {
+    const [rows] = await db.query(`SELECT emp_id, TRIM(CONCAT(COALESCE(emp_first_name, ''), ' ', COALESCE(emp_last_name, ''))) AS name
+      FROM \`${auth.DADMIN}\`.employee WHERE emp_id IN (?)`, [list]);
+    for (const r of rows) if (r.name) out.set(r.emp_id, r.name);
+  } catch (err) {
+    if (!/denied|ER_TABLEACCESS|ER_NO_SUCH_TABLE/i.test(`${err.code} ${err.message}`)) throw err;
+  }
+  return out;
+}
+const auditShape = (r, names, max) => {
+  const s = auditRead.SCREEN[r.screen] || auditRead.SCREEN.other;
+  return { audit_id: r.audit_id, created_at: r.created_at, emp_id: r.emp_id, who: names.get(r.emp_id) || r.emp_id, screen: s.key, screen_label: s.label,
+    action: r.action, entity_type: r.entity_type, entity_id: r.entity_id, changes: auditRead.changesOf(r, max) };
+};
+async function auditList(req, scope) {
+  const pg = page(req);
+  const w = auditWhere(req, scope);
+  const sc = auditRead.screenCase();
   const [rows] = await db.query(
-    `SELECT audit_id, emp_id, action, entity_type, entity_id, before_json, after_json, created_at FROM audit_log ${w} ORDER BY audit_id DESC LIMIT ? OFFSET ?`,
-    [...params, pg.limit, pg.offset]
-  );
-  const [[c]] = await db.query(`SELECT COUNT(*) AS n FROM audit_log ${w}`, params);
-  return { rows, total: Number(c.n), page: pg.page, limit: pg.limit };
+    `SELECT audit_id, emp_id, action, entity_type, entity_id, before_json, after_json, created_at, ${sc.sql} AS screen FROM audit_log ${w.sql}
+      ORDER BY audit_id DESC LIMIT ? OFFSET ?`, [...sc.args, ...w.args, pg.limit, pg.offset]);
+  const [[c]] = await db.query(`SELECT COUNT(*) AS n FROM audit_log ${w.sql}`, w.args);
+  let people = null;
+  if (scope !== 'own') { // the "Everybody" list: every admin user and everybody who is in the log
+    const [users] = await db.query('SELECT emp_id FROM admin_users');
+    const [inLog] = await db.query('SELECT DISTINCT emp_id FROM audit_log');
+    people = [...new Set([...users, ...inLog].map((x) => x.emp_id))];
+  }
+  const names = await auditNames([...rows.map((r) => r.emp_id), ...(people || []), by(req)]);
+  return {
+    scope, rows: rows.map((r) => auditShape(r, names, 300)), total: Number(c.n), page: pg.page, limit: pg.limit, today: pricing.istToday(),
+    screens: auditRead.screensFor(req.admin, scope).map((s) => ({ key: s.key, label: s.label })),
+    people: people && people.map((id) => ({ emp_id: id, name: names.get(id) || id })).sort((a, b) => a.name.localeCompare(b.name)),
+    me: { emp_id: by(req), name: names.get(by(req)) || by(req) }, can_export: scope === 'all',
+  };
+}
+route('get', '/audit', 'audit:view', async (req) => auditList(req, auditRead.scopeOf(req.admin)));
+route('get', '/audit/mine', 'any', async (req) => auditList(req, 'own'));
+route('get', '/audit/export.csv', 'audit:view', async (req, res) => {
+  if (auditRead.scopeOf(req.admin) !== 'all') throw new InputError('Only the Super admin or an Admin exports the audit log', 403);
+  const w = auditWhere(req, 'all');
+  const sc = auditRead.screenCase();
+  const [rows] = await db.query(
+    `SELECT audit_id, emp_id, action, entity_type, entity_id, before_json, after_json, created_at, ${sc.sql} AS screen FROM audit_log ${w.sql}
+      ORDER BY audit_id DESC LIMIT 100000`, [...sc.args, ...w.args]);
+  const names = await auditNames(rows.map((r) => r.emp_id));
+  const side = (ch, k) => ch.filter((x) => x[k] !== null).map((x) => (x.field ? `${x.field}: ${x[k]}` : x[k])).join('; ');
+  const body = csv.stringify([['when', 'who', 'employee_id', 'screen', 'what', 'on', 'from', 'to'], ...rows.map((r) => {
+    const x = auditShape(r, names, 2000);
+    return [theme.istStamp(r.created_at), x.who, x.emp_id, x.screen_label, `${x.action} ${x.entity_type}`, x.entity_id || '', side(x.changes, 'from'), side(x.changes, 'to')];
+  })]);
+  const today = pricing.istToday();
+  const file = `dfresh-audit-log-${today}.csv`;
+  const filters = Object.fromEntries(['screen', 'emp', 'q'].filter((k) => typeof req.query[k] === 'string' && req.query[k].trim()).map((k) => [k, String(req.query[k]).trim().slice(0, 80)]));
+  await audit(null, { empId: by(req), action: 'export', entity: 'audit_log', after: { rows: rows.length, period: `${w.from || 'start'} to ${w.to || today}`, ...filters, file } });
+  res.set({ 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="${file}"`, 'Cache-Control': 'no-store' });
+  res.send(body);
 });
 
 // Errors from any admin route: input / upload problems and DB constraint errors get a plain message.
@@ -3156,7 +3286,10 @@ function roleExtras(body, before) {
     see_cost: 'see_cost' in body ? (body.see_cost ? 1 : 0) : Number(before ? before.see_cost : 0),
     own_customers_only: 'own_customers_only' in body ? (body.own_customers_only ? 1 : 0) : Number(before ? before.own_customers_only : 0),
   };
-  const l = 'limit' in body ? foundation.cleanLimit(body.limit, { InputError }) : { kind: before ? before.limit_kind : 'none', amount: before && before.limit_amount !== null ? Number(before.limit_amount) : null };
+  let l;
+  try {
+    l = 'limit' in body ? foundation.cleanLimit(body.limit, { InputError }) : { kind: before ? before.limit_kind : 'none', amount: before && before.limit_amount !== null ? Number(before.limit_amount) : null };
+  } catch (e) { e.code = 'fields'; e.fields = { limit: e.message }; throw e; } // shown under the Default limit field
   return { ...out, limit_kind: l.kind, limit_amount: l.kind === 'amount' ? l.amount : null };
 }
 function roleWithinMe(req, grid, extras) {
@@ -3327,6 +3460,8 @@ route('post', '/books/export', 'reports:export', async (req, res) => {
 // Foundation (phase 12a): godowns, staff, approval rules, stand-ins - in foundation.js, on the same route helper (before
 // the error handler below, so their messages reach the screen, and inside the start-up check of every declaration)
 foundation.register({ route, tx, db, by, InputError, canDo });
+require('./company').register({ route, tx, db, by, InputError, canDo }); // phase 13: Admin > Company
+require('./numbering-admin').register({ route, tx, db, by, InputError, canDo }); // phase 13: Numbering and Switches
 
 // ---------------------------------------------------------------------------------------------
 // Notifications (docs/COMMERCE-SPEC.md 5.5f; notifications.js). Settings section (Setup > Notifications): view = events,
@@ -3413,12 +3548,25 @@ route('get', '/notifications/log', 'settings:view', async (req) => {
   const f = (k) => (typeof req.query[k] === 'string' && req.query[k].trim() ? req.query[k].trim().slice(0, 60) : null);
   if (f('event')) { where.push('n.event_key = ?'); args.push(f('event')); }
   if (f('audience')) { where.push('n.audience = ?'); args.push(f('audience')); }
-  if (f('status')) { where.push(`${NOTE_STATUS} = ?`); args.push(f('status')); }
+  if (f('channel')) { where.push('n.channel = ?'); args.push(f('channel')); } // phase 13 Outbox: e-mail / WhatsApp
   if (f('order')) { where.push('o.order_no = ?'); args.push(f('order')); }
   if (f('customer')) { where.push('c.customer_no = ?'); args.push(f('customer')); }
   if (f('q')) { where.push('(n.recipient LIKE ? OR n.subject LIKE ? OR n.ref LIKE ?)'); const like = `%${f('q').replace(/[%_\\]/g, (x) => `\\${x}`)}%`; args.push(like, like, like); }
   if (req.query.tests !== '1') where.push('n.is_test = 0');
-  return { rows: await notificationRows(where.join(' AND '), args, 300) };
+  // phase 13 Outbox: the count of each status under the other filters (the status tabs)
+  const [counts] = await db.query(`SELECT ${NOTE_STATUS} AS status, COUNT(*) AS n FROM notification_log n LEFT JOIN mail_outbox m ON m.mail_id = n.mail_id
+      LEFT JOIN customers c ON c.customer_id = n.customer_id LEFT JOIN orders o ON o.order_id = n.order_id WHERE ${where.join(' AND ')} GROUP BY 1`, args);
+  if (f('status')) { where.push(`${NOTE_STATUS} = ?`); args.push(f('status')); }
+  return { rows: await notificationRows(where.join(' AND '), args, 300), counts: Object.fromEntries(counts.map((x) => [x.status, Number(x.n)])) };
+});
+
+// phase 13 Outbox: one message with the text that was (or would be) sent; WhatsApp copies keep only their line
+route('get', '/notifications/log/:id', 'settings:view', async (req) => {
+  const [row] = await notificationRows('n.log_id = ?', [Number(req.params.id) || 0], 1);
+  if (!row) throw new InputError('Not found', 404);
+  const [[m]] = row.mail_id ? await db.query('SELECT text_body, next_attempt_at FROM mail_outbox WHERE mail_id = ?', [row.mail_id]) : [[null]];
+  const maker = row.created_by ? await auditNames([row.created_by]) : new Map();
+  return { ...row, text_body: m ? m.text_body : null, next_attempt_at: m ? m.next_attempt_at : null, created_by_name: maker.get(row.created_by) || row.created_by };
 });
 
 route('post', '/notifications/log/:id/retry', 'settings:edit', async (req) => tx(async (q) => {
@@ -3465,8 +3613,9 @@ route('get', '/commerce-settings', 'settings:view', async () => {
 });
 
 route('put', '/commerce-settings/:key', 'settings:edit', async (req) => tx(async (q) => {
-  const [[row]] = await q.query('SELECT setting_key, value, value_type, options FROM commerce_settings WHERE setting_key = ? FOR UPDATE', [req.params.key]);
+  const [[row]] = await q.query('SELECT setting_key, value, value_type, options, sw_group FROM commerce_settings WHERE setting_key = ? FOR UPDATE', [req.params.key]);
   if (!row) throw new InputError('Unknown setting', 404);
+  if (row.sw_group && !req.admin.is_admin) throw new InputError('Only an Admin changes a switch', 403); // phase 13 (v23: Switches are Admin only)
   const [roles] = await q.query('SELECT role_id FROM roles');
   const checked = commerceSettings.check(row, req.body.value, roles.map((r) => r.role_id));
   if (checked.error) throw new InputError(checked.error);
@@ -3485,9 +3634,8 @@ route('put', '/commerce-settings/:key', 'settings:edit', async (req) => tx(async
       const w = await secondAdmin.ask(q, { t: 'books', dk: 'books', summary: `Reopen the books: closed up to ${row.value} to ${checked.value || 'not closed'}`, payload: { value: checked.value } }, by(req));
       return { setting_key: row.setting_key, value: row.value, waiting: w.message };
     }
-  } else if (secondAdmin.BANK_KEYS.includes(row.setting_key)) {
-    const w = await secondAdmin.ask(q, { kind: 'company_bank', t: 'bank', dk: `bank:${row.setting_key}`, summary: `${label}: change (bank details on invoices)`, payload: { key: row.setting_key, value: checked.value } }, by(req));
-    return { setting_key: row.setting_key, value: row.value, waiting: `${w.message} A bank change is never overridden.` };
+  } else if (row.setting_key === 'einvoice_mode' && checked.value !== 'off' && (await require('./company').facts(q)).gst_type === 'composition') { // eslint-disable-line global-require
+    throw new InputError('A composition dealer makes bills of supply, so e-invoice stays off (Admin > Company, Tax and compliance)');
   } else if (secondAdmin.settingLoosens(row.setting_key, row.value, checked.value)) {
     const w = await secondAdmin.ask(q, { t: 'switch', dk: `switch:${row.setting_key}`, summary: `Switch ${label}: ${shown(row.value)} to ${shown(checked.value)}`, payload: { key: row.setting_key, value: checked.value } }, by(req));
     return { setting_key: row.setting_key, value: row.value, waiting: `${w.message} It loosens a control.` };

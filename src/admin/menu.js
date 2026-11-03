@@ -51,7 +51,7 @@ export const MENU = [
     use: "see your own to-do list and tick jobs off when done.",
     tag: "not built yet",
     section: null,
-    phase: 13
+    phase: "fv7"
    },
    {
     id: "home/alerts",
@@ -1352,11 +1352,10 @@ export const MENU = [
       use: "keep company details right; bank and UPI changes need a second Admin. │",
       to: [
        {
-        path: "settings",
+        path: "company",
         section: "settings",
         action: "view",
-        commerce: false,
-        hash: "cs-s-company"
+        commerce: false
        }
       ]
      },
@@ -1381,11 +1380,10 @@ export const MENU = [
       use: "set prefixes and starting numbers. │",
       to: [
        {
-        path: "commerce-settings",
+        path: "numbering",
         section: "settings",
         action: "view",
-        commerce: true,
-        hash: "cs-g-numbering"
+        commerce: true
        }
       ]
      },
@@ -1396,7 +1394,7 @@ export const MENU = [
       use: "close a year so old bills cannot change. │",
       tag: "not built yet",
       section: "settings",
-      phase: 13
+      phase: "fv7"
      },
      {
       id: "admin/organisation/print-templates",
@@ -1405,7 +1403,7 @@ export const MENU = [
       use: "change the layout of printed documents.",
       tag: "not built yet",
       section: "settings",
-      phase: 13
+      phase: "fv7"
      }
     ]
    },
@@ -1483,7 +1481,7 @@ export const MENU = [
       to: [
        {
         path: "audit",
-        section: "audit",
+        section: null,
         action: "view",
         commerce: false
        }
@@ -1501,7 +1499,7 @@ export const MENU = [
       see: "the printer used for labels.",
       use: "choose and test the label printer. │",
       section: "settings",
-      phase: 13
+      phase: "fv7"
      },
      {
       id: "admin/devices/scanner",
@@ -1509,7 +1507,7 @@ export const MENU = [
       see: "the barcode scanner setup.",
       use: "connect and test a scanner.",
       section: "settings",
-      phase: 13
+      phase: "fv7"
      }
     ],
     tag: "not built yet"
@@ -1576,7 +1574,7 @@ export const MENU = [
       use: "switch features on or off; switching off a control needs a second Admin.",
       to: [
        {
-        path: "commerce-settings",
+        path: "switches",
         section: "settings",
         action: "view",
         commerce: false

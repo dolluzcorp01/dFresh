@@ -10,7 +10,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from './adminApi';
-import { InfoCard, Loading, Notice, PageHead, useAction, useLeaveGuard, useLoad, useToast } from './ui';
+import { Loading, Notice, PageHead, useAction, useLeaveGuard, useLoad, useToast } from './ui';
 
 export default function ApprovalRules() {
   const data = useLoad('/approval-rules');
@@ -54,7 +54,8 @@ export default function ApprovalRules() {
   return (
     <section>
       <PageHead sub="What needs a second person's yes, up to what amount"
-        rules={['Off = done straight away, with a line in the audit log', d ? `${d.rules.length} rules` : 'Rules', 'Only an Admin changes these']} />
+        rules={['Off = done straight away, with a line in the audit log', d ? `${d.rules.length} rules` : 'Rules', 'Only an Admin changes these',
+          'Bank and rule-change rules are always on', d ? `Counts together over ${d.split_days} days, expires after ${d.expiry_days}` : 'Counts together']} />
       <p className="a-lead">Which actions need a second person, and from what size. Who may sign is decided by roles (the Approve tick) and limits (the money): <Link to="/admin/roles">Roles</Link>, <Link to="/admin/users">Staff</Link>.</p>
       <p className="a-hint">Switching a rule off or raising its limit waits for a second Admin; switching one on or lowering its limit is at once. The three locked rules can never be switched off.</p>
       {act.note}
@@ -117,15 +118,6 @@ export default function ApprovalRules() {
           <button type="button" className="a-btn a-btn-ghost" disabled={act.busy} onClick={() => setPending({})}>Cancel changes</button>
           <button type="button" className="a-btn" disabled={act.busy} onClick={save}>Save</button>
         </div>
-      )}
-      {d && (
-        <InfoCard title="How a request finds its signer">
-          <ul>
-            <li>Each request goes to the people whose role can Approve its section, who work at its godown, and whose limit covers the amount.</li>
-            <li>Requests of one kind for one customer, supplier or payee in the last {d.split_days} days count together before a money limit; a request waits {d.expiry_days} days, then expires (<Link to="/admin/commerce-settings#cs-g-approvals">Switches</Link>).</li>
-            <li>Always on: a company bank change, a supplier bank change and weakening a rule can never be switched off.</li>
-          </ul>
-        </InfoCard>
       )}
     </section>
   );

@@ -20,6 +20,7 @@ const godowns = require('./godowns');
 const pricing = require('./pricing');
 const commerceSettings = require('./commerce-settings');
 const numbering = require('./numbering');
+const company = require('./company');
 const secondAdmin = require('./second-admin');
 const notifications = require('./notifications');
 
@@ -108,9 +109,8 @@ const limitWords = (l) => (l === 'role' ? 'role default' : engine.limitText(l));
 function register({ route, tx, db, by, InputError, canDo }) {
   const people = async (q) => approvals.people(q);
   const meOf = (list, req) => list.find((p) => p.emp_id === req.admin.emp_id) || { ...req.admin, name: req.admin.emp_id, active: true };
-  async function companyState(q) {
-    const cs = await commerceSettings.read(q);
-    const code = String(cs.invoice_seller_state_code || '33');
+  async function companyState(q) { // phase 13: from Admin > Company (its GSTIN's state, else its office state)
+    const code = String((await company.facts(q)).state_code || '33');
     return STATES.find((s) => STATE_CODE[s] === code) || 'Tamil Nadu';
   }
 
@@ -125,7 +125,8 @@ function register({ route, tx, db, by, InputError, canDo }) {
   }
 
   /** the next tax invoice number of a godown (read only: the series is not bumped) */
-  async function nextInvoice(q, g, cs) {
+  async function nextInvoice(q, g, cs) { // eslint-disable-line no-unused-vars
+    if (numbering.sampleFor) return numbering.sampleFor(q, 'invoice', g.godown_id ? g.godown_id : { code: g.code, in_number: g.in_number ? 1 : 0 }); // phase 13: Numbering
     const fy = numbering.fyOf(new Date());
     const seg = Number(g.in_number) ? { seg: `${g.code}/`, key: `${g.code}-` } : { seg: '', key: '' };
     const [[r]] = await q.query('SELECT last_no FROM number_series WHERE series_key = ?', [`${cs.invoice_prefix}-${seg.key}${fy.fy}`]);
@@ -142,45 +143,85 @@ function register({ route, tx, db, by, InputError, canDo }) {
       const f = await godownFacts(db, g.godown_id);
       const inCharge = ppl.find((p) => p.emp_id === g.in_charge);
       out.push({ ...g, works_at: godowns.covers(req.admin, g.godown_id), in_charge_name: inCharge ? inCharge.name : null, ...f, next_invoice: await nextInvoice(db, g, cs),
+        hours_text: godowns.hoursText(g), pin_missing: !g.pin,
         people: ppl.filter((p) => p.active && engine.worksAt(p, g.godown_id)).length });
     }
     return { godowns: out, states: STATES, company_state: await companyState(db), can_edit: canDo(req, 'settings', 'edit') };
   });
 
   async function cleanGodown(q, body, before) {
+    const bad = (field, why) => { const e = new InputError(why); e.code = 'fields'; e.fields = { [field]: why }; throw e; }; // the panel marks the field
     const code = String(body.code ?? (before ? before.code : '')).trim().toUpperCase();
-    if (!/^[A-Z]{1,4}$/.test(code)) throw new InputError('Code: 1 to 4 capital letters, e.g. C');
+    if (!/^[A-Z]{1,4}$/.test(code)) bad('code', 'Code: 1 to 4 capital letters, e.g. C');
     const [[dup]] = await q.query('SELECT location_id FROM locations WHERE code = ? AND location_id <> ?', [code, before ? before.godown_id : 0]);
     if (dup) throw new InputError(`Code ${code} is taken by another godown`, 409);
+    if (!before || code !== before.code) { // phase 13: every per-godown number with this code stays inside its limit (GST: 16)
+      const tooLong = await numbering.godownCodeCheck(q, code);
+      if (tooLong) throw new InputError(`Code: ${tooLong}`, 409);
+    }
     const name = String(body.name ?? (before ? before.name : '')).trim();
-    if (name.length < 2 || name.length > 100) throw new InputError('Name: 2 to 100 characters');
+    if (name.length < 2 || name.length > 100) bad('name', 'Name: 2 to 100 characters');
     const address = String(body.address ?? (before ? before.address || '' : '')).trim().slice(0, 255) || null;
+    if (!address) bad('address', 'Address line 1 is needed.');
     const state = String(body.state ?? (before ? before.state : 'Tamil Nadu')).trim();
     if (!STATES.includes(state)) throw new InputError(`State: one of ${STATES.join(', ')}`);
     const gstin = String(body.gstin ?? (before ? before.gstin || '' : '')).trim().toUpperCase() || null;
-    if (gstin && !GSTIN_RE.test(gstin)) throw new InputError('GSTIN: 15 characters, like 33ABCDE1234F1Z5');
-    if (gstin && gstin.slice(0, 2) !== STATE_CODE[state]) throw new InputError(`GSTIN: a ${state} GSTIN starts with ${STATE_CODE[state]}`);
-    if (!gstin && state !== await companyState(q)) throw new InputError('GSTIN: a godown in another state needs its own 15-character GSTIN');
+    if (gstin && !GSTIN_RE.test(gstin)) bad('gstin', 'GSTIN: 15 characters, like 33ABCDE1234F1Z5');
+    if (gstin && gstin.slice(0, 2) !== STATE_CODE[state]) bad('gstin', `GSTIN: a ${state} GSTIN starts with ${STATE_CODE[state]}`);
+    if (gstin) { // v23 0.37: every GSTIN of the company carries the company PAN (characters 3 to 12)
+      const pan = String((await company.facts(q)).pan || '').toUpperCase();
+      if (!pan) bad('gstin', 'GSTIN: fill in the company PAN first (Admin > Company, Tax and compliance); a godown GSTIN carries it');
+      if (gstin.slice(2, 12) !== pan) bad('gstin', `GSTIN: its PAN (${gstin.slice(2, 12)}) is not the company PAN (${pan})`);
+    }
+    if (!gstin && state !== await companyState(q)) bad('gstin', 'GSTIN: a godown in another state needs its own 15-character GSTIN');
     const inCharge = String(body.in_charge ?? (before ? before.in_charge || '' : '')).trim() || null;
     if (inCharge) {
       const [[u]] = await q.query('SELECT emp_id FROM admin_users WHERE emp_id = ? AND is_active = 1', [inCharge]);
       if (!u) throw new InputError('In charge: an active member of staff');
     }
     const phone = String(body.phone ?? (before ? before.phone || '' : '')).trim() || null;
-    if (phone && !/^\+?[0-9 ]{8,16}$/.test(phone)) throw new InputError('Phone: digits, e.g. +91 77790 39666');
-    return { code, name, address, state, gstin, in_charge: inCharge, phone };
+    if (phone && !/^\+?[0-9 ]{8,16}$/.test(phone)) bad('phone', 'Phone: digits, e.g. +91 77790 39666');
+    // phase 13 (v23 0.48): line 2, city, PIN, hours, weekly days off (never every day), closed dates
+    const pick = (k, d = '') => String(body[k] ?? (before ? before[k] || d : d)).trim();
+    const addrLine2 = pick('addr_line2').slice(0, 150) || null;
+    const city = pick('city').slice(0, 80) || null;
+    const pin = pick('pin') || null;
+    if (pin && !/^[1-9]\d{5}$/.test(pin)) bad('pin', 'PIN: 6 digits, e.g. 631501');
+    const openT = pick('open_time', '09:00');
+    const closeT = pick('close_time', '18:00');
+    const hhmm = /^([01]\d|2[0-3]):[0-5]\d$/;
+    if (!hhmm.test(openT)) bad('open_time', 'Opens: a time like 09:00');
+    if (!hhmm.test(closeT)) bad('close_time', 'Closes: a time like 18:00');
+    if (closeT <= openT) bad('close_time', 'Closes: after it opens');
+    const offRaw = 'weekly_off' in body ? body.weekly_off : (before ? before.weekly_off : ['Sun']);
+    const off = [...new Set((Array.isArray(offRaw) ? offRaw : String(offRaw || '').split(',')).map((x) => String(x).trim()).filter(Boolean))];
+    if (off.some((d) => !godowns.DAYS.includes(d))) throw new InputError(`Weekly off: days like ${godowns.DAYS.join(', ')}`);
+    if (off.length === godowns.DAYS.length) throw new InputError('Weekly off: a godown cannot be closed every day');
+    const closedRaw = 'closed_dates' in body ? body.closed_dates : (before ? before.closed_dates : []);
+    const closed = (Array.isArray(closedRaw) ? closedRaw : []).map((c) => ({ from: String(c.from || ''), to: String(c.to || c.from || ''), why: String(c.why || '').trim().slice(0, 80) }));
+    for (const c of closed) {
+      if (!pricing.isDate(c.from) || !pricing.isDate(c.to) || c.to < c.from) throw new InputError('Closed dates: a from and a to date (on or after it)');
+      if (!c.why) throw new InputError('Closed dates: say why (e.g. Deepavali)');
+    }
+    return { code, name, address, addr_line2: addrLine2, city, pin, state, gstin, in_charge: inCharge, phone, open_time: openT, close_time: closeT,
+      weekly_off: godowns.DAYS.filter((d) => off.includes(d)), closed_dates: closed };
   }
 
   route('post', '/godowns', 'settings:edit', async (req) => tx(async (q) => {
     const g = await cleanGodown(q, req.body);
     const [[mx]] = await q.query('SELECT COALESCE(MAX(sort_order), 0) + 1 AS n FROM locations');
     const [ins] = await q.query(
-      'INSERT INTO locations (code, name, address, state, gstin, in_charge, phone, in_number, sort_order, is_active, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, 1, ?, UTC_TIMESTAMP())',
-      [g.code, g.name, g.address, g.state, g.gstin, g.in_charge, g.phone, Number(mx.n), by(req)]);
+      `INSERT INTO locations (code, name, address, addr_line2, city, pin, state, gstin, in_charge, phone, open_time, close_time, weekly_off, closed_dates, in_number, sort_order, is_active, updated_by, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 1, ?, UTC_TIMESTAMP())`,
+      [g.code, g.name, g.address, g.addr_line2, g.city, g.pin, g.state, g.gstin, g.in_charge, g.phone, g.open_time, g.close_time, g.weekly_off.join(','), JSON.stringify(g.closed_dates), Number(mx.n), by(req)]);
     await audit(q, { empId: by(req), action: 'create', entity: 'godown', entityId: g.code, after: g });
-    const [all] = await q.query("SELECT a.emp_id FROM admin_users a WHERE a.is_active = 1 AND a.godowns_all = 1");
-    return { godown_id: ins.insertId, ...g, every_godown_people: all.map((x) => x.emp_id),
-      message: `${g.name} added. Its invoices start at DFI/${g.code}/.../0001. People on "every godown" (${all.length}) can work there at once.` };
+    // v23 0.11: everybody on "every godown" works there at once; the others only once it is ticked for them
+    const ppl = (await people(q)).filter((p) => p.active && !p.pending);
+    const everyG = ppl.filter((p) => p.godowns === 'ALL').map((p) => p.name);
+    const listed = ppl.filter((p) => p.godowns !== 'ALL').length;
+    const sample = await nextInvoice(q, { code: g.code, in_number: 1 }, await commerceSettings.read(q));
+    return { godown_id: ins.insertId, ...g, every_godown_people: everyG,
+      message: `${g.name} added. Its invoices start at ${sample}. ${everyG.length ? `${everyG.join(', ')} can work there at once (every godown).` : 'Nobody is on "every godown".'}${listed ? ` The other ${listed} work there only once it is ticked for them in Staff.` : ''}` };
   }), { status: 201 });
 
   route('put', '/godowns/:id', 'settings:edit', async (req) => tx(async (q) => {
@@ -198,9 +239,13 @@ function register({ route, tx, db, by, InputError, canDo }) {
         if (why.length) throw new InputError(`${before.name} cannot be closed: ${why.join(', ')}.`, 409);
       }
     }
-    await q.query('UPDATE locations SET code = ?, name = ?, address = ?, state = ?, gstin = ?, in_charge = ?, phone = ?, is_active = ?, updated_by = ?, updated_at = UTC_TIMESTAMP() WHERE location_id = ?',
-      [g.code, g.name, g.address, g.state, g.gstin, g.in_charge, g.phone, active, by(req), before.godown_id]);
-    const b = { code: before.code, name: before.name, address: before.address, state: before.state, gstin: before.gstin, in_charge: before.in_charge, phone: before.phone, is_active: Number(before.is_active) };
+    await q.query(`UPDATE locations SET code = ?, name = ?, address = ?, addr_line2 = ?, city = ?, pin = ?, state = ?, gstin = ?, in_charge = ?, phone = ?, open_time = ?, close_time = ?,
+      weekly_off = ?, closed_dates = ?, is_active = ?, updated_by = ?, updated_at = UTC_TIMESTAMP() WHERE location_id = ?`,
+      [g.code, g.name, g.address, g.addr_line2, g.city, g.pin, g.state, g.gstin, g.in_charge, g.phone, g.open_time, g.close_time, g.weekly_off.join(','), JSON.stringify(g.closed_dates),
+        active, by(req), before.godown_id]);
+    const b = { code: before.code, name: before.name, address: before.address, addr_line2: before.addr_line2, city: before.city, pin: before.pin, state: before.state, gstin: before.gstin,
+      in_charge: before.in_charge, phone: before.phone, open_time: before.open_time, close_time: before.close_time, weekly_off: before.weekly_off, closed_dates: before.closed_dates,
+      is_active: Number(before.is_active) };
     await audit(q, { empId: by(req), action: active !== b.is_active ? (active ? 'reopen' : 'close') : 'update', entity: 'godown', entityId: g.code, before: b, after: { ...g, is_active: active } });
     return { godown_id: before.godown_id, ...g, is_active: active === 1 };
   }));
@@ -224,8 +269,17 @@ function register({ route, tx, db, by, InputError, canDo }) {
     const gs = await godowns.list(db);
     const [drv] = await db.query('SELECT DISTINCT emp_id FROM drivers WHERE is_active = 1 AND emp_id IS NOT NULL'); // read only: the Driver column
     const drivers = new Set(drv.map((x) => x.emp_id));
+    // from dAdmin, read only (named columns): e-mail and phone; last login from the audit log's sign-in rows
+    const ids = list.map((p) => p.emp_id);
+    const { DADMIN } = require('./auth'); // eslint-disable-line global-require
+    const [emps] = ids.length ? await db.query(`SELECT emp_id, emp_mail_id, emp_mobile_no FROM \`${DADMIN}\`.employee WHERE emp_id IN (?)`, [ids]) : [[]];
+    const dadminOf = Object.fromEntries(emps.map((e) => [e.emp_id, { emp_id: e.emp_id, email: e.emp_mail_id || null, phone: e.emp_mobile_no || null }]));
+    const [logins] = ids.length ? await db.query(`SELECT emp_id, DATE_FORMAT(CONVERT_TZ(MAX(created_at), '+00:00', '+05:30'), '%Y-%m-%d %H:%i') AS at FROM audit_log
+      WHERE action = 'login' AND emp_id IN (?) GROUP BY emp_id`, [ids]) : [[]];
+    const lastLogin = Object.fromEntries(logins.map((x) => [x.emp_id, x.at]));
     return {
-      staff: list.map((p) => asStaff(p, list, { locked: rowProblem(me, p) || null, driver: drivers.has(p.emp_id) })),
+      staff: list.map((p) => asStaff(p, list, { locked: rowProblem(me, p) || null, driver: drivers.has(p.emp_id), pending: Boolean(p.pending), left: p.left || null,
+        dadmin: dadminOf[p.emp_id] || null, last_login: lastLogin[p.emp_id] || null })),
       godowns: gs.map((g) => ({ godown_id: g.godown_id, code: g.code, name: g.name, is_active: g.is_active, mine: godowns.covers(req.admin, g.godown_id) })),
       me: { emp_id: me.emp_id, is_admin: me.is_admin, is_super: isSuper(me), limit_text: engine.limitText(me.limit), godowns: me.godowns },
       today: pricing.istToday(),

@@ -12,7 +12,7 @@ the phase that builds it (gap map build order; Website entries with no screen: p
 |---|---|
 | Home / Dashboard | /admin/commerce/ops; /admin/ (live) |
 | Home / Approvals | /admin/approvals |
-| Home / My tasks | placeholder: Not built yet - phase 13 |
+| Home / My tasks | placeholder: Later (Foundation v7) |
 | Home / Alerts | placeholder: Not built yet - phase 23 |
 | Sales / Leads / Enquiries | /admin/leads (live) |
 | Sales / Leads / Follow-ups | /admin/commerce/follow-ups |
@@ -105,20 +105,20 @@ the phase that builds it (gap map build order; Website entries with no screen: p
 | Website / Brand and layout / Visit cards | placeholder: Not built yet - phase 24 |
 | Website / Google and sharing | /admin/settings#cs-s-sharing-and-seo (live) |
 | Website / Site settings | /admin/settings (live) |
-| Admin / Organisation / Company | /admin/settings#cs-s-company (live) |
+| Admin / Organisation / Company | /admin/company (live) |
 | Admin / Organisation / Godowns | /admin/godowns |
-| Admin / Organisation / Numbering | /admin/commerce-settings#cs-g-numbering |
-| Admin / Organisation / Financial year lock | placeholder: Not built yet - phase 13 |
-| Admin / Organisation / Print templates | placeholder: Not built yet - phase 13 |
+| Admin / Organisation / Numbering | /admin/numbering |
+| Admin / Organisation / Financial year lock | placeholder: Later (Foundation v7) |
+| Admin / Organisation / Print templates | placeholder: Later (Foundation v7) |
 | Admin / Users and security / Staff | /admin/users (live) |
 | Admin / Users and security / Roles | /admin/roles (live) |
 | Admin / Users and security / Approval rules | /admin/approval-rules; /admin/approval-rules |
 | Admin / Users and security / Stand-ins | /admin/stand-ins |
 | Admin / Users and security / Audit log | /admin/audit (live) |
-| Admin / Devices / Label printer | placeholder: Not built yet - phase 13 |
-| Admin / Devices / Scanner | placeholder: Not built yet - phase 13 |
+| Admin / Devices / Label printer | placeholder: Later (Foundation v7) |
+| Admin / Devices / Scanner | placeholder: Later (Foundation v7) |
 | Admin / Communications / Notifications | /admin/notifications?tab=events |
 | Admin / Communications / Message templates | /admin/notifications?tab=templates |
 | Admin / Communications / Outbox | /admin/notifications?tab=log |
-| Admin / Settings / Switches | /admin/commerce-settings (live) |
+| Admin / Settings / Switches | /admin/switches (live) |
 | Online store | placeholder: Later |

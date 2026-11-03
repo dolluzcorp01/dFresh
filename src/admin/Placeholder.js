@@ -16,14 +16,14 @@ export default function Placeholder() {
   if (!x || x.entry.to) return <section><PageHead title="Page not found" crumb={['Back Office']} /><Empty title="No such page">Pick a page in the menu.</Empty></section>;
   const e = x.entry;
   if (!targetFor(me, e)) return <NoAccess section={e.section} />;
-  const pill = e.phase === 'later' ? 'Later' : `Not built yet - phase ${e.phase}`;
+  const pill = e.phase === 'later' ? 'Later' : e.phase === 'fv7' ? 'Later (Foundation v7)' : `Not built yet - phase ${e.phase}`;
   return (
     <section className="a-placeholder">
       <PageHead title={e.label} crumb={[x.group.label, x.sub && x.sub.label, x.entry !== x.group && e.label].filter(Boolean)}
         sub={x.group.desc ? `${x.group.label}: ${x.group.desc}` : undefined} />
       <div className="a-card">
         <Empty icon={GROUP_ICON[x.group.key] || 'list-todo'} title={e.label}>
-          <Pill tone={e.phase === 'later' ? 'gray' : 'warn'}>{pill}</Pill>
+          <Pill tone={['later', 'fv7'].includes(e.phase) ? 'gray' : 'warn'}>{pill}</Pill>
         </Empty>
         <dl className="a-kv a-ph-kv">
           <dt>What you see</dt><dd>{cap(e.see)}</dd>

@@ -12,17 +12,24 @@ class GodownError extends Error {
   constructor(message, status = 400) { super(message); this.status = status; }
 }
 
-const GODOWN_COLS = 'location_id AS godown_id, code, name, address, state, gstin, in_charge, phone, in_number, sort_order, is_active';
+const GODOWN_COLS = `location_id AS godown_id, code, name, address, addr_line2, city, pin, state, gstin, in_charge, phone, open_time, close_time, weekly_off,
+  closed_dates, in_number, sort_order, is_active`;
+
+const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const offDays = (v) => String(v || '').split(',').map((x) => x.trim()).filter((x) => DAYS.includes(x));
+const closedOf = (v) => { const x = typeof v === 'string' ? JSON.parse(v || '[]') : v; return Array.isArray(x) ? x : []; };
+/** "09:00 to 18:00, closed Sun" */
+const hoursText = (g) => `${g.open_time} to ${g.close_time}${(g.weekly_off || []).length ? `, closed ${g.weekly_off.join(', ')}` : ''}`;
 
 /** every godown (active first, then by sort order) */
 async function list(q) {
   const [rows] = await q.query(`SELECT ${GODOWN_COLS} FROM locations ORDER BY is_active DESC, sort_order, location_id`);
-  return rows.map((r) => ({ ...r, in_number: Number(r.in_number) === 1, is_active: Number(r.is_active) === 1 }));
+  return rows.map((r) => ({ ...r, in_number: Number(r.in_number) === 1, is_active: Number(r.is_active) === 1, weekly_off: offDays(r.weekly_off), closed_dates: closedOf(r.closed_dates) }));
 }
 
 async function byId(q, id) {
   const [[g]] = await q.query(`SELECT ${GODOWN_COLS} FROM locations WHERE location_id = ?`, [Number(id)]);
-  return g || null;
+  return g ? { ...g, weekly_off: offDays(g.weekly_off), closed_dates: closedOf(g.closed_dates) } : null;
 }
 
 /** the person's godowns: null = every godown, else the list of ids */
@@ -89,4 +96,4 @@ async function resolve(q, req, raw) {
   return id;
 }
 
-module.exports = { GodownError, list, byId, scopeOf, covers, picked, viewScope, where, assertSees, assertWorks, defaultFor, resolve };
+module.exports = { DAYS, hoursText, GodownError, list, byId, scopeOf, covers, picked, viewScope, where, assertSees, assertWorks, defaultFor, resolve };

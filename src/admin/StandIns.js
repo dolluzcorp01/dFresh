@@ -3,7 +3,7 @@
 // Someone on leave signs nothing; their requests go to the stand-in, who signs with their powers (Approvals names
 // both). Leave and the stand-in are set on the person in Staff (a click on a row opens Staff).
 import { Link, useNavigate } from 'react-router-dom';
-import { Avatar, InfoCard, Loading, PageHead, Pill, Table, useLoad } from './ui';
+import { Avatar, Loading, PageHead, Pill, Table, useLoad } from './ui';
 
 export default function StandIns() {
   const data = useLoad('/stand-ins');
@@ -12,7 +12,8 @@ export default function StandIns() {
   return (
     <section>
       <PageHead sub="Who approves when someone is on leave"
-        rules={['Someone on leave signs nothing', "The stand-in signs with the absent person's rights and limit", 'The audit log names both']} />
+        rules={['Someone on leave signs nothing', "The stand-in signs with the absent person's rights and limit", 'A stand-in already approves the same, at least the same limit',
+          'An Admin enters their own leave, or 2 days ahead and 30 days at most', 'The audit log names both']} />
       <p className="a-lead">Who approves when someone is on leave. A leave and its stand-in are set on the person, in <Link to="/admin/users">Staff</Link>; this page shows them all in one place. Click a row to change it.</p>
       <Loading state={data}>
         {d && (
@@ -37,9 +38,6 @@ export default function StandIns() {
           </div>
         )}
       </Loading>
-      <InfoCard title="Who can stand in">
-        <p>A stand-in must already approve every section the absent person approves, with at least the same limit, and must not be on leave on those dates. An Admin&apos;s leave is entered by that Admin, or by another Admin at least 2 days ahead and for at most 30 days.</p>
-      </InfoCard>
     </section>
   );
 }

@@ -1,6 +1,6 @@
 // Toasts (v23): short messages bottom right after an action, in four tones, read by screen readers (aria-live).
-// They close by themselves (good / info after 5 s, warn / bad after 8 s, a long text 10 s; hovering keeps them) or
-// with their X. Messages belong to the page they came from: changing page clears them.
+// They close by themselves (good / info after 5 s, warn after 8 s, a long text 10 s; hovering keeps them) or with
+// their X; a red one (bad) stays until it is closed (v23 0.26). Messages belong to the page they came from: changing page clears them.
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import LIcon from './LIcon';
@@ -15,7 +15,7 @@ let seq = 0;
 function ToastItem({ t, onClose }) {
   const [paused, setPaused] = useState(false);
   useEffect(() => {
-    if (paused) return undefined;
+    if (paused || t.tone === 'bad') return undefined; // a red message stays until closed
     const long = `${t.title} ${t.text || ''}`.length > 90;
     const ms = long ? 10000 : t.tone === 'bad' || t.tone === 'warn' ? 8000 : 5000;
     const id = setTimeout(() => onClose(t.id), ms);

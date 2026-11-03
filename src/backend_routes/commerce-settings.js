@@ -3,6 +3,7 @@
 // The lists (customer types, return reasons, delivery methods and areas, locations) are described in LISTS and edited
 // through the generic list routes in Admin_server.js.
 const { checkSetting } = require('../shared/settingRules');
+const numbering = require('./numbering');
 
 const GSTIN_PLACEHOLDER = 'TO-BE-CONFIRMED';
 
@@ -29,8 +30,15 @@ async function read(q) {
   const r = Object.fromEntries(rules.map((x) => [x.kind, { on: Number(x.is_on) === 1, v: x.limit_value === null ? 0 : Number(x.limit_value), packs: x.limit_packs === null ? 0 : Number(x.limit_packs) }]));
   const on = (k) => Boolean(r[k] && r[k].on);
   const v = (k) => (r[k] ? r[k].v : 0);
+  // phase 13: the seller and the round off moved to Admin > Company (company.js); their old keys are still given here,
+  // read from there, for the readers that use them (orders, returns, godowns)
+  const co = await require('./company').facts(q); // eslint-disable-line global-require
   return {
     ...out,
+    invoice_seller_name: co.name, invoice_seller_gstin: co.gstin || GSTIN_PLACEHOLDER, invoice_seller_address: co.address,
+    invoice_seller_state_code: co.state_code, invoice_round_off: co.round_off,
+    // phase 13: the document prefixes and the first invoice number live on the Numbering page (document_series)
+    ...(await numbering.settingsView(q)),
     approve_refund_on: on('refund'), approve_refund_above: v('refund'),
     approve_writeoff_on: on('write_off'), approve_writeoff_value_above: v('write_off'), approve_writeoff_qty_above: r.write_off ? r.write_off.packs : 0,
     approve_discount_on: on('discount'), approve_discount_pct_above: v('discount'),
@@ -71,12 +79,6 @@ function check(row, raw, roleIds = []) {
     }
     default: {
       if (s.length > 1000) return bad('At most 1000 characters');
-      if (row.setting_key === 'invoice_seller_gstin' && s !== GSTIN_PLACEHOLDER) {
-        const g = checkSetting('gstin', s);
-        if (!s || g.error) return bad(`A GSTIN like 33ABCDE1234F1Z5, or ${GSTIN_PLACEHOLDER} until it is known`);
-        return { value: g.value, error: null };
-      }
-      if (row.setting_key === 'invoice_seller_state_code' && !/^\d{2}$/.test(s)) return bad('Two digits, e.g. 33 for Tamil Nadu');
       if (/_prefix$/.test(row.setting_key) && !/^[A-Z]{2,5}$/.test(s)) return bad('2 to 5 capital letters');
       return { value: s, error: null };
     }
