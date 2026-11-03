@@ -58,11 +58,20 @@ const PARTS = {
     ['tabs', '.drawer .dtabs', '.a-drawer .a-tabs'], ['foot', '.drawer .df', '.a-drawer > footer'], ['foot button', '.drawer .df .btn', '.a-drawer > footer .a-btn'],
   ]],
   // phase 12a pages: the same parts on v23's page and ours (PAGES below)
-  ...Object.fromEntries(['godowns', 'staff', 'roles', 'approval rules', 'stand-ins', 'approvals', 'export', 'company', 'numbering', 'switches', 'audit', 'outbox'].map((k) => [`${k} page`, [['#page', '.a-main'], [
+  ...Object.fromEntries(['godowns', 'staff', 'roles', 'approval rules', 'stand-ins', 'approvals', 'export', 'company', 'numbering', 'switches', 'audit', 'outbox',
+    'products', 'raw materials', 'units', 'kits', 'categories'].map((k) => [`${k} page`, [['#page', '.a-main'], [
     ['page', '#page', '.a-main'], ['crumb', '.crumb', '.a-crumb'], ['title', '.ph h1', '.a-ph h1'], ['subtitle', '.ph p', '.a-ph p'],
     ['rule chips', '.rchips', '.a-rchips'], ['rule chip', '.rchips .pill', '.a-rchips .a-pill'], ['primary button', '.ph .acts .btn.primary', '.a-ph-acts .a-btn:not(.a-btn-ghost)'],
     ['card', '#page .card', k === 'roles' ? '.a-main .a-roleedit' : '.a-main .a-listcard, .a-main .a-card'], ['th', '#page table.t th', '.a-main .a-table th'], ['td', '#page table.t tbody td', '.a-main .a-table tbody td'],
     ['pill', '#page table.t .pill, #page .card .pill', '.a-main .a-table .a-pill, .a-main .a-card .a-pill'],
+  ]]])),
+  // phase 14: the product and SKU side panels (v23 DRAWERS.product / DRAWERS.sku), the same parts as the drawer
+  ...Object.fromEntries(['product drawer', 'sku drawer'].map((k) => [k, [['.drawer', '.a-drawer'], [
+    ['drawer', '.drawer', '.a-drawer'], ['head', '.drawer .dh', '.a-drawer > header'], ['title', '.drawer .dh h2', '.a-drawer > header h2'],
+    ['close', '.drawer .dh .iconbtn', '.a-drawer > header .a-iconbtn'], ['body', '.drawer .db', '.a-drawer-body'], ['status bar', '.drawer .statusbar', '.a-drawer .a-statusbar'],
+    ['section tabs', '.drawer .dtabs', '.a-drawer .p14-dtabs'], ['section tab', '.drawer .dtabs button', '.a-drawer .p14-dtabs button'],
+    ['field label', '.drawer .fld label', '.a-drawer .p14-l'], ['input', '.drawer .fld input:not([type=checkbox])', '.a-drawer .p14-fld input:not([type=checkbox]):not([type=file])'],
+    ['foot', '.drawer .df', '.a-drawer > footer'], ['foot button', '.drawer .df .btn', '.a-drawer > footer .a-btn'],
   ]]])),
   toast: [['.toasts', '.a-toasts'], [
     ['stack', '.toasts', '.a-toasts'], ['toast', '.toast', '.a-tst'], ['icon', '.toast > svg', '.a-tst > .a-i'], ['title', '.toast .tx b', '.a-tst-tx b'], ['text', '.toast .tx span', '.a-tst-tx span'],
@@ -103,13 +112,17 @@ async function v23Page(browser, w, h, part) {
 // our page per part: the list page is Orders (a list with tabs, like v23's Customer list); the rest on the Customer list
 const OUR_PATH = { 'list page': 'commerce/orders', 'godowns page': 'godowns', 'staff page': 'users', 'roles page': 'roles', 'approval rules page': 'approval-rules', 'stand-ins page': 'stand-ins',
   'approvals page': 'approvals', 'export page': 'commerce/reports?tab=accounting', // phase 12b
-  'company page': 'company', 'numbering page': 'numbering', 'switches page': 'switches', 'audit page': 'audit', 'outbox page': 'notifications?tab=log' }; // phase 13
+  'company page': 'company', 'numbering page': 'numbering', 'switches page': 'switches', 'audit page': 'audit', 'outbox page': 'notifications?tab=log', // phase 13
+  'products page': 'products', 'raw materials page': 'raw-materials', 'units page': 'units', 'kits page': 'kits', 'categories page': 'categories',
+  'product drawer': 'products?open=DZIND-DF001', 'sku drawer': 'products?sku=DF001-M100' }; // phase 14
 // v23's page per part (default: the Customer list)
 const V23_PAGE = { 'godowns page': 'admin/organisation/godowns', 'staff page': 'admin/users-and-security/staff', 'roles page': 'admin/users-and-security/roles',
   'approval rules page': 'admin/users-and-security/approval-rules', 'stand-ins page': 'admin/users-and-security/stand-ins',
   'approvals page': 'home/approvals', 'export page': 'money/accounting-export/export-to-accountant', // phase 12b
   'company page': 'admin/organisation/company', 'numbering page': 'admin/organisation/numbering', 'switches page': 'admin/settings/switches',
-  'audit page': 'admin/users-and-security/audit-log', 'outbox page': 'admin/communications/outbox' }; // phase 13
+  'audit page': 'admin/users-and-security/audit-log', 'outbox page': 'admin/communications/outbox', // phase 13
+  'products page': 'masters/catalogue/products-and-skus', 'raw materials page': 'masters/catalogue/raw-materials', 'units page': 'masters/tax-and-units/units-of-measure',
+  'kits page': 'masters/catalogue/kits', 'categories page': 'masters/catalogue/categories', 'product drawer': 'masters/catalogue/products-and-skus', 'sku drawer': 'masters/catalogue/products-and-skus' }; // phase 14
 // ONLY=part,part limits the run (e.g. ONLY="godowns page,staff page")
 const ONLY = process.env.ONLY ? process.env.ONLY.split(',').map((x) => x.trim()) : null;
 async function ourPage(browser, w, h, part) {
@@ -132,6 +145,9 @@ const SETUP = {
   'menu collapsed': [async (p) => { await p.click('[data-a="mini"]'); await wait(300); }, async (p) => { await p.click('.a-head button[aria-controls="a-nav"]'); await wait(300); }],
   'list page': [null, null],
   drawer: [async (p) => { await p.click('table.t tbody tr'); await wait(500); }, async (p) => { await p.evaluate(() => [...document.querySelectorAll('.a-tw table.a-table tbody tr')].find((r) => /Active/.test(r.innerText)).click()); await wait(1200); }],
+  // phase 14: v23 opens the first product row / the SKUs tab's first row; ours opens by its deep link (Table Napkins 20x20 / DF001-M100, the same records)
+  'product drawer': [async (p) => { await p.click('#page tr[data-row]'); await wait(600); }, async () => { await wait(800); }],
+  'sku drawer': [async (p) => { await p.click('[data-a="ptab"][data-i="1"]'); await wait(400); await p.click('#page tr[data-sku]'); await wait(600); }, async () => { await wait(800); }],
   toast: [async (p) => { await p.evaluate(() => window.toast('good', 'Customer saved', 'CUS-0141 Hotel Kanchi Residency')); await wait(300); },
     async (p) => {
       await p.evaluate(() => {
@@ -164,7 +180,7 @@ const SETUP = {
           if (mode === 'shots') {
             const file = path.join(OUT, `_${which}-${part}-${w}.png`);
             const el = await p.$(secSel[i]);
-            if (el && part !== 'drawer' && part !== 'toast' && !(part === 'menu' && w < 900)) await el.screenshot({ path: file });
+            if (el && !/drawer/.test(part) && part !== 'toast' && !(part === 'menu' && w < 900)) await el.screenshot({ path: file });
             else await p.screenshot({ path: file });
             files.push(file);
           }

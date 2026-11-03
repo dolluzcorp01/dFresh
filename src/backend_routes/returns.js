@@ -204,7 +204,8 @@ async function receiveState(q, returnId) {
 async function receiveScan(q, returnNo, raw, empId) {
   const r = await lockReturn(q, returnNo, ['requested', 'collecting', 'received']);
   if ((await pendingOf(q, returnNo)).some((p) => p.kind === 'return_window')) throw new ReturnError(`${returnNo} waits for approval (outside the return window)`, 409);
-  const code = String(raw || '').trim().toUpperCase().slice(0, 60);
+  // phase 14: a supplier EAN or a stored carton code scans as its SKU (or SKU#C), like the SKU's own label
+  const code = await require('./catalogue').scanCode(q, raw);
   if (!code) throw new ReturnError('Scan a pack or a carton');
   const m = /^([A-Z0-9-]+)(?:\/([A-Z0-9/-]+?))?(#C)?$/.exec(code);
   const lines = await receiveState(q, r.return_id);

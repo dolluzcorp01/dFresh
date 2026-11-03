@@ -1,41 +1,52 @@
-// Masters > Catalogue > Barcodes and labels (dFresh Commerce, DEMO database dfresh_commerce): SKU and barcode.
-// One SKU per product / colour version and pack size (migration 20261021_commerce_04_catalogue.sql). The barcode is the
-// SKU printed as Code 128 (JsBarcode). "Scan / search SKU": a USB scanner types the code and Enter, like a keyboard.
-// Print labels: a label sheet (A4, 3 x 8) in a new window, printed or saved as PDF from the browser. Three kinds, the
-// scan formats of the pack check and the return receiving (phase 5 / 6): pack labels (SKU), carton labels (SKU#C =
-// one full carton) and batch labels (SKU/BATCH, with the manufacture and expiry dates) for batch-tracked products.
-import { useEffect, useMemo, useRef, useState } from 'react';
+// Masters > Catalogue > Barcodes and labels (phase 14, v23 viewBarcodes / doScan / linkScan / viewLabels / showLabels /
+// packDecl; API /catalogue/scan, /catalogue/barcodes, /catalogue/labels in catalogue.js). Three tabs:
+// - Scan: any barcode (our own SKU label, the supplier's EAN, a carton code) finds its SKU, with the stock of the godown
+//   picked at the top. A misread EAN-13 says so; an unknown code can be linked here by someone with Edit on Products,
+//   anyone else notes it for the office ("Scanned, not yet linked", red count on the tab). People without Products
+//   can still scan here when they have Inventory or Packing.
+// - All barcodes: every barcode with its kind and SKU.
+// - Print labels: 1. pick the packs, 2. choose the label (pack / carton / shelf, the language, copies, month of packing),
+//   3. the labels, then Print opens an A4 sheet in a new window. The label words come from the label texts in every
+//   language (ui_text); the pack declaration (MRP, net quantity, packed by, customer care, origin) stays in English,
+//   as the law allows. Batch labels (SKU/BATCH) stay below.
+// Barcodes are Code 128 (JsBarcode).
+import { useMemo, useRef, useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import JsBarcode from 'jsbarcode';
-import { InfoCard, Loading, Notice, PageHead, useLoad } from './ui';
+import { api } from './adminApi';
+import { Alert, Loading, Notice, PageHead, Pill, Table, Tabs, LIcon, fmtDate, money, useAdmin, useCan, useLoad, useToast } from './ui';
 import { FONT_STACK, PRINT_FONTS, printWhenReady } from './printKit';
+import { savedGodown } from './HeaderBar';
+import { Thumb } from './Categories';
+import { splitMsg } from './Units';
 
 const BARCODE = { format: 'CODE128', margin: 6, background: '#ffffff', lineColor: '#121214', font: 'monospace' };
 
 function Barcode({ value, height = 44, width = 1.4, fontSize = 13 }) {
   const ref = useRef(null);
   useEffect(() => {
-    if (ref.current) JsBarcode(ref.current, value, { ...BARCODE, height, width, fontSize, displayValue: true });
+    if (ref.current) {
+      try { JsBarcode(ref.current, value, { ...BARCODE, height, width, fontSize, displayValue: true }); } catch { /* a value Code 128 cannot hold: the text below stays */ }
+    }
   }, [value, height, width, fontSize]);
   return <svg ref={ref} className="a-barcode" role="img" aria-label={`Barcode ${value}`} />;
 }
 
 // SVG markup of one barcode, for the label sheet window
-function barcodeSvg(value) {
+function barcodeSvg(value, { height = 46, width = 1.5, fontSize = 13 } = {}) {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  JsBarcode(svg, value, { ...BARCODE, height: 46, width: 1.5, fontSize: 13, displayValue: true });
+  try { JsBarcode(svg, value, { ...BARCODE, height, width, fontSize, displayValue: true }); } catch { return `<div class="mono">${esc(value)}</div>`; }
   return svg.outerHTML;
 }
 
 const esc = (v) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-
 const day = (d) => (d ? new Date(`${String(d).slice(0, 10)}T00:00:00Z`).toLocaleDateString('en-IN', { timeZone: 'UTC', day: 'numeric', month: 'short', year: 'numeric' }) : '');
-const KINDS = { pack: 'Pack labels (SKU)', carton: 'Carton labels (SKU#C)' };
-/** the label of a SKU in a kind -> { code, name, sub } */
-const labelOf = (s, kind) => (kind === 'carton'
-  ? { code: `${s.sku_code}#C`, name: s.name, sub: `CARTON of ${s.packs_per_carton} x ${s.size_label}` }
-  : { code: s.sku_code, name: s.name, sub: s.size_label });
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const monthText = (m) => (/^\d{4}-\d{2}$/.test(m || '') ? `${MONTHS[Number(m.slice(5, 7)) - 1]} ${m.slice(0, 4)}` : '');
+const thisMonth = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }).slice(0, 7);
+const BLOCKED = 'The label window was blocked: allow pop-ups for this site and try again.';
 
-/** items = [{ code, name, sub }] */
+/** the batch label sheet: items = [{ code, name, sub }] */
 function printLabels(items, copies, what) {
   const labels = items.flatMap((s) => Array(copies).fill(s)).map((s) => `
     <div class="label"><div class="name">${esc(s.name)}</div>${barcodeSvg(s.code)}<div class="size">${esc(s.sub)}</div></div>`).join('');
@@ -59,106 +70,315 @@ function printLabels(items, copies, what) {
   return true;
 }
 
-export default function CommerceSkus() {
-  const list = useLoad('/commerce/skus');
-  const [q, setQ] = useState('');
-  const [picked, setPicked] = useState(null); // the SKU shown large (scan result or row click)
-  const [scanMsg, setScanMsg] = useState(null);
-  const [selected, setSelected] = useState(() => new Set());
-  const [copies, setCopies] = useState(1);
-  const [printMsg, setPrintMsg] = useState(null);
-  const [kind, setKind] = useState('pack');
-  const scanRef = useRef(null);
-  const rows = useMemo(() => list.data || [], [list.data]);
-  const shown = useMemo(() => {
-    const s = q.trim().toLowerCase();
-    return s ? rows.filter((r) => [r.sku_code, r.product_id, r.name, r.size_label].some((v) => String(v || '').toLowerCase().includes(s))) : rows;
-  }, [rows, q]);
+/** one label's content (preview and sheet): { name, lines: [text], decl: [text] | null, mrpLine, code } */
+function labelOf(r, shown, words, company) {
+  const w = words[shown.lang] || words.en || {};
+  const cat = r.category ? (r.category[shown.lang] || r.category.en || '') : '';
+  const kindLine = shown.type === 'carton' ? `${w.lb_carton_of} ${r.packs_per_carton} ${w.lb_packs}`
+    : shown.type === 'shelf' ? `${w.lb_shelf} · ${w.lb_reorder} ${r.reorder ?? 0}`
+      : `${w.lb_pack}: ${r.size_label || ''}`;
+  const decl = shown.type === 'pack' && r.sku_type === 'finished' ? {
+    mrp: r.mrp !== null && r.mrp !== undefined ? `MRP ${money(r.mrp)}` : 'MRP not set',
+    mrpNote: r.mrp !== null && r.mrp !== undefined ? ' (incl. of all taxes)' : '',
+    lines: [
+      `Net qty: ${r.net_qty || r.size_label || ''} · Packed: ${monthText(shown.month)}`,
+      `Brand: ${r.brand || ''}`,
+      `Packed by: ${r.packed_by || [company.name, company.address].filter(Boolean).join(', ')}`,
+      `Customer care: ${[company.phone, company.email].filter(Boolean).join(', ')}`,
+      `Country of origin: ${r.origin || ''}`,
+    ],
+  } : null;
+  return { name: r.name, lines: [cat ? `${w.lb_category}: ${cat}` : null, kindLine].filter(Boolean), decl, code: shown.type === 'carton' ? r.carton_code : r.sku_code };
+}
 
-  // Enter in the box (what a barcode scanner sends): an exact SKU opens it; anything else filters the list
-  const scan = (e) => {
-    e.preventDefault();
-    const code = q.trim().toUpperCase();
-    const hit = rows.find((r) => r.sku_code === code);
-    if (hit) { setPicked(hit); setScanMsg({ kind: 'ok', text: `Found ${hit.sku_code}: ${hit.name}` }); setQ(''); }
-    else setScanMsg(shown.length ? { kind: 'info', text: `No SKU "${code}" - ${shown.length} match(es) below` } : { kind: 'error', text: `No SKU matches "${q.trim()}"` });
-    if (scanRef.current) scanRef.current.focus();
+/** the A4 sheet of shown labels in a new window */
+function printSheet(labels, shown) {
+  const body = labels.map((l) => `<div class="label"><b>${esc(l.name)}</b><span>${l.lines.map(esc).join('<br>')}</span>${
+    l.decl ? `<span class="decl"><b>${esc(l.decl.mrp)}</b>${esc(l.decl.mrpNote)}<br>${l.decl.lines.map(esc).join('<br>')}</span>` : ''}${barcodeSvg(l.code)}</div>`).join('');
+  const w = window.open('', '_blank');
+  if (!w) return false;
+  w.document.write(`<!doctype html><html lang="${esc(shown.lang)}"><head><meta charset="utf-8"><title>dFresh ${esc(shown.type)} labels - ${labels.length}</title>${PRINT_FONTS}
+<style>
+  @page { size: A4; margin: 8mm; }
+  body { margin: 0; font-family: ${FONT_STACK}; color: #111; }
+  .sheet { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2mm; }
+  .label { border: 1px dashed #c9c6bc; border-radius: 2mm; padding: 2.5mm; font-size: 8.5pt; line-height: 1.35; overflow: hidden; break-inside: avoid; }
+  .label > b { display: block; font-size: 9.5pt; margin-bottom: 1mm; }
+  .decl { display: block; font-size: 7pt; line-height: 1.35; margin-top: 1.5mm; padding-top: 1.5mm; border-top: 1px dotted #999; }
+  .decl b { display: inline; font-size: 7.5pt; }
+  .label svg { display: block; max-width: 100%; height: auto; margin-top: 1.5mm; }
+  .bar { padding: 8px 0 12px; font-size: 13px; } @media print { .bar { display: none; } .label { border-color: #e2dccb; } }
+</style></head><body><div class="bar">dFresh ${esc(shown.type)} labels - ${labels.length} label(s). Print, or choose "Save as PDF".</div>
+<div class="sheet">${body}</div></body></html>`);
+  w.document.close();
+  printWhenReady(w);
+  return true;
+}
+
+export default function CommerceSkus() {
+  const canView = useCan('products', 'view');
+  const canEdit = useCan('products', 'edit');
+  const canInv = useCan('inventory', 'view');
+  const barcodes = useLoad(canView ? '/catalogue/barcodes' : null);
+  const unknown = (canEdit && barcodes.data && barcodes.data.unknown) || [];
+  const tabs = [
+    { key: 'scan', label: 'Scan', count: unknown.length },
+    ...(canView ? [{ key: 'all', label: 'All barcodes' }] : []),
+    ...(canView || canInv ? [{ key: 'labels', label: 'Print labels' }] : []),
+  ];
+  const [tab, setTab] = useState('scan');
+  return (
+    <section>
+      <PageHead sub="Scan any barcode to find its SKU, see every barcode, print pack, carton and shelf labels." />
+      <Tabs tabs={tabs} value={tab} onChange={setTab} label="Barcodes and labels" className="a-p14-btabs" />
+      {tab === 'scan' && <ScanTab barcodes={barcodes} unknown={unknown} canView={canView} canEdit={canEdit} />}
+      {tab === 'all' && canView && <AllTab barcodes={barcodes} />}
+      {tab === 'labels' && (
+        <>
+          {canView && <LabelMaker />}
+          <BatchLabels />
+        </>
+      )}
+    </section>
+  );
+}
+
+function ScanTab({ barcodes, unknown, canView, canEdit }) {
+  const { me } = useAdmin();
+  const toast = useToast();
+  const navigate = useNavigate();
+  const [code, setCode] = useState('');
+  const [res, setRes] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [link, setLink] = useState({ sku: '', kind: 'supplier' });
+  const ref = useRef(null);
+  const picked = savedGodown(me);
+  const gName = picked ? (((me && me.godown_list) || []).find((g) => Number(g.godown_id) === Number(picked)) || {}).name || 'This godown' : 'All godowns';
+  const skus = (barcodes.data && barcodes.data.skus) || [];
+  const imageOf = (sku) => ((barcodes.data && barcodes.data.rows.find((r) => r.sku_code === sku && r.image)) || {}).image;
+
+  const focus = () => setTimeout(() => { if (ref.current) { ref.current.focus(); ref.current.select(); } }, 0);
+  const scan = async (raw) => {
+    const c = String(raw ?? '').trim().toUpperCase();
+    setCode(c);
+    if (!c) { setRes(null); toast('bad', 'Nothing scanned', 'Scan or type a barcode.'); focus(); return; }
+    setBusy(true);
+    try {
+      const out = await api.send('POST', '/catalogue/scan', { code: c });
+      setRes(out);
+      if (out.unknown && out.can_link) setLink((l) => ({ ...l, sku: l.sku || (skus[0] && skus[0].sku_code) || '' }));
+      if (out.noted || out.can_link) barcodes.reload();
+    } catch (e) {
+      setRes(null);
+      toast('bad', 'Not found', e.message);
+    } finally { setBusy(false); focus(); }
   };
-  const toggle = (code) => setSelected((s) => { const n = new Set(s); if (n.has(code)) n.delete(code); else n.add(code); return n; });
-  const allShown = shown.length > 0 && shown.every((r) => selected.has(r.sku_code));
-  const toggleAll = () => setSelected((s) => { const n = new Set(s); shown.forEach((r) => (allShown ? n.delete(r.sku_code) : n.add(r.sku_code))); return n; });
-  const print = () => {
-    const skus = rows.filter((r) => selected.has(r.sku_code));
-    const ok = printLabels((skus.length ? skus : shown).map((s) => labelOf(s, kind)), copies, KINDS[kind]);
-    setPrintMsg(ok ? null : { kind: 'error', text: 'The label window was blocked: allow pop-ups for this site and try again.' });
+  const doLink = async () => {
+    if (!res || !link.sku) { toast('bad', 'Not linked', 'Choose the SKU.'); return; }
+    setBusy(true);
+    try {
+      const out = await api.send('POST', '/catalogue/barcodes/link', { barcode: res.code, sku_code: link.sku, kind: link.kind });
+      const [t, x] = splitMsg(out.message, 'Linked');
+      toast('good', t, x);
+      barcodes.reload();
+      setBusy(false);
+      scan(res.code);
+    } catch (e) {
+      toast('bad', 'Not linked', e.message);
+      setBusy(false);
+    }
+  };
+  const stock = res && res.stock ? (picked ? res.stock[picked] ?? 0 : res.stock.all ?? 0) : 0;
+  const statusPill = (r) => {
+    if (r.type === 'raw') return <Pill tone="info">Raw material</Pill>;
+    return <Pill tone={r.status === 'active' ? 'good' : r.status === 'discontinued' ? 'warn' : 'gray'}>{r.status === 'active' ? 'Active' : r.status === 'discontinued' ? 'Discontinued' : String(r.status || '').replace(/^./, (x) => x.toUpperCase())}</Pill>;
   };
 
   return (
-    <section>
-      <PageHead sub="Every SKU with its barcode: scan to find one, print pack, carton and batch labels." />
-      <InfoCard title="Commerce demo - SKU and barcode">
-        <ul>
-          <li>One SKU per product and pack size, e.g. <code>DF037-M150</code> = DF037, pack of 150. Colour versions get their own (<code>DF008BLK-M100</code>).</li>
-          <li>The barcode is the SKU as Code 128: any USB or phone scanner reads it.</li>
-          <li>Scan into the box (or type and press Enter) to find a SKU. Tick rows and Print labels for an A4 label sheet.</li>
-          <li>Carton labels (<code>SKU#C</code>) count a full carton in one scan; batch labels (<code>SKU/BATCH</code>) are for products tracked by batch, at packing and when returns come back.</li>
-        </ul>
-      </InfoCard>
-      <div className="a-card a-scanbox">
-        <form className="a-toolbar" onSubmit={scan}>
-          <label htmlFor="sku-scan" className="a-inline"><strong>Scan / search SKU</strong></label>
-          <input id="sku-scan" ref={scanRef} type="search" autoFocus autoComplete="off" placeholder="Scan a barcode or type DF037-M150"
-            value={q} onChange={(e) => { setQ(e.target.value); setScanMsg(null); }} />
-          <button type="submit" className="a-btn">Find</button>
+    <>
+      <div className="a-card">
+        <p className="a-p14-lead">Scan or type any barcode: our own label, the supplier&apos;s EAN or a carton code. All of them find the same SKU.</p>
+        <form className="a-p14-scanbox" onSubmit={(e) => { e.preventDefault(); scan(code); }}>
+          <label className="a-p14-scanin"><LIcon name="search" />
+            <input ref={ref} value={code} autoFocus autoComplete="off" placeholder="Scan here, then Enter" aria-label="Barcode" onChange={(e) => setCode(e.target.value)} />
+          </label>
+          <button type="submit" className="a-btn a-p14-find" disabled={busy}>Find</button>
         </form>
-        {scanMsg && <Notice kind={scanMsg.kind} onClose={() => setScanMsg(null)}>{scanMsg.text}</Notice>}
-        {picked && (
-          <div className="a-skucard">
-            <Barcode value={picked.sku_code} height={70} width={2} fontSize={16} />
-            <dl className="a-dl">
-              <div><dt>SKU</dt><dd><code>{picked.sku_code}</code></dd></div>
-              <div><dt>Product</dt><dd>{picked.name} <code>{picked.product_id}</code></dd></div>
-              <div><dt>Pack</dt><dd>{picked.size_label}</dd></div>
-            </dl>
+        {res && res.sku && (
+          <div className="a-p14-scanres">
+            <Thumb file={imageOf(res.sku)} size={64} />
+            <div>
+              <b>{res.sku} · {res.name}</b>
+              <span>Found by its {String(res.kind_label || '').toLowerCase()}{res.kind === 'carton' ? ` · 1 scan = 1 carton = ${res.packs} packs` : ''} · {gName} stock {stock}</span>
+              <div className="a-p14-mt6">{statusPill(res)}</div>
+            </div>
+            {canView && <button type="button" className="a-btn a-btn-ghost" onClick={() => navigate(`/admin/products?sku=${encodeURIComponent(res.sku)}`)}>Open</button>}
           </div>
         )}
+        {res && res.bad && (
+          <Alert tone="bad" title={`${res.code} is a misread.`} className="a-p14-mt12">Its EAN-13 check digit is wrong. Scan it again.</Alert>
+        )}
+        {res && res.unknown && (
+          <>
+            <Alert tone="warn" title={`${res.code} belongs to no SKU.`} className="a-p14-mt12">
+              {res.can_link ? 'Link it below, or put the pack aside.' : 'It has been noted for the office. Put the pack aside until they link it.'}
+            </Alert>
+            {res.can_link && (
+              <div className="a-p14-inline">
+                <select className="a-p14-grow" value={link.sku} aria-label="Link to SKU" onChange={(e) => setLink((l) => ({ ...l, sku: e.target.value }))}>
+                  {skus.map((s) => <option key={s.sku_code} value={s.sku_code}>{s.sku_code} · {s.name}</option>)}
+                </select>
+                <select value={link.kind} aria-label="as" onChange={(e) => setLink((l) => ({ ...l, kind: e.target.value }))}>
+                  <option value="supplier">as Supplier EAN</option>
+                  <option value="carton">as Carton</option>
+                </select>
+                <button type="button" className="a-btn" disabled={busy} onClick={doLink}>Link</button>
+              </div>
+            )}
+          </>
+        )}
       </div>
-      <Loading state={list}>
-        <div className="a-toolbar">
-          <span className="a-muted">{shown.length} of {rows.length} SKUs{selected.size ? ` - ${selected.size} ticked` : ''}</span>
-          <label className="a-inline">Kind
-            <select value={kind} aria-label="Label kind" onChange={(e) => setKind(e.target.value)}>{Object.entries(KINDS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
-          </label>
-          <label className="a-inline">Labels per SKU
-            <select value={copies} onChange={(e) => setCopies(Number(e.target.value))}>{[1, 2, 3, 6, 12, 24].map((n) => <option key={n}>{n}</option>)}</select>
-          </label>
-          <button type="button" className="a-btn" onClick={print} disabled={!shown.length}>
-            Print {kind === 'carton' ? 'carton' : 'pack'} labels ({selected.size || shown.length} SKU)
-          </button>
+      {canEdit && unknown.length > 0 && (
+        <div className="a-listcard">
+          <div className="a-cardh"><h2>Scanned, not yet linked</h2><Pill tone="bad">{unknown.length}</Pill></div>
+          <Table rowKey={(u) => u.barcode} rows={unknown} label="Scanned, not yet linked" columns={[
+            { key: 'barcode', label: 'Barcode', render: (u) => <code>{u.barcode}</code> },
+            { key: 'who', label: 'Scanned by', render: (u) => u.who || u.scanned_by },
+            { key: 'when', label: 'When', render: (u) => <>{fmtDate(u.scanned_at)}{u.times > 1 && <small className="a-muted"> ({u.times} times)</small>}</> },
+            { key: 'act', label: <span className="a-sr">Link</span>, className: 'a-p14-act',
+              render: (u) => <button type="button" className="a-btn a-btn-sm a-btn-ghost" onClick={() => { window.scrollTo({ top: 0 }); scan(u.barcode); }}>Link it</button> },
+          ]} />
         </div>
-        {printMsg && <Notice kind={printMsg.kind} onClose={() => setPrintMsg(null)}>{printMsg.text}</Notice>}
-        <div className="a-scroll">
-          <table className="a-table a-skus">
-            <thead><tr>
-              <th><input type="checkbox" aria-label="Tick all shown" checked={allShown} onChange={toggleAll} /></th>
-              <th>SKU</th><th>Product</th><th>Pack</th><th>Barcode</th>
-            </tr></thead>
-            <tbody>
-              {shown.map((r) => (
-                <tr key={r.sku_code} className={picked && picked.sku_code === r.sku_code ? 'a-target' : undefined}>
-                  <td><input type="checkbox" aria-label={`Tick ${r.sku_code}`} checked={selected.has(r.sku_code)} onChange={() => toggle(r.sku_code)} /></td>
-                  <td><button type="button" className="a-link" onClick={() => setPicked(r)}><code>{r.sku_code}</code></button></td>
-                  <td>{r.name} <small className="a-muted">{r.product_id}</small></td>
-                  <td>{r.size_label}</td>
-                  <td><Barcode value={r.sku_code} height={34} width={1.1} fontSize={11} /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Loading>
-      <BatchLabels />
-    </section>
+      )}
+    </>
+  );
+}
+
+function AllTab({ barcodes }) {
+  const navigate = useNavigate();
+  const rows = (barcodes.data && barcodes.data.rows) || [];
+  const n = (k) => rows.filter((r) => r.kind === k).length;
+  return (
+    <Loading state={barcodes}>
+      <div className="a-listcard">
+        <div className="a-countline"><b>{rows.length}</b> barcodes · {n('supplier')} supplier EANs · {n('carton')} carton codes</div>
+        <Table rows={rows} rowKey={(r) => r.barcode} label="All barcodes" onRowClick={(r) => navigate(`/admin/products?sku=${encodeURIComponent(r.sku_code)}`)}
+          empty={{ title: 'No barcodes yet' }} columns={[
+            { key: 'barcode', label: 'Barcode', sort: true, render: (r) => <code>{r.barcode}</code> },
+            { key: 'kind_label', label: 'Kind', sort: true },
+            { key: 'sku_code', label: 'SKU', sort: true, render: (r) => <span className="a-p14-prow"><Thumb file={r.image} size={34} /><span><b>{r.sku_code}</b><small>{r.name}</small></span></span> },
+          ]} />
+      </div>
+    </Loading>
+  );
+}
+
+function LabelMaker() {
+  const data = useLoad('/catalogue/labels');
+  const toast = useToast();
+  const [q, setQ] = useState('');
+  const [sel, setSel] = useState(() => new Set());
+  const [opt, setOpt] = useState({ type: 'pack', lang: 'en', copies: '1', month: thisMonth() });
+  const [shown, setShown] = useState(null); // the settings of the labels on screen
+  const d = data.data;
+  const rows = useMemo(() => (d ? d.rows : []), [d]);
+  const list = useMemo(() => {
+    const s = q.trim().toLowerCase();
+    return s ? rows.filter((r) => `${r.sku_code} ${r.name}`.toLowerCase().includes(s)) : rows;
+  }, [rows, q]);
+  const toggle = (c) => setSel((x) => { const n = new Set(x); if (n.has(c)) n.delete(c); else n.add(c); return n; });
+  const set = (k) => (e) => setOpt((o) => ({ ...o, [k]: e.target.value }));
+
+  const show = () => {
+    const codes = rows.filter((r) => sel.has(r.sku_code)).map((r) => r.sku_code);
+    const copies = Number(opt.copies);
+    if (!codes.length) { setShown(null); toast('bad', 'No labels', 'Tick at least one pack on the left.'); return; }
+    if (!/^\d+$/.test(String(opt.copies).trim()) || copies < 1 || copies > 50) { setShown(null); toast('bad', 'No labels', 'Copies must be 1 to 50.'); return; }
+    if (opt.type === 'pack' && !/^\d{4}-\d{2}$/.test(opt.month || '')) { setShown(null); toast('bad', 'No labels', 'Pick the month of packing.'); return; }
+    setShown({ ...opt, copies, codes });
+    if (opt.type === 'pack') {
+      const nomrp = rows.filter((r) => sel.has(r.sku_code) && r.sku_type === 'finished' && (r.mrp === null || r.mrp === undefined)).map((r) => r.sku_code);
+      if (nomrp.length) toast('warn', `MRP not set on ${nomrp.length} pack${nomrp.length > 1 ? 's' : ''}`, `${nomrp.join(', ')}: the label says "MRP not set". Set it on the pack before printing retail labels.`);
+    }
+  };
+  const labels = useMemo(() => {
+    if (!shown || !d) return [];
+    return shown.codes.flatMap((c) => {
+      const r = rows.find((x) => x.sku_code === c);
+      return r ? Array(shown.copies).fill(labelOf(r, shown, d.words, d.company)) : [];
+    });
+  }, [shown, d, rows]);
+  const print = () => { if (!printSheet(labels, shown)) toast('bad', 'Not printed', BLOCKED); };
+
+  return (
+    <Loading state={data}>
+      {d && (
+        <>
+          <div className="a-p14-two">
+            <div className="a-card a-card-flush">
+              <div className="a-cardh"><h2>1. Pick the packs</h2><Pill tone="gray">{sel.size} picked</Pill></div>
+              <div className="a-p14-pad">
+                <label className="a-p14-scanin a-p14-search"><LIcon name="search" size="sm" />
+                  <input value={q} placeholder="Find a SKU" aria-label="Find a SKU" onChange={(e) => setQ(e.target.value)} />
+                </label>
+              </div>
+              <div className="a-p14-lablist">
+                {list.map((r) => (
+                  <label key={r.sku_code} className="a-p14-labrow">
+                    <input type="checkbox" checked={sel.has(r.sku_code)} onChange={() => toggle(r.sku_code)} />
+                    <Thumb file={r.image} size={34} />
+                    <span><b>{r.sku_code}</b><small>{r.name}{r.sku_type === 'raw' ? ' · raw material' : ''}</small></span>
+                  </label>
+                ))}
+                {!list.length && <p className="a-muted a-p14-pad">No SKU matches.</p>}
+              </div>
+            </div>
+            <div className="a-card a-card-flush">
+              <div className="a-cardh"><h2>2. Choose the label</h2></div>
+              <div className="a-cardb a-p14-opts">
+                <label className="a-field"><span>Label</span>
+                  <select value={opt.type} onChange={set('type')}>
+                    <option value="pack">Pack: our SKU barcode</option>
+                    <option value="carton">Carton: carton code, packs per carton</option>
+                    <option value="shelf">Shelf: SKU and reorder level</option>
+                  </select></label>
+                <label className="a-field"><span>Language</span>
+                  <select value={opt.lang} onChange={set('lang')}>{d.languages.map((l) => <option key={l.lang_code} value={l.lang_code}>{l.name_en}</option>)}</select>
+                  <small className="a-hint">Product names stay as supplied; the rest is translated.</small></label>
+                <label className="a-field"><span>Copies of each</span>
+                  <input type="number" min="1" max="50" step="1" value={opt.copies} onChange={set('copies')} /></label>
+                <label className="a-field"><span>Month of packing (pack labels)</span>
+                  <input type="month" value={opt.month} onChange={set('month')} />
+                  <small className="a-hint">Printed on pack labels with MRP, net quantity, packed by, customer care and origin. These lines stay in English, as the law allows.</small></label>
+                <div className="a-p14-btns">
+                  <button type="button" className="a-btn" onClick={show}>Show labels</button>
+                  {shown && <button type="button" className="a-btn a-btn-ghost" onClick={print}><LIcon name="download" size="sm" />Print</button>}
+                </div>
+              </div>
+            </div>
+          </div>
+          {shown && (
+            <div className="a-card a-card-flush">
+              <div className="a-cardh"><h2>3. Labels</h2><Pill tone="gray">{labels.length} labels</Pill></div>
+              <div className="a-cardb">
+                <div className="a-p14-labels" lang={shown.lang}>
+                  {labels.map((l, i) => (
+                    <div key={i} className="a-p14-label">
+                      <b>{l.name}</b>
+                      <span>{l.lines.map((x, j) => <span key={j} className="a-p14-line">{x}</span>)}</span>
+                      {l.decl && (
+                        <span className="a-p14-decl"><b>{l.decl.mrp}</b>{l.decl.mrpNote}{l.decl.lines.map((x, j) => <span key={j} className="a-p14-line">{x}</span>)}</span>
+                      )}
+                      <Barcode value={l.code} height={40} width={1.3} fontSize={12} />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </Loading>
   );
 }
 
@@ -172,7 +392,7 @@ function BatchLabels() {
   const print = () => {
     const chosen = rows.filter((b) => !sel.size || sel.has(b.batch_id));
     const ok = printLabels(chosen.map((b) => ({ code: `${b.sku_code}/${b.batch_no}`, name: b.name, sub: `${b.size_label} · batch ${b.batch_no} · mfd ${day(b.mfg_date)} · exp ${day(b.expiry_date)}` })), copies, 'batch labels');
-    setMsg(ok ? null : { kind: 'error', text: 'The label window was blocked: allow pop-ups for this site and try again.' });
+    setMsg(ok ? null : { kind: 'error', text: BLOCKED });
   };
   const toggle = (id) => setSel((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   return (

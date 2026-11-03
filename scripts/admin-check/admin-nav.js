@@ -68,7 +68,8 @@ function liveEntries() {
 const SCREENS = liveEntries();
 // the page title when it is not the menu entry's name; API list to compare the first row with ([endpoint, keys])
 const TITLE = { '/admin/settings': 'Settings', '/admin/commerce-settings': 'Commerce settings' };
-const FIRST_ROW = { '/admin/categories': ['/categories', ['category_key']], '/admin/kits': ['/kits', ['kit_key']], '/admin/size-picker': ['/size-picker', ['size_label']],
+// phase 14: Categories shows each category's English name (Masters > Catalogue, v23); Kits is a card grid (no table row to compare)
+const FIRST_ROW = { '/admin/categories': ['/catalogue/categories', ['name.en']], '/admin/size-picker': ['/size-picker', ['size_label']],
   '/admin/banners': ['/banners', ['banner_key']], '/admin/towns': ['/towns', ['town_key']], '/admin/form-options': ['/form-options', ['option_value']] };
 const titleOf = (s) => TITLE[s.href.split('#')[0]] || s.label;
 const linkSel = (s) => `#a-nav a[href="${s.href}"]`;
@@ -185,7 +186,8 @@ async function main() {
     const firstRow = {};
     for (const [href, [api, keys]] of Object.entries(FIRST_ROW)) {
       const rows = await apiCall(page, api);
-      firstRow[href] = rows && rows.length ? keys.map((k) => String(rows[0][k])) : null;
+      const list = Array.isArray(rows) ? rows : (rows && rows.rows) || null; // phase 14: { rows } answers too
+      firstRow[href] = list && list.length ? keys.map((k) => String(k.split('.').reduce((o, x) => (o ? o[x] : undefined), list[0]))) : null;
     }
     // every group and sub-group open, then read the menu
     for (;;) {
@@ -331,8 +333,9 @@ async function main() {
     // ---- 7. error boundary ----------------------------------------------------------------------------
     await page.setRequestInterception(true);
     page.on('request', (r) => {
-      if (/\/api\/dfresh\/admin\/kits$/.test(r.url())) r.respond({ // same CORS headers as the API (dev: the page on :3000 calls the API on :4012)
-        status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: [null] }),
+      // phase 14: the Kits page reads /catalogue/kits ({ kits, ... }); one broken kit row crashes it
+      if (/\/api\/dfresh\/admin\/catalogue\/kits$/.test(r.url())) r.respond({ // same CORS headers as the API (dev: the page on :3000 calls the API on :4012)
+        status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: { kits: [null], godowns: [], business_types: [], skus: [], products: [], languages: [], basis: '' } }),
         headers: { 'Access-Control-Allow-Origin': new URL(WEB).origin, 'Access-Control-Allow-Credentials': 'true' },
       });
       else r.continue();

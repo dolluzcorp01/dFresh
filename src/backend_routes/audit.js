@@ -51,7 +51,7 @@ const SCREENS = [
   { key: 'languages', label: 'Languages', section: 'content', match: [{ types: ['language'] }] },
   { key: 'translations', label: 'Translations', section: 'content', match: [{ types: ['ui_text'] }] },
   { key: 'website', label: 'Website content', section: 'content', match: [{ types: ['banner', 'town', 'form_option', 'brochure'] }] },
-  { key: 'products', label: 'Products', section: 'products', match: [{ types: ['product', 'product_image', 'category', 'kit', 'size_picker', 'featured', 'product_tax', 'sku'] }] },
+  { key: 'products', label: 'Products', section: 'products', match: [{ types: ['product', 'product_image', 'category', 'kit', 'size_picker', 'featured', 'product_tax', 'sku', 'barcode', 'unit'] }] },
   { key: 'prices', label: 'Prices', section: 'products', match: [{ types: ['sku_price'] }] },
   { key: 'leads', label: 'Leads', section: 'leads', match: [{ types: ['lead'] }] },
   { key: 'customers', label: 'Customers', section: 'customers', match: [{ types: ['customer', 'follow_up', 'segment'] }] },

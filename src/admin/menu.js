@@ -957,7 +957,19 @@ export const MENU = [
       to: [
        {
         path: "commerce/skus",
+        section: "products",
+        action: "view",
+        commerce: true
+       },
+       {
+        path: "commerce/skus",
         section: "inventory",
+        action: "view",
+        commerce: true
+       },
+       {
+        path: "commerce/skus",
+        section: "packing",
         action: "view",
         commerce: true
        }
@@ -968,8 +980,14 @@ export const MENU = [
       label: "Raw materials",
       see: "paper reels, cores, film, cartons - with stock and cost.",
       use: "keep the list of what production uses and what we buy.",
-      section: "inventory",
-      phase: 14
+      to: [
+       {
+        path: "raw-materials",
+        section: "products",
+        action: "view",
+        commerce: false
+       }
+      ]
      }
     ]
    },
@@ -1069,8 +1087,14 @@ export const MENU = [
       label: "Units of measure",
       see: "pack, carton, kg, roll and how they convert.",
       use: "add or change units. │",
-      section: "products",
-      phase: 14
+      to: [
+       {
+        path: "units",
+        section: "products",
+        action: "view",
+        commerce: false
+       }
+      ]
      },
      {
       id: "masters/tax-and-units/hsn-and-gst-rates",

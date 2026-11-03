@@ -34,7 +34,8 @@ const ENTITIES = {
       sort_order: POSITION, is_featured: { type: 'bool' }, featured_order: { ...POSITION, nullable: true },
       show_for_home: { type: 'bool' }, swatch_hex: { type: 'hex', nullable: true },
       specification: TEXT(255, { required: true }), pack: TEXT(120, { required: true }),
-      spec_status: TEXT(255, { nullable: true }), is_active: { type: 'bool' },
+      // phase 14: is_active follows products.status (catalogue.js: Make active, Hide, Discontinue...), never written here
+      spec_status: TEXT(255, { nullable: true }), is_active: { type: 'bool', readOnly: true },
     },
     tr: {
       table: 'product_translations', updatedBy: true,

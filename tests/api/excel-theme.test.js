@@ -29,7 +29,7 @@ test('branded sheet: logo + title rows, ink / gold header in row 4, frozen, filt
   assert.equal(wb.title, 'dFresh Products');
   assert.equal(wb.creator, 'dFresh admin');
   assert.equal(wb.company, 'Dolluz Corporation');
-  assert.deepEqual(wb.worksheets.map((s) => s.name), ['Read_Me', 'Products', 'Categories', 'UI_Text']);
+  assert.deepEqual(wb.worksheets.map((s) => s.name), ['Read_Me', 'Products', 'Categories', 'SKUs', 'UI_Text'] /* phase 14: the SKUs sheet */);
   const ws = wb.getWorksheet('Products');
   assert.equal(ws.getImages().length, 1, 'logo on the sheet');
   assert.ok(ws.getImages()[0].range.tl.nativeRow < 3, 'logo starts in rows 1-3');

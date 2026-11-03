@@ -35,6 +35,10 @@ import EntityPage from './EntityPage';
 import Languages from './Languages';
 import Brochures from './Brochures';
 import CommerceSkus from './CommerceSkus';
+import Categories from './Categories';
+import Kits from './Kits';
+import Units from './Units';
+import RawMaterials from './RawMaterials';
 import CommerceStock from './CommerceStock';
 import CommerceOrders from './CommerceOrders';
 import CommerceReturns from './CommerceReturns';
@@ -157,14 +161,16 @@ export default function AdminApp() {
             <Route path="import-export" element={<Need section="products"><ImportExport /></Need>} />
             <Route path="translations" element={<Need section="content"><Translations /></Need>} />
             <Route path="banners" element={<Need section="content"><EntityPage key="banners" name="banners" /></Need>} />
-            <Route path="kits" element={<Need section="products"><EntityPage key="kits" name="kits" /></Need>} />
+            <Route path="kits" element={<Need section="products"><Kits /></Need>} />
             <Route path="towns" element={<Need section="content"><EntityPage key="towns" name="towns" /></Need>} />
-            <Route path="categories" element={<Need section="products"><EntityPage key="categories" name="categories" /></Need>} />
+            <Route path="categories" element={<Need section="products"><Categories /></Need>} />
+            <Route path="units" element={<Need section="products"><Units /></Need>} />
+            <Route path="raw-materials" element={<Need section="products"><RawMaterials /></Need>} />
             <Route path="size-picker" element={<Need section="products"><EntityPage key="size-picker" name="size-picker" /></Need>} />
             <Route path="form-options" element={<Need section="content"><EntityPage key="form-options" name="form-options" /></Need>} />
             <Route path="languages" element={<Need section="content"><Languages /></Need>} />
             <Route path="brochures" element={<Need section="content"><Brochures /></Need>} />
-            <Route path="commerce/skus" element={<Need section="inventory" commerce><CommerceSkus /></Need>} />
+            <Route path="commerce/skus" element={<Need section={['products', 'inventory', 'packing']} commerce><CommerceSkus /></Need>} />
             <Route path="commerce/stock" element={<Need section="inventory" commerce><CommerceStock /></Need>} />
             <Route path="commerce/orders" element={<Need section="orders" commerce><CommerceOrders /></Need>} />
             <Route path="commerce/returns" element={<Need section="returns" commerce><CommerceReturns /></Need>} />

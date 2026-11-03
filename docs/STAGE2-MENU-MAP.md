@@ -6,7 +6,7 @@ paths = the first one the user may open. "(live)" = also shown while Commerce is
 site's screens); every other entry shows only while Commerce is on. A placeholder shows the guide's texts and
 the phase that builds it (gap map build order; Website entries with no screen: phase 24, agreed 2 Nov 2026).
 
-148 menu lines = 13 groups + Online store + 23 sub-groups + 111 pages. Of the 112 entries that open something (pages and Online store), 65 open a screen and 47 the placeholder.
+148 menu lines = 13 groups + Online store + 23 sub-groups + 111 pages. Of the 112 entries that open something (pages and Online store), 67 open a screen and 45 the placeholder.
 
 | Menu page | Opens |
 |---|---|
@@ -78,15 +78,15 @@ the phase that builds it (gap map build order; Website entries with no screen: p
 | Masters / Catalogue / Products and SKUs | /admin/products (live) |
 | Masters / Catalogue / Categories | /admin/categories (live) |
 | Masters / Catalogue / Kits | /admin/kits (live) |
-| Masters / Catalogue / Barcodes and labels | /admin/commerce/skus |
-| Masters / Catalogue / Raw materials | placeholder: Not built yet - phase 14 |
+| Masters / Catalogue / Barcodes and labels | /admin/commerce/skus; /admin/commerce/skus; /admin/commerce/skus |
+| Masters / Catalogue / Raw materials | /admin/raw-materials (live) |
 | Masters / Prices / Price lists | /admin/commerce/prices |
 | Masters / Prices / Quantity slabs | placeholder: Not built yet - phase 15 |
 | Masters / Prices / Special prices | placeholder: Not built yet - phase 15 |
 | Masters / Partners / Suppliers | /admin/commerce/stock?tab=suppliers |
 | Masters / Partners / Vehicles and drivers | /admin/commerce-settings#cs-l-vehicles |
 | Masters / Partners / Couriers | /admin/commerce-settings#cs-l-couriers |
-| Masters / Tax and units / Units of measure | placeholder: Not built yet - phase 14 |
+| Masters / Tax and units / Units of measure | /admin/units (live) |
 | Masters / Tax and units / HSN and GST rates | placeholder: Not built yet - phase 15 |
 | Masters / Tax and units / Delivery areas | /admin/commerce-settings#cs-l-delivery_areas |
 | Website / Home page / Banners | /admin/banners (live) |

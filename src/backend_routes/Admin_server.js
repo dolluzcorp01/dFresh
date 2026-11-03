@@ -511,6 +511,8 @@ route('delete', '/products/:id/images/:position', 'products:edit', async (req) =
   const position = Number(req.params.position);
   const [[img]] = await db.query('SELECT position, file_name FROM product_images WHERE product_id = ? AND position = ?', [id, position]);
   if (!img) throw new InputError('No photo at that position', 404);
+  const [[pst]] = await db.query('SELECT status, (SELECT COUNT(*) FROM product_images WHERE product_id = ?) AS n FROM products WHERE product_id = ?', [id, id]);
+  if (pst && Number(pst.n) === 1 && ['active', 'hidden'].includes(pst.status)) throw new InputError('Cannot remove the last picture: an active product must keep at least one. Add another first, or change its status.', 409);
   await tx(async (q) => {
     await q.query('DELETE FROM product_images WHERE product_id = ? AND position = ?', [id, position]);
     await audit(q, { empId: by(req), action: 'delete', entity: 'product_image', entityId: `${id}#${position}`, before: img });
@@ -769,6 +771,7 @@ for (const name of Object.keys(entities.ENTITIES)) {
   }), { content: true });
 
   route('post', `/${name}`, entityPerm(name, 'create'), async (req) => tx(async (q) => {
+    if (name === 'products') throw new InputError('Create products in Masters > Catalogue > Products and SKUs (they start as a Draft).', 410); // phase 14
     if (name === 'banners') await bannerGuard(q, req.body, null);
     if (name === 'towns') { req.body.town_key = await townKeyCheck(q, req.body.town_key, null); townGeoCheck(req.body); }
     if (name === 'form-options') {
@@ -3145,9 +3148,13 @@ const effectiveOf = (v) => {
   return d;
 };
 
-route('get', '/prices', 'products:view', async () => {
+route('get', '/prices', 'products:view', async (req) => {
   const today = pricing.istToday();
   const rows = await pricing.skuRows(db);
+  // phase 14: MRP for everyone, the standard cost for See cost only (v23 1.28, 1.29)
+  const [money14] = await db.query('SELECT sku_code, mrp, std_cost FROM skus');
+  const m14 = new Map(money14.map((x) => [x.sku_code, x]));
+  const cost14 = seesCost(req);
   const own = await pricing.ownPricesOn(db, today);
   const next = await pricing.upcoming(db, today);
   const [cats] = await db.query(
@@ -3158,7 +3165,10 @@ route('get', '/prices', 'products:view', async () => {
   return {
     today, basis: await pricing.basis(db), lists: await pricing.lists(db), gstRates: pricing.gstRates(await commerceSettings.read(db)),
     sellUnits: pricing.SELL_UNITS, categories: cats, demo: Number(demo.n) > 0,
-    rows: rows.map((r) => ({ ...r, own: own.get(r.sku_code) || {}, upcoming: next.get(r.sku_code) || [] })),
+    seesCost: cost14,
+    rows: rows.map((r) => ({ ...r, own: own.get(r.sku_code) || {}, upcoming: next.get(r.sku_code) || [],
+      mrp: m14.get(r.sku_code) && m14.get(r.sku_code).mrp !== null ? Number(m14.get(r.sku_code).mrp) : null,
+      ...(cost14 ? { std_cost: m14.get(r.sku_code) && m14.get(r.sku_code).std_cost !== null ? Number(m14.get(r.sku_code).std_cost) : null } : {}) })),
   };
 }, COMMERCE_ONLY);
 
@@ -3462,6 +3472,7 @@ route('post', '/books/export', 'reports:export', async (req, res) => {
 foundation.register({ route, tx, db, by, InputError, canDo });
 require('./company').register({ route, tx, db, by, InputError, canDo }); // phase 13: Admin > Company
 require('./numbering-admin').register({ route, tx, db, by, InputError, canDo }); // phase 13: Numbering and Switches
+require('./catalogue').register({ route, tx, db, by, InputError, canDo }); // phase 14: Masters > Catalogue, Units of measure
 
 // ---------------------------------------------------------------------------------------------
 // Notifications (docs/COMMERCE-SPEC.md 5.5f; notifications.js). Settings section (Setup > Notifications): view = events,

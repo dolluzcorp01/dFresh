@@ -136,7 +136,8 @@ async function packState(q, orderId) {
 /** one scan at the packing table -> { result, message, state } (refused scans are kept too) */
 async function packScan(q, orderNo, raw, empId) {
   const o = await lockOrder(q, orderNo, ['packing']);
-  const code = String(raw || '').trim().toUpperCase().slice(0, 60);
+  // phase 14: a supplier EAN or a stored carton code scans as its SKU (or SKU#C), like the SKU's own label
+  const code = await require('./catalogue').scanCode(q, raw);
   if (!code) throw new DeliveryError('Scan a pack or a carton');
   const m = /^([A-Z0-9-]+)(?:\/([A-Z0-9/-]+?))?(#C)?$/.exec(code);
   const state = await packState(q, o.order_id);

@@ -259,7 +259,7 @@ async function list(req, status) {
     const dec = r.decided_by ? ctx.people.find((p) => p.emp_id === r.decided_by) : null;
     const asker = ctx.people.find((p) => p.emp_id === r.requested_by);
     out.push({
-      ...r, payload: undefined, excluded: q.excluded, kind_label: (KINDS[r.kind] || {}).label || r.kind, godown: ctx.godownNames[r.godown_id] || null,
+      ...r, payload: undefined, excluded: q.excluded, kind_label: (payloadOf(r) || {}).label || (KINDS[r.kind] || {}).label || r.kind, godown: ctx.godownNames[r.godown_id] || null,
       amount: admin.seesCost || !['write_off', 'stock_count', 'restock'].includes(r.kind) ? r.amount : null, // a cost figure: See cost only
       requested_by_name: asker ? asker.name : r.requested_by, decided_by_name: dec ? dec.name : r.decided_by,
       decided_via_name: r.decided_via === 'override' ? 'an override (24 hours, nobody cancelled)' : via ? via.name : null,

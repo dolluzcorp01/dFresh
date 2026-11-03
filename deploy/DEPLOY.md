@@ -165,7 +165,7 @@ for f in $(ls database/migrations/*.sql | sort); do
   echo "== $f"; sudo mysql --default-character-set=utf8mb4 dfresh < "$f" || { echo "FAILED: $f"; break; }
 done
 ```
-The 49 migrations, in the order they must run (tick each; a later update applies only the new ones):
+The 51 migrations, in the order they must run (tick each; a later update applies only the new ones):
 
 - [ ] `20261009_phase3_home_ui_text.sql`
 - [ ] `20261009_phase4_products_ui_text.sql`
@@ -244,6 +244,15 @@ The 49 migrations, in the order they must run (tick each; a later update applies
       Commerce settings (same keys, same values)
 - [ ] `20261103_stage2_13_04_godown_details.sql` - a godown's address line 2, city, PIN, opening hours (09:00 to 18:00),
       weekly days off (Sun) and closed dates
+- [ ] `20261104_stage2_14_01_catalogue.sql` - section 1 Products: product status (draft, active, hidden, discontinued,
+      archived; today's rows: active, or hidden where is_active was 0; is_active keeps meaning "on the website"), brand,
+      packed by, origin, shelf life and near-expiry days per product; product words may be empty (a Draft, a language
+      partly done); SKU status, type (finished / raw material), MRP, standard cost, weight, size, steps, pallet;
+      carton size history, supplier barcodes, unknown scans, substitutes, units of measure; kit code, sold / not sold,
+      price and parts (today's website kits: each product's first pack, quantity 1). Needs `npm install`
+      (qrcode-generator, the UPI QR on invoices) in the same release.
+- [ ] `20261104_stage2_14_02_label_words.sql` - the pack / carton / shelf label words in English, Tamil and Hindi
+      (group "Pack labels", never sent to the website)
 
 The 11 commerce files replace the 12 of the commerce branch's phases (consolidated on 21 Oct 2026, never applied on
 any database but the `dfresh_commerce` demo): each table in its final shape, no file patches another. Built on a

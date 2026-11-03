@@ -573,26 +573,27 @@ async function reorderList(q, godownIds) {
   return out;
 }
 
-/** batches with good stock in these godowns (null = every godown): expired, near expiry (Commerce setting days) or ok */
+/** batches with good stock in these godowns (null = every godown): expired, near expiry (the product's warn days, else the Switches default) or ok */
 async function batchList(q, godownIds = null) {
   const cs = await commerceSettings.read(q);
   const warn = Number(cs.expiry_warn_days) || 60;
   const gw = godownIds === null ? ['1 = 1', []] : [godownIds.length ? 'm.location_id IN (?)' : '1 = 0', godownIds.length ? [godownIds] : []];
   const [rows] = await q.query(
     `SELECT b.batch_id, b.sku_code, b.batch_no, DATE_FORMAT(b.mfg_date, '%Y-%m-%d') AS mfg_date, DATE_FORMAT(b.expiry_date, '%Y-%m-%d') AS expiry_date,
-            DATEDIFF(b.expiry_date, ${IST_TODAY}) AS days_left, COALESCE(t.name, pt.name, s.product_id) AS name, s.size_label,
+            DATEDIFF(b.expiry_date, ${IST_TODAY}) AS days_left, COALESCE(t.name, pt.name, s.product_id) AS name, s.size_label, p.near_expiry_days,
             COALESCE(SUM(CASE WHEN m.stock_kind = 'good' THEN m.delta END), 0) AS good,
             COALESCE(SUM(CASE WHEN m.stock_kind = 'dmg' THEN m.delta END), 0) AS damaged
        FROM batches b JOIN skus s ON s.sku_code = b.sku_code JOIN products p ON p.product_id = s.product_id
        LEFT JOIN product_translations t ON t.product_id = s.product_id AND t.lang_code = 'en'
        LEFT JOIN product_translations pt ON pt.product_id = p.variant_of AND pt.lang_code = 'en'
        LEFT JOIN stock_movements m ON m.batch_id = b.batch_id AND ${gw[0]}
-      GROUP BY b.batch_id, b.sku_code, b.batch_no, b.mfg_date, b.expiry_date, t.name, pt.name, s.product_id, s.size_label
+      GROUP BY b.batch_id, b.sku_code, b.batch_no, b.mfg_date, b.expiry_date, t.name, pt.name, s.product_id, s.size_label, p.near_expiry_days
       ORDER BY b.expiry_date`, gw[1]
   );
-  return { warnDays: warn, rows: rows.map((r) => {
+  return { warnDays: warn, rows: rows.map(({ near_expiry_days: own, ...r }) => {
     const d = Number(r.days_left);
-    return { ...r, days_left: d, good: Number(r.good), damaged: Number(r.damaged), state: d < 0 ? 'expired' : d <= warn ? 'near' : 'ok' };
+    const w = own === null || own === undefined ? warn : Number(own); // phase 14: per product; the Switches value is the default
+    return { ...r, days_left: d, warn_days: w, good: Number(r.good), damaged: Number(r.damaged), state: d < 0 ? 'expired' : d <= w ? 'near' : 'ok' };
   }) };
 }
 

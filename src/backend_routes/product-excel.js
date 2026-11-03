@@ -21,6 +21,7 @@ const ExcelJS = require('exceljs');
 const entities = require('./admin-entities');
 const { RETIRED_KEYS } = require('./text-groups');
 const theme = require('./excel-theme');
+const skuExcel = require('./sku-excel'); // phase 14: the SKUs sheet
 
 const CORE = ['en', 'ta', 'hi'];
 const FIELD_GROUPS = [ // [header base, translation column, read-only]
@@ -128,6 +129,7 @@ async function buildWorkbook(q, { who = 'dFresh admin' } = {}) {
       [''],
       ['How to use', true],
       ['• Products sheet: one row per product (Variant_of filled = a colour of that product). Edit, then import in the admin: a dry run shows every change first.'],
+      ['• SKUs sheet: one row per pack (SKU). Change packs, cartons, minimum order, weight, HSN, GST, supplier EAN, status and MRP; a new row adds a pack (its code must match the pack). Same dry run first.'],
       ['• Columns ending _EN / _TA / _HI (and any other language code) are the same field per language. Leave a language empty to show English.'],
       [`• Specification and Pack are the ${LANG_SUFFIX(def)} value. ${OVERRIDE_GROUPS.map((g) => `${g[0]}_XX`).join(' / ')}: only when that language needs its own text; empty = the main column.`],
       ['• Read-only: Category_XX on Products (edit names on the Categories sheet), Image_1..3 (upload photos in the admin), Products count.'],
@@ -163,6 +165,8 @@ async function buildWorkbook(q, { who = 'dFresh admin' } = {}) {
       products.filter((p) => p.category_key === c.category_key && !p.variant_of).length,
     ]),
   });
+
+  await skuExcel.addSheet(q, wb, theme, meta); // phase 14: one row per pack
 
   const byKey = new Map();
   for (const r of ui) {
@@ -479,7 +483,15 @@ async function diffWorkbook(q, buffer) {
     usedOrder.set(n, [...(usedOrder.get(n) || []), k]);
   }
   for (const [n, ks] of usedOrder) if (ks.length > 1) errors.push(`Categories: Order ${n} is used ${ks.length} times (${ks.join(', ')}). Use 1, 2, 3 ... once each.`);
-  const unknownSheets = wb.worksheets.map((s) => s.name).filter((n) => !['Read_Me', 'Products', 'Categories', 'UI_Text'].includes(n));
+  // phase 14: the SKUs sheet (optional: older files have none)
+  let skus = { errors: [], changes: [], plan: [] };
+  const sws = wb.getWorksheet('SKUs');
+  if (sws) {
+    const { header: sh, rows: srows } = sheetRows(sws, 'sku');
+    skus = await skuExcel.diffSheet(q, sh, srows);
+    errors.push(...skus.errors);
+  }
+  const unknownSheets = wb.worksheets.map((s) => s.name).filter((n) => !['Read_Me', 'Products', 'Categories', 'UI_Text', 'SKUs'].includes(n));
   const notes = [...positionNotes, ...(wb.getWorksheet('UI_Text') ? ['UI_Text sheet is not imported here: use Translations (CSV) for UI text.'] : [])];
 
   // in sheet order: "Products row 6" before "Products row 7"; other messages keep their place after them
@@ -488,10 +500,10 @@ async function diffWorkbook(q, buffer) {
 
   return {
     ok: errors.length === 0,
-    summary: { added: added.length, changed: changed.length, removed: removed.length, categories: categories.length, errors: errors.length },
-    added, changed, removed, categories: categories.map(({ category, diffs }) => ({ category, diffs })),
+    summary: { added: added.length, changed: changed.length, removed: removed.length, categories: categories.length, skus: skus.changes.length, errors: errors.length },
+    added, changed, removed, categories: categories.map(({ category, diffs }) => ({ category, diffs })), skus: skus.changes,
     readOnly, unknownColumns, unknownSheets, notes, errors,
-    plan: { products: plan, removed: removed.map((r) => r.product), categories },
+    plan: { products: plan, removed: removed.map((r) => r.product), categories, skus: skus.plan },
   };
 }
 
@@ -502,6 +514,7 @@ async function applyPlan(q, plan, empId) {
     const before = p.create ? null : await entities.load('products', [p.id], q);
     if (p.create) {
       await entities.create(q, 'products', { product_id: p.id, ...p.base, tr: Object.fromEntries(Object.entries(p.trRows).filter(([, v]) => v)) }, empId);
+      await q.query("UPDATE products SET status = 'draft', is_active = 0 WHERE product_id = ?", [p.id]); // phase 14: a new product starts as a Draft
     } else {
       const base = Object.fromEntries(Object.entries(p.base).filter(([col, v]) => !same(before[col], v)));
       if (Object.keys(base).length) {
@@ -515,7 +528,7 @@ async function applyPlan(q, plan, empId) {
   }
   for (const id of plan.removed) {
     const before = await entities.load('products', [id], q);
-    await q.query('UPDATE products SET is_active = 0, updated_by = ? WHERE product_id = ?', [empId, id]);
+    await q.query("UPDATE products SET is_active = 0, status = IF(status = 'active', 'hidden', status), updated_by = ? WHERE product_id = ?", [empId, id]); // phase 14: hidden from the website
     changes.push({ entity: 'product', id, before, after: await entities.load('products', [id], q) });
   }
   for (const c of plan.categories) {
@@ -524,6 +537,7 @@ async function applyPlan(q, plan, empId) {
     await entities.writeTranslations(q, entities.ENTITIES.categories, [c.category], c.trRows, empId);
     changes.push({ entity: 'category', id: c.category, before, after: await entities.load('categories', [c.category], q) });
   }
+  if (plan.skus && plan.skus.length) await skuExcel.applySheet(q, plan.skus, empId); // phase 14 (audited per SKU)
   return changes;
 }
 

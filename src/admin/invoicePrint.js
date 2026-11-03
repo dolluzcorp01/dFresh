@@ -6,6 +6,7 @@
 import { api } from './adminApi';
 import { API_BASE } from '../utils/api';
 import { FONT_STACK, PRINT_FONTS, printWhenReady } from './printKit';
+import { qrSvg, upiLink } from '../shared/upiQr';
 
 const esc = (v) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const day = (d) => (d ? new Date(`${String(d).slice(0, 10)}T00:00:00Z`).toLocaleDateString('en-IN', { timeZone: 'UTC', day: 'numeric', month: 'short', year: 'numeric' }) : '');
@@ -34,6 +35,14 @@ export function printDoc(title, body, demo) {
   w.document.close();
   printWhenReady(w);
   return true;
+}
+
+/** phase 14: a scannable UPI QR (UPI ID, the amount to pay, the invoice number), the same as the PDF draws */
+function upiBlock(inv) {
+  const toPay = Number(inv.total) - Math.max(Number(inv.wallet_used) - Number(inv.wallet_discount), 0);
+  const qr = qrSvg(upiLink({ upi: inv.upi, name: inv.seller_name, amount: toPay, note: inv.invoice_no }), 110);
+  return `<div style="display:flex;gap:12px;align-items:center;margin:8px 0">${qr}<p style="margin:0"><b>Pay by UPI:</b> ${esc(inv.upi)}<br>
+    <small>Scan with any UPI app: Rs ${toPay.toFixed(2)} for ${esc(inv.invoice_no)}</small></p></div>`;
 }
 
 export function invoiceHtml(inv) {
@@ -75,7 +84,7 @@ export function invoiceHtml(inv) {
     </tbody></table>
     ${cns.length ? `<p><b>Credit notes against this invoice:</b> ${cns.map((c) => `${esc(c.credit_note_no)} (${istDay(c.issued_at)}, Rs ${Number(c.total).toFixed(2)}${c.reason ? ` - ${esc(c.reason)}` : ''})`).join('; ')}</p>` : ''}
     ${inv.bank ? `<p><b>Pay to:</b> ${esc(inv.bank)}</p>` : ''}
-    ${inv.upi ? `<p><b>Pay by UPI:</b> ${esc(inv.upi)}</p>` : ''}
+    ${inv.upi ? upiBlock(inv) : ''}
     ${inv.declaration ? `<p><small><b>Declaration:</b> ${esc(inv.declaration)}</small></p>` : ''}
     ${inv.terms ? `<p><small>${esc(inv.terms)}</small></p>` : ''}
     ${inv.signatory || inv.has_signature ? `<div style="text-align:right;margin-top:12px"><b>For ${esc(inv.seller_name)}</b><br>

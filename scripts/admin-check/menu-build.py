@@ -83,7 +83,9 @@ MAP = {
     'masters/catalogue/products-and-skus': [T('products', 'products', **LIVE)],
     'masters/catalogue/categories': [T('categories', 'products', **LIVE)],
     'masters/catalogue/kits': [T('kits', 'products', **LIVE)],
-    'masters/catalogue/barcodes-and-labels': [T('commerce/skus', 'inventory')],
+    'masters/catalogue/barcodes-and-labels': [T('commerce/skus', 'products'), T('commerce/skus', 'inventory'), T('commerce/skus', 'packing')],  # phase 14: Products rights, or the floor (Inventory, Packing) to scan
+    'masters/catalogue/raw-materials': [T('raw-materials', 'products', **LIVE)],  # phase 14
+    'masters/tax-and-units/units-of-measure': [T('units', 'products', **LIVE)],  # phase 14
     'masters/prices/price-lists': [T('commerce/prices', 'products')],
     'masters/partners/suppliers': [T('commerce/stock', 'inventory', search='tab=suppliers')],
     'masters/partners/vehicles-and-drivers': [T('commerce-settings', 'settings', hash='cs-l-vehicles')],

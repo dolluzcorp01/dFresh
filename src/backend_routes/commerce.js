@@ -221,7 +221,7 @@ async function prepare(q, data, opts = {}) {
   if (!merged.size) throw new CommerceError('Add at least one SKU');
   const keys = [...merged.keys()];
   const [known] = await q.query(
-    `SELECT s.sku_code, s.is_active, s.packs_per_carton, s.min_order_qty, s.sell_unit, p.gst_rate, p.hsn_code, p.category_key
+    `SELECT s.sku_code, s.is_active, s.status, s.packs_per_carton, s.min_order_qty, s.step_qty, s.sell_unit, p.gst_rate, p.hsn_code, p.category_key
        FROM skus s JOIN products p ON p.product_id = s.product_id WHERE s.sku_code IN (?)`, [keys]
   );
   const info = new Map(known.map((k) => [k.sku_code, k]));
@@ -274,6 +274,10 @@ async function prepare(q, data, opts = {}) {
     const st = stockAll.get(k);
     if (!opts.replacement && want > st.available) short.push({ sku_code: k, qty: want, ...st, free: freeLines.some((l) => l.sku_code === k) });
   }
+  // phase 14 (v23): a discontinued pack is sold from its stock only, never back-ordered (not even with the override)
+  const gone = opts.replacement ? [] : short.filter((x) => info.has(x.sku_code) && info.get(x.sku_code).status === 'discontinued');
+  gone.forEach((x) => problems.push(`${x.sku_code} is discontinued: only the ${Math.max(x.available, 0)} in stock can be sold, never back-ordered; ${x.qty} asked`));
+  for (const x of gone) short.splice(short.indexOf(x), 1);
   if (short.length && !data.override_stock) {
     short.forEach((x) => problems.push(`${x.sku_code}: only ${Math.max(x.available, 0)} available (${x.good} in stock${x.expired ? `, ${x.expired} expired` : ''}, ${x.reserved} reserved for other orders); ${x.qty} asked${x.free ? ' (with the free packs of an offer)' : ''}`));
   }

@@ -75,13 +75,22 @@ function StockInDrawer({ stock, onClose, onSaved }) {
   const [addingSupplier, setAddingSupplier] = useState(false);
   const skus = useMemo(() => skusOf(stock, godown), [stock, godown]);
   const seesCost = Boolean(stock.data && stock.data.seesCost);
-  const add = (code) => {
-    const s = skus.get(code);
+  const add = async (raw, carton = null) => {
+    let code = raw;
+    let s = skus.get(code);
+    if (!s && carton === null) {
+      // phase 14: a supplier EAN or a carton code finds its SKU too (Masters > Catalogue > Barcodes and labels)
+      const hit = await api.send('POST', '/catalogue/scan', { code: raw }).catch(() => null);
+      if (hit && hit.sku && skus.get(hit.sku)) { add(hit.sku, hit.kind === 'carton'); return; }
+      setScanMsg({ kind: 'error', text: hit && hit.bad ? `${raw} is a misread: its EAN-13 check digit is wrong. Scan it again.` : `${raw}: no such SKU${hit && hit.noted ? ' (noted for the office)' : ''}` });
+      return;
+    }
     if (!s) { setScanMsg({ kind: 'error', text: `${code}: no such SKU` }); return; }
+    code = s.sku_code || code;
     setLines((ls) => {
       const at = ls.findIndex((l) => l.sku_code === code);
       if (at >= 0) return ls.map((l, i) => (i === at ? { ...l, qty: String(Number(l.qty || 0) + 1) } : l));
-      return [...ls, { sku_code: code, qty: '1', unit: Number(s.packs_per_carton) > 1 && f.kind === 'purchase' ? 'carton' : 'pack', unit_cost: '', batch_no: '', mfg_date: '', expiry_date: '' }];
+      return [...ls, { sku_code: code, qty: '1', unit: carton || (carton === null && Number(s.packs_per_carton) > 1 && f.kind === 'purchase') ? 'carton' : 'pack', unit_cost: '', batch_no: '', mfg_date: '', expiry_date: '' }];
     });
     setScanMsg({ kind: 'ok', text: `${code} ${s.name} - ${s.size_label}` });
   };

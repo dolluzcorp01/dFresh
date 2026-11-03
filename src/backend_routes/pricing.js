@@ -108,6 +108,8 @@ function qtyProblem(sku, qty) {
     const hi = lo + ppc;
     return `${sku.sku_code}: sold in full cartons of ${ppc} packs - ${qty} packs is not a whole number of cartons (${lo ? `${lo} or ` : ''}${hi})`;
   }
+  const step = Number(sku.step_qty) || 1; // phase 14: "in steps of" on the SKU
+  if (step > 1 && qty % step !== 0) return `${sku.sku_code}: ordered in steps of ${step} packs - ${qty} is not a multiple of ${step}`;
   return null;
 }
 
@@ -142,6 +144,19 @@ async function setPrices(q, changes, { effective = null, source, empId, allowPas
     if (p.error) { errors[id] = p.error; continue; }
     if (p.value === null && list === DEFAULT_LIST) { errors[id] = 'The Default price cannot be empty: every other list falls back to it'; continue; }
     clean.set(id, { sku_code: sku, list_key: list, price: p.value });
+  }
+  // phase 14 (v23 1.28): a raw material or a draft is never on a price list, and no list may charge more than the MRP
+  const [meta] = await q.query(`SELECT s.sku_code, s.sku_type, s.mrp, p.gst_rate, p.status FROM skus s LEFT JOIN products p ON p.product_id = s.product_id WHERE s.sku_code IN (?)`, [skuCodes.length ? skuCodes : ['']]);
+  const inclusive = (await commerceSettings.read(q)).prices_include_gst === 'inclusive';
+  for (const [id, c] of clean) {
+    const m = meta.find((x) => x.sku_code === c.sku_code);
+    if (!m) continue;
+    if (m.sku_type === 'raw') { errors[id] = 'A raw material is never on a price list'; clean.delete(id); continue; }
+    if (m.status === 'draft' && c.price !== null) { errors[id] = 'A Draft product is not priced on a list: make it active first'; clean.delete(id); continue; }
+    if (m.mrp !== null && c.price !== null) {
+      const inc = inclusive ? round2(c.price) : round2(c.price * (1 + Number(m.gst_rate) / 100));
+      if (inc > Number(m.mrp) + 0.004) { errors[id] = `Above the MRP: ${inc.toFixed(2)} with GST, MRP ${Number(m.mrp).toFixed(2)}. Nobody may be charged more than MRP`; clean.delete(id); }
+    }
   }
   // a customer type's list with no own price and no Default price either would leave the SKU unpriced
   for (const c of clean.values()) {
@@ -278,6 +293,8 @@ async function updateSku(q, skuCode, values, empId, source = 'grid') {
   if (!Object.keys(set).length) return false;
   await q.query(`UPDATE skus SET ${Object.keys(set).map((k) => `${k} = ?`).join(', ')}, updated_by = ?, updated_at = UTC_TIMESTAMP() WHERE sku_code = ?`,
     [...Object.values(set), empId, skuCode]);
+  // phase 14: a carton size change applies to cartons arriving from today (sku_cartons keeps the history)
+  if ('packs_per_carton' in set) await q.query('INSERT INTO sku_cartons (sku_code, from_date, packs, created_by) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE packs = VALUES(packs), created_by = VALUES(created_by)', [skuCode, istToday(), set.packs_per_carton, empId]);
   await audit(q, { empId, action: 'update', entity: 'sku', entityId: skuCode, before: Object.fromEntries(Object.keys(set).map((k) => [k, before[k]])), after: { ...set, source } });
   return true;
 }

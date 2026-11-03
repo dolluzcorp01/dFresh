@@ -12,6 +12,7 @@ const { Pdf, PAGE_W } = require('./pdf-writer');
 const company = require('./company');
 const customers = require('./customers');
 const { stateName, posReason } = require('../shared/gstStates');
+const upiQr = require('../shared/upiQr');
 
 const SKU_NAME = 'COALESCE(t.name, pt.name, s.product_id)';
 const SKU_JOIN = `JOIN products p ON p.product_id = s.product_id
@@ -242,7 +243,21 @@ async function invoicePdf(q, id) {
   ]);
   if (inv.credit_notes.length) d.para(`Credit notes against this invoice: ${inv.credit_notes.map((c) => `${c.credit_note_no} (${istDay(c.issued_at)}, Rs ${money(c.total)}${c.reason ? ` - ${c.reason}` : ''})`).join('; ')}`, { color: INK });
   if (inv.bank) d.para(`Pay to: ${inv.bank}`, { color: INK });
-  if (inv.upi) d.para(`Pay by UPI: ${inv.upi}`, { color: INK });
+  if (inv.upi) {
+    // phase 14: a UPI QR with the UPI ID, the amount to pay and the invoice number, next to the line
+    const toPay = Number(inv.total) - (walletPaid > 0.005 ? walletPaid : 0);
+    const qr = upiQr.qrMatrix(upiQr.upiLink({ upi: inv.upi, name: inv.seller_name, amount: toPay, note: inv.invoice_no }));
+    const side = 84;
+    const cell = side / (qr.n + 8);
+    d.need(side + 8);
+    const x0 = M;
+    const y0 = d.y + 2;
+    d.pdf.rect(x0, y0, side, side, { fill: '#ffffff', stroke: '#cccccc' });
+    for (let r = 0; r < qr.n; r += 1) for (let c = 0; c < qr.n; c += 1) if (qr.dark(r, c)) d.pdf.rect(x0 + (c + 4) * cell, y0 + (r + 4) * cell, cell + 0.05, cell + 0.05, { fill: INK });
+    d.pdf.text(x0 + side + 10, y0 + 18, `Pay by UPI: ${inv.upi}`, { size: 9, bold: true, color: INK });
+    d.pdf.text(x0 + side + 10, y0 + 34, `Scan with any UPI app: Rs ${money(toPay)} for ${inv.invoice_no}`, { size: 8.5, color: GREY });
+    d.y = y0 + side + 8;
+  }
   if (inv.declaration) d.para(`Declaration: ${inv.declaration}`);
   if (inv.terms) d.para(inv.terms);
   if (inv.signatory || inv.has_signature) {

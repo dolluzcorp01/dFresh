@@ -37,16 +37,16 @@ export default function ImportExport() {
     const r = await up.send('dry', '/products/import?dryRun=1', checked);
     setReport({ ...r, file: checked });
   });
-  const hasChanges = report && report.summary.added + report.summary.changed + report.summary.removed + report.summary.categories > 0;
+  const hasChanges = report && report.summary.added + report.summary.changed + report.summary.removed + report.summary.categories + (report.summary.skus || 0) > 0;
   const canApply = Boolean(report && report.dryRun && report.ok && report.file === file && report.fileHash && hasChanges);
   const confirm = useConfirm();
   const apply = async () => {
     if (!canApply) return;
     const s = report.summary;
-    if (!(await confirm({ title: 'Apply these changes to the live site?', message: `${s.added} added, ${s.changed} changed, ${s.removed} switched off, ${s.categories} category change(s). Visitors see them at once.`, action: 'Apply changes', danger: true }))) return;
+    if (!(await confirm({ title: 'Apply these changes to the live site?', message: `${s.added} added, ${s.changed} changed, ${s.removed} switched off, ${s.categories} category change(s), ${s.skus || 0} SKU change(s). Visitors see them at once.`, action: 'Apply changes', danger: true }))) return;
     act.run(async () => {
       const r = await up.send('apply', `/products/import?dryRun=0&hash=${encodeURIComponent(report.fileHash)}`, file);
-      setApplied({ added: r.summary.added, changed: r.summary.changed, removed: r.summary.removed, categories: r.summary.categories });
+      setApplied({ added: r.summary.added, changed: r.summary.changed, removed: r.summary.removed, categories: r.summary.categories, skus: r.summary.skus || 0 });
       reset();
     });
   };
@@ -73,7 +73,7 @@ export default function ImportExport() {
         {applied && (
           <Notice kind="ok">
             Applied: {applied.added} added, {applied.changed} changed, {applied.removed} deactivated
-            {applied.categories ? `, ${applied.categories} category change(s)` : ''}.{' '}
+            {applied.categories ? `, ${applied.categories} category change(s)` : ''}{applied.skus ? `, ${applied.skus} SKU change(s)` : ''}.{' '}
             {canExport && <button type="button" className="a-link" onClick={exportXlsx} disabled={act.busy}>Download the updated list</button>}
           </Notice>
         )}
@@ -96,7 +96,7 @@ function Report({ r }) {
   const s = r.summary;
   return (
     <div className="a-report">
-      <p><strong>Dry run:</strong> {s.added} added, {s.changed} changed, {s.removed} removed (deactivated), {s.categories} category change(s), {s.errors} error(s).</p>
+      <p><strong>Dry run:</strong> {s.added} added, {s.changed} changed, {s.removed} removed (deactivated), {s.categories} category change(s), {s.skus || 0} SKU change(s), {s.errors} error(s).</p>
       {r.errors.length > 0 && <Notice kind="error"><ul>{r.errors.map((e) => <li key={e}>{e}</li>)}</ul></Notice>}
       {r.unknownColumns.length > 0 && <Notice kind="warn">Unknown columns (not imported): {r.unknownColumns.join(', ')}</Notice>}
       {r.unknownSheets.length > 0 && <Notice kind="warn">Unknown sheets (not imported): {r.unknownSheets.join(', ')}</Notice>}
@@ -122,6 +122,14 @@ function Report({ r }) {
             <tr key={`${c.category}-${d.field}`}><td><code>{c.category}</code></td><td>{d.field}</td>
               <td lang={langOf(d.field)}>{show(d.before)}</td><td lang={langOf(d.field)}>{show(d.after)}</td></tr>
           )))}</tbody></table>
+        </>
+      )}
+      {(r.skus || []).length > 0 && (
+        <>
+          <h3>SKUs (packs)</h3>
+          <table className="a-table a-difftable"><tbody>{r.skus.map((c) => (
+            <tr key={c.sku}><td><code>{c.sku}</code></td><td>{c.kind === 'new' ? 'New SKU' : 'Change'}</td><td>{c.diff.join('; ')}</td></tr>
+          ))}</tbody></table>
         </>
       )}
       {r.readOnly.length > 0 && (

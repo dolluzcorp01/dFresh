@@ -229,10 +229,15 @@ function SkuDrawer({ sku, meta, canEdit, onClose, onSaved }) {
         {canEdit && <p><button type="button" className="a-btn a-btn-sm" disabled={!taxDirty || act.busy} onClick={() => send(`/prices/products/${encodeURIComponent(sku.product_id)}`, tax, `${sku.name}: HSN, GST and batch tracking saved for every size`)}>Save tax and batches</button></p>}
       </fieldset>
       <h3>Prices today ({meta.basis.short})</h3>
+      <p className="a-muted">MRP {sku.mrp != null ? `${rs(sku.mrp)} with GST: no list may charge more` : 'not set (Products and SKUs, the pack)'}{meta.seesCost ? ` · Cost ${sku.std_cost != null ? Number(sku.std_cost).toFixed(2) : 'not set'} (standard, without GST)` : ''}</p>
       <table className="a-table">
         <tbody>{meta.lists.map((l) => {
           const own = sku.own[l.key];
-          return <tr key={l.key}><th scope="row">{l.label}</th><td className="a-num">{own != null ? rs(own) : sku.own.default != null && l.key !== 'default' ? <span className="a-muted">{rs(sku.own.default)} (Default)</span> : <span className="a-miss">Missing</span>}</td></tr>;
+          const p = own != null ? own : l.key !== 'default' ? sku.own.default : null;
+          const ex = p != null && meta.basis.inclusive ? p / (1 + Number(sku.gst_rate) / 100) : p;
+          const below = meta.seesCost && sku.std_cost != null && ex != null && ex < sku.std_cost - 0.004;
+          return <tr key={l.key}><th scope="row">{l.label}</th><td className="a-num">{own != null ? rs(own) : sku.own.default != null && l.key !== 'default' ? <span className="a-muted">{rs(sku.own.default)} (Default)</span> : <span className="a-miss">Missing</span>}
+            {below && <small className="a-bad" role="note"> sells below cost ({Number(ex).toFixed(2)} without GST, cost {Number(sku.std_cost).toFixed(2)})</small>}</td></tr>;
         })}</tbody>
       </table>
       {sku.upcoming.length > 0 && <p>Scheduled: {sku.upcoming.map((u) => `${listLabel(u.list_key)} ${u.price == null ? 'back to Default' : rs(u.price)} from ${dmy(u.effective_from)}`).join('; ')}</p>}
