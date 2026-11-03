@@ -1423,11 +1423,15 @@ route('put', '/users/:empId', 'users:edit', async (req) => tx(async (q) => {
       delete set.role_id;
     }
   }
+  // The Super admin brings a person back at once (the remedy when the other Admin was marked as left: nobody else could
+  // sign it), only as they were: their role, limit and godowns stay as they left them; anything wider still waits.
+  let superBack = false;
   if (set.is_active === 1 && Number(before.is_active) === 0) {
     const info = await foundation.roleInfo(q, set.role_id || before.role_id);
     const [[lim]] = await q.query('SELECT limit_kind, limit_amount FROM admin_users WHERE emp_id = ?', [before.emp_id]);
     const own = lim.limit_kind === 'role' ? info.limit : { kind: lim.limit_kind, amount: lim.limit_amount === null ? null : Number(lim.limit_amount) };
-    if (foundation.signs(info, own)) {
+    superBack = Number(req.admin.role_id) === permissions.SUPERADMIN_ROLE_ID && foundation.signs(info, own);
+    if (foundation.signs(info, own) && !superBack) {
       await q.query('UPDATE admin_users SET pending_add = 1 WHERE emp_id = ?', [before.emp_id]);
       waiting.push((await secondAdmin.ask(q, { t: 'staffback', dk: `staffback:${before.emp_id}`, payload: { emp_id: before.emp_id },
         summary: `Bring back ${before.name || before.emp_id} as ${info.name}, signs up to ${approvalEngine.limitText(own)}` }, by(req))).message);
@@ -1436,6 +1440,12 @@ route('put', '/users/:empId', 'users:edit', async (req) => tx(async (q) => {
   }
   if (set.is_active === 0 && Number(before.is_active) === 1) { set.left_at = new Date(); set.left_by = by(req); }
   if (Object.keys(set).length) await q.query(`UPDATE admin_users SET ${Object.keys(set).map((c) => `${c} = ?`).join(', ')} WHERE emp_id = ?`, [...Object.values(set), before.emp_id]);
+  if (superBack) { // every Admin is told at once
+    const back = await empName(q, before.emp_id);
+    const [[now]] = await q.query('SELECT r.name AS role_name, a.limit_kind, a.limit_amount, a.godowns_all FROM admin_users a JOIN roles r ON r.role_id = a.role_id WHERE a.emp_id = ?', [before.emp_id]);
+    await notifications.adminAlert(q, { subject: `${back} brought back by the Super admin`, ref: `back ${before.emp_id}`, by: by(req),
+      body: `${await empName(q, by(req))} (Super admin) brought ${back} back at once, as before they left: ${now.role_name}, limit ${now.limit_kind === 'role' ? 'role default' : now.limit_kind === 'amount' ? `Rs ${Number(now.limit_amount)}` : now.limit_kind}, ${Number(now.godowns_all) ? 'every godown' : 'their godowns'}. Anything wider waits for a second Admin.` });
+  }
   if (set.is_active === 0 && permissions.isAdminRole(before.role_id)) { // every Admin is told at once
     const gone = await empName(q, before.emp_id);
     const marker = await empName(q, by(req));
@@ -1445,7 +1455,7 @@ route('put', '/users/:empId', 'users:edit', async (req) => tx(async (q) => {
   const [[after]] = await q.query(`${USER_SELECT} WHERE a.emp_id = ?`, [before.emp_id]);
   const action = set.role_id && set.role_id !== before.role_id ? 'role_change' : set.is_active === 0 ? 'deactivate' : set.is_active === 1 ? 'reactivate' : 'update';
   await audit(q, { empId: by(req), action, entity: 'admin_user', entityId: before.emp_id, before: { role: before.role_name, is_active: before.is_active, notify_email: before.notify_email },
-    after: { role: after.role_name, is_active: after.is_active, notify_email: after.notify_email, ...(waiting.length ? { waiting } : {}) } });
+    after: { role: after.role_name, is_active: after.is_active, notify_email: after.notify_email, ...(waiting.length ? { waiting } : {}), ...(superBack ? { brought_back_by_super_admin: true } : {}) } });
   return { ...withNames([after], await dadminNames(q))[0], waiting };
 }));
 
