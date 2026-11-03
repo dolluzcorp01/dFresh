@@ -84,18 +84,20 @@ export default function Switches() {
                     {s.example && <em>{s.example}</em>}
                     {s.loosens && <small className="a-muted">{Array.isArray(s.loosens) ? `Changing it to "${shown(s, s.loosens[1])}"` : LOOSEN_WORDS[s.loosens]} waits for a second Admin.</small>}
                     {s.waiting && <small className="a-nsw-wait">Waits for a second Admin: {s.waiting.summary} (request {s.waiting.approval_id})</small>}
-                    {s.updated_by && <small className="a-muted">Changed {fmtDate(s.updated_at)} by {s.updated_by}</small>}
+                    {s.fixed_from && <small className="a-muted">Read only. {s.fixed_from}.</small>}
+                    {s.server_note && <small className="a-nsw-wait">{s.server_note}</small>}
+                    {s.updated_by && !s.fixed_from && <small className="a-muted">Changed {fmtDate(s.updated_at)} by {s.updated_by}</small>}
                   </div>
                   <div className="a-nsw-ctl">
                     {s.type === 'bool' && (
                       <span className="a-switch-row">
-                        <button type="button" role="switch" aria-checked={s.value === '1'} aria-label={s.label} className="a-switch" disabled={ro}
+                        <button type="button" role="switch" aria-checked={s.value === '1'} aria-label={s.label} className="a-switch" disabled={ro || Boolean(s.fixed_from)}
                           onClick={() => save(s, s.value === '1' ? '0' : '1')}><span className="a-switch-knob" aria-hidden="true" /></button>
                         <strong>{s.value === '1' ? 'On' : 'Off'}</strong>
                       </span>
                     )}
                     {s.type === 'select' && (
-                      <select value={s.value} aria-label={s.label} disabled={ro} onChange={(e) => save(s, e.target.value)}>
+                      <select value={s.value} aria-label={s.label} disabled={ro || Boolean(s.fixed_from)} onChange={(e) => save(s, e.target.value)}>
                         {s.options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                       </select>
                     )}
@@ -103,7 +105,7 @@ export default function Switches() {
                       <>
                         <span className="a-above">
                           {s.unit === 'Rs' && <span>Rs</span>}
-                          <input type="number" className="a-numin" min={s.min ?? 0} max={s.max ?? undefined} step={s.type === 'decimal' ? '0.01' : '1'} aria-label={s.label} disabled={ro}
+                          <input type="number" className="a-numin" min={s.min ?? 0} max={s.max ?? undefined} step={s.type === 'decimal' ? '0.01' : '1'} aria-label={s.label} disabled={ro || Boolean(s.fixed_from)}
                             value={s.key in typed ? typed[s.key] : s.value} onChange={(e) => setTyped((t) => ({ ...t, [s.key]: e.target.value }))}
                             onBlur={() => commitNumber(s)} onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />
                           {s.unit && s.unit !== 'Rs' && <span className="a-muted">{s.unit}</span>}

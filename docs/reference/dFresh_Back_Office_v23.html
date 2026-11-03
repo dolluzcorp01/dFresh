@@ -707,7 +707,7 @@ function subPerms(){ var o=allPerms(['setup']); o.setup.view=true; return o; }
 function addFoundationState(D){
   D.kinds=JSON.parse(JSON.stringify(KINDS0));
   /* Company: live site_settings carried over (legal name, CIN, phones, e-mail, office address, map, site URL); the rest is new */
-  D.company={name:'Dolluz Corporation (OPC) Pvt Ltd',brand:'dFresh',type:'One Person Company (OPC) Private Limited',cin:'U72501TN2018OPC120419',website:'https://dfresh.in',
+  D.company={name:'Dolluz Corporation (OPC) Pvt Ltd',brand:'dFresh',type:'One Person Company (OPC) Private Limited',cin:'U72501TN2018OPC120419',website:'https://dfresh.us',
     logoSq:REAL.icon,logoWide:'',
     gstin:'',pan:'',gstType:'regular',tan:'',udyam:'',einvoice:false,eway:true,ewayLimit:50000,
     addr:{l1:'Padur',l2:'',city:'Chennai',pin:'',state:'Tamil Nadu'},mapq:'Padur, Chennai, Tamil Nadu',
@@ -8289,7 +8289,7 @@ ACT.saveCompany=function(){ if (!isAdm(me())) return; clearErrs(); var c=D.compa
   if (k==='profile'){ var nm=val('coName').trim(), br=val('coBrand').trim(), cin=val('coCin').trim().toUpperCase(), web=val('coWeb').trim();
     if (!nm) e('coName','The legal name is needed.'); if (!br) e('coBrand','The brand is needed.');
     if (cin && !/^[LU][0-9]{5}[A-Z]{2}[0-9]{4}[A-Z]{3}[0-9]{6}$/.test(cin)) e('coCin','A CIN is 21 characters, like U72501TN2018OPC120419.');
-    if (web && !/^https:\/\/[^\s.]+\.[^\s]+$/.test(web)) e('coWeb','Start with https:// and give a full address, like https://dfresh.in.');
+    if (web && !/^https:\/\/[^\s.]+\.[^\s]+$/.test(web)) e('coWeb','Start with https:// and give a full address, like https://dfresh.us.');
     if (failed(bad)) return;
     set(c,'name',nm,'Legal name'); set(c,'brand',br,'Brand'); set(c,'type',val('coType'),'Company type'); set(c,'cin',cin,'CIN'); set(c,'website',web,'Website'); }
   if (k==='tax'){ var g=val('coGst').trim().toUpperCase(), pan=val('coPan').trim().toUpperCase(), tan=val('coTan').trim().toUpperCase(), ud=val('coUdyam').trim().toUpperCase(), gt=val('coGstType'), ei=val('coEinv')==='1', ew=val('coEway')==='1', el=String(val('coEwayLim')).trim(), fs=c.addr.state;

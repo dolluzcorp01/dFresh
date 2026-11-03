@@ -191,10 +191,11 @@ function OnOffSwitch({ s, act, onSaved, label }) {
   });
   return (
     <span className="a-switch-row">
-      <button type="button" role="switch" aria-checked={on} aria-label={label} className="a-switch" onClick={flip} disabled={act.busy}>
+      <button type="button" role="switch" aria-checked={on} aria-label={label} className="a-switch" onClick={flip} disabled={act.busy || Boolean(s.fixed_from)}>
         <span className="a-switch-knob" aria-hidden="true" />
       </button>
       <strong>{on ? 'On' : 'Off'}</strong>
+      {s.fixed_from && <small className="a-muted">Read only. {s.fixed_from}.</small>}
     </span>
   );
 }

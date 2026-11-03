@@ -165,7 +165,7 @@ for f in $(ls database/migrations/*.sql | sort); do
   echo "== $f"; sudo mysql --default-character-set=utf8mb4 dfresh < "$f" || { echo "FAILED: $f"; break; }
 done
 ```
-The 51 migrations, in the order they must run (tick each; a later update applies only the new ones):
+The 52 migrations, in the order they must run (tick each; a later update applies only the new ones):
 
 - [ ] `20261009_phase3_home_ui_text.sql`
 - [ ] `20261009_phase4_products_ui_text.sql`
@@ -253,6 +253,8 @@ The 51 migrations, in the order they must run (tick each; a later update applies
       (qrcode-generator, the UPI QR on invoices) in the same release.
 - [ ] `20261104_stage2_14_02_label_words.sql` - the pack / carton / shelf label words in English, Tamil and Hindi
       (group "Pack labels", never sent to the website)
+- [ ] `20261104_stage2_14_03_site_domain.sql` - the stored website (company, and site_settings site_url where it
+      still exists) set to https://dfresh.us wherever it held the old .in address
 
 The 11 commerce files replace the 12 of the commerce branch's phases (consolidated on 21 Oct 2026, never applied on
 any database but the `dfresh_commerce` demo): each table in its final shape, no file patches another. Built on a

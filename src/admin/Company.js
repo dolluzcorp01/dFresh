@@ -3,7 +3,8 @@
 // and an Admin open it (v23 "Admin only"). Bank accounts: add (the number typed twice), change, make default, make
 // inactive, bring back - every one waits for a second Admin and is never overridden; an account is never deleted.
 // The legal name, CIN, GSTIN, e-mail, phone and WhatsApp are the same rows the public site prints (one source). The
-// logo stays with the website (read only here). "Books closed up to" is the phase 12b setting (moving it back waits).
+// logo stays with the website (read only here). The website address is the server's PUBLIC_SITE_URL: read only, with
+// where it comes from. "Books closed up to" is the phase 12b setting (moving it back waits).
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from './adminApi';
@@ -124,7 +125,7 @@ function Profile({ d }) {
         <KV k="Brand" v={p.brand} need />
         <KV k="Company type" v={p.company_type} need />
         <KV k="CIN" v={p.cin} need />
-        <KV k="Website" v={p.website} />
+        <KV k="Website">{p.website} <small className="a-muted">{p.website_from}</small></KV>
       </dl>
       <p className="a-hint-s">The legal name and CIN are the same ones the website footer prints, so they are changed in one place.</p>
     </>
@@ -278,7 +279,7 @@ function System({ d }) {
 
 // ---------------------------------------------------------------- Change: one drawer per section
 function startOf(sec, d) {
-  if (sec === 'profile') return { ...d.profile };
+  if (sec === 'profile') { const { website, website_from, ...p } = d.profile; return p; } // eslint-disable-line no-unused-vars
   if (sec === 'tax') return { gstin: d.tax.gstin, pan: d.tax.pan, gst_type: d.tax.gst_type, tan: d.tax.tan, udyam: d.tax.udyam };
   if (sec === 'address') return { line1: d.address.line1, line2: d.address.line2, city: d.address.city, pin: d.address.pin, state_code: d.address.state_code, map_query: d.address.map_query, email: d.address.email, phone: d.address.phone, whatsapp: d.address.whatsapp };
   if (sec === 'invoice') return { show_bank: d.invoice.show_bank ? '1' : '0', show_upi: d.invoice.show_upi ? '1' : '0', signatory: d.invoice.signatory, round_off: d.invoice.round_off ? '1' : '0', copies: d.invoice.copies, declaration: d.invoice.declaration, terms: d.invoice.terms };
@@ -325,7 +326,7 @@ function SectionDrawer({ sec, d, onClose, onSaved }) {
         <Field def={fd('brand', 'Brand', { required: true })} value={f.brand} onChange={set('brand')} />
         <Field def={fd('company_type', 'Company type', { type: 'select', options: d.options.types, allowEmpty: false })} value={f.company_type} onChange={set('company_type')} />
         <Field def={fd('cin', 'CIN', { info: '21 characters, like U72501TN2018OPC120419. The website footer prints it.' })} value={f.cin} onChange={up('cin')} />
-        <Field def={fd('website', 'Website', { info: 'Starts with https://' })} value={f.website} onChange={set('website')} />
+        <Field def={fd('website', 'Website', { type: 'readonly', help: d.profile.website_from, info: 'Documents and e-mails use this address. It is the server setting PUBLIC_SITE_URL, not typed here.' })} value={d.profile.website} onChange={() => {}} />
       </div>
     );
   }

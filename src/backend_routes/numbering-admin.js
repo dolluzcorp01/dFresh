@@ -16,6 +16,7 @@
 const { audit } = require('./audit');
 const numbering = require('./numbering');
 const secondAdmin = require('./second-admin');
+const commerceSettings = require('./commerce-settings');
 
 const SW_GROUPS = ['Turn on', 'Stock', 'Orders', 'Delivery', 'Money', 'Wallet', 'Returns', 'Approvals', 'System'];
 const PREFIX_RE = /^[A-Z][A-Z0-9]{1,5}$/;
@@ -155,8 +156,11 @@ function register({ route, tx, db, by, InputError, canDo }) {
     const switches = rows.map((r) => {
       const range = secondAdmin.RANGE[r.setting_key] || null;
       const w = waits.find((x) => x.dk === `switch:${r.setting_key}`);
+      const fx = commerceSettings.fixedOf(r.setting_key); // decided by the code: shown read only with where it comes from
       return {
-        key: r.setting_key, label: r.label, about: r.help, example: r.sw_example, group: r.sw_group, type: r.value_type, value: r.value,
+        key: r.setting_key, label: r.label, about: r.help, example: r.sw_example, group: r.sw_group, type: r.value_type, value: fx ? fx.value : r.value,
+        fixed_from: fx ? fx.from : null,
+        server_note: r.setting_key === 'notify_email' && process.env.MAIL_ENABLED !== 'true' ? 'This server sends no e-mail at all: MAIL_ENABLED is off in its settings (set on the server by the developer).' : null,
         options: r.options ? JSON.parse(r.options) : null, unit: r.sw_unit, min: range ? range[0] : null, max: range ? range[1] : null,
         loosens: secondAdmin.LOOSEN[r.setting_key] || null, tbc: Number(r.tbc) === 1, updated_by: r.updated_by, updated_at: r.updated_at,
         waiting: w ? { approval_id: w.approval_id, summary: w.summary } : null,

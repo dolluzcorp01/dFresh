@@ -1053,7 +1053,7 @@ INSERT INTO site_settings (setting_key, setting_value, is_public, description) V
   ('ga4_measurement_id', '', 1, 'TO BE PROVIDED, e.g. G-XXXXXXX'),
   ('gsheet_spreadsheet_id', '', 0, 'TO BE PROVIDED - lead sheet (tabs per form)'),
   ('recaptcha_site_key', '', 1, 'optional - honeypot + rate limit are always on'),
-  ('site_url', 'https://dfresh.in', 1, 'TO CONFIRM domain (brief: dfresh.com is not owned)');
+  ('site_url', 'https://dfresh.us', 1, 'TO CONFIRM domain (brief: dfresh.com is not owned)');
 
 INSERT INTO admin_users (emp_id, role, is_active, created_by) VALUES
   ('DZIND002', 'admin', 1, 'seed'),

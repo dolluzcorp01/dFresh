@@ -134,6 +134,11 @@ function SettingRow({ row, roles, value, pending, busy, onChange, onSave, onCanc
     control = <input type={row.value_type === 'text' ? 'text' : 'number'} min={row.value_type === 'text' ? undefined : range ? range[0] : 0} max={range ? range[1] : undefined} step={row.value_type === 'decimal' ? '0.01' : '1'}
       value={value} aria-label={row.label} onChange={(e) => onChange(e.target.value)} className={row.value_type === 'text' ? 'a-wide' : 'a-price'} />;
   }
+  // decided by the code (commerce-settings.js FIXED): the value as text, read only, with where it comes from
+  if (row.fixed_from) {
+    const opt = row.value_type === 'select' && row.options.find(([v]) => v === row.value);
+    control = <span className="a-fixedval"><b>{row.value_type === 'bool' ? (row.value === '1' ? 'On' : 'Off') : opt ? opt[1] : row.value}</b><small className="a-muted">Read only. {row.fixed_from}.</small></span>;
+  }
   return (
     <tr id={`cs-${row.setting_key}`} className={pending ? 'a-pending' : undefined}>
       <td className="a-cs-label"><b>{row.label}</b>{row.tbc && <Pill tone="warn" className="a-tbp">To be confirmed</Pill>}
@@ -141,7 +146,7 @@ function SettingRow({ row, roles, value, pending, busy, onChange, onSave, onCanc
         {waitHint(row.setting_key) && <small className="a-muted a-person-sub">{waitHint(row.setting_key)}</small>}</td>
       <td className="a-set-val">{control}
         {row.setting_key === 'books_closed_to' && value && <button type="button" className="a-link" onClick={() => onChange('')}>Not closed (empty)</button>}
-        {row.updated_by && !pending && <small className="a-muted">Changed {fmtDate(row.updated_at)} by {row.updated_by}</small>}</td>
+        {row.updated_by && !pending && !row.fixed_from && <small className="a-muted">Changed {fmtDate(row.updated_at)} by {row.updated_by}</small>}</td>
       <td>{pending && (
         <span className="a-pending-btns">
           <button type="button" className="a-btn a-btn-sm" disabled={busy} onClick={onSave}>Save</button>

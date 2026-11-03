@@ -1104,9 +1104,12 @@ route('delete', '/brochures/:lang', 'content:delete', async (req) => {
 // ---------------------------------------------------------------------------------------------
 // Settings, admin users, audit log (admin only)
 // ---------------------------------------------------------------------------------------------
+const SEO_NOINDEX_FROM = 'Set on the server by the developer (SEO_NOINDEX): this server is never indexed';
 route('get', '/settings', 'settings:view', async () => {
   const [rows] = await db.query('SELECT setting_key, setting_value, is_public, description, updated_by, updated_at FROM site_settings ORDER BY setting_key');
-  return rows;
+  // SEO_NOINDEX=true (a staging server) keeps the site out of search engines whatever the switch says (seo.js)
+  return rows.map((r) => (r.setting_key === 'site_indexing' && process.env.SEO_NOINDEX === 'true'
+    ? { ...r, setting_value: 'off', fixed_from: SEO_NOINDEX_FROM } : r));
 });
 
 // Settings holding a picture (uploaded below; typed values are refused) and settings naming a product.
@@ -1127,6 +1130,7 @@ route('put', '/settings/:key', 'settings:edit', async (req) => {
     throw new InputError('Only an admin can change the mail sender', 403);
   }
   if (req.params.key === 'two_step_login') throw new InputError('Use the switch: turning two-step sign-in on or off has its own steps');
+  if (req.params.key === 'site_indexing' && process.env.SEO_NOINDEX === 'true') throw new InputError(`Not changed here. ${SEO_NOINDEX_FROM}.`, 409);
   // phones, e-mails, GA4 ID, sheet ID: the same rules as the admin page (src/shared/settingRules.js), tidied
   if (settingRules.DERIVED[req.params.key]) throw new InputError(`${req.params.key} follows ${settingRules.DERIVED[req.params.key]}: change that one instead`);
   const checked = settingRules.checkSetting(req.params.key, raw);
@@ -3617,7 +3621,7 @@ route('get', '/commerce-settings', 'settings:view', async () => {
   const fy = financialYear();
   const yy = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', year: '2-digit' }).format(new Date());
   return {
-    settings: rows.map((r) => ({ ...r, tbc: Number(r.tbc) === 1, options: r.options ? JSON.parse(r.options) : null })),
+    settings: rows.map((r) => { const fx = commerceSettings.fixedOf(r.setting_key); return { ...r, tbc: Number(r.tbc) === 1, options: r.options ? JSON.parse(r.options) : null, ...(fx ? { value: fx.value, fixed_from: fx.from } : {}) }; }),
     lists, roles, invoiceDemo: commerceSettings.invoiceIsDemo(cs),
     numbers: { invoice: `${cs.invoice_prefix}/${fy}/${String(cs.invoice_start_no || 1).padStart(4, '0')}`, creditNote: `${cs.credit_note_prefix}/${fy}/0001`, order: `${cs.order_prefix}-${yy}nnnn`, ret: `${cs.return_prefix}-${yy}nnnn`, fy },
   };

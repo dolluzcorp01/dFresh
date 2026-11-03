@@ -7,6 +7,21 @@ const numbering = require('./numbering');
 
 const GSTIN_PLACEHOLDER = 'TO-BE-CONFIRMED';
 
+// Settings whose real value is decided by the code, not by the stored row: the admin shows them read only with
+// `from` (where the value comes from) and the PUT refuses them. key -> () => { value (stored-text form), from }
+const BY_CODE = 'Set in code by the developer';
+const FIXED = {
+  notify_whatsapp: () => ({ value: '0', from: `${BY_CODE}: no WhatsApp provider is set up yet` }),
+  notify_sms: () => ({ value: '0', from: `${BY_CODE}: no SMS provider is set up yet` }),
+  einvoice_mode: () => ({ value: 'off', from: `${BY_CODE}: IRN generation is not built yet` }),
+  ewaybill_mode: () => ({ value: 'off', from: `${BY_CODE}: e-way bills from the admin are not built yet` }),
+  razorpay_payment_links: () => ({ value: '0', from: `${BY_CODE}: Razorpay is not built yet` }),
+  accounting_export: () => ({ value: 'csv', from: `${BY_CODE}: the export is a CSV journal; Tally and Zoho are not built yet` }),
+  order_sources: () => ({ value: require('../shared/customerRules').SOURCES.join(', '), from: `${BY_CODE} (the customer Source list)` }), // eslint-disable-line global-require
+};
+/** { value, from } when the code decides this setting, else null */
+const fixedOf = (key) => (FIXED[key] ? FIXED[key]() : null);
+
 function typed(row) {
   const v = row.value;
   switch (row.value_type) {
@@ -52,6 +67,8 @@ async function read(q) {
 function check(row, raw, roleIds = []) {
   const s = String(raw ?? '').trim();
   const bad = (error) => ({ value: s, error });
+  const fx = fixedOf(row.setting_key);
+  if (fx) return bad(`Not changed here. ${fx.from}.`);
   switch (row.value_type) {
     case 'bool': {
       if (!(s === '1' || s === '0' || s === 'true' || s === 'false')) return bad('On or off');
@@ -157,4 +174,4 @@ function checkListRow(list, raw, { creating }) {
   return { values, errors };
 }
 
-module.exports = { read, check, typed, invoiceIsDemo, LISTS, checkListRow, GSTIN_PLACEHOLDER };
+module.exports = { read, check, typed, invoiceIsDemo, LISTS, checkListRow, GSTIN_PLACEHOLDER, fixedOf };

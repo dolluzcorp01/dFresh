@@ -2,7 +2,7 @@
 // Sections, each with its own Change: Profile, Tax and compliance, Address and contact, Bank accounts, Invoice
 // preferences, System. Only the Super admin and an Admin open it (v23 "Admin only"); a Sub-admin is refused.
 // Data (migration 20261103_stage2_13_01_company.sql):
-// - the `company` row (brand, type, website, PAN, GST type, TAN, Udyam, registered office, invoice preferences,
+// - the `company` row (brand, type, PAN, GST type, TAN, Udyam, registered office, invoice preferences,
 //   signature, date format);
 // - the facts the public site shows keep ONE source, site_settings (company_name, cin, gstin, office_phone,
 //   public_email, whatsapp_display and its whatsapp_number): this page writes those rows, so the site prints exactly
@@ -14,6 +14,8 @@
 // - "Books closed up to" stays the Commerce setting books_closed_to (phase 12b, PUT /commerce-settings/books_closed_to).
 // facts(q) is the seller every invoice, PDF and statement prints (and what commerce-settings.js still gives as
 // invoice_seller_* / invoice_round_off).
+// The website is not typed here: it is the server's PUBLIC_SITE_URL (config/urls.js siteBase), the same address the
+// e-mails, links and SEO use. The page shows it read only; company.website is kept in step by migration only.
 const crypto = require('crypto');
 const multer = require('multer');
 const sharp = require('sharp');
@@ -22,6 +24,7 @@ const secondAdmin = require('./second-admin');
 const photoCheck = require('./photo-check');
 const { GST_STATES, stateName, isStateCode } = require('../shared/gstStates');
 const { checkSetting, whatsappNumber } = require('../shared/settingRules');
+const { siteBase } = require('../../config/urls');
 
 const SITE_KEYS = ['company_name', 'cin', 'gstin', 'office_phone', 'public_email', 'whatsapp_display'];
 const GSTIN_RE = /^\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
@@ -29,7 +32,6 @@ const PAN_RE = /^[A-Z]{5}\d{4}[A-Z]$/;
 const TAN_RE = /^[A-Z]{4}\d{5}[A-Z]$/;
 const UDYAM_RE = /^UDYAM-[A-Z]{2}-\d{2}-\d{7}$/;
 const CIN_RE = /^[LU]\d{5}[A-Z]{2}\d{4}[A-Z]{3}\d{6}$/;
-const WEB_RE = /^https:\/\/[^\s.]+\.\S+$/;
 const PIN_RE = /^[1-9]\d{5}$/;
 const ACC_RE = /^\d{9,18}$/;
 const IFSC_RE = /^[A-Z]{4}0[A-Z0-9]{6}$/;
@@ -39,13 +41,14 @@ const ACCOUNT_TYPES = ['Current', 'Savings', 'Cash credit / OD'];
 const COPIES = ['Original', 'Duplicate', 'Triplicate'];
 const DATE_FORMATS = ['DD-MM-YYYY', 'DD/MM/YYYY'];
 const SIGN_MAX = 500 * 1024;
+const WEBSITE_FROM = 'Set on the server by the developer';
 const ADMIN_ONLY = 'Admin only: Company holds the legal details and the bank account printed on every invoice, so only the Super admin or an Admin opens it.';
 
 const mask = (a) => (a ? `XXXX${String(a).slice(-4)}` : '');
 const txt = (v, max) => String(v ?? '').trim().slice(0, max);
 const bool = (v) => (v === true || v === 1 || v === '1' || v === 'true' ? 1 : 0);
 
-const COMPANY_COLS = `company_id, brand, company_type, website, pan, gst_type, tan, udyam, addr_line1, addr_line2, city, pin, state_code, map_query,
+const COMPANY_COLS = `company_id, brand, company_type, pan, gst_type, tan, udyam, addr_line1, addr_line2, city, pin, state_code, map_query,
   show_bank, show_upi, signatory, (signature_png IS NOT NULL) AS has_signature, declaration, terms, round_off, copies, date_format, updated_by, updated_at`;
 const BANK_COLS = 'bank_id, holder_name, bank_name, branch, account_no, ifsc, account_type, upi_id, old_text, status, is_default, created_by, created_at, updated_by, updated_at';
 
@@ -81,7 +84,7 @@ async function defaultBank(q) {
  * The seller every document prints, read now (an invoice keeps its own copy from the day it was issued):
  * { name, brand, gstin, pan, cin, state_code (the GST state), state, address, gst_type, round_off (bool), phone, email,
  *   bank (the "Pay to" line of the default approved account, null when none or switched off), upi (its UPI ID for the
- *   QR, null when none or switched off), signatory, declaration, terms, copies, has_signature }
+ *   QR, null when none or switched off), signatory, declaration, terms, copies, has_signature, website (PUBLIC_SITE_URL) }
  */
 async function facts(q) {
   const [c, s, b] = [await companyRow(q), await siteFacts(q), await defaultBank(q)];
@@ -91,6 +94,7 @@ async function facts(q) {
     gst_type: c.gst_type, round_off: c.round_off === 1, phone: s.office_phone, email: s.public_email,
     bank: c.show_bank && b ? bankLine(b) : null, upi: c.show_upi && b && b.upi_id ? b.upi_id : null,
     signatory: c.signatory || '', declaration: c.declaration || '', terms: c.terms || '', copies: c.copies, has_signature: c.has_signature,
+    website: siteBase(),
   };
 }
 /** the signature as PNG (null when none) */
@@ -215,7 +219,7 @@ function register({ route, tx, db, by, InputError, canDo }) { // eslint-disable-
     if (c.show_upi && !(def && def.upi_id)) warnInvoice.push('The UPI QR is switched on, but the default account has no UPI ID, so no QR prints.');
     return {
       can_edit: true,
-      profile: { name: s.company_name, brand: c.brand, company_type: c.company_type, cin: s.cin, website: c.website || '' },
+      profile: { name: s.company_name, brand: c.brand, company_type: c.company_type, cin: s.cin, website: siteBase(), website_from: WEBSITE_FROM },
       tax: { gstin: s.gstin, gst_state_code: s.gstin ? code : null, gst_state: s.gstin ? stateName(code) : null, pan: c.pan || '', gst_type: c.gst_type, tan: c.tan || '', udyam: c.udyam || '',
         einvoice: cs.einvoice_mode === 'on', eway: Boolean(cs.eway_bill_required), eway_limit: Number(cs.eway_bill_above) || 0 },
       address: { line1: c.addr_line1 || '', line2: c.addr_line2 || '', city: c.city || '', pin: c.pin || '', state_code: c.state_code, state: stateName(c.state_code), text: addressText(c),
@@ -248,15 +252,14 @@ function register({ route, tx, db, by, InputError, canDo }) { // eslint-disable-
     const set = {}; // company columns
     const site = {}; // site_settings rows
     if (sec === 'profile') {
-      const name = txt(b.name, 80); const brand = txt(b.brand, 30); const cin = txt(b.cin, 30).replace(/\s/g, '').toUpperCase(); const web = txt(b.website, 80);
+      const name = txt(b.name, 80); const brand = txt(b.brand, 30); const cin = txt(b.cin, 30).replace(/\s/g, '').toUpperCase();
       if (!name) errors.name = 'The legal name is needed.';
       if (!brand) errors.brand = 'The brand is needed.';
       if (!TYPES.includes(b.company_type)) errors.company_type = `One of: ${TYPES.join(', ')}.`;
       if (cin && !CIN_RE.test(cin)) errors.cin = 'A CIN is 21 characters, like U72501TN2018OPC120419.';
-      if (web && !WEB_RE.test(web)) errors.website = 'Start with https:// and give a full address, like https://dfresh.in.';
       fieldErrors(errors);
       Object.assign(site, { company_name: name, cin });
-      Object.assign(set, { brand, company_type: b.company_type, website: web || null });
+      Object.assign(set, { brand, company_type: b.company_type }); // b.website is ignored: it comes from PUBLIC_SITE_URL
     }
     if (sec === 'tax') {
       const g = txt(b.gstin, 20).replace(/\s/g, '').toUpperCase(); const pan = txt(b.pan, 12).toUpperCase(); const tan = txt(b.tan, 12).toUpperCase(); const ud = txt(b.udyam, 22).toUpperCase();

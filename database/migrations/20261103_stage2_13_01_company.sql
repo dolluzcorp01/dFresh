@@ -75,7 +75,7 @@ ALTER TABLE `invoices`
 
 -- the one company row, from today's invoice settings (the office line without the state, which is printed from the code)
 INSERT INTO `company` (`company_id`, `website`, `addr_line1`, `state_code`, `round_off`, `declaration`, `terms`, `updated_by`)
-SELECT 1, 'https://dfresh.in',
+SELECT 1, 'https://dfresh.us',
   NULLIF(TRIM(CASE WHEN st.value = '33' AND ad.value LIKE '%, Tamil Nadu' THEN LEFT(ad.value, CHAR_LENGTH(ad.value) - CHAR_LENGTH(', Tamil Nadu')) ELSE ad.value END), ''),
   COALESCE(NULLIF(st.value, ''), '33'), COALESCE(ro.value = '1', 1),
   'We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct.',

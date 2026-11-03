@@ -301,6 +301,8 @@ div.a-target { box-shadow: 0 0 0 3px var(--accent-line); border-radius: var(--r)
 .a-emsg { font-size: 12.5px; color: var(--bad); font-weight: 600; }
 .adm .a-err input, .adm .a-err select, .adm .a-err textarea { border-color: var(--bad); box-shadow: 0 0 0 3px rgba(198, 40, 40, .12); }
 .a-field input, .a-field select, .a-field textarea { width: 100%; }
+/* read only (a value from the server or the code, or a view-only role): greyed as v23 .numin:disabled */
+.a-field input:disabled, .a-field select:disabled, .a-field textarea:disabled { background: var(--surface-2); color: var(--muted); }
 .a-check { flex-direction: row; align-items: center; gap: 8px; }
 .a-check input { width: auto; }
 .a-grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px 18px; }
@@ -495,6 +497,7 @@ td.a-pending { background: #fff8e1; box-shadow: inset 3px 0 0 #e3b44f; }
 .a-settings col.a-set-act { width: 150px; }
 .a-set-val > input[type="text"], .a-set-val > textarea, .a-set-val .a-ps { width: 100%; box-sizing: border-box; }
 .a-set-val > small { display: block; margin-top: 4px; }
+.a-fixedval { display: flex; flex-direction: column; gap: 2px; }
 .a-sheetcheck { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
 .a-sheetcheck small { overflow-wrap: anywhere; }
 @media (max-width: 900px) { .a-settings { table-layout: auto; } .a-settings col.a-set-key { width: auto; } }
