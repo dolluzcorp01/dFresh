@@ -422,7 +422,8 @@ function OrderForm({ order = null, onClose, onSaved }) {
   };
   const listKey = customer ? customer.list_key : 'default';
   const list = f ? f.lists.find((l) => l.key === listKey) || { key: 'default', label: 'Default' } : null;
-  const inclusive = Boolean(f && f.basis.inclusive);
+  const inclusive = Boolean(list && list.typed === 'inc'); // phase 15: each list says how its prices are typed
+  const listBasis = { inclusive, label: inclusive ? 'Prices are typed with GST (GST is inside the price)' : 'Prices are typed without GST (GST is added on the invoice)', short: inclusive ? 'incl. GST' : 'excl. GST' };
   const shipTo = ship || bill;
   const pos = shipTo && f ? placeOfSupply(bill && bill.gstin, shipTo.state_code, f.posRule) : null; // the server's rule (gstStates.js)
   const gstType = pos && pos.code === f.sellerState ? 'intra' : 'inter';
@@ -434,7 +435,9 @@ function OrderForm({ order = null, onClose, onSaved }) {
     const below = lp && price !== null && price < lp ? Math.round(((lp - price) / lp) * 10000) / 100 : 0;
     const qtyBad = !sku ? null : !Number.isInteger(Number(l.qty)) || Number(l.qty) < 1 ? 'Quantity: a whole number from 1' : qtyProblem(sku, packs);
     const short = Boolean(sku && packs > sku.available);
-    return { l, sku, packs, lp, price, below, problem: qtyBad, short, needsApproval: Boolean(f && f.approval.on && below > f.approval.pct) };
+    // phase 15 (D7): a typed price below the pack's lowest allowed price (without GST) waits for approval
+    const ex = price === null || !sku ? null : inclusive ? price / (1 + sku.gst_rate / 100) : price;
+    return { l, sku, packs, lp, price, below, problem: qtyBad, short, needsApproval: Boolean(f && f.approval.floor && l.price !== '' && sku && sku.min_price != null && ex !== null && ex < sku.min_price - 0.004) };
   });
   const items = rows.filter((r) => r.sku).map((r) => ({ sku_code: r.sku.sku_code, qty: r.packs, gst_rate: r.sku.gst_rate,
     price: r.price === null ? 0 : inclusive ? round2(r.price / (1 + r.sku.gst_rate / 100)) : r.price }));
@@ -520,7 +523,7 @@ function OrderForm({ order = null, onClose, onSaved }) {
         {f && (
           <>
             {act.note}
-            <PriceBasis basis={f.basis} />
+            <PriceBasis basis={listBasis} />
             {editing && order.editable === 'reason' && (
               <Notice kind="warn">{order.order_no} is packed: changing it needs a reason; the stock is re-reserved and the packer re-packs it.</Notice>
             )}
@@ -562,7 +565,7 @@ function OrderForm({ order = null, onClose, onSaved }) {
             <h3>Items</h3>
             <datalist id="order-skus">{f.skus.map((s) => <option key={s.sku_code} value={s.sku_code}>{s.name} - {s.size_label}</option>)}</datalist>
             <table className="a-table a-orderlines">
-              <thead><tr><th>SKU (scan or type)</th><th className="a-num">Qty</th><th className="a-num">Price / pack ({f.basis.short})</th><th className="a-num">Amount</th><th /></tr></thead>
+              <thead><tr><th>SKU (scan or type)</th><th className="a-num">Qty</th><th className="a-num">Price / pack ({listBasis.short})</th><th className="a-num">Amount</th><th /></tr></thead>
               <tbody>
                 {rows.map(({ l, sku, packs, lp, price, below, problem, short, needsApproval }, n) => {
                   const units = unitsOf(sku);
@@ -586,7 +589,7 @@ function OrderForm({ order = null, onClose, onSaved }) {
                       <td className="a-num"><input type="number" min="0" step="0.5" className="a-price" value={l.price} placeholder={lp == null ? '' : String(lp)} aria-label={`Price ${n + 1}`} onChange={(e) => setLine(n, { price: e.target.value })} />
                         {sku && (lp == null ? <small className="a-bad a-ordernote" role="alert">No {list.label} or Default price: set it in Products and prices</small>
                           : <small className="a-muted a-ordernote">{list.label} list: {rs(lp)}{l.auto ? ' (used)' : ''}</small>)}
-                        {below > 0 && <small className={`a-ordernote ${needsApproval ? 'a-bad' : 'a-muted'}`}>{below}% below the list{needsApproval ? ': needs approval' : ''}</small>}</td>
+                        {below > 0 && <small className={`a-ordernote ${needsApproval ? 'a-bad' : 'a-muted'}`}>{below}% below the list{needsApproval ? ', below the lowest allowed price: needs approval' : ''}</small>}</td>
                       <td className="a-num">{sku && price !== null ? rs(packs * price) : ''}
                         {lineOf(sku && sku.sku_code) && lineOf(sku.sku_code).offer_label && <small className="a-ok a-ordernote">{lineOf(sku.sku_code).offer_label}{lineOf(sku.sku_code).offer_discount > 0 ? `: - ${rs(lineOf(sku.sku_code).offer_discount)}` : ''}</small>}
                         {P && P.coupon && P.coupon.excluded.includes(sku && sku.sku_code) && <small className="a-muted a-ordernote">not in coupon {P.coupon.code}</small>}</td>

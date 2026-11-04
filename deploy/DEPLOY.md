@@ -165,7 +165,7 @@ for f in $(ls database/migrations/*.sql | sort); do
   echo "== $f"; sudo mysql --default-character-set=utf8mb4 dfresh < "$f" || { echo "FAILED: $f"; break; }
 done
 ```
-The 52 migrations, in the order they must run (tick each; a later update applies only the new ones):
+The 53 migrations, in the order they must run (tick each; a later update applies only the new ones):
 
 - [ ] `20261009_phase3_home_ui_text.sql`
 - [ ] `20261009_phase4_products_ui_text.sql`
@@ -255,6 +255,13 @@ The 52 migrations, in the order they must run (tick each; a later update applies
       (group "Pack labels", never sent to the website)
 - [ ] `20261104_stage2_14_03_site_domain.sql` - the stored website (company, and site_settings site_url where it
       still exists) set to https://dfresh.us wherever it held the old .in address
+- [ ] `20261104_stage2_15_01_prices.sql` - section 2 Prices and tax: price lists of their own (typed with or without
+      GST, rounding, one default, customer types per list), the basis of each price row, the lowest allowed price per
+      pack, list slabs and a pack's own quantity bands, waiting price changes (PC-001) and special prices (SP-001), HSN
+      codes with dated GST rates and the GST rate list (moved from the commerce settings gst_rates and
+      prices_include_gst, which go), the "Prices and tax" rights row, the margin floor / special price / order-line
+      floor approval rules (replacing "Price below the price list"), and the three logo settings (empty = the logo of
+      today). No price in use changes.
 
 The 11 commerce files replace the 12 of the commerce branch's phases (consolidated on 21 Oct 2026, never applied on
 any database but the `dfresh_commerce` demo): each table in its final shape, no file patches another. Built on a

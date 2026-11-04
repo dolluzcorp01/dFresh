@@ -319,7 +319,10 @@ router.get('/admin/me', auth.requireAuth, async (req, res) => {
         .map((g) => ({ godown_id: g.godown_id, code: g.code, name: g.name }));
     } catch { /* table not there yet */ }
     const { limitText } = require('./approval-engine'); // eslint-disable-line global-require
-    res.json({ success: true, data: { ...req.admin, name, commerce_enabled: commerceEnabled, is_driver: isDriver, see_cost: Boolean(req.admin.seesCost),
+    // phase 15: the square logo (Logo and brand images) for the admin header and tab icon; null = the logo of today
+    let logoSquare = null;
+    try { const b = await require('./brand').current(db); logoSquare = b.uploaded.square ? b.square : null; } catch { /* table not there yet */ } // eslint-disable-line global-require
+    res.json({ success: true, data: { ...req.admin, name, commerce_enabled: commerceEnabled, is_driver: isDriver, logo_square: logoSquare, see_cost: Boolean(req.admin.seesCost),
       limit_text: limitText(req.admin.limit), godown_list: godownList } });
   } catch (err) {
     console.error('admin me failed:', err.code || err.message);

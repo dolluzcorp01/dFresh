@@ -6,7 +6,7 @@ paths = the first one the user may open. "(live)" = also shown while Commerce is
 site's screens); every other entry shows only while Commerce is on. A placeholder shows the guide's texts and
 the phase that builds it (gap map build order; Website entries with no screen: phase 24, agreed 2 Nov 2026).
 
-148 menu lines = 13 groups + Online store + 23 sub-groups + 111 pages. Of the 112 entries that open something (pages and Online store), 67 open a screen and 45 the placeholder.
+148 menu lines = 13 groups + Online store + 23 sub-groups + 111 pages. Of the 112 entries that open something (pages and Online store), 71 open a screen and 41 the placeholder.
 
 | Menu page | Opens |
 |---|---|
@@ -80,14 +80,14 @@ the phase that builds it (gap map build order; Website entries with no screen: p
 | Masters / Catalogue / Kits | /admin/kits (live) |
 | Masters / Catalogue / Barcodes and labels | /admin/commerce/skus; /admin/commerce/skus; /admin/commerce/skus |
 | Masters / Catalogue / Raw materials | /admin/raw-materials (live) |
-| Masters / Prices / Price lists | /admin/commerce/prices |
-| Masters / Prices / Quantity slabs | placeholder: Not built yet - phase 15 |
-| Masters / Prices / Special prices | placeholder: Not built yet - phase 15 |
+| Masters / Prices / Price lists | /admin/prices |
+| Masters / Prices / Quantity slabs | /admin/quantity-slabs |
+| Masters / Prices / Special prices | /admin/special-prices |
 | Masters / Partners / Suppliers | /admin/commerce/stock?tab=suppliers |
 | Masters / Partners / Vehicles and drivers | /admin/commerce-settings#cs-l-vehicles |
 | Masters / Partners / Couriers | /admin/commerce-settings#cs-l-couriers |
 | Masters / Tax and units / Units of measure | /admin/units (live) |
-| Masters / Tax and units / HSN and GST rates | placeholder: Not built yet - phase 15 |
+| Masters / Tax and units / HSN and GST rates | /admin/hsn-rates |
 | Masters / Tax and units / Delivery areas | /admin/commerce-settings#cs-l-delivery_areas |
 | Website / Home page / Banners | /admin/banners (live) |
 | Website / Home page / Home doors | /admin/settings#cs-s-home-page (live) |
@@ -100,7 +100,7 @@ the phase that builds it (gap map build order; Website entries with no screen: p
 | Website / Forms / Form options | /admin/form-options (live) |
 | Website / Forms / Form rules | placeholder: Not built yet - phase 24 |
 | Website / Where we deliver map | /admin/towns (live) |
-| Website / Brand and layout / Logo and brand images | placeholder: Not built yet - phase 24 |
+| Website / Brand and layout / Logo and brand images | /admin/brand (live) |
 | Website / Brand and layout / Menu links | placeholder: Not built yet - phase 24 |
 | Website / Brand and layout / Visit cards | placeholder: Not built yet - phase 24 |
 | Website / Google and sharing | /admin/settings#cs-s-sharing-and-seo (live) |

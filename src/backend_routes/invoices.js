@@ -13,9 +13,41 @@ const commerceSettings = require('./commerce-settings');
 const company = require('./company');
 const numbering = require('./numbering');
 const notifications = require('./notifications');
+const tax = require('./tax');
+const r2 = (n) => Math.round(n * 100) / 100;
 
 class InvoiceError extends Error {
   constructor(message, status = 400) { super(message); this.status = status; }
+}
+
+/**
+ * phase 15 (v23 H.49): an invoice uses the GST rate of its own date. A line whose HSN code has another rate on `day`
+ * than the order was priced with is taxed again at that rate (its taxable value stays), and the order's tax, round off,
+ * total and amount due follow, so the order, the invoice screen and the saved invoice agree -> lines changed
+ */
+async function retaxOn(q, orderId, day, roundOff) {
+  const [lines] = await q.query('SELECT line_id, hsn, gst_rate, taxable FROM order_items WHERE order_id = ? FOR UPDATE', [orderId]);
+  const rates = await tax.ratesOn(q, day);
+  const [[o]] = await q.query('SELECT gst_type, taxable, delivery_gst, total, round_off FROM orders WHERE order_id = ?', [orderId]);
+  let n = 0;
+  for (const l of lines) {
+    const r = rates.get(l.hsn);
+    if (r === undefined || Number(l.gst_rate) === r) continue;
+    const t = Number(l.taxable);
+    const half = o.gst_type === 'intra' ? r2((t * r) / 200) : 0;
+    const igst = o.gst_type === 'inter' ? r2((t * r) / 100) : 0;
+    await q.query('UPDATE order_items SET gst_rate = ?, cgst = ?, sgst = ?, igst = ?, line_total = ? WHERE line_id = ?', [r, half, half, igst, r2(t + 2 * half + igst), l.line_id]);
+    n += 1;
+  }
+  if (!n) return 0;
+  const [[sum]] = await q.query('SELECT COALESCE(SUM(cgst), 0) AS c, COALESCE(SUM(sgst), 0) AS s, COALESCE(SUM(igst), 0) AS i FROM order_items WHERE order_id = ?', [orderId]);
+  const dg = Number(o.delivery_gst);
+  const [c, sg, ig] = o.gst_type === 'intra' ? [r2(Number(sum.c) + dg / 2), r2(Number(sum.s) + dg / 2), r2(Number(sum.i))] : [r2(Number(sum.c)), r2(Number(sum.s)), r2(Number(sum.i) + dg)];
+  const before = r2(Number(o.taxable) + c + sg + ig);
+  const ro = roundOff ? r2(Math.round(before) - before) : 0;
+  const total = r2(before + ro);
+  await q.query('UPDATE orders SET cgst = ?, sgst = ?, igst = ?, round_off = ?, total = ?, amount_due = amount_due + ? WHERE order_id = ?', [c, sg, ig, ro, total, r2(total - Number(o.total)), orderId]);
+  return n;
 }
 
 /** issue the invoice of an order (q inside a transaction) -> { invoice_id, invoice_no } */
@@ -32,6 +64,10 @@ async function issue(q, orderId, empId, { at = null } = {}) {
   const cs = await commerceSettings.read(q);
   const co = await company.facts(q); // phase 13: the seller, and the bank + UPI it prints, from Admin > Company
   const when = at ? new Date(at) : new Date();
+  if (await retaxOn(q, orderId, numbering.istParts(when).ymd, co.round_off)) { // the rate of the invoice date
+    const [[t]] = await q.query('SELECT taxable, delivery_gst, cgst, sgst, igst, round_off, total FROM orders WHERE order_id = ?', [orderId]);
+    Object.assign(o, t);
+  }
   await books.assertOpen(q, new Date(when.getTime() + 5.5 * 3600e3).toISOString().slice(0, 10)); // phase 12b month lock
   const fy = numbering.fyOf(when);
   const g = await numbering.godownSegment(q, o.godown_id);
@@ -101,7 +137,6 @@ async function creditNoteForReturn(q, orderId, lines, reason, returnId, empId) {
   const [items] = await q.query(`SELECT sku_code, SUM(qty) AS qty, MAX(hsn) AS hsn, MAX(gst_rate) AS gst_rate, SUM(taxable) AS taxable, SUM(cgst) AS cgst, SUM(sgst) AS sgst, SUM(igst) AS igst
       FROM order_items WHERE order_id = ? GROUP BY sku_code`, [orderId]);
   items.forEach((i) => { i.qty = Number(i.qty); });
-  const r2 = (n) => Math.round(n * 100) / 100;
   const out = [];
   for (const l of lines.filter((x) => x.qty > 0)) {
     const it = items.find((i) => i.sku_code === l.sku_code);

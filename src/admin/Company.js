@@ -112,12 +112,18 @@ export default function Company() {
 // ---------------------------------------------------------------- the sections, view
 function Profile({ d }) {
   const p = d.profile;
+  const brand = useLoad('/brand'); // phase 15: the logos live on Website > Brand and layout > Logo and brand images
+  const b = brand.data;
   return (
     <>
       <div className="a-co-logos">
         <div className="a-co-logo">
-          <div className="a-co-lbox"><img src={mediaUrl(SITE_LOGO)} alt="dFresh logo" /></div>
-          <div><b>Logo</b><small>The website keeps the logo; documents use the same one.</small><Link to="/admin/settings">Website &gt; Site settings</Link></div>
+          <div className="a-co-lbox"><img src={mediaUrl(b ? b.square : '/media/logo/favicon-192.png')} alt="Square logo" /></div>
+          <div><b>Square logo</b><small>1:1 · app icon, admin header, stamp. Read only here.</small><Link to="/admin/brand">Website &gt; Brand and layout &gt; Logo and brand images</Link></div>
+        </div>
+        <div className="a-co-logo">
+          <div className="a-co-lbox"><img src={mediaUrl(b ? b.wide : SITE_LOGO)} alt="Wide logo" /></div>
+          <div><b>Wide logo</b><small>Landscape · invoice and document header. Read only here.</small><Link to="/admin/brand">Change it there</Link></div>
         </div>
       </div>
       <dl className="a-kv">

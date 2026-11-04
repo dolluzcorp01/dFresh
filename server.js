@@ -133,6 +133,9 @@ if (isProd || process.env.SERVE_BUILD === 'true') {
       return text('application/xml', 300)(res, await seo.sitemap());
     } catch (err) { return next(err); }
   });
+  // phase 15: an uploaded favicon (Website > Brand and layout > Logo and brand images) answers /favicon*.png,
+  // /favicon.ico and /manifest.json; with none uploaded these fall through to the build's own files, as before
+  require('./src/backend_routes/brand').publicRoutes(app, getDBConnection(process.env.DB_NAME || 'dfresh').promise());
   app.use(express.static(BUILD, {
     index: false,
     setHeaders(res, file) {

@@ -59,13 +59,21 @@ const PARTS = {
   ]],
   // phase 12a pages: the same parts on v23's page and ours (PAGES below)
   ...Object.fromEntries(['godowns', 'staff', 'roles', 'approval rules', 'stand-ins', 'approvals', 'export', 'company', 'numbering', 'switches', 'audit', 'outbox',
-    'products', 'raw materials', 'units', 'kits', 'categories'].map((k) => [`${k} page`, [['#page', '.a-main'], [
+    'products', 'raw materials', 'units', 'kits', 'categories',
+    'price lists', 'price list', 'quantity slabs', 'special prices', 'hsn rates', 'brand'].map((k) => [`${k} page`, [['#page', '.a-main'], [
     ['page', '#page', '.a-main'], ['crumb', '.crumb', '.a-crumb'], ['title', '.ph h1', '.a-ph h1'], ['subtitle', '.ph p', '.a-ph p'],
     ['rule chips', '.rchips', '.a-rchips'], ['rule chip', '.rchips .pill', '.a-rchips .a-pill'], ['primary button', '.ph .acts .btn.primary', '.a-ph-acts .a-btn:not(.a-btn-ghost)'],
     ['card', '#page .card', k === 'roles' ? '.a-main .a-roleedit' : '.a-main .a-listcard, .a-main .a-card'], ['th', '#page table.t th', '.a-main .a-table th'], ['td', '#page table.t tbody td', '.a-main .a-table tbody td'],
     ['pill', '#page table.t .pill, #page .card .pill', '.a-main .a-table .a-pill, .a-main .a-card .a-pill'],
   ]]])),
   // phase 14: the product and SKU side panels (v23 DRAWERS.product / DRAWERS.sku), the same parts as the drawer
+  // phase 15: the price panel of one pack (v23 DRAWERS.price), the same parts as the drawer
+  'price drawer': [['.drawer', '.a-drawer'], [
+    ['drawer', '.drawer', '.a-drawer'], ['head', '.drawer .dh', '.a-drawer > header'], ['title', '.drawer .dh h2', '.a-drawer > header h2'],
+    ['close', '.drawer .dh .iconbtn', '.a-drawer > header .a-iconbtn'], ['body', '.drawer .db', '.a-drawer-body'], ['section head', '.drawer .db h3', '.a-drawer-body h3'],
+    ['field label', '.drawer .fld label', '.a-drawer .a-field > span'], ['input', '.drawer .fld input', '.a-drawer .a-field input'],
+    ['foot', '.drawer .df', '.a-drawer > footer'], ['foot button', '.drawer .df .btn', '.a-drawer > footer .a-btn'],
+  ]],
   ...Object.fromEntries(['product drawer', 'sku drawer'].map((k) => [k, [['.drawer', '.a-drawer'], [
     ['drawer', '.drawer', '.a-drawer'], ['head', '.drawer .dh', '.a-drawer > header'], ['title', '.drawer .dh h2', '.a-drawer > header h2'],
     ['close', '.drawer .dh .iconbtn', '.a-drawer > header .a-iconbtn'], ['body', '.drawer .db', '.a-drawer-body'], ['status bar', '.drawer .statusbar', '.a-drawer .a-statusbar'],
@@ -114,7 +122,9 @@ const OUR_PATH = { 'list page': 'commerce/orders', 'godowns page': 'godowns', 's
   'approvals page': 'approvals', 'export page': 'commerce/reports?tab=accounting', // phase 12b
   'company page': 'company', 'numbering page': 'numbering', 'switches page': 'switches', 'audit page': 'audit', 'outbox page': 'notifications?tab=log', // phase 13
   'products page': 'products', 'raw materials page': 'raw-materials', 'units page': 'units', 'kits page': 'kits', 'categories page': 'categories',
-  'product drawer': 'products?open=DZIND-DF001', 'sku drawer': 'products?sku=DF001-M100' }; // phase 14
+  'product drawer': 'products?open=DZIND-DF001', 'sku drawer': 'products?sku=DF001-M100', // phase 14
+  'price lists page': 'prices', 'price list page': 'prices?list=default', 'quantity slabs page': 'quantity-slabs', 'special prices page': 'special-prices',
+  'hsn rates page': 'hsn-rates', 'brand page': 'brand', 'price drawer': 'prices?list=default' }; // phase 15
 // v23's page per part (default: the Customer list)
 const V23_PAGE = { 'godowns page': 'admin/organisation/godowns', 'staff page': 'admin/users-and-security/staff', 'roles page': 'admin/users-and-security/roles',
   'approval rules page': 'admin/users-and-security/approval-rules', 'stand-ins page': 'admin/users-and-security/stand-ins',
@@ -122,7 +132,11 @@ const V23_PAGE = { 'godowns page': 'admin/organisation/godowns', 'staff page': '
   'company page': 'admin/organisation/company', 'numbering page': 'admin/organisation/numbering', 'switches page': 'admin/settings/switches',
   'audit page': 'admin/users-and-security/audit-log', 'outbox page': 'admin/communications/outbox', // phase 13
   'products page': 'masters/catalogue/products-and-skus', 'raw materials page': 'masters/catalogue/raw-materials', 'units page': 'masters/tax-and-units/units-of-measure',
-  'kits page': 'masters/catalogue/kits', 'categories page': 'masters/catalogue/categories', 'product drawer': 'masters/catalogue/products-and-skus', 'sku drawer': 'masters/catalogue/products-and-skus' }; // phase 14
+  'kits page': 'masters/catalogue/kits', 'categories page': 'masters/catalogue/categories', 'product drawer': 'masters/catalogue/products-and-skus', 'sku drawer': 'masters/catalogue/products-and-skus', // phase 14
+  'price lists page': 'masters/prices/price-lists', 'price list page': 'masters/prices/price-lists', 'quantity slabs page': 'masters/prices/quantity-slabs',
+  'special prices page': 'masters/prices/special-prices', 'hsn rates page': 'masters/tax-and-units/hsn-and-gst-rates', 'price drawer': 'masters/prices/price-lists',
+  // v23 has no Logo and brand images page (placeholder, "built in Section 18"); its logo tiles are on Company > Profile
+  'brand page': 'admin/organisation/company' }; // phase 15
 // ONLY=part,part limits the run (e.g. ONLY="godowns page,staff page")
 const ONLY = process.env.ONLY ? process.env.ONLY.split(',').map((x) => x.trim()) : null;
 async function ourPage(browser, w, h, part) {
@@ -148,6 +162,10 @@ const SETUP = {
   // phase 14: v23 opens the first product row / the SKUs tab's first row; ours opens by its deep link (Table Napkins 20x20 / DF001-M100, the same records)
   'product drawer': [async (p) => { await p.click('#page tr[data-row]'); await wait(600); }, async () => { await wait(800); }],
   'sku drawer': [async (p) => { await p.click('[data-a="ptab"][data-i="1"]'); await wait(400); await p.click('#page tr[data-sku]'); await wait(600); }, async () => { await wait(800); }],
+  // phase 15: v23 opens its default (Shop) list card, then the first pack; ours opens the Default list by its link
+  'price list page': [async (p) => { await p.click('#page [data-list]'); await wait(600); }, null],
+  'price drawer': [async (p) => { await p.click('#page [data-list]'); await wait(600); await p.click('#page tr[data-price]'); await wait(600); },
+    async (p) => { await p.evaluate(() => document.querySelector('.a-main .a-table tbody tr').click()); await wait(1200); }],
   toast: [async (p) => { await p.evaluate(() => window.toast('good', 'Customer saved', 'CUS-0141 Hotel Kanchi Residency')); await wait(300); },
     async (p) => {
       await p.evaluate(() => {

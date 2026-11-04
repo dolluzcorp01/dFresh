@@ -1253,6 +1253,64 @@ td.a-pending { background: #fff8e1; box-shadow: inset 3px 0 0 #e3b44f; }
   .p14-hist-t td { border-bottom: 0; padding-top: 4px; padding-bottom: 4px; }
   .p14-hist-t tr { border-bottom: 1px solid var(--line); }
 }
+/* phase 15: prices and tax, logo and brand images */
+.a-p15-basis { display: flex; align-items: center; gap: 6px; }
+.a-p15-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-bottom: 12px; }
+.adm .a-p15-cards .a-card { padding: 16px; }
+.a-p15-lhead { display: flex; gap: 12px; align-items: center; }
+.a-p15-lhead small { display: block; font-size: 13px; }
+.a-p15-thumb { width: 44px; height: 44px; flex: none; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--line); border-radius: 10px; color: var(--text-2); }
+.a-p15-lname { font-size: 16px; margin: 0 4px; }
+.a-p15-sp { flex: 1; }
+.adm .a-p15-bar.a-card { padding: 10px 12px; }
+.a-p15-hsn td { font-size: 13.5px; }
+.adm .a-p15-lcard { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; text-align: left; cursor: pointer; margin: 0; font: inherit; color: inherit; }
+.adm .a-p15-lcard:hover { border-color: var(--accent); }
+.a-p15-lcard b { font-size: 16px; }
+.a-p15-pills { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 8px; }
+.a-p15-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; }
+.a-p15-bar h2 { margin: 0 4px; font-size: 20px; }
+.a-p15-filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 10px; }
+.a-p15-filters select { max-width: 100%; }
+.a-p15-sub { display: block; }
+.a-p15-types { display: flex; flex-wrap: wrap; gap: 8px 18px; }
+.a-p15-hist { margin: 0 0 12px; padding-left: 18px; }
+.a-p15-hist li { margin: 4px 0; }
+.a-p15-errs { color: var(--bad); padding-left: 18px; }
+.a-p15-cardhead { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; }
+.a-p15-cardhead small { display: block; color: var(--muted); }
+.a-p15-check { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--gap); align-items: start; }
+.a-p15-check .a-card { margin: 0; }
+.a-p15-price { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 0 0 12px; }
+.a-p15-price dt { color: var(--muted); font-size: 12.5px; }
+.a-p15-price dd { margin: 0; font-weight: 700; font-size: 18px; }
+.a-p15-steps { padding-left: 20px; margin: 6px 0 0; }
+.a-p15-steps li { margin: 6px 0; }
+.a-p15-steps b { display: block; }
+.a-p15-steps span { color: var(--text-2); }
+.a-p15-slabs { }
+.adm .a-p15-filters.a-card { padding: 14px 16px; }
+.adm .a-p15-slabs.a-card, .adm .a-p15-rates.a-card { padding: 14px 16px; }
+.a-p15-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
+.a-p15-info { background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 13px; }
+.a-p15-rates { }
+.adm .a-p15-x { border: 0; background: none; padding: 0 0 0 4px; cursor: pointer; font: inherit; color: inherit; }
+.a-p15-brand { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: var(--gap); }
+.a-p15-btile { display: flex; flex-direction: column; gap: 12px; margin: 0; }
+.a-p15-bimg { height: 120px; display: flex; align-items: center; justify-content: center; background: repeating-conic-gradient(#f2f2f2 0% 25%, #fff 0% 50%) 50% / 16px 16px; border-radius: 8px; border: 1px solid var(--line); }
+.a-p15-bimg img { max-width: 90%; max-height: 100px; object-fit: contain; }
+.a-p15-favs { display: flex; gap: 12px; align-items: flex-end; }
+.a-p15-btxt { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+@media (max-width: 899px) {
+  .a-p15-check { grid-template-columns: minmax(0, 1fr); }
+  .a-p15-cards { grid-template-columns: minmax(0, 1fr); }
+  .a-p15-price { grid-template-columns: minmax(0, 1fr); }
+}
+@media print {
+  body.a-printing-card * { visibility: hidden; }
+  body.a-printing-card .a-printonly-area, body.a-printing-card .a-printonly-area * { visibility: visible; }
+  body.a-printing-card .a-printonly-area { position: absolute; left: 0; top: 0; width: 100%; }
+}
 `;
 
 export default css;

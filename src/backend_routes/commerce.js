@@ -35,6 +35,7 @@
 //
 // Invoice: issued at dispatch (or at confirm: setting), numbered DFI/26-27/0001 (invoices.js).
 const pricing = require('./pricing');
+const tax = require('./tax');
 const books = require('./books');
 const approvals = require('./approvals');
 const commerceSettings = require('./commerce-settings');
@@ -59,7 +60,9 @@ const HELD = { approval: 'is waiting for approval', cancelled: 'is cancelled' };
 const TERMS = { cod: 'Pay on delivery', advance: 'Paid in advance', credit: 'On credit' };
 const MODES = { cash: 'Cash', upi: 'UPI', bank: 'Bank transfer', cheque: 'Cheque', razorpay: 'Razorpay (manual)' };
 const PAYMENT_STATUS = { unpaid: 'Unpaid', partly_paid: 'Part paid', paid: 'Paid', part_refunded: 'Part refunded', refunded: 'Refunded' };
-const HOLD_KINDS = ['price_below_list', 'over_available', 'credit_order', 'discount', 'customer_hold'];
+// phase 15 (D7): an order line below the lowest allowed price or below cost plus the margin floor waits (price_floor,
+// margin_floor); price_below_list ("% below the list") is gone, its handler stays for any old request
+const HOLD_KINDS = ['price_below_list', 'price_floor', 'margin_floor', 'over_available', 'credit_order', 'discount', 'customer_hold'];
 const EDITABLE = { approval: 'free', new: 'free', packing: 'reason', packed: 'reason' };
 const round2 = (n) => Math.round(n * 100) / 100;
 // An invoice is overdue when its order still owes money after the due date (issue day + the credit days); a pay-on-
@@ -230,10 +233,16 @@ async function prepare(q, data, opts = {}) {
   const off = keys.filter((k) => !Number(info.get(k).is_active));
   if (off.length && !opts.replacement) throw new CommerceError(`Switched off, cannot be ordered: ${off.join(', ')}`);
 
+  // phase 15: the list's own "prices are typed", the price after quantity slabs / bands and a lower special price
+  // (pricing.quote, the same as Check a price), and the GST rate of each HSN code on the price date
   const list = await pricing.listOfCustomer(q, customerId);
-  const own = await pricing.ownPricesOn(q, opts.priceDate || pricing.istToday(), keys);
+  const priceDay = opts.priceDate || pricing.istToday();
   const settings = await commerceSettings.read(q);
-  const inclusive = settings.prices_include_gst === 'inclusive';
+  const inclusive = list.list.typed === 'inc';
+  const rates = await tax.ratesOn(q, priceDay);
+  const auto = new Map();
+  for (const i of merged.values()) auto.set(i.sku_code, await pricing.quote(q, { customerId, sku: i.sku_code, qty: i.qty, date: priceDay }));
+  const rule = await pricing.marginRule(q);
   await stockLib.lockSkus(q, keys);
   const stock = await availability(q, keys, editing ? editing.order_id : 0, { lock: true, godown });
   const problems = [];
@@ -241,15 +250,17 @@ async function prepare(q, data, opts = {}) {
   const lines = [...merged.values()].map((i) => {
     const s = info.get(i.sku_code);
     if (!opts.replacement) { const bad = pricing.qtyProblem(s, i.qty); if (bad) problems.push(bad); }
-    const listPrice = pricing.resolve(own.get(i.sku_code), list.key).price;
+    const rate = rates.has(s.hsn_code) ? rates.get(s.hsn_code) : null;
+    if (rate === null) problems.push(`${i.sku_code}: HSN ${s.hsn_code} is not in the HSN list, so GST is unknown (Masters > Tax and units > HSN and GST rates)`);
+    const qt = auto.get(i.sku_code);
+    const listPrice = qt.ex === null || rate === null ? null : pricing.fromEx(qt.ex, list.list.typed, rate);
     let entered = i.entered;
     if (entered === null) {
-      if (listPrice === null) problems.push(`${i.sku_code} has no price on the ${list.label} or Default list: set it in Products and prices`);
+      if (listPrice === null && rate !== null) problems.push(`${i.sku_code} has no price on the ${list.label} or ${list.def.label} list: set it in Masters > Prices > Price lists`);
       entered = listPrice || 0;
     }
-    const rate = Number(s.gst_rate);
     const below = listPrice && entered < listPrice ? round2(((listPrice - entered) / listPrice) * 100) : 0;
-    return { sku_code: i.sku_code, qty: i.qty, entered, list_price: listPrice, below, gst_rate: rate, hsn: s.hsn_code, category_key: s.category_key,
+    return { sku_code: i.sku_code, qty: i.qty, entered, typed: i.entered !== null, list_price: listPrice, below, gst_rate: rate || 0, hsn: s.hsn_code, category_key: s.category_key,
       packs_per_carton: Number(s.packs_per_carton) || 1, is_free: 0, price: inclusive ? round2(entered / (1 + rate / 100)) : entered };
   });
   // automatic offers: slab % on the line, buy X get Y = free lines (their stock counts like any line)
@@ -258,11 +269,12 @@ async function prepare(q, data, opts = {}) {
   const freeLines = [];
   if (offers.free.length) {
     const [fi] = await q.query(`SELECT s.sku_code, p.gst_rate, p.hsn_code, p.category_key FROM skus s JOIN products p ON p.product_id = s.product_id WHERE s.sku_code IN (?)`, [offers.free.map((f) => f.sku_code)]);
-    const fown = await pricing.ownPricesOn(q, opts.priceDate || pricing.istToday(), offers.free.map((f) => f.sku_code));
     for (const f of offers.free) {
       const s = fi.find((x) => x.sku_code === f.sku_code);
       if (!s) continue;
-      freeLines.push({ sku_code: f.sku_code, qty: f.qty, entered: 0, list_price: pricing.resolve(fown.get(f.sku_code), list.key).price, below: 0, gst_rate: Number(s.gst_rate), hsn: s.hsn_code,
+      const fr = rates.has(s.hsn_code) ? rates.get(s.hsn_code) : Number(s.gst_rate);
+      const fq = await pricing.quote(q, { customerId, sku: f.sku_code, qty: 1, date: priceDay });
+      freeLines.push({ sku_code: f.sku_code, qty: f.qty, entered: 0, list_price: fq.listEx === undefined || fq.listEx === null ? null : pricing.fromEx(fq.listEx, list.list.typed, fr), below: 0, gst_rate: fr, hsn: s.hsn_code,
         category_key: s.category_key, is_free: 1, price: 0, offer_id: f.offer_id, offer_label: f.offer_label, offer_discount: 0 });
     }
   }
@@ -282,6 +294,10 @@ async function prepare(q, data, opts = {}) {
     short.forEach((x) => problems.push(`${x.sku_code}: only ${Math.max(x.available, 0)} available (${x.good} in stock${x.expired ? `, ${x.expired} expired` : ''}, ${x.reserved} reserved for other orders); ${x.qty} asked${x.free ? ' (with the free packs of an offer)' : ''}`));
   }
   if (short.length && data.override_stock && !opts.canOverride) problems.push('Ordering more than the available stock needs a role with "approve" on Orders');
+  for (const i of lines.filter((x) => x.typed && x.gst_rate !== null)) { // a typed price above the MRP is never allowed
+    const g = await pricing.guard(q, await pricing.packFacts(q, i.sku_code), i.price, priceDay, { rule });
+    if (g.mrp) problems.push(`${i.sku_code}: ${g.mrp.replace(/\.$/, '')}`);
+  }
   if (problems.length) throw new CommerceError(problems.join('. '));
 
   // addresses and GST type
@@ -378,12 +394,22 @@ async function prepare(q, data, opts = {}) {
       t.discount ? `coupon ${coupon.code} ${rs(t.discount)}` : null, t.manual_discount ? `manual ${rs(t.manual_discount)}: ${manualReason}` : null].filter(Boolean).join(', ')}); limit ${Number(settings.approve_discount_pct_above)}%` });
   }
   if (!opts.replacement) {
-    const maxBelow = Math.max(0, ...lines.map((i) => i.below));
-    if (maxBelow > 0 && await approvals.needed(q, 'price_below_list', { pct: maxBelow })) {
-      const bl = lines.filter((i) => i.below > settings.approve_price_below_pct);
-      holds.push({ kind: 'price_below_list', amount: round2(bl.reduce((a, i) => a + (i.list_price - i.entered) * i.qty, 0)),
-        what: bl.map((i) => `${i.sku_code} at Rs ${i.entered} (${list.label} list Rs ${i.list_price}, ${i.below}% below)`).join('; '),
-        lines: bl.map((i) => ({ sku_code: i.sku_code, qty: i.qty, price: i.entered, list_price: i.list_price, below: i.below })) });
+    // a price typed on a line: above the MRP is refused (in the lines loop below); below the lowest allowed price or
+    // below cost plus the margin floor waits (one price guard, pricing.guard)
+    const lowF = []; const lowM = [];
+    for (const i of lines.filter((x) => x.typed)) {
+      const facts = await pricing.packFacts(q, i.sku_code);
+      const g = await pricing.guard(q, facts, i.price, priceDay, { rule });
+      if (g.floor) lowF.push({ ...i, why: g.floor });
+      else if (g.margin) lowM.push({ ...i, why: g.margin });
+    }
+    if (lowF.length && await approvals.needed(q, 'price_floor')) {
+      holds.push({ kind: 'price_floor', amount: null, what: lowF.map((i) => `${i.sku_code} at Rs ${i.entered}: ${i.why}`).join('; '),
+        lines: lowF.map((i) => ({ sku_code: i.sku_code, qty: i.qty, price: i.entered, list_price: i.list_price })) });
+    }
+    if (lowM.length && (await pricing.marginRule(q)).on) {
+      holds.push({ kind: 'margin_floor', amount: null, what: lowM.map((i) => `${i.sku_code} at Rs ${i.entered}: below cost plus the margin floor`).join('; '),
+        lines: lowM.map((i) => ({ sku_code: i.sku_code, qty: i.qty, price: i.entered, list_price: i.list_price })) });
     }
     if (short.length && await approvals.needed(q, 'over_available')) {
       holds.push({ kind: 'over_available', amount: null, what: short.map((x) => `${x.sku_code} ${x.qty} asked, ${Math.max(x.available, 0)} available`).join('; '), lines: short });

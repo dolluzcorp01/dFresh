@@ -13,6 +13,11 @@ const company = require('./company');
 const customers = require('./customers');
 const { stateName, posReason } = require('../shared/gstStates');
 const upiQr = require('../shared/upiQr');
+const sharp = require('sharp');
+const brand = require('./brand');
+const { getDBConnection } = require('../../config/db');
+
+const brandDb = getDBConnection(process.env.DB_NAME || 'dfresh').promise();
 
 const SKU_NAME = 'COALESCE(t.name, pt.name, s.product_id)';
 const SKU_JOIN = `JOIN products p ON p.product_id = s.product_id
@@ -107,7 +112,14 @@ class Doc {
   }
 
   async start() {
-    this.logo = logo();
+    // phase 15: the wide logo of Website > Brand and layout > Logo and brand images, else the document logo of today
+    const wide = await brand.logoFile(brandDb, 'wide').catch(() => null);
+    if (wide) {
+      this.logo = fs.readFileSync(wide);
+      const m = await sharp(this.logo).metadata();
+      this.ratio = m.width / m.height;
+      this.uploaded = true;
+    } else { this.logo = logo(); this.ratio = LOGO_RATIO; }
     this.header();
     return this;
   }
@@ -117,7 +129,11 @@ class Doc {
     p.rect(0, 0, PAGE_W, 54, { fill: INK });
     p.rect(0, 54, PAGE_W, 3, { fill: GOLD });
     const h = 30;
-    p.image(this.logo, M, 12, LOGO_RATIO * h, h);
+    if (this.uploaded) { // an uploaded logo sits on a light panel, so a dark-on-light logo stays readable on the ink band
+      const w = Math.min(this.ratio * h, 200);
+      p.rect(M - 4, 8, w + 8, h + 8, { fill: '#FCFBF6' });
+      p.image(this.logo, M, 12, w, w / this.ratio);
+    } else p.image(this.logo, M, 12, LOGO_RATIO * h, h);
     p.text(M, 20, this.title, { size: 14, bold: true, color: '#FCFBF6', align: 'right', width: CW });
     this.y = 72;
     if (this.demo) {

@@ -197,7 +197,7 @@ happened, and stop there.
     with GST. Change it to `70`: no errors, 1 SKU change (mrp 50 -> 70); Apply saves it.
 
 45. First, in Admin > Users and security > Roles, make sure Supervisor and Sales have View (only) on the Products row
-    (our Sales role starts without it; v23's has it). Then as the **Supervisor** and the **Sales** person: open
+    (Sales has it since phase 15, as v23). Then as the **Supervisor** and the **Sales** person: open
     Products and SKUs.
     Both see every page with a "View only" note: no New product, no Save, no Import. As the **Delivery** person: the
     Masters > Catalogue pages are not in the menu.

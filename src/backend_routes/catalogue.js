@@ -21,6 +21,7 @@ const { audit } = require('./audit');
 const secondAdmin = require('./second-admin');
 const pricing = require('./pricing');
 const commerceSettings = require('./commerce-settings');
+const tax = require('./tax');
 const company = require('./company');
 const godownsLib = require('./godowns');
 const permissions = require('../shared/permissions');
@@ -116,31 +117,36 @@ async function syncSellable(q, productId) {
       SET s.is_active = (s.status IN ('active','discontinued') AND p.status IN ${SELLABLE_PRODUCT}) WHERE s.product_id = ?`, [productId]);
 }
 
-/** every finished SKU's highest price with GST per list, today and on each later dated price -> [{ list, label, from, inc }] */
-async function pricesWithGst(q, skuCode) {
-  const [[s]] = await q.query('SELECT s.sku_code, p.gst_rate FROM skus s JOIN products p ON p.product_id = s.product_id WHERE s.sku_code = ?', [skuCode]);
+/**
+ * every finished SKU's price with GST per list, today and on each later dated price or GST rate change, at the GST rate
+ * of each day (phase 15: dated HSN rates; hsn = another code to try, for an HSN change) -> [{ list, label, from, inc }]
+ */
+async function pricesWithGst(q, skuCode, hsn = null) {
+  const [[s]] = await q.query('SELECT s.sku_code, p.hsn_code FROM skus s JOIN products p ON p.product_id = s.product_id WHERE s.sku_code = ?', [skuCode]);
   if (!s) return [];
+  const code = hsn || s.hsn_code;
   const today = pricing.istToday();
-  const inclusive = (await pricing.basis(q)).inclusive;
   const lists = await pricing.lists(q);
-  const [rows] = await q.query("SELECT list_key, DATE_FORMAT(effective_from, '%Y-%m-%d') AS d, price FROM sku_prices WHERE sku_code = ? ORDER BY effective_from", [skuCode]);
+  const [rows] = await q.query("SELECT list_key, DATE_FORMAT(effective_from, '%Y-%m-%d') AS d, price, basis FROM sku_prices WHERE sku_code = ? ORDER BY effective_from", [skuCode]);
+  const [rates] = await q.query("SELECT DATE_FORMAT(effective_from, '%Y-%m-%d') AS d FROM hsn_rates WHERE hsn_code = ? AND status = 'active' AND effective_from > ?", [code, today]);
   const out = [];
   for (const l of lists) {
     const mine = rows.filter((r) => r.list_key === l.key);
-    const days = [today, ...mine.filter((r) => r.d > today).map((r) => r.d)];
+    const days = [...new Set([today, ...mine.filter((r) => r.d > today).map((r) => r.d), ...rates.map((r) => r.d)])].sort();
     for (const d of days) {
       const on = mine.filter((r) => r.d <= d).pop();
       if (!on || on.price === null) continue;
-      const inc = inclusive ? r2(on.price) : r2(Number(on.price) * (1 + Number(s.gst_rate) / 100));
-      out.push({ list: l.key, label: l.label, from: d > today ? d : null, inc });
+      const rate = await tax.rateOn(q, code, d);
+      if (rate === null) continue;
+      out.push({ list: l.key, label: l.label, from: d > today ? d : null, inc: r2(pricing.toEx(Number(on.price), on.basis, rate) * (1 + rate / 100)) });
     }
   }
   return out;
 }
 /** the prices an MRP would be below -> ["Default: Rs 62.00 with GST", ...] */
-async function mrpProblems(q, skuCode, mrp) {
+async function mrpProblems(q, skuCode, mrp, hsn = null) {
   if (mrp === null || mrp === undefined) return [];
-  return (await pricesWithGst(q, skuCode)).filter((x) => x.inc > Number(mrp) + 0.004)
+  return (await pricesWithGst(q, skuCode, hsn)).filter((x) => x.inc > Number(mrp) + 0.004)
     .map((x) => `${x.label}${x.from ? ` from ${x.from}` : ''} charges ${money(x.inc)} with GST`);
 }
 
@@ -688,7 +694,8 @@ function register({ route, tx, db, by, InputError, canDo }) {
     const batch = raw ? Number(s.track_batches) === 1 : has('track_batches') ? Boolean(b.track_batches) : Number(s.track_batches) === 1;
     const near = raw ? '' : str('near_expiry_days', 4, s.near_expiry_days === null ? '' : String(s.near_expiry_days));
     const hsn = raw ? null : str('hsn_code', 8, s.hsn_code || '');
-    const gst = raw || !has('gst_rate') ? (s.gst_rate === null ? null : Number(s.gst_rate)) : Number(b.gst_rate);
+    // phase 15: the GST rate comes from the HSN code (Masters > Tax and units > HSN and GST rates); it is not typed
+    const gst = raw || !hsn ? (s.gst_rate === null ? null : Number(s.gst_rate)) : await tax.rateOn(q, hsn, pricing.istToday());
     const subs = raw ? [] : has('substitutes') && Array.isArray(b.substitutes) ? [...new Set(b.substitutes.map((x) => String(x).toUpperCase()))].slice(0, 10) : null;
     const reorder = has('reorder') && b.reorder && typeof b.reorder === 'object' ? b.reorder : null;
     const units = has('units') && Array.isArray(b.units) ? b.units : null;
@@ -717,8 +724,20 @@ function register({ route, tx, db, by, InputError, canDo }) {
       if (near !== '' && !whole(near, 0)) err.near_expiry_days = '0, or a whole number of days, or empty for the default.';
       else if (near !== '' && whole(life, 0) && Number(life) > 0 && Number(near) >= Number(life) * 30) err.near_expiry_days = `Longer than the ${life}-month shelf life.`;
       if (!HSN_RE.test(hsn)) err.hsn_code = '4, 6 or 8 digits.';
-      const rates = pricing.gstRates(await commerceSettings.read(q));
-      if (!rates.includes(gst)) err.gst_rate = `One of ${rates.join(', ')}%.`;
+      else if (hsn !== s.hsn_code) {
+        const why = await tax.hsnProblem(q, hsn);
+        if (why) err.hsn_code = why;
+        else {
+          // every pack of the product takes the new code: each keeps under its MRP at the new code's rates
+          const [sibs] = await q.query('SELECT sku_code, mrp FROM skus WHERE product_id = ?', [s.product_id]);
+          const probs = [];
+          for (const x of sibs) {
+            const m = x.sku_code === code && mrpIn !== undefined && mrpIn !== '' && Number(mrpIn) > 0 ? Number(mrpIn) : x.mrp;
+            probs.push(...(await mrpProblems(q, x.sku_code, m, hsn)).map((t) => `${x.sku_code} ${t}`));
+          }
+          if (probs.length) err.hsn_code = `At HSN ${hsn} the price goes above MRP: ${probs.slice(0, 2).join('; ')}. Lower the price or raise the MRP first.`;
+        }
+      }
     }
     if (st !== s.status) {
       if (!SKU_STATUS[st]) err.status = 'Active, discontinued or archived.';
@@ -1194,7 +1213,8 @@ function register({ route, tx, db, by, InputError, canDo }) {
     };
   });
 
-  nightlyRun = () => tx((q) => nightly(q, 'SYSTEM'));
+  // phase 15: also today's GST rate on each product, so a rate that starts today (tax.js) shows as "GST today"
+  nightlyRun = () => tx(async (q) => { await tax.syncProductGst(q); return nightly(q, 'SYSTEM'); });
   return { nightly };
 }
 

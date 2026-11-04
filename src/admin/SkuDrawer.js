@@ -81,7 +81,6 @@ export function RawThumb() {
 
 const SOURCE = [['made', 'Made by dFresh'], ['bought', 'Bought in'], ['both', 'Made and bought']];
 const SELL = [['pack', 'Packs only'], ['carton', 'Full cartons only'], ['both', 'Packs or cartons']];
-const GST = [0, 5, 12, 18, 28];
 const TAB_OF = {
   size_label: 'pack', raw_name: 'pack', unit_code: 'pack', source: 'pack', status: 'pack', net_qty: 'pack', mrp: 'pack', std_cost: 'pack',
   sell_unit: 'sell', min_order_qty: 'sell', step_qty: 'sell', substitutes: 'sell',
@@ -163,7 +162,7 @@ export default function SkuDrawer({ code, onClose, onSaved, onBack, skus }) {
     else {
       Object.assign(body, { size_label: f.size_label, net_qty: f.net_qty, mrp: f.mrp, sell_unit: f.sell_unit, min_order_qty: f.min_order_qty, step_qty: f.step_qty,
         substitutes: f.substitutes, shelf_life_months: f.shelf_life_months, track_batches: f.track_batches, near_expiry_days: f.near_expiry_days,
-        hsn_code: f.hsn_code, gst_rate: f.gst_rate });
+        hsn_code: f.hsn_code });
     }
     if (s.sees_cost) body.std_cost = f.std_cost;
     const r = await api.send('PUT', `/catalogue/skus/${encodeURIComponent(s.sku_code)}`, body);
@@ -415,14 +414,11 @@ export default function SkuDrawer({ code, onClose, onSaved, onBack, skus }) {
           <p className="a-hint-s p14-full p14-mt0">A raw material is bought, never sold, so no HSN or GST rate is set on it here. Purchase tax comes with Masters &gt; Tax and units &gt; HSN and GST rates (section 2).</p>
         ) : (
           <>
-            <Fld k="hsn_code" label="HSN code" req error={err('hsn_code')} hint={`4, 6 or 8 digits. The accountant confirms each one. ${shared}`}>
+            <Fld k="hsn_code" label="HSN code" req error={err('hsn_code')} hint={`A code from Masters > Tax and units > HSN and GST rates. ${shared}`}>
               <input id={fid('hsn_code')} value={f.hsn_code} inputMode="numeric" maxLength={8} disabled={ro} onChange={(e) => set('hsn_code', e.target.value.replace(/\D/g, ''))} />
             </Fld>
-            <Fld k="gst_rate" label="GST rate" req error={err('gst_rate')} hint={`Set with the HSN code until Masters > Tax and units > HSN and GST rates is built (section 2). ${shared}`}>
-              <select id={fid('gst_rate')} value={f.gst_rate} disabled={ro} onChange={(e) => set('gst_rate', e.target.value)}>
-                {f.gst_rate === '' && <option value="">Choose...</option>}
-                {GST.map((r) => <option key={r} value={String(r)}>{r}%</option>)}
-              </select>
+            <Fld k="gst_rate" label="GST rate today" error={err('gst_rate')} hint="Read only: it comes from the HSN code (Masters > Tax and units > HSN and GST rates), with the date each rate starts.">
+              <input id={fid('gst_rate')} value={f.gst_rate === '' ? '' : `${f.gst_rate}%`} disabled readOnly />
             </Fld>
           </>
         )}

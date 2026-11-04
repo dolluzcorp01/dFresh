@@ -111,7 +111,7 @@ export default function Sidebar({ me, drawerOpen, onCloseDrawer, collapsed, onTo
       {narrow && drawerOpen && <div className="a-nav-backdrop" onClick={() => onCloseDrawer(false)} aria-hidden="true" />}
       <aside id="a-nav" className={`a-side${drawerOpen ? ' open' : ''}${compact ? ' mini' : ''}`} aria-label="Main menu">
         <Link to="/admin" className="a-brand2" onClick={navigate} aria-label="dFresh Back Office - home">
-          <span className="a-logo"><img src={mediaUrl('/media/logo/favicon-32.png')} alt="" width="24" height="24" /></span>
+          <span className="a-logo"><img src={mediaUrl((me && me.logo_square) || '/media/logo/favicon-32.png')} alt="" width="24" height="24" /></span>
           <span className="a-brand2-t"><b>dFresh</b><small>Back Office</small></span>
         </Link>
         {!compact && (

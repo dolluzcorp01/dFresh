@@ -40,7 +40,7 @@ const db = getDBConnection(process.env.DB_NAME || 'dfresh').promise();
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 // a GET route per section, to see the API refuse a role without that section (Admin_server.js)
 const PROBE = { leads: '/leads', orders: '/commerce/orders', packing: '/commerce/packing', delivery: '/commerce/my-trips', inventory: '/commerce/stock',
-  returns: '/commerce/returns', customers: '/commerce/customers', promotions: '/commerce/promotions', products: '/prices', content: '/ui-text',
+  returns: '/commerce/returns', customers: '/commerce/customers', promotions: '/commerce/promotions', products: '/catalogue/products', prices: '/prices/lists', content: '/ui-text',
   settings: '/settings', users: '/users', audit: '/audit' };
 
 /** the guide's 148 lines: { depth, name, tag } (tag = "not built yet" | "later" | null) */

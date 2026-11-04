@@ -439,8 +439,8 @@ dFresh Back Office
 │   │
 │   ├── Brand and layout
 │   │   ├── Logo and brand images
-│   │   │       What you see : the logo and brand pictures used on the site.
-│   │   │       Use it to    : change the logo without a developer.
+│   │   │       What you see : the square logo, the wide logo and the favicon the site, admin and documents use.
+│   │   │       Use it to    : change the logo without a developer (the favicon sizes are made for you).
 │   │   │
 │   │   ├── Menu links
 │   │   │       What you see : the top menu items and their order.

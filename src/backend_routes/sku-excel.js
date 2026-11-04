@@ -9,7 +9,7 @@
 // only, and lowering it waits for a second Admin (the SKU panel).
 const { audit } = require('./audit');
 const pricing = require('./pricing');
-const commerceSettings = require('./commerce-settings');
+const tax = require('./tax');
 const catalogue = require('./catalogue');
 
 const COLS = ['sku', 'product', 'category', 'name', 'pack', 'made_or_bought', 'packs_per_carton', 'sold_as', 'min_order', 'in_steps_of', 'weight_kg',
@@ -53,7 +53,7 @@ async function diffSheet(q, header, rows) {
   const prodBy = new Map(prods.map((p) => [p.product_id, p]));
   const [catRows] = await q.query('SELECT category_key FROM categories');
   const cats = new Set(catRows.map((c) => c.category_key));
-  const rates = pricing.gstRates(await commerceSettings.read(q));
+  const rates = await tax.ratesOn(q, pricing.istToday()); // phase 15: the GST rate comes from the HSN code
   const seen = new Set();
   const seenEan = new Set();
   const perProduct = new Map();
@@ -91,7 +91,15 @@ async function diffSheet(q, header, rows) {
     if (o.batch !== 'yes' && o.batch !== 'no') e('batch must be yes or no.');
     if (Number(o.shelf_life_months) > 0 && o.batch !== 'yes') e('it expires, so batch must be yes.');
     if (!/^\d{4}(\d{2}){0,2}$/.test(o.hsn)) e('HSN must be 4, 6 or 8 digits.');
-    if (o.gst === '' || !rates.includes(Number(o.gst))) e(`GST must be one of ${rates.join(', ')}.`);
+    else if (!rates.has(o.hsn)) e(`HSN ${o.hsn} is not in the HSN list. Add it under Masters > Tax and units > HSN and GST rates first.`);
+    else {
+      if (o.gst !== '' && Number(o.gst) !== rates.get(o.hsn)) e(`gst ${o.gst} is refused: the GST rate comes from the HSN code (${o.hsn} is ${rates.get(o.hsn)}% today).`);
+      o.gst = String(rates.get(o.hsn));
+      if (s && o.hsn !== s.hsn) {
+        const probs = await catalogue.mrpProblems(q, o.sku, hasMrp && o.mrp !== '' && Number(o.mrp) > 0 ? Number(o.mrp) : (s.mrp === '' || s.mrp === null ? null : Number(s.mrp)), o.hsn);
+        if (probs.length) e(`at HSN ${o.hsn} the price goes above MRP: ${probs[0]}.`);
+      }
+    }
     if (hasMrp && o.mrp !== '') {
       if (!(Number(o.mrp) > 0) || !/^\d+(\.\d{1,2})?$/.test(o.mrp)) e('mrp must be more than 0 with at most 2 decimals, or empty.');
       else if (s) {

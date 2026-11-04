@@ -52,7 +52,9 @@ const SCREENS = [
   { key: 'translations', label: 'Translations', section: 'content', match: [{ types: ['ui_text'] }] },
   { key: 'website', label: 'Website content', section: 'content', match: [{ types: ['banner', 'town', 'form_option', 'brochure'] }] },
   { key: 'products', label: 'Products', section: 'products', match: [{ types: ['product', 'product_image', 'category', 'kit', 'size_picker', 'featured', 'product_tax', 'sku', 'barcode', 'unit'] }] },
-  { key: 'prices', label: 'Prices', section: 'products', match: [{ types: ['sku_price'] }] },
+  { key: 'prices', label: 'Prices', section: 'prices', match: [{ types: ['sku_price', 'price_list', 'special_price'] }] }, // phase 15
+  { key: 'tax', label: 'Tax', section: 'prices', match: [{ types: ['hsn_code', 'hsn_rate', 'gst_rate'] }] }, // phase 15
+  { key: 'brand', label: 'Logo and brand images', section: 'content', match: [{ types: ['brand'] }] }, // phase 15 step 9
   { key: 'leads', label: 'Leads', section: 'leads', match: [{ types: ['lead'] }] },
   { key: 'customers', label: 'Customers', section: 'customers', match: [{ types: ['customer', 'follow_up', 'segment'] }] },
   { key: 'orders', label: 'Orders', section: 'orders', match: [{ types: ['order', 'payment'] }] },

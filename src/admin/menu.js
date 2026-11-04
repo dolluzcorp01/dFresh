@@ -1002,8 +1002,8 @@ export const MENU = [
       use: "set or change prices (below cost plus margin needs approval). │",
       to: [
        {
-        path: "commerce/prices",
-        section: "products",
+        path: "prices",
+        section: "prices",
         action: "view",
         commerce: true
        }
@@ -1014,16 +1014,28 @@ export const MENU = [
       label: "Quantity slabs",
       see: "lower prices for bigger quantities.",
       use: "set the slabs, e.g. 10+ packs at 5% off. │",
-      section: "products",
-      phase: 15
+      to: [
+       {
+        path: "quantity-slabs",
+        section: "prices",
+        action: "view",
+        commerce: true
+       }
+      ]
      },
      {
       id: "masters/prices/special-prices",
       label: "Special prices",
       see: "one customer's own agreed price for a pack.",
       use: "give a special price (below the limit needs approval).",
-      section: "products",
-      phase: 15
+      to: [
+       {
+        path: "special-prices",
+        section: "prices",
+        action: "view",
+        commerce: true
+       }
+      ]
      }
     ]
    },
@@ -1101,8 +1113,14 @@ export const MENU = [
       label: "HSN and GST rates",
       see: "the tax code and GST rate for each product, with the date it starts.",
       use: "change a rate from a date (needs approval). │",
-      section: "products",
-      phase: 15
+      to: [
+       {
+        path: "hsn-rates",
+        section: "prices",
+        action: "view",
+        commerce: true
+       }
+      ]
      },
      {
       id: "masters/tax-and-units/delivery-areas",
@@ -1305,10 +1323,16 @@ export const MENU = [
      {
       id: "website/brand-and-layout/logo-and-brand-images",
       label: "Logo and brand images",
-      see: "the logo and brand pictures used on the site.",
-      use: "change the logo without a developer. │",
-      section: "content",
-      phase: 24
+      see: "the square logo, the wide logo and the favicon the site, admin and documents use.",
+      use: "change the logo without a developer (the favicon sizes are made for you). │",
+      to: [
+       {
+        path: "brand",
+        section: "content",
+        action: "view",
+        commerce: false
+       }
+      ]
      },
      {
       id: "website/brand-and-layout/menu-links",

@@ -1,173 +1,123 @@
-// Price list Excel (Products and prices > Excel): export every SKU with its product's HSN / GST rate, carton size,
-// minimum order, how it is sold and one Price_<list> column per price list; import = dry run first (every change and
-// every error), Apply only for the exact file (fingerprint) that passed with 0 errors, checked again inside the
-// transaction - the same rules as the product import (product-excel.js).
-// An empty price on a customer type's list = no own price (the Default one applies); a Default price cannot be emptied
-// (a SKU that never had one is only noted). SKUs are never added or removed by the import. HSN and GST rate belong to the product: every size of a
-// product must carry the same values. Prices take effect from the date chosen in the admin (today or later).
+// Price list Excel, one file per list (phase 15, v23 2.26: Masters > Prices > Price lists > a list > Export / Import).
+// Columns as v23: list, sku, product, price, from, typed, gst_rate, price_without_gst, price_with_gst. Only price and
+// from are read back; the rest are for reading. Import = check the file first (every error; nothing saved with one),
+// Apply only for the exact file (fingerprint) that passed with 0 errors, checked again inside the transaction.
+// Each row goes through the one price guard (pricing.checkPrices): above MRP, below the lowest allowed price and the
+// top slab are refused; below cost plus the margin floor is refused here too ("change it alone in the price panel so it
+// goes for approval"). A row with both price and from empty is skipped. Each saved price is in the audit log.
 const ExcelJS = require('exceljs');
 const theme = require('./excel-theme');
 const { sheetRows } = require('./product-excel');
 const pricing = require('./pricing');
-const commerceSettings = require('./commerce-settings');
+const tax = require('./tax');
 const { InputError } = require('./admin-entities');
 
 const SHEET = 'Prices';
-const FIXED = ['SKU', 'Product', 'Size', 'Category', 'HSN', 'GST_rate', 'Packs_per_carton', 'Min_order_qty', 'Sell_in'];
-const READ_ONLY = ['Product', 'Size', 'Category'];
-const priceHeader = (key) => `Price_${key}`;
+const COLS = ['list', 'sku', 'product', 'price', 'from', 'typed', 'gst_rate', 'price_without_gst', 'price_with_gst'];
 const blank = (v) => v === null || v === undefined || String(v).trim() === '';
-const txt = (v) => (blank(v) ? '' : String(typeof v === 'number' && !Number.isInteger(v) ? Math.round(v * 100) / 100 : v).trim());
+const txt = (v) => (blank(v) ? '' : String(v instanceof Date ? v.toISOString().slice(0, 10) : typeof v === 'number' && !Number.isInteger(v) ? Math.round(v * 100) / 100 : v).trim());
 
-async function buildWorkbook(q, { who = 'dFresh admin' } = {}) {
+/** today's price of every pack on one list (the default list's price where this list has none, as orders do) */
+async function listRows(q, list) {
   const today = pricing.istToday();
-  const [rows, lists, own, basis] = [await pricing.skuRows(q), await pricing.lists(q), await pricing.ownPricesOn(q, today), await pricing.basis(q)];
-  const rates = pricing.gstRates(await commerceSettings.read(q));
+  const [skus, rows, rates, def] = [await pricing.skuRows(q), await pricing.rowsOn(q, today), await tax.ratesOn(q, today), await pricing.defaultKey(q)];
+  return skus.filter((s) => s.product_status !== 'draft').map((s) => {
+    const per = rows.get(s.sku_code) || {};
+    const r = per[list.key] && per[list.key].price !== null ? per[list.key] : null;
+    const rate = rates.has(s.hsn_code) ? rates.get(s.hsn_code) : null;
+    const typed = r && rate !== null ? pricing.fromEx(pricing.toEx(r.price, r.basis, rate), list.typed, rate) : null;
+    const ex = typed === null ? null : pricing.round2(pricing.toEx(typed, list.typed, rate));
+    return { s, typed, from: r ? r.from : null, rate, ex, inc: ex === null ? null : pricing.round2(ex * (1 + rate / 100)), fallback: !r && list.key !== def };
+  });
+}
+
+async function buildWorkbook(q, list, { who = 'dFresh admin' } = {}) {
+  const today = pricing.istToday();
+  const rows = await listRows(q, list);
   const wb = theme.newWorkbook('dFresh Prices');
-  const meta = { exportedBy: who, filters: null };
+  const meta = { exportedBy: who, filters: `list ${list.name}` };
   theme.notesSheet(wb, 'Read_Me', {
     ...meta,
-    title: 'dFresh Price lists',
+    title: `dFresh price list: ${list.name}`,
     lines: [
-      [`dFresh price lists on ${today} - ${basis.label.toUpperCase()}`, true],
-      [`${rows.length} SKUs · lists: ${lists.map((l) => l.label).join(', ')}`],
+      [`${list.name} on ${today}: prices are typed ${list.typed === 'inc' ? 'WITH GST' : 'WITHOUT GST'}`, true],
       [''],
       ['How to use', true],
-      ['• Prices sheet: one row per SKU. Edit, then import in the admin (Products and prices > Excel): a dry run shows every change first.'],
-      [`• Price_<list>: the price per pack on that list (${basis.short}). Empty on a customer type's list = that list uses the Default price.`],
-      ['• Price_default can never be empty. The admin asks from which date the imported prices apply (today or later).'],
-      [`• HSN (4, 6 or 8 digits) and GST_rate (${rates.join(', ')} %) belong to the product: give every size of a product the same values.`],
-      ['• Packs_per_carton and Min_order_qty: whole numbers from 1. Sell_in: pack, carton (full cartons only) or both.'],
-      ['• Read-only: Product, Size, Category. SKUs are not added or removed by the import.'],
+      ['• Change price and from, keep the rest. One file per list: the list column must stay this list.'],
+      ['• from: the date the new price starts (today or later). Quotes and orders already made keep their price.'],
+      ['• Leave price and from empty on a row to leave that pack as it is.'],
+      ['• Checked first in the admin: above MRP, below the lowest allowed price, below cost plus the margin floor and the top slab are errors; nothing is saved while one is left.'],
       ['• Keep the column names in the dark header row as they are: the import finds its columns by these names.'],
-      ['• Commerce DEMO: the prices in dfresh_commerce are demo values.'],
     ],
   });
   theme.tableSheet(wb, SHEET, {
     ...meta,
-    title: `dFresh Price lists (${basis.short})`,
+    title: `dFresh ${list.name} prices`,
     freezeCols: 2,
     columns: [
-      { header: 'SKU', width: 16 }, { header: 'Product', width: 30 }, { header: 'Size', width: 18 }, { header: 'Category', width: 18 },
-      { header: 'HSN', width: 10 }, { header: 'GST_rate', type: 'number', width: 10 }, { header: 'Packs_per_carton', type: 'number', width: 12 },
-      { header: 'Min_order_qty', type: 'number', width: 12 }, { header: 'Sell_in', width: 10 },
-      ...lists.map((l) => ({ header: priceHeader(l.key), type: 'number', width: 13 })),
+      { header: 'list', width: 14 }, { header: 'sku', width: 16 }, { header: 'product', width: 34 }, { header: 'price', type: 'number', width: 11 },
+      { header: 'from', width: 12 }, { header: 'typed', width: 12 }, { header: 'gst_rate', type: 'number', width: 9 },
+      { header: 'price_without_gst', type: 'number', width: 16 }, { header: 'price_with_gst', type: 'number', width: 15 },
     ],
-    rows: rows.map((r) => [
-      r.sku_code, r.name, r.size_label, r.category, r.hsn_code, r.gst_rate, r.packs_per_carton, r.min_order_qty, r.sell_unit,
-      ...lists.map((l) => { const v = (own.get(r.sku_code) || {})[l.key]; return v === undefined ? null : v; }),
-    ]),
+    rows: rows.map((r) => [list.key, r.s.sku_code, `${r.s.name} ${r.s.size_label || ''}`.trim(), r.typed, r.from, list.typed === 'inc' ? 'with GST' : 'without GST', r.rate, r.ex, r.inc]),
   });
   return wb;
 }
 
-/** -> { ok, summary, errors, notes, unknownColumns, prices, skus, products, plan } (nothing is written) */
-async function diffWorkbook(q, buffer, effective) {
+/** -> { ok, summary, errors, changes, plan } (nothing is written) */
+async function diffWorkbook(q, buffer, list) {
   const wb = new ExcelJS.Workbook();
-  try {
-    await wb.xlsx.load(buffer);
-  } catch {
-    throw new InputError('This is not an Excel (.xlsx) file this tool can read');
-  }
+  try { await wb.xlsx.load(buffer); } catch { throw new InputError('This is not an Excel (.xlsx) file this tool can read'); }
   const ws = wb.getWorksheet(SHEET);
-  if (!ws) throw new InputError(`The workbook has no "${SHEET}" sheet (use the exported price list)`);
-  if (ws.rowCount > 5001) throw new InputError(`At most 5,000 rows in one import (this sheet has ${ws.rowCount - 1})`); // security review L3
-  const { header, rows } = sheetRows(ws, 'SKU');
-  if (!header.includes('SKU')) throw new InputError(`The ${SHEET} sheet has no SKU column`);
-  const lists = await pricing.lists(q);
-  const listByHeader = new Map(lists.map((l) => [priceHeader(l.key), l]));
-  const unknownColumns = header.filter((h) => !FIXED.includes(h) && !listByHeader.has(h)).map((h) => `${SHEET}!${h}`);
-  const priceCols = header.filter((h) => listByHeader.has(h));
-  const rates = pricing.gstRates(await commerceSettings.read(q));
-  const current = new Map((await pricing.skuRows(q)).map((r) => [r.sku_code, r]));
-  const own = await pricing.ownPricesOn(q, effective);
-
+  if (!ws) throw new InputError(`The workbook has no "${SHEET}" sheet (start from Export)`);
+  if (ws.rowCount > 5001) throw new InputError(`At most 5,000 rows in one import (this sheet has ${ws.rowCount - 1})`);
+  const { header, rows } = sheetRows(ws, 'sku');
+  if (!rows.length) throw new InputError('The file is empty.');
+  const miss = ['list', 'sku', 'price', 'from'].filter((c) => !header.includes(c));
+  if (miss.length) throw new InputError(`Missing columns: ${miss.join(', ')}. Start from Export.`);
+  const today = pricing.istToday();
+  const current = new Map((await listRows(q, list)).map((r) => [r.s.sku_code, r]));
   const errors = [];
-  const notes = [];
-  const prices = [];
-  const skus = [];
-  const products = [];
-  const plan = { prices: [], skus: new Map(), products: new Map() };
+  const changes = [];
   const seen = new Set();
-  const productTax = new Map(); // product_id -> { hsn_code, gst_rate, row }
-  const stillMissing = []; // SKUs that had no Default price and still have none
   for (const r of rows) {
-    const at = `${SHEET} row ${r._row}`;
-    const code = txt(r.SKU).toUpperCase();
-    if (!code) { errors.push(`${at}: SKU is empty`); continue; }
-    if (seen.has(code)) { errors.push(`${at}: ${code} appears twice`); continue; }
+    const code = txt(r.sku).toUpperCase();
+    const at = `Row ${r._row} (${code || 'no SKU'}): `;
+    if (blank(r.price) && blank(r.from)) continue;
+    if (txt(r.list) !== list.key) { errors.push(`${at}list is ${txt(r.list) || 'empty'}, but this is the ${list.key} list. One file per list.`); continue; }
+    if (!code) { errors.push(`${at}SKU is empty.`); continue; }
+    if (seen.has(code)) { errors.push(`${at}SKU appears twice in the file.`); continue; }
     seen.add(code);
     const cur = current.get(code);
-    if (!cur) { errors.push(`${at}: there is no SKU ${code} (SKUs are not added by the import)`); continue; }
-
-    // product tax: the same on every row of the product
-    const taxRaw = {};
-    if (header.includes('HSN')) taxRaw.hsn_code = txt(r.HSN);
-    if (header.includes('GST_rate')) taxRaw.gst_rate = txt(r.GST_rate);
-    const tax = pricing.checkTax(taxRaw, rates);
-    Object.values(tax.errors).forEach((e) => errors.push(`${at} (${code}): ${e}`));
-    if (!Object.keys(tax.errors).length && Object.keys(tax.values).length) {
-      const prev = productTax.get(cur.product_id);
-      if (prev && (prev.hsn_code !== tax.values.hsn_code || prev.gst_rate !== tax.values.gst_rate)) {
-        errors.push(`${at} (${code}): ${cur.product_id} has another HSN / GST rate on row ${prev.row} - they belong to the product, give every size the same`);
-      } else if (!prev) {
-        productTax.set(cur.product_id, { ...tax.values, row: r._row });
-        const diffs = Object.entries(tax.values).filter(([k, v]) => (k === 'gst_rate' ? Number(cur[k]) !== v : String(cur[k]) !== v));
-        if (diffs.length) {
-          plan.products.set(cur.product_id, Object.fromEntries(diffs));
-          diffs.forEach(([k, v]) => products.push({ product_id: cur.product_id, name: cur.name, field: k === 'hsn_code' ? 'HSN' : 'GST rate', before: cur[k], after: v }));
-        }
-      }
-    }
-
-    // SKU selling fields
-    const skuRaw = {};
-    if (header.includes('Packs_per_carton')) skuRaw.packs_per_carton = txt(r.Packs_per_carton);
-    if (header.includes('Min_order_qty')) skuRaw.min_order_qty = txt(r.Min_order_qty);
-    if (header.includes('Sell_in')) skuRaw.sell_unit = txt(r.Sell_in).toLowerCase();
-    const sk = pricing.checkSkuFields(skuRaw);
-    Object.values(sk.errors).forEach((e) => errors.push(`${at} (${code}): ${e}`));
-    if (!Object.keys(sk.errors).length) {
-      const diffs = Object.entries(sk.values).filter(([k, v]) => String(cur[k]) !== String(v));
-      if (diffs.length) {
-        plan.skus.set(code, Object.fromEntries(diffs));
-        diffs.forEach(([k, v]) => skus.push({ sku_code: code, field: { packs_per_carton: 'Packs per carton', min_order_qty: 'Minimum order', sell_unit: 'Sell in' }[k], before: cur[k], after: v }));
-      }
-    }
-
-    // prices
-    for (const h of priceCols) {
-      const list = listByHeader.get(h);
-      const before = (own.get(code) || {})[list.key];
-      const was = before === undefined ? null : before;
-      const p = pricing.parsePrice(txt(r[h]));
-      if (p.error) { errors.push(`${at} (${code}) ${h}: ${p.error}`); continue; }
-      if (p.value === null && list.key === pricing.DEFAULT_LIST) {
-        if (was === null) { stillMissing.push(code); continue; } // never had one: nothing changes (it stays unorderable)
-        errors.push(`${at} (${code}) ${h}: the Default price cannot be emptied (it was ${was})`);
-        continue;
-      }
-      if (p.value === was) continue;
-      plan.prices.push({ sku_code: code, list_key: list.key, price: p.value });
-      prices.push({ sku_code: code, name: cur.name, size_label: cur.size_label, list: list.label, before: was, after: p.value });
-    }
+    if (!cur) { errors.push(`${at}no pack with this SKU.`); continue; }
+    const p = pricing.parsePrice(txt(r.price));
+    if (p.error || p.value === null || p.value <= 0) { errors.push(`${at}price must be more than 0, with at most 2 decimals.`); continue; }
+    const from = txt(r.from);
+    if (!pricing.isDate(from)) { errors.push(`${at}from must be a date like ${today}.`); continue; }
+    if (from < today) { errors.push(`${at}from ${from} is in the past. Quotes and orders already made keep their price.`); continue; }
+    if (cur.typed === p.value && cur.from === from) continue; // unchanged
+    const [res] = (await pricing.checkPrices(q, [{ sku_code: code, list_key: list.key, price: p.value }], from)).values();
+    const [[w]] = await q.query("SELECT request_no FROM price_requests WHERE sku_code = ? AND list_key = ? AND status = 'pending'", [code, list.key]);
+    if (res.hard) { errors.push(`${at}${res.hard.charAt(0).toLowerCase()}${res.hard.slice(1)}`); continue; }
+    if (res.soft) { errors.push(`${at}${res.soft.replace(/\.$/, '').charAt(0).toLowerCase()}${res.soft.replace(/\.$/, '').slice(1)}. Change it alone in the price panel so it goes for approval.`); continue; }
+    if (w) { errors.push(`${at}a change already waits for approval (${w.request_no}).`); continue; }
+    changes.push({ sku_code: code, list_key: list.key, price: p.value, from, old: cur.typed });
   }
-  const missingCols = FIXED.filter((h) => !READ_ONLY.includes(h) && h !== 'SKU' && !header.includes(h));
-  if (missingCols.length) notes.push(`Columns not in the file (left as they are): ${missingCols.join(', ')}`);
-  if (stillMissing.length) notes.push(`${stillMissing.length} SKU(s) still have no Default price and cannot be ordered yet: ${stillMissing.join(', ')}`);
-  const notInFile = [...current.keys()].filter((k) => !seen.has(k));
-  if (notInFile.length) notes.push(`${notInFile.length} SKU(s) not in the file are left as they are: ${notInFile.slice(0, 8).join(', ')}${notInFile.length > 8 ? ' ...' : ''}`);
-  const summary = { prices: prices.length, skus: plan.skus.size, products: plan.products.size, errors: errors.length };
-  return { ok: errors.length === 0, summary, errors, notes, unknownColumns, prices, skus, products, plan, effective };
+  const ok = errors.length === 0;
+  return { ok, summary: ok ? `No errors in ${rows.length} rows: ${changes.length} price${changes.length === 1 ? '' : 's'} will change.` : `${errors.length} error${errors.length === 1 ? '' : 's'}. Nothing was saved.`,
+    errors, changes, plan: ok ? changes : [] };
 }
 
-/** apply a dry-run plan inside the caller's transaction -> number of changes */
-async function applyPlan(q, plan, { effective, empId }) {
+/** apply a checked plan (grouped by start date) -> number of prices saved */
+async function applyPlan(q, plan, { empId }) {
   let n = 0;
-  for (const [productId, values] of plan.products) if (await pricing.updateProductTax(q, productId, values, empId, 'import')) n += 1;
-  for (const [code, values] of plan.skus) if (await pricing.updateSku(q, code, values, empId, 'import')) n += 1;
-  if (plan.prices.length) n += (await pricing.setPrices(q, plan.prices, { effective, source: 'import', empId })).changed.length;
+  const byDate = new Map();
+  for (const c of plan) { if (!byDate.has(c.from)) byDate.set(c.from, []); byDate.get(c.from).push(c); }
+  for (const [from, list] of byDate) {
+    const r = await pricing.setPrices(q, list.map((c) => ({ sku_code: c.sku_code, list_key: c.list_key, price: c.price })), { effective: from, source: 'import', empId });
+    n += r.changed.length;
+  }
   return n;
 }
 
-module.exports = { buildWorkbook, diffWorkbook, applyPlan, SHEET };
+module.exports = { buildWorkbook, diffWorkbook, applyPlan, listRows, SHEET, COLS };

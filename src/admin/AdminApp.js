@@ -48,6 +48,10 @@ import CommerceCustomers from './CommerceCustomers';
 import CommercePromotions from './CommercePromotions';
 import CommerceOps from './CommerceOps';
 import Prices from './Prices';
+import QuantitySlabs from './QuantitySlabs';
+import SpecialPrices from './SpecialPrices';
+import HsnRates from './HsnRates';
+import Brand from './Brand';
 import CommercePacking from './CommercePacking';
 import CommerceDelivery, { MyTrips } from './CommerceDelivery';
 import Settings from './Settings';
@@ -96,6 +100,12 @@ export default function AdminApp() {
     styleRef.current = style;
     return () => { meta.remove(); style.remove(); if (icon) icon.remove(); styleRef.current = null; };
   }, []);
+  // phase 15: an uploaded square logo (Logo and brand images) is the admin's tab icon too
+  useEffect(() => {
+    if (!me || !me.logo_square) return;
+    const link = document.querySelector('link[rel~="icon"]');
+    if (link) link.href = mediaUrl(me.logo_square);
+  }, [me]);
   // Dev hot reload re-runs adminStyles.js but not the effect above: without this an open tab keeps the old CSS
   // under new markup (e.g. unstyled rows). Same string = nothing to do.
   useEffect(() => {
@@ -179,7 +189,12 @@ export default function AdminApp() {
             <Route path="commerce/customers" element={<Need section="customers" commerce><CommerceCustomers /></Need>} />
             <Route path="commerce/promotions" element={<Need section="promotions" commerce><CommercePromotions /></Need>} />
             <Route path="commerce/ops" element={<Need commerce><CommerceOps /></Need>} />
-            <Route path="commerce/prices" element={<Need section="products" commerce><Prices /></Need>} />
+            <Route path="prices" element={<Need section="prices" commerce><Prices /></Need>} />
+            <Route path="commerce/prices" element={<Navigate to="/admin/prices" replace />} />
+            <Route path="quantity-slabs" element={<Need section="prices" commerce><QuantitySlabs /></Need>} />
+            <Route path="special-prices" element={<Need section="prices" commerce><SpecialPrices /></Need>} />
+            <Route path="hsn-rates" element={<Need section="prices" commerce><HsnRates /></Need>} />
+            <Route path="brand" element={<Need section="content"><Brand /></Need>} />
             <Route path="commerce/packing" element={<Need section="packing" commerce><CommercePacking /></Need>} />
             <Route path="commerce/delivery" element={<Need section="delivery" action="create" commerce><CommerceDelivery /></Need>} />
             <Route path="commerce/my-trips" element={<Need section="delivery" commerce><MyTrips /></Need>} />

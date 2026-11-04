@@ -350,7 +350,7 @@ async function requestPriceList(q, id, listKey, empId) {
   const c = await lockCustomer(q, id);
   const key = listKey ? String(listKey) : null;
   if (key) {
-    const [[ok]] = await q.query("SELECT type_key FROM customer_types WHERE type_key = ? UNION SELECT 'default' FROM DUAL WHERE ? = 'default'", [key, key]);
+    const [[ok]] = await q.query("SELECT list_key FROM price_lists WHERE list_key = ? AND status = 'active'", [key]); // phase 15: the price lists
     if (!ok) throw new CustomerError('Unknown price list');
   }
   if ((c.price_list || null) === key) return { pending: false };

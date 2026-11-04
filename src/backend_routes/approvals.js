@@ -41,7 +41,10 @@ const KINDS = {
   goodwill_credit: { label: 'Manual wallet credit', section: 'promotions' },
   wallet_debit: { label: 'Manual wallet debit', section: 'promotions' },
   credit_raise: { label: 'Credit limit raise', section: 'customers' },
-  price_below_list: { label: 'Price below the list', section: 'products' },
+  price_below_list: { label: 'Price below the list', section: 'products' }, // phase 15: replaced by price_floor and margin_floor
+  margin_floor: { label: 'Price below cost plus the margin floor', section: 'prices' },
+  special_price: { label: 'Special price for a customer', section: 'prices' },
+  price_floor: { label: 'Order line below the lowest allowed price', section: 'prices' },
   over_available: { label: 'Order above the available stock', section: 'orders' },
   credit_order: { label: 'Order over the credit limit or with overdue invoices', section: 'customers' },
   stock_count: { label: 'Stock count differences', section: 'inventory' },

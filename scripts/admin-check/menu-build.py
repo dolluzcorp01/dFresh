@@ -86,7 +86,11 @@ MAP = {
     'masters/catalogue/barcodes-and-labels': [T('commerce/skus', 'products'), T('commerce/skus', 'inventory'), T('commerce/skus', 'packing')],  # phase 14: Products rights, or the floor (Inventory, Packing) to scan
     'masters/catalogue/raw-materials': [T('raw-materials', 'products', **LIVE)],  # phase 14
     'masters/tax-and-units/units-of-measure': [T('units', 'products', **LIVE)],  # phase 14
-    'masters/prices/price-lists': [T('commerce/prices', 'products')],
+    'masters/prices/price-lists': [T('prices', 'prices')],  # phase 15: section 2 Prices and tax
+    'masters/prices/quantity-slabs': [T('quantity-slabs', 'prices')],
+    'masters/prices/special-prices': [T('special-prices', 'prices')],
+    'masters/tax-and-units/hsn-and-gst-rates': [T('hsn-rates', 'prices')],
+    'website/brand-and-layout/logo-and-brand-images': [T('brand', 'content', **LIVE)],  # phase 15 step 9
     'masters/partners/suppliers': [T('commerce/stock', 'inventory', search='tab=suppliers')],
     'masters/partners/vehicles-and-drivers': [T('commerce-settings', 'settings', hash='cs-l-vehicles')],
     'masters/partners/couriers': [T('commerce-settings', 'settings', hash='cs-l-couriers')],
@@ -123,7 +127,7 @@ PLACE_SECTION = [
     ('fulfilment/', 'delivery'), ('purchase/', 'inventory'), ('production/', 'inventory'), ('inventory/', 'inventory'),
     ('money/payments/refunds', 'returns'), ('money/payments/supplier-payments', 'inventory'), ('money/billing/', 'orders'), ('money/payments/', 'orders'),
     ('money/', 'reports'), ('gst/', 'reports'), ('marketing/', 'promotions'), ('reports/', 'reports'),
-    ('masters/catalogue/raw-materials', 'inventory'), ('masters/', 'products'), ('website/', 'content'),
+    ('masters/catalogue/raw-materials', 'inventory'), ('masters/prices/', 'prices'), ('masters/tax-and-units/hsn', 'prices'), ('masters/', 'products'), ('website/', 'content'),
     ('admin/users-and-security/', 'users'), ('admin/', 'settings'), ('online-store', 'settings'),
 ]
 # the phase that builds an entry (gap map "Proposed build order"); website entries with no screen: phase 24
