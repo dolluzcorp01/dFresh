@@ -5,6 +5,7 @@ const { checkSetting } = require('./settingRules');
 const { isStateCode } = require('./gstStates');
 
 const CTYPES = ['Home', 'Hotel', 'Hospital', 'Office', 'Distributor'];
+// the default order sources; the list staff pick from is Commerce settings > Order sources (commerce-settings.js orderSources)
 const SOURCES = ['Phone', 'WhatsApp', 'Walk-in', 'Referral', 'Other'];
 const EMAIL = /^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]{2,}$/;
 

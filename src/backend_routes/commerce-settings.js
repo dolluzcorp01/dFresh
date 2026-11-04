@@ -17,10 +17,20 @@ const FIXED = {
   ewaybill_mode: () => ({ value: 'off', from: `${BY_CODE}: e-way bills from the admin are not built yet` }),
   razorpay_payment_links: () => ({ value: '0', from: `${BY_CODE}: Razorpay is not built yet` }),
   accounting_export: () => ({ value: 'csv', from: `${BY_CODE}: the export is a CSV journal; Tally and Zoho are not built yet` }),
-  order_sources: () => ({ value: require('../shared/customerRules').SOURCES.join(', '), from: `${BY_CODE} (the customer Source list)` }), // eslint-disable-line global-require
 };
 /** { value, from } when the code decides this setting, else null */
 const fixedOf = (key) => (FIXED[key] ? FIXED[key]() : null);
+
+// Order sources: the Source list of the customer forms (New customer, the customer panel) and the server check.
+// "Lead" and "Import" are set by the system (a customer from a lead, the Excel import) and are always allowed.
+const SYSTEM_SOURCES = ['Lead', 'Import'];
+const splitSources = (v) => [...new Set(String(v || '').split(',').map((x) => x.trim()).filter(Boolean))];
+/** the order sources staff can pick, from Commerce settings (the code's default list when the row is missing) */
+async function orderSources(q) {
+  const [[r]] = await q.query("SELECT value FROM commerce_settings WHERE setting_key = 'order_sources'");
+  const list = r ? splitSources(r.value) : [];
+  return list.length ? list : require('../shared/customerRules').SOURCES; // eslint-disable-line global-require
+}
 
 function typed(row) {
   const v = row.value;
@@ -96,6 +106,19 @@ function check(row, raw, roleIds = []) {
     }
     default: {
       if (s.length > 1000) return bad('At most 1000 characters');
+      if (row.setting_key === 'order_sources') {
+        const list = splitSources(s);
+        if (!list.length) return bad('At least one source');
+        if (list.length > 20) return bad('At most 20 sources');
+        const long = list.find((x) => x.length > 30);
+        if (long) return bad(`Each source 30 characters at most ("${long}" is ${long.length})`);
+        const sys = list.find((x) => SYSTEM_SOURCES.some((y) => y.toLowerCase() === x.toLowerCase()));
+        if (sys) return bad(`"${sys}" is set by the system (a customer from a lead or the Excel import): leave it out`);
+        const lower = list.map((x) => x.toLowerCase());
+        const twice = list.find((x, i) => lower.indexOf(x.toLowerCase()) !== i);
+        if (twice) return bad(`"${twice}" is there twice`);
+        return { value: list.join(', '), error: null };
+      }
       if (/_prefix$/.test(row.setting_key) && !/^[A-Z]{2,5}$/.test(s)) return bad('2 to 5 capital letters');
       return { value: s, error: null };
     }
@@ -174,4 +197,4 @@ function checkListRow(list, raw, { creating }) {
   return { values, errors };
 }
 
-module.exports = { read, check, typed, invoiceIsDemo, LISTS, checkListRow, GSTIN_PLACEHOLDER, fixedOf };
+module.exports = { read, check, typed, invoiceIsDemo, LISTS, checkListRow, GSTIN_PLACEHOLDER, fixedOf, orderSources, SYSTEM_SOURCES };

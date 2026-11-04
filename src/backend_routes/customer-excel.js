@@ -80,8 +80,9 @@ async function diffWorkbook(q, buffer, opts = {}) { // opts.own: a user limited 
   for (const r of rows) {
     const at = `${SHEET} row ${r._row}`;
     const no = txt(r.Customer_no).toUpperCase();
+    const keep = no ? ((await q.query('SELECT source FROM customers WHERE customer_no = ?', [no]))[0][0] || {}).source : null; // a source taken off the list stays on its customers
     const core = await customers.checkCore(q, { name: txt(r.Name), business_name: txt(r.Business_name), type_key: txt(r.Type) || 'home', phone: txt(r.Phone), email: txt(r.Email),
-      source: txt(r.Source) || 'Import', owner_emp_id: txt(r.Owner) });
+      source: txt(r.Source) || 'Import', owner_emp_id: txt(r.Owner) }, { keep });
     const errs = Object.values(core.errors);
     const tags = txt(r.Tags).split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
     const status = txt(r.Status).toLowerCase().replace(' ', '_') || 'active';

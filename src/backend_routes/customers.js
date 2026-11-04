@@ -17,7 +17,7 @@ const commerceSettings = require('./commerce-settings');
 const numbering = require('./numbering');
 const { checkSetting } = require('../shared/settingRules');
 const { isStateCode, stateName } = require('../shared/gstStates');
-const { indianMobile, phoneDigits, SOURCES } = require('../shared/customerRules');
+const { indianMobile, phoneDigits } = require('../shared/customerRules');
 
 const STATUS = { active: 'Active', on_hold: 'On hold', inactive: 'Inactive' };
 const ACTIVITY = { call: 'Call', whatsapp: 'WhatsApp', visit: 'Visit', mail: 'Mail', note: 'Note' };
@@ -43,7 +43,8 @@ async function adminUsers(q) {
 }
 
 /** the customer itself -> { values, errors } (only the keys given when partial) */
-async function checkCore(q, raw, { partial = false } = {}) {
+// keep: the customer's current source, still accepted after it was taken off the Order sources list
+async function checkCore(q, raw, { partial = false, keep = null } = {}) {
   const has = (k) => !partial || (raw && k in raw);
   const values = {};
   const errors = {};
@@ -61,7 +62,12 @@ async function checkCore(q, raw, { partial = false } = {}) {
     else { values.phone = p; values.phone_digits = phoneDigits(p); }
   }
   if (has('email')) { values.email = t(raw, 'email').toLowerCase() || null; if (values.email && !EMAIL.test(values.email)) errors.email = 'A plain e-mail address, e.g. name@example.com.'; }
-  if (has('source')) { values.source = t(raw, 'source') || null; if (values.source && !SOURCES.includes(values.source) && values.source !== 'Lead' && values.source !== 'Import') errors.source = `One of ${SOURCES.join(', ')}.`; }
+  if (has('source')) {
+    values.source = t(raw, 'source') || null;
+    const cs = require('./commerce-settings'); // eslint-disable-line global-require
+    const list = await cs.orderSources(q); // Commerce settings > Order sources
+    if (values.source && values.source !== keep && !list.includes(values.source) && !cs.SYSTEM_SOURCES.includes(values.source)) errors.source = `One of ${list.join(', ')} (Commerce settings > Order sources).`;
+  }
   if (has('owner_emp_id')) {
     values.owner_emp_id = t(raw, 'owner_emp_id').toUpperCase() || null;
     if (values.owner_emp_id && !(await adminUsers(q)).includes(values.owner_emp_id)) errors.owner_emp_id = 'The sales owner must be an admin user (emp id).';
@@ -187,7 +193,7 @@ const CORE_COLS = ['name', 'business_name', 'type_key', 'phone', 'phone_digits',
 /** edit the customer itself (duplicates checked against the others) */
 async function updateCore(q, id, raw, empId) {
   const c = await lockCustomer(q, id);
-  const { values, errors } = await checkCore(q, raw, { partial: true });
+  const { values, errors } = await checkCore(q, raw, { partial: true, keep: c.source });
   if (raw.godown_id !== undefined && raw.godown_id !== null && raw.godown_id !== '') {
     const g = await checkGodown(q, raw.godown_id);
     if (!g) errors.godown_id = 'Choose the godown'; else values.godown_id = g;

@@ -199,7 +199,7 @@ export function NewCustomerDrawer({ onClose, onSaved, onOpenExisting }) {
       <h3>Owner, source and tags</h3>
       <div className="a-grid2">
         <label className="a-field"><span>Sales owner</span><select value={c.owner_emp_id} aria-label="Sales owner" onChange={(e) => setC({ ...c, owner_emp_id: e.target.value })}><option value="">None</option>{m && m.owners.map((o) => <option key={o.emp_id} value={o.emp_id}>{o.name}</option>)}</select>{fe('owner_emp_id')}</label>
-        <label className="a-field"><span>Source</span><select value={c.source} onChange={(e) => setC({ ...c, source: e.target.value })}>{['Phone', 'WhatsApp', 'Walk-in', 'Referral', 'Other'].map((x) => <option key={x}>{x}</option>)}</select></label>
+        <label className="a-field"><span>Source</span><select value={c.source} onChange={(e) => setC({ ...c, source: e.target.value })}>{[...new Set([...(m ? m.sources : []), c.source])].map((x) => <option key={x}>{x}</option>)}</select></label>
         <label className="a-field"><span>Tags (comma separated)</span><input value={c.tags} aria-label="Tags" onChange={(e) => setC({ ...c, tags: e.target.value })} /></label>
       </div>
     </Drawer>

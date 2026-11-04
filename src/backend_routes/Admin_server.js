@@ -2557,7 +2557,6 @@ route('get', '/commerce/reports/accounting/preview', 'reports:view', async (req)
 // ---------------------------------------------------------------------------------------------
 const customers = require('./customers');
 const customerExcel = require('./customer-excel');
-const customerRules = require('../shared/customerRules');
 const asCustomer = (e) => {
   if (!(e instanceof customers.CustomerError)) return e;
   const err = new InputError(e.message, e.status);
@@ -2672,7 +2671,7 @@ route('get', '/commerce/customers', 'customers:view', async (req) => {
   const [tags] = await db.query('SELECT tag, COUNT(*) AS n FROM customer_tags GROUP BY tag ORDER BY tag');
   const [towns] = await db.query("SELECT DISTINCT town FROM customer_addresses WHERE is_active = 1 AND town IS NOT NULL AND town <> '' ORDER BY town");
   return { rows, filters, segments: segments.map((x) => ({ ...x, filters: JSON.parse(x.filters) })), tags: tags.map((x) => ({ tag: x.tag, n: Number(x.n) })), towns: towns.map((x) => x.town),
-    types: await customers.types(db), owners: await adminPeople(db), statuses: customers.STATUS, ownOnly: Boolean(await ownOnly(req)) };
+    types: await customers.types(db), owners: await adminPeople(db), statuses: customers.STATUS, ownOnly: Boolean(await ownOnly(req)), sources: await commerceSettings.orderSources(db) };
 });
 route('post', '/commerce/segments', 'customers:view', async (req) => {
   const name = String(req.body.name || '').trim().slice(0, 80);
@@ -2792,7 +2791,7 @@ route('get', '/commerce/customers/:id', 'customers:view', async (req) => {
     followUps: follow.map((x) => ({ ...x, overdue: Number(x.overdue) === 1 })), orders: orders.map((o) => ({ ...o, overdue: Number(o.overdue) === 1 })),
     outstanding: orders.filter((o) => o.status !== 'cancelled' && Number(o.amount_due) > 0).reduce((a, o) => a + Number(o.amount_due), 0), wallet: await wallet.balance(db, id),
     priceList: list, lists, pending, pendingCredit: pending.find((x) => x.kind === 'credit_raise') || null, lead: lead || null,
-    types: await customers.types(db), owners: await adminPeople(db), statuses: customers.STATUS, activityKinds: customers.ACTIVITY, states: GST_STATES, sources: customerRules.SOURCES,
+    types: await customers.types(db), owners: await adminPeople(db), statuses: customers.STATUS, activityKinds: customers.ACTIVITY, states: GST_STATES, sources: await commerceSettings.orderSources(db),
     areas: (await db.query('SELECT area_id, label FROM delivery_areas WHERE is_active = 1 ORDER BY sort_order, area_id'))[0],
     languages: (await db.query('SELECT lang_code, name_en, is_default FROM languages WHERE is_active = 1 ORDER BY sort_order, lang_code'))[0],
   };
