@@ -60,7 +60,10 @@ const SCREENS = [
   { key: 'orders', label: 'Orders', section: 'orders', match: [{ types: ['order', 'payment'] }] },
   { key: 'invoices', label: 'Invoices', section: 'orders', match: [{ types: ['invoice'] }] },
   { key: 'returns', label: 'Returns', section: 'returns', match: [{ types: ['return', 'credit_note'] }] },
-  { key: 'stock', label: 'Stock', section: 'inventory', match: [{ types: ['stock', 'stock_count', 'stock_level', 'write_off', 'supplier'] }] },
+  { key: 'suppliers', label: 'Suppliers', section: 'buying', match: [{ types: ['supplier'] }] }, // phase 16
+  { key: 'buying', label: 'Purchase', section: 'buying', match: [{ types: ['indent', 'purchase_order', 'goods_in', 'quality_check', 'supplier_bill', 'claim'] }] }, // phase 16
+  { key: 'supplier_payments', label: 'Supplier payments', section: 'money', match: [{ types: ['supplier_payment'] }] }, // phase 16
+  { key: 'stock', label: 'Stock', section: 'inventory', match: [{ types: ['stock', 'stock_count', 'stock_level', 'write_off'] }] },
   { key: 'delivery', label: 'Delivery', section: 'delivery', match: [{ types: ['trip'] }] },
   { key: 'promotions', label: 'Promotions', section: 'promotions', match: [{ types: ['coupon', 'cashback_rule', 'offer', 'promotions'] }] },
   { key: 'wallet', label: 'Wallet', section: 'promotions', match: [{ types: ['wallet'] }] },

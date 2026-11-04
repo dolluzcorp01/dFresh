@@ -379,16 +379,28 @@ export const MENU = [
     label: "Indents",
     see: "requests from staff - \"we need this\" - with item and quantity.",
     use: "turn an indent into a purchase order.",
-    section: "inventory",
-    phase: 16
+    to: [
+     {
+      path: "indents",
+      section: "buying",
+      action: "view",
+      commerce: true
+     }
+    ]
    },
    {
     id: "purchase/purchase-orders",
     label: "Purchase orders",
     see: "what we ordered, from which supplier, at what price, and how much has come in.",
     use: "raise a PO (big ones need approval), amend it, or close it. Amendments that raise the price need approval again.",
-    section: "inventory",
-    phase: 16
+    to: [
+     {
+      path: "purchase-orders",
+      section: "buying",
+      action: "view",
+      commerce: true
+     }
+    ]
    },
    {
     id: "purchase/goods-in",
@@ -397,11 +409,10 @@ export const MENU = [
     use: "scan or count cartons as they arrive; the goods go to QC hold first.",
     to: [
      {
-      path: "commerce/stock",
-      section: "inventory",
+      path: "goods-in",
+      section: "buying",
       action: "view",
-      commerce: true,
-      search: "tab=in"
+      commerce: true
      }
     ]
    },
@@ -410,24 +421,42 @@ export const MENU = [
     label: "Quality check",
     see: "goods-in and production runs waiting to be checked.",
     use: "accept the good packs (they go into stock) and reject the bad ones (they become a claim or a write-off).",
-    section: "inventory",
-    phase: 16
+    to: [
+     {
+      path: "quality-check",
+      section: "buying",
+      action: "view",
+      commerce: true
+     }
+    ]
    },
    {
     id: "purchase/supplier-bills",
     label: "Supplier bills",
     see: "the supplier's invoices, matched to goods in and the PO price.",
     use: "enter a bill; if the price differs from the PO it waits for approval. Only matched or approved bills can be paid.",
-    section: "inventory",
-    phase: 16
+    to: [
+     {
+      path: "supplier-bills",
+      section: "buying",
+      action: "view",
+      commerce: true
+     }
+    ]
    },
    {
     id: "purchase/claims-and-purchase-returns",
     label: "Claims and purchase returns",
     see: "damaged, short or wrong goods we are claiming from suppliers.",
     use: "send goods back, make a debit note, and record the supplier's credit note.",
-    section: "inventory",
-    phase: 16
+    to: [
+     {
+      path: "claims",
+      section: "buying",
+      action: "view",
+      commerce: true
+     }
+    ]
    }
   ]
  },
@@ -638,8 +667,14 @@ export const MENU = [
       label: "Supplier payments",
       see: "what we owe each supplier, with due dates (MSME 45-day rule).",
       use: "pay suppliers against their bills; only to the approved bank account. │",
-      section: "inventory",
-      phase: 16
+      to: [
+       {
+        path: "supplier-payments",
+        section: "money",
+        action: "view",
+        commerce: true
+       }
+      ]
      },
      {
       id: "money/payments/refunds",
@@ -1050,11 +1085,10 @@ export const MENU = [
       use: "add or change suppliers; a bank account change needs approval. │",
       to: [
        {
-        path: "commerce/stock",
-        section: "inventory",
+        path: "suppliers",
+        section: "buying",
         action: "view",
-        commerce: true,
-        search: "tab=suppliers"
+        commerce: true
        }
       ]
      },

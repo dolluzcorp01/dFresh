@@ -93,11 +93,12 @@ function rowProblem(me, target, { leaveOnly = false } = {}) {
   return '';
 }
 
-/** does role b sign more than role a? (an Approve a lacks, a higher limit, See cost: v23 roleWider) */
+/** does role b sign more than role a? (an Approve a lacks, a higher limit, See cost, Buying Edit: v23 roleWider) */
 function roleWider(a, b) {
   if (!a || !b) return false;
   if (engine.limitNum(b.limit) > engine.limitNum(a.limit)) return true;
   if (b.see_cost && !a.see_cost) return true;
+  if (permissions.can(b.perms, 'buying', 'edit') && !permissions.can(a.perms, 'buying', 'edit')) return true; // v23 Y10: Buying Edit shows purchase rates
   return permissions.SECTION_KEYS.some((s) => permissions.can(b.perms, s, 'approve') && !permissions.can(a.perms, s, 'approve'));
 }
 /** can this person sign anything? (an Approve right, a limit above nothing, or See cost: v23 staffSigns) */

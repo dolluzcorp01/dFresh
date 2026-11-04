@@ -1,27 +1,27 @@
 // Inventory (docs/COMMERCE-SPEC.md 4.4; API /commerce/stock ..., logic in src/backend_routes/stock.js), per godown
-// (phase 12a: the godowns in view, the header picker narrows them). Tabs (?tab=), in the order stock moves: Suppliers,
+// (phase 12a: the godowns in view, the header picker narrows them). Tabs (?tab=), in the order stock moves:
 // Stock in, Stock (the default), Batches, Reorder, Counts, Write-offs, Movements.
 // - Stock: per godown and SKU good, expired (batches past expiry, blocked from orders), reserved by confirmed orders,
 //   available, and the other shelves (labels from the API: QC hold, Damaged, Returned (R), Rejected, Display); reorder
 //   level and quantity per godown (edit); average cost and stock value (only for a role with See cost). Record: good ->
 //   damaged, or packs back into Returned (R), in one godown. Recheck (phase 6): Returned (R) packs back to good stock,
 //   only when Commerce settings allow resale, always through approval.
-// - Stock in, Write-offs, Counts, Suppliers: InventoryWork.js.
+// - Stock in, Write-offs, Counts: InventoryWork.js (Suppliers moved to Masters > Partners > Suppliers in phase 16).
 // - Batches: every batch with good stock, Expired / Near expiry (Commerce setting days) / OK.
 // - Reorder: SKUs whose available stock is below the reorder level, with a suggested quantity in full cartons.
 // - Movements: every change of stock with filters (SKU, type, dates, who, batch) and an Excel export (edit).
 import { useEffect, useMemo, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { api } from './adminApi';
 import { InfoCard, Loading, PageHead, Pill, Table, Tabs, fmtDate, useAction, useCan, useLoad } from './ui';
-import { StockIns, WriteOffs, Counts, Suppliers } from './InventoryWork';
+import { StockIns, WriteOffs, Counts } from './InventoryWork';
 import GodownField, { useGodown } from './GodownField';
 
 // the shelves besides Good, in the order of the stock table (labels come from the API: stock.KIND_LABEL)
 const SHELF_COLS = [['hold', 'hold'], ['damaged', 'dmg'], ['returned', 'ret'], ['rejected', 'rej'], ['display', 'disp']];
-// in the order stock moves: who supplies, what comes in, what is there (the default tab), by batch, what to reorder, counting it,
+// in the order stock moves (suppliers: Masters > Partners > Suppliers, phase 16): what comes in, what is there (the default tab), by batch, what to reorder, counting it,
 // writing off, and the full movement log
-const TABS = [['suppliers', 'Suppliers'], ['in', 'Stock in'], ['stock', 'Stock'], ['batches', 'Batches'], ['reorder', 'Reorder'], ['counts', 'Counts'], ['writeoffs', 'Write-offs'], ['moves', 'Movements']];
+const TABS = [['in', 'Stock in'], ['stock', 'Stock'], ['batches', 'Batches'], ['reorder', 'Reorder'], ['counts', 'Counts'], ['writeoffs', 'Write-offs'], ['moves', 'Movements']];
 const rs = (n) => (n === null || n === undefined ? '-' : `Rs ${Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
 const day = (d) => (d ? new Date(`${String(d).slice(0, 10)}T00:00:00Z`).toLocaleDateString('en-IN', { timeZone: 'UTC', day: 'numeric', month: 'short', year: 'numeric' }) : '');
 
@@ -36,7 +36,7 @@ export default function CommerceStock() {
       <PageHead sub="What we have in each godown, how it came in and how it left." />
       <InfoCard title="Stock per godown">
         <ul>
-          <li>Stock is the sum of movements, never typed in. It comes in through Stock in (production or purchase) and goes out at dispatch, by write-off or by an approved count.</li>
+          <li>Stock is the sum of movements, never typed in. It comes in through Stock in (production) or Purchase > Goods in (bought, after Quality check) and goes out at dispatch, by write-off or by an approved count.</li>
           <li>Available = good stock - expired batches - stock reserved by confirmed orders. Products tracked by batch go out earliest expiry first; expired stock cannot be ordered.</li>
           <li>Each godown has its own stock, reorder levels and counts; the godown picker at the top shows one godown or all of yours.</li>
           <li>Write-offs above the threshold and count differences wait for approval (Approvals, top of the menu).</li>
@@ -50,7 +50,7 @@ export default function CommerceStock() {
       {tab === 'counts' && <Counts />}
       {tab === 'reorder' && <Reorder />}
       {tab === 'moves' && <Movements />}
-      {tab === 'suppliers' && <Suppliers />}
+      {tab === 'suppliers' && <Navigate to="/admin/suppliers" replace />}
     </section>
   );
 }

@@ -22,12 +22,14 @@ const LOOSEN = {
   approval_expiry_days: 'up', split_days: 'down', wallet_max_use_pct: 'up', return_window_days: 'up', eway_bill_above: 'up',
   manual_discount_allowed: 'on', returned_resell: 'on', delivery_otp: 'off', eway_bill_required: 'off',
   return_outside_window: ['refuse', 'approval'], cashback_credit_at: ['after_window', 'delivery'],
+  quarantine: 'off', freight_cost: 'off', claim_days: 'up', // phase 16 (v23 Y5: freight into the average cost off is a weakening)
 };
 // ranges that stop silly values (v23 SW_RANGE)
 // (phase 13: every number on the Switches page has one; the page shows them and the PUT enforces them)
 const RANGE = {
   approval_expiry_days: [1, 30], split_days: [1, 30], wallet_max_use_pct: [0, 100], return_window_days: [0, 60],
   eway_bill_above: [0, 500000], order_min_value_default: [0, 100000], expiry_warn_days: [1, 365], slow_moving_days: [7, 365],
+  claim_days: [0, 90],
 };
 
 /** does changing setting `key` from `from` to `to` (stored text) loosen a control? */
@@ -53,7 +55,7 @@ async function waitingLine(q, approvalId) {
 
 /**
  * hold a change for a second Admin -> { waiting: true, approval_id, message } (or the one already waiting for the
- * same thing: { already: true }). kind: rule_change (default) or company_bank.
+ * same thing: { already: true }). kind: rule_change (default), company_bank or supplier_bank.
  */
 async function ask(q, { t, dk, summary, payload = {}, kind = 'rule_change' }, empId) {
   const [[w]] = await q.query("SELECT approval_id FROM approvals WHERE kind = ? AND status = 'pending' AND JSON_UNQUOTE(JSON_EXTRACT(payload, '$.dk')) = ?", [kind, dk]);
@@ -90,6 +92,8 @@ on('bank', { apply: (q, p, empId) => setSetting(q, p.key, p.value, empId) });
 
 approvals.onApproved('rule_change', async (q, p, empId) => { if (p && handlers[p.t]) await handlers[p.t].apply(q, p, empId); });
 approvals.onApproved('company_bank', async (q, p, empId) => { if (p && handlers[p.t]) await handlers[p.t].apply(q, p, empId); });
+approvals.onApproved('supplier_bank', async (q, p, empId) => { if (p && handlers[p.t]) await handlers[p.t].apply(q, p, empId); });
+approvals.onClosed('supplier_bank', async (q, p, status, empId) => { if (p && handlers[p.t] && handlers[p.t].closed) await handlers[p.t].closed(q, p, status, empId); });
 approvals.onClosed('rule_change', async (q, p, status, empId) => { if (p && handlers[p.t] && handlers[p.t].closed) await handlers[p.t].closed(q, p, status, empId); });
 approvals.onRecheck('rule_change', async (q, p) => (p && handlers[p.t] && handlers[p.t].recheck ? handlers[p.t].recheck(q, p) : ''));
 

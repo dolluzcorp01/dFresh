@@ -6,7 +6,7 @@ paths = the first one the user may open. "(live)" = also shown while Commerce is
 site's screens); every other entry shows only while Commerce is on. A placeholder shows the guide's texts and
 the phase that builds it (gap map build order; Website entries with no screen: phase 24, agreed 2 Nov 2026).
 
-148 menu lines = 13 groups + Online store + 23 sub-groups + 111 pages. Of the 112 entries that open something (pages and Online store), 71 open a screen and 41 the placeholder.
+148 menu lines = 13 groups + Online store + 23 sub-groups + 111 pages. Of the 112 entries that open something (pages and Online store), 77 open a screen and 35 the placeholder.
 
 | Menu page | Opens |
 |---|---|
@@ -34,12 +34,12 @@ the phase that builds it (gap map build order; Website entries with no screen: p
 | Fulfilment / Delivery / Proof of delivery | placeholder: Not built yet - phase 20 |
 | Fulfilment / Delivery / Failed / short / refused | /admin/commerce/delivery?tab=failed |
 | Fulfilment / Delivery / Cash on delivery | placeholder: Not built yet - phase 20 |
-| Purchase / Indents | placeholder: Not built yet - phase 16 |
-| Purchase / Purchase orders | placeholder: Not built yet - phase 16 |
-| Purchase / Goods in | /admin/commerce/stock?tab=in |
-| Purchase / Quality check | placeholder: Not built yet - phase 16 |
-| Purchase / Supplier bills | placeholder: Not built yet - phase 16 |
-| Purchase / Claims and purchase returns | placeholder: Not built yet - phase 16 |
+| Purchase / Indents | /admin/indents |
+| Purchase / Purchase orders | /admin/purchase-orders |
+| Purchase / Goods in | /admin/goods-in |
+| Purchase / Quality check | /admin/quality-check |
+| Purchase / Supplier bills | /admin/supplier-bills |
+| Purchase / Claims and purchase returns | /admin/claims |
 | Production / Recipes | placeholder: Not built yet - phase 17 |
 | Production / Production runs | placeholder: Not built yet - phase 17 |
 | Production / Wastage | placeholder: Not built yet - phase 17 |
@@ -56,7 +56,7 @@ the phase that builds it (gap map build order; Website entries with no screen: p
 | Money / Billing / Debit notes | placeholder: Not built yet - phase 21 |
 | Money / Billing / Delivery challans | placeholder: Not built yet - phase 21 |
 | Money / Payments / Receipts | placeholder: Not built yet - phase 21 |
-| Money / Payments / Supplier payments | placeholder: Not built yet - phase 16 |
+| Money / Payments / Supplier payments | /admin/supplier-payments |
 | Money / Payments / Refunds | placeholder: Not built yet - phase 21 |
 | Money / Payments / Cheque register | placeholder: Later |
 | Money / Expenses / Expenses | placeholder: Not built yet - phase 23 |
@@ -83,7 +83,7 @@ the phase that builds it (gap map build order; Website entries with no screen: p
 | Masters / Prices / Price lists | /admin/prices |
 | Masters / Prices / Quantity slabs | /admin/quantity-slabs |
 | Masters / Prices / Special prices | /admin/special-prices |
-| Masters / Partners / Suppliers | /admin/commerce/stock?tab=suppliers |
+| Masters / Partners / Suppliers | /admin/suppliers |
 | Masters / Partners / Vehicles and drivers | /admin/commerce-settings#cs-l-vehicles |
 | Masters / Partners / Couriers | /admin/commerce-settings#cs-l-couriers |
 | Masters / Tax and units / Units of measure | /admin/units (live) |

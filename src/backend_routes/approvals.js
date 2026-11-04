@@ -33,7 +33,13 @@ const db = getDBConnection(process.env.DB_NAME || 'dfresh').promise();
 const KINDS = {
   rule_change: { label: 'Weaken an approval rule', section: 'settings' },
   company_bank: { label: 'Company bank account', section: 'settings' },
-  supplier_bank: { label: 'Supplier bank account', section: 'inventory' },
+  supplier_bank: { label: 'Supplier bank account', section: 'buying' },
+  po: { label: 'Purchase order', section: 'buying' },
+  bill_diff: { label: 'Supplier bill price differs from the PO', section: 'buying' },
+  excess_in: { label: 'Goods in beyond the delivery tolerance', section: 'buying' },
+  no_po_in: { label: 'Goods in without a purchase order', section: 'buying' },
+  supplier_pay: { label: 'Pay a supplier', section: 'money' },
+  cust_change: { label: 'Put a customer type on another price list', section: 'customers' },
   refund: { label: 'Refund', section: 'returns' },
   write_off: { label: 'Stock write-off', section: 'inventory' },
   discount: { label: 'Discount above the limit', section: 'orders' },
@@ -486,5 +492,5 @@ function startOverrideJob() {
 module.exports = {
   sendAgain, onAgain, setOverride, cancelOverride, settleOverride, sweepOverrides, leftNotices, startOverrideJob, overridesOf, UNDATED,
   KINDS, ApprovalError, onApproved, onClosed, onRecheck, rules, rule, check, needed, direct, request, people, context, signers, list, countDecidable,
-  decide, withdraw, expireOld, splitPast,
+  decide, withdraw, expireOld, splitPast, splitFrom,
 };

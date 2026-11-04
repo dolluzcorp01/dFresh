@@ -1758,36 +1758,7 @@ route('post', '/commerce/movements', 'inventory:create', async (req) => {
   try { return await tx(async (q) => stock.recordMove(q, { ...req.body, godown_id: await godowns.resolve(q, req, req.body.godown_id) }, by(req))); } catch (e) { throw asStock(e); }
 });
 
-// Suppliers
-const supplierValues = (b) => {
-  const v = { name: String(b.name || '').trim().slice(0, 150), phone: String(b.phone || '').trim().slice(0, 20) || null, gstin: String(b.gstin || '').trim().toUpperCase() || null,
-    address: String(b.address || '').trim().slice(0, 255) || null, is_active: b.is_active === false || b.is_active === 0 || b.is_active === '0' ? 0 : 1 };
-  if (!v.name) throw new InputError('Name is required');
-  if (v.gstin) { const g = settingRules.checkSetting('gstin', v.gstin); if (g.error) throw new InputError(`GSTIN: ${g.error}`); v.gstin = g.value; }
-  return v;
-};
-route('get', '/commerce/suppliers', 'inventory:view', async () => {
-  const [rows] = await db.query(`SELECT s.supplier_id, s.name, s.phone, s.gstin, s.address, s.is_active,
-      (SELECT COUNT(*) FROM stock_ins i WHERE i.supplier_id = s.supplier_id) AS stock_ins, (SELECT MAX(received_on) FROM stock_ins i WHERE i.supplier_id = s.supplier_id) AS last_in
-      FROM suppliers s ORDER BY s.is_active DESC, s.name`);
-  return rows;
-});
-route('post', '/commerce/suppliers', 'inventory:create', async (req) => {
-  const v = supplierValues(req.body || {});
-  const [[dup]] = await db.query('SELECT supplier_id FROM suppliers WHERE name = ?', [v.name]);
-  if (dup) throw new InputError(`A supplier called ${v.name} exists already`, 409);
-  const [ins] = await db.query('INSERT INTO suppliers (name, phone, gstin, address, is_active, created_by) VALUES (?, ?, ?, ?, ?, ?)', [v.name, v.phone, v.gstin, v.address, v.is_active, by(req)]);
-  await audit(null, { empId: by(req), action: 'create', entity: 'supplier', entityId: String(ins.insertId), after: v });
-  return { supplier_id: ins.insertId, ...v };
-}, { status: 201 });
-route('put', '/commerce/suppliers/:id', 'inventory:edit', async (req) => {
-  const v = supplierValues(req.body || {});
-  const [[before]] = await db.query('SELECT name, phone, gstin, address, is_active FROM suppliers WHERE supplier_id = ?', [Number(req.params.id)]);
-  if (!before) throw new InputError('No such supplier', 404);
-  await db.query('UPDATE suppliers SET name = ?, phone = ?, gstin = ?, address = ?, is_active = ? WHERE supplier_id = ?', [v.name, v.phone, v.gstin, v.address, v.is_active, Number(req.params.id)]);
-  await audit(null, { empId: by(req), action: 'update', entity: 'supplier', entityId: String(req.params.id), before, after: v });
-  return { supplier_id: Number(req.params.id), ...v };
-});
+// Suppliers: Masters > Partners > Suppliers (phase 16, suppliers.js; section buying)
 
 // Stock in
 route('get', '/commerce/stock-ins', 'inventory:view', async (req) => {
@@ -1805,6 +1776,8 @@ route('get', '/commerce/stock-ins', 'inventory:view', async (req) => {
   }) };
 });
 route('post', '/commerce/stock-ins', 'inventory:create', async (req) => {
+  // phase 16: bought goods come in through Purchase > Goods in (to QC hold, against a PO); Stock in keeps Production
+  if ((req.body || {}).kind !== 'production') throw new InputError('Bought goods come in through Purchase > Goods in. Stock in is for production only.');
   try {
     const r = await tx(async (q) => stock.stockIn(q, { ...req.body, godown_id: await godowns.resolve(q, req, req.body.godown_id) }, by(req)));
     return seesCost(req) ? r : { stock_in_id: r.stock_in_id, lines: r.lines.map(({ avg_before: ab, avg_after: aa, ...l }) => l) }; // eslint-disable-line no-unused-vars
@@ -3139,6 +3112,9 @@ route('get', '/commerce/ops', 'any', async (req) => {
 // ---------------------------------------------------------------------------------------------
 require('./prices').register({ route, tx, db, by, InputError, canDo, commerceGate, upload, exportedBy, seesCost: seesCosts });
 require('./brand').register({ route, tx, db, by, InputError, upload }); // phase 15: Website > Brand and layout > Logo and brand images
+// phase 16: section 3 Suppliers and buying (buying.js rules, buying-routes.js screens) and Money > Payments > Supplier payments
+require('./buying-routes').register({ route, tx, db, by, InputError, canDo, commerceGate, seesCost: seesCosts });
+require('./supplier-pay').register({ route, tx, db, by, InputError, canDo, commerceGate });
 
 // ---------------------------------------------------------------------------------------------
 // Roles and permissions (docs/COMMERCE-SPEC.md 1; migration 20261021_commerce_01_access.sql)

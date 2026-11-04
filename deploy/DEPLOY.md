@@ -165,7 +165,7 @@ for f in $(ls database/migrations/*.sql | sort); do
   echo "== $f"; sudo mysql --default-character-set=utf8mb4 dfresh < "$f" || { echo "FAILED: $f"; break; }
 done
 ```
-The 53 migrations, in the order they must run (tick each; a later update applies only the new ones):
+The 54 migrations, in the order they must run (tick each; a later update applies only the new ones):
 
 - [ ] `20261009_phase3_home_ui_text.sql`
 - [ ] `20261009_phase4_products_ui_text.sql`
@@ -262,6 +262,15 @@ The 53 migrations, in the order they must run (tick each; a later update applies
       prices_include_gst, which go), the "Prices and tax" rights row, the margin floor / special price / order-line
       floor approval rules (replacing "Price below the price list"), and the three logo settings (empty = the logo of
       today). No price in use changes.
+- [ ] `20261104_stage2_16_01_buying.sql` - section 3 Suppliers and buying: suppliers get a code, what they supply,
+      status with a reason, GSTIN state, MSME, address, terms, contacts, items and prices, and the approved bank
+      account (the two suppliers of today keep their name and GSTIN; phone and address move to the new fields);
+      a raw material's own HSN; indents, purchase orders with revisions, goods in, supplier bills, claims, supplier
+      payments and cost adjustments; the "Suppliers and buying" and "Payments" rights rows; the approval rules
+      purchase order, bill price difference, goods in beyond the tolerance, goods in without a PO, pay a supplier and
+      a customer type on another price list; the Stock switches QC hold, freight into the average cost and days to
+      claim; the indent, PO, goods in, bill, supplier, debit note, return challan, claim and supplier payment series.
+      No stock, batch or average cost changes.
 
 The 11 commerce files replace the 12 of the commerce branch's phases (consolidated on 21 Oct 2026, never applied on
 any database but the `dfresh_commerce` demo): each table in its final shape, no file patches another. Built on a

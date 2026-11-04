@@ -7,8 +7,10 @@
 // - Available (per godown) = good stock - expired batches - active reservations of other orders.
 // - Every stock-out (dispatch) keeps the average cost at that moment (unit_cost): the margin uses it, never today's cost.
 //   The average cost is per SKU across every godown.
-// - Stock in (production from the Kanchipuram unit, or purchase from a supplier) into one godown: lines in packs with a
-//   cost per pack; each line updates the SKU's weighted average cost: (on hand x old average + qty x cost) / (on hand + qty).
+// - Stock in (production from the Kanchipuram unit; purchase from a supplier only for the demo seed and the stock-ins of
+//   before phase 16: bought goods now come in through Purchase > Goods in, buying.js) into one godown: lines in packs
+//   with a cost per pack; each line updates the SKU's weighted average cost: (on hand x old average + qty x cost) /
+//   (on hand + qty).
 // - Batches (products.track_batches): a stock in of such a SKU needs batch no., manufacture and expiry date; dispatch
 //   takes the earliest expiry first (FEFO), never an expired batch, and records which batch went out.
 // - Write-off (from any shelf): above the approval rule (Rs value or packs) it waits for approval, then posts; below
@@ -26,6 +28,7 @@ const { storable } = require('./photo-check');
 const MOVE_LABEL = {
   production: 'Stock in (production)', purchase: 'Stock in (purchase)', out: 'Dispatched', return: 'Back in', damaged: 'Moved to damaged',
   write_off: 'Write-off', count: 'Count difference', in: 'In', adjust: 'Adjust', recheck: 'Recheck (R) to good', shelf: 'Shelf move',
+  grn_hold: 'Goods in, QC hold', qc: 'Quality check', grn: 'Goods in, accepted', qc_reject: 'Rejected at QC', sent_back: 'Sent back to the supplier', late_claim: 'Found faulty after QC', // phase 16
 };
 const SHELVES = ['good', 'hold', 'dmg', 'ret', 'rej', 'disp'];
 const KIND_LABEL = { good: 'Good', hold: 'QC hold', dmg: 'Damaged', ret: 'Returned (R)', rej: 'Rejected (to go back)', disp: 'Disputed' };
@@ -190,8 +193,8 @@ async function stockIn(q, data, empId, opts = {}) {
   let supplierId = null;
   if (kind === 'purchase') {
     supplierId = Number(data.supplier_id);
-    const [[s]] = await q.query('SELECT supplier_id, is_active FROM suppliers WHERE supplier_id = ?', [supplierId]);
-    if (!s || !Number(s.is_active)) throw new StockError('Choose the supplier');
+    const [[s]] = await q.query('SELECT supplier_id, status FROM suppliers WHERE supplier_id = ?', [supplierId]);
+    if (!s || s.status === 'blocked') throw new StockError('Choose the supplier');
   }
   const today = pricing.istToday();
   const day = String(data.received_on || today);

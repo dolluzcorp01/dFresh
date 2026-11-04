@@ -49,8 +49,9 @@ happened, and stop there.
    Both refused: there must always be a default list, and the default list cannot be archived.
 
 9. **Distributor** list, Settings: tick Hotel. Save.
-   Saved, with "Note: customer type Hotel left the Hotel list." Check a price for Demo Hotel Sangam now says
-   Distributor (for Hotel). Put Hotel back on the Hotel list.
+   "The customer types change waits for approval" (phase 16: also for an Admin; someone with Approve on Customers
+   decides it in Home > Approvals). Shoban approves: customer type Hotel leaves the Hotel list, and Check a price for
+   Demo Hotel Sangam now says Distributor (for Hotel). Put Hotel back on the Hotel list (Shoban approves again).
 
 10. Home list, Settings: Prices are typed With GST. Save.
     "Prices are now typed with GST: (n) prices converted from today so the customer pays the same." DF001-M100 shows

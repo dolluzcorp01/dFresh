@@ -10,12 +10,16 @@
 //   expands the menu with that group open.
 // - Under 900px: a slide-in drawer with the same groups (never collapsed); a link, the backdrop or Esc closes it.
 // - Group and sub-group headers are buttons with aria-expanded / aria-controls (Tab + Enter / Space).
+// - "/" or Ctrl K opens Find a page. Phase 16 (v23 Ctrl K): it also finds suppliers, purchase orders and goods in
+//   (GET /buying/find, for a role that views Suppliers and buying), listed under the pages it finds.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import LIcon from './ui/LIcon';
 import { Avatar } from './ui';
 import { GROUP_ICON, activeEntry, flatEntries, hrefOf, menuFor } from './menuAccess';
 import { mediaUrl } from '../utils/api';
+import { api } from './adminApi';
+import { can } from '../shared/permissions';
 
 const GROUPS_KEY = 'dfresh-admin-nav-groups'; // + ':' + emp_id: remembered per user
 const COLLAPSED_KEY = 'dfresh-admin-nav-collapsed';
@@ -84,7 +88,8 @@ export default function Sidebar({ me, drawerOpen, onCloseDrawer, collapsed, onTo
     const onKey = (e) => {
       if (e.key === 'Escape' && drawerOpen) onCloseDrawer(true);
       const typing = e.target.closest && e.target.closest('input, textarea, select, [contenteditable="true"]');
-      if (e.key === '/' && !typing && !compact && findRef.current) { e.preventDefault(); findRef.current.focus(); }
+      const ctrlK = (e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K');
+      if (((e.key === '/' && !typing) || ctrlK) && !compact && findRef.current) { e.preventDefault(); findRef.current.focus(); }
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
@@ -105,6 +110,14 @@ export default function Sidebar({ me, drawerOpen, onCloseDrawer, collapsed, onTo
 
   const query = q.trim().toLowerCase();
   const hits = query ? flatEntries(menu).filter(({ group, sub, entry }) => `${entry.label} ${entry.see || ''} ${group.label} ${sub ? sub.label : ''}`.toLowerCase().includes(query)) : null;
+  // records (phase 16: suppliers, purchase orders, goods in), a moment after typing stops
+  const [recs, setRecs] = useState([]);
+  const findsRecords = Boolean(me && me.commerce_enabled && can(me.perms, 'buying', 'view'));
+  useEffect(() => {
+    if (!findsRecords || query.length < 2) { setRecs([]); return undefined; }
+    const t = setTimeout(() => { api.get(`/buying/find?q=${encodeURIComponent(query)}`).then((r) => setRecs(r.rows || []), () => setRecs([])); }, 250);
+    return () => clearTimeout(t);
+  }, [query, findsRecords]);
 
   return (
     <>
@@ -126,8 +139,15 @@ export default function Sidebar({ me, drawerOpen, onCloseDrawer, collapsed, onTo
         )}
         <nav className="a-navlist" aria-label="Admin">
           {hits ? (
-            hits.length ? hits.map(({ group, sub, entry }) => page(entry, <small className="a-np-where">{group.label}{sub ? ` / ${sub.label}` : ''}</small>))
-              : <div className="a-nores">No page called &quot;{q}&quot;.</div>
+            <>
+              {hits.length ? hits.map(({ group, sub, entry }) => page(entry, <small className="a-np-where">{group.label}{sub ? ` / ${sub.label}` : ''}</small>))
+                : !recs.length && <div className="a-nores">No page called &quot;{q}&quot;.</div>}
+              {recs.map((x) => (
+                <Link key={`${x.k}-${x.href}`} to={x.href} className="a-np" onClick={() => { setQ(''); navigate(); }}>
+                  <span className="a-np-l">{x.t}<small className="a-np-where">{x.k} · {x.s}</small></span>
+                </Link>
+              ))}
+            </>
           ) : menu.map((g) => {
             const icon = <LIcon name={GROUP_ICON[g.key] || 'list-todo'} />;
             if (g.solo) {

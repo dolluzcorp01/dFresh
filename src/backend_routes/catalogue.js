@@ -630,7 +630,7 @@ function register({ route, tx, db, by, InputError, canDo }) {
   // ---------------- SKUs: one (the side panel) and save
   async function skuOut(q, req, code) {
     const [[s]] = await q.query(`SELECT s.sku_code, s.product_id, s.sku_type, s.raw_name, s.unit_code, s.size_label, s.packs_per_carton, s.min_order_qty, s.step_qty, s.sell_unit, s.status,
-        s.source, s.net_qty, s.mrp, s.std_cost, s.avg_cost, s.weight_kg, s.dims, s.per_pallet, s.bin_location, p.hsn_code, p.gst_rate, p.track_batches, p.shelf_life_months, p.near_expiry_days,
+        s.source, s.net_qty, s.mrp, s.std_cost, s.avg_cost, s.weight_kg, s.dims, s.per_pallet, s.bin_location, COALESCE(p.hsn_code, s.raw_hsn) AS hsn_code, p.gst_rate, p.track_batches, p.shelf_life_months, p.near_expiry_days,
         p.status AS product_status, ${SKU_NAME} AS name,
         (SELECT pi.file_name FROM product_images pi WHERE pi.product_id = s.product_id ORDER BY pi.position LIMIT 1) AS image
       FROM skus s ${SKU_JOIN} WHERE s.sku_code = ?`, [code]);
@@ -655,7 +655,7 @@ function register({ route, tx, db, by, InputError, canDo }) {
       sees_cost: seesCost(req), sell_unit: s.sell_unit, min_order_qty: Number(s.min_order_qty), step_qty: Number(s.step_qty), packs_per_carton: Number(s.packs_per_carton),
       per_pallet: s.per_pallet === null ? null : Number(s.per_pallet), weight_kg: s.weight_kg === null ? null : Number(s.weight_kg), dims: s.dims || '',
       shelf_life_months: Number(s.shelf_life_months || 0), track_batches: Number(s.track_batches) === 1, near_expiry_days: s.near_expiry_days === null ? null : Number(s.near_expiry_days),
-      near_default: Number(cs.expiry_warn_days) || 60, hsn_code: s.hsn_code || '', gst_rate: s.gst_rate === null ? null : Number(s.gst_rate),
+      near_default: Number(cs.expiry_warn_days) || 60, hsn_code: s.hsn_code || '', gst_rate: raw ? (s.hsn_code ? await tax.rateOn(q, s.hsn_code, pricing.istToday()) : null) : s.gst_rate === null ? null : Number(s.gst_rate),
       cartons, barcodes: [{ barcode: s.sku_code, kind: 'own', kind_label: BKIND.own }, ...(raw ? [] : [{ barcode: `${s.sku_code}#C`, kind: 'carton', kind_label: BKIND.carton, builtin: true }]),
         ...codes.map((c) => ({ ...c, kind_label: BKIND[c.kind] }))],
       substitutes: subs.map((x) => x.sub_sku_code), units: units.map((u) => ({ unit_code: u.unit_code, name: u.name, base_qty: Number(u.base_qty) })),
@@ -694,12 +694,15 @@ function register({ route, tx, db, by, InputError, canDo }) {
     const batch = raw ? Number(s.track_batches) === 1 : has('track_batches') ? Boolean(b.track_batches) : Number(s.track_batches) === 1;
     const near = raw ? '' : str('near_expiry_days', 4, s.near_expiry_days === null ? '' : String(s.near_expiry_days));
     const hsn = raw ? null : str('hsn_code', 8, s.hsn_code || '');
+    // phase 16: a raw material's own HSN code (v23), for the GST on its purchase; empty = not set yet
+    const rawHsn = raw ? str('hsn_code', 8, s.raw_hsn || '') : null;
     // phase 15: the GST rate comes from the HSN code (Masters > Tax and units > HSN and GST rates); it is not typed
     const gst = raw || !hsn ? (s.gst_rate === null ? null : Number(s.gst_rate)) : await tax.rateOn(q, hsn, pricing.istToday());
     const subs = raw ? [] : has('substitutes') && Array.isArray(b.substitutes) ? [...new Set(b.substitutes.map((x) => String(x).toUpperCase()))].slice(0, 10) : null;
     const reorder = has('reorder') && b.reorder && typeof b.reorder === 'object' ? b.reorder : null;
     const units = has('units') && Array.isArray(b.units) ? b.units : null;
     if (raw && !name) err.raw_name = 'Give it a name.';
+    if (raw && rawHsn && rawHsn !== (s.raw_hsn || '')) { if (!HSN_RE.test(rawHsn)) err.hsn_code = '4, 6 or 8 digits.'; else { const why = await tax.hsnProblem(q, rawHsn); if (why) err.hsn_code = why; } }
     if (raw) { const [[u]] = await q.query('SELECT unit_code FROM units WHERE unit_code = ?', [unit]); if (!u) err.unit_code = 'Choose a unit.'; }
     if (!raw && !pack) err.size_label = 'The pack label cannot be empty.';
     if (!SOURCE[src]) err.source = 'Made, bought or both.';
@@ -826,6 +829,7 @@ function register({ route, tx, db, by, InputError, canDo }) {
       cartMsg = ` New cartons hold ${cart}; cartons in stock keep ${s.packs_per_carton}.`;
     }
     if (st !== s.status) chg('status', SKU_STATUS[s.status], SKU_STATUS[st]);
+    if (raw && (rawHsn || '') !== (s.raw_hsn || '')) { chg('HSN', s.raw_hsn || 'not set', rawHsn || 'not set'); await q.query('UPDATE skus SET raw_hsn = ? WHERE sku_code = ?', [rawHsn || null, code]); }
     await q.query(`UPDATE skus SET size_label = ?, raw_name = ?, unit_code = ?, source = ?, status = ?, net_qty = ?, mrp = ?, sell_unit = ?, min_order_qty = ?, step_qty = ?, packs_per_carton = ?,
         per_pallet = ?, weight_kg = ?, dims = ?, updated_by = ?, updated_at = UTC_TIMESTAMP() WHERE sku_code = ?`,
     [pack, name, unit, src, st, net || null, mrp, sell, Number(moq), Number(step), Number(cart), pal === '' ? null : Number(pal), Number(wt), dims || null, by(req), code]);

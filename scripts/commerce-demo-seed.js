@@ -201,11 +201,14 @@ async function inTx(fn) {
   if (!Number(ins)) {
     const dayAgo = (n) => new Date(Date.now() + 5.5 * 3600e3 - n * 86400e3).toISOString().slice(0, 10);
     const atAgo = (n) => new Date(Date.now() - n * 86400e3);
-    await db.query(`INSERT INTO suppliers (name, phone, gstin, address, created_by) VALUES
-      ('DEMO Sri Lakshmi Paper Traders', '+91 94440 11223', '33AAACS1234L1Z2', 'Sidco Industrial Estate, Ambattur, Chennai', 'demo-seed'),
-      ('DEMO Coimbatore Hygiene Products', '+91 98940 55667', '33AAACC5678H1Z9', 'Avinashi Road, Coimbatore', 'demo-seed')`);
+    // phase 16: suppliers have a code, a state, an address and contacts (Masters > Partners > Suppliers)
+    await db.query(`INSERT INTO suppliers (code, name, kinds, gstin, state_code, addr_l1, city, since, created_by) VALUES
+      ('SUP-0001', 'DEMO Sri Lakshmi Paper Traders', 'raw', '33AAACS1234L1Z2', '33', 'Sidco Industrial Estate, Ambattur, Chennai', 'Chennai', CURDATE(), 'demo-seed'),
+      ('SUP-0002', 'DEMO Coimbatore Hygiene Products', 'raw', '33AAACC5678H1Z9', '33', 'Avinashi Road, Coimbatore', 'Coimbatore', CURDATE(), 'demo-seed')`);
+    await db.query("INSERT INTO number_series (series_key, last_no) VALUES ('SUP', 2) ON DUPLICATE KEY UPDATE last_no = GREATEST(last_no, 2)");
     const [[sup1]] = await db.query("SELECT supplier_id FROM suppliers WHERE name LIKE 'DEMO Sri Lakshmi%'");
     const [[sup2]] = await db.query("SELECT supplier_id FROM suppliers WHERE name LIKE 'DEMO Coimbatore%'");
+    await db.query("INSERT INTO supplier_contacts (supplier_id, pos, phone) VALUES (?, 0, '+91 94440 11223'), (?, 0, '+91 98940 55667')", [sup1.supplier_id, sup2.supplier_id]);
     const [all] = await db.query("SELECT s.sku_code, s.product_id, p.track_batches FROM skus s JOIN products p ON p.product_id = s.product_id ORDER BY s.sku_code");
     const LOW = { 'DF037-M150': 8, 'DF017-R4': 14, 'DF028-M100': 8 }; // a few SKUs run low on purpose
     const qtyOf = (sku) => LOW[sku] || 80 + ([...sku].reduce((a, c) => a + c.charCodeAt(0), 0) * 37) % 200;

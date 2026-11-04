@@ -52,6 +52,14 @@ import QuantitySlabs from './QuantitySlabs';
 import SpecialPrices from './SpecialPrices';
 import HsnRates from './HsnRates';
 import Brand from './Brand';
+import Suppliers from './Suppliers';
+import Indents from './Indents';
+import PurchaseOrders from './PurchaseOrders';
+import GoodsIn from './GoodsIn';
+import QualityCheck from './QualityCheck';
+import SupplierBills from './SupplierBills';
+import Claims from './Claims';
+import SupplierPayments from './SupplierPayments';
 import CommercePacking from './CommercePacking';
 import CommerceDelivery, { MyTrips } from './CommerceDelivery';
 import Settings from './Settings';
@@ -195,6 +203,15 @@ export default function AdminApp() {
             <Route path="special-prices" element={<Need section="prices" commerce><SpecialPrices /></Need>} />
             <Route path="hsn-rates" element={<Need section="prices" commerce><HsnRates /></Need>} />
             <Route path="brand" element={<Need section="content"><Brand /></Need>} />
+            {/* phase 16: section 3 Suppliers and buying, and Money > Payments > Supplier payments */}
+            <Route path="suppliers" element={<Need section="buying" commerce><Suppliers /></Need>} />
+            <Route path="indents" element={<Need section="buying" commerce><Indents /></Need>} />
+            <Route path="purchase-orders" element={<Need section="buying" commerce><PurchaseOrders /></Need>} />
+            <Route path="goods-in" element={<Need section="buying" commerce><GoodsIn /></Need>} />
+            <Route path="quality-check" element={<Need section="buying" commerce><QualityCheck /></Need>} />
+            <Route path="supplier-bills" element={<Need section="buying" commerce><SupplierBills /></Need>} />
+            <Route path="claims" element={<Need section="buying" commerce><Claims /></Need>} />
+            <Route path="supplier-payments" element={<Need section="money" commerce><SupplierPayments /></Need>} />
             <Route path="commerce/packing" element={<Need section="packing" commerce><CommercePacking /></Need>} />
             <Route path="commerce/delivery" element={<Need section="delivery" action="create" commerce><CommerceDelivery /></Need>} />
             <Route path="commerce/my-trips" element={<Need section="delivery" commerce><MyTrips /></Need>} />

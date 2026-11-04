@@ -22,8 +22,8 @@
 const permissions = require('../shared/permissions');
 
 const LOCKED_KINDS = ['rule_change', 'company_bank', 'supplier_bank'];
-const SECOND_ADMIN_KINDS = ['rule_change', 'company_bank'];
-const NO_GODOWN_KINDS = ['rule_change', 'company_bank', 'after_export']; // company-wide: no godown scope
+const SECOND_ADMIN_KINDS = ['rule_change', 'company_bank', 'supplier_bank']; // phase 16: a supplier's bank waits for a second Admin
+const NO_GODOWN_KINDS = ['rule_change', 'company_bank', 'supplier_bank', 'after_export']; // company-wide: no godown scope
 // rule changes that decide who can sign: never overridden (v23 N12)
 const NEVER_OVERRIDE = ['staffadd', 'staffback', 'stafflim', 'staffscope', 'staffrole', 'staffadm', 'roleperm'];
 const SECTION_LABEL = Object.fromEntries(permissions.SECTIONS.map((s) => [s.key, s.label]));
@@ -170,7 +170,7 @@ function othersAway(p, people, today) {
  */
 function overrideProblem(p, q, ctx, waiting = null) {
   if (q.status !== 'pending') return `It is already ${q.status}.`;
-  if (q.kind !== 'rule_change') return q.kind === 'company_bank' ? 'A bank change is never overridden: it waits for a second Admin.' : 'Only a rule change can be overridden.';
+  if (q.kind !== 'rule_change') return q.kind === 'company_bank' || q.kind === 'supplier_bank' ? 'A bank change is never overridden: it waits for a second Admin.' : 'Only a rule change can be overridden.';
   const t = q.payload && q.payload.t;
   if (NEVER_OVERRIDE.includes(t)) return 'A change to who can sign (staff, roles, limits, godowns) is never overridden.';
   if (!p.is_admin) return 'Only an Admin overrides.';

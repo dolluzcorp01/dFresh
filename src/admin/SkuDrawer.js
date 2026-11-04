@@ -1,5 +1,5 @@
 // The SKU side panel (phase 14, v23 DRAWERS.sku; API /catalogue/skus in catalogue.js): one form in sections (Pack,
-// Selling, Stock, Barcodes, Tax; a raw material has no Selling and no product-level tax or shelf-life fields). Save stays
+// Selling, Stock, Barcodes, Tax; a raw material has no Selling and no shelf-life fields, and its own HSN code, phase 16). Save stays
 // off until something changes, closing or Cancel with changes asks first, a refused save marks each field in red under
 // it, marks its section tab red and opens the first one. Barcodes are added / removed straight away (refused while the
 // form has unsaved typing). Used by Products and SKUs and by Raw materials; other pages link to /admin/products?sku=CODE.
@@ -158,7 +158,7 @@ export default function SkuDrawer({ code, onClose, onSaved, onBack, skus }) {
   const save = () => act.run(async () => {
     const body = { source: f.source, status: f.status, packs_per_carton: f.packs_per_carton, per_pallet: f.per_pallet, weight_kg: f.weight_kg, dims: f.dims,
       reorder: f.reorder, units: f.units.filter((u) => u.unit_code) };
-    if (raw) Object.assign(body, { raw_name: f.raw_name, unit_code: f.unit_code });
+    if (raw) Object.assign(body, { raw_name: f.raw_name, unit_code: f.unit_code, hsn_code: f.hsn_code });
     else {
       Object.assign(body, { size_label: f.size_label, net_qty: f.net_qty, mrp: f.mrp, sell_unit: f.sell_unit, min_order_qty: f.min_order_qty, step_qty: f.step_qty,
         substitutes: f.substitutes, shelf_life_months: f.shelf_life_months, track_batches: f.track_batches, near_expiry_days: f.near_expiry_days,
@@ -411,7 +411,14 @@ export default function SkuDrawer({ code, onClose, onSaved, onBack, skus }) {
 
       <div className="p14-form" hidden={tab !== 'tax'}>
         {raw ? (
-          <p className="a-hint-s p14-full p14-mt0">A raw material is bought, never sold, so no HSN or GST rate is set on it here. Purchase tax comes with Masters &gt; Tax and units &gt; HSN and GST rates (section 2).</p>
+          <>
+            <Fld k="hsn_code" label="HSN code" error={err('hsn_code')} hint="A code from Masters > Tax and units > HSN and GST rates. The GST on its purchase comes from that code's rate on the bill date.">
+              <input id={fid('hsn_code')} value={f.hsn_code} inputMode="numeric" maxLength={8} disabled={ro} onChange={(e) => set('hsn_code', e.target.value.replace(/\D/g, ''))} />
+            </Fld>
+            <Fld k="gst_rate" label="GST rate today" error={err('gst_rate')} hint="Read only: it comes from the HSN code (Masters > Tax and units > HSN and GST rates).">
+              <input id={fid('gst_rate')} value={f.gst_rate === '' ? '' : `${f.gst_rate}%`} disabled readOnly />
+            </Fld>
+          </>
         ) : (
           <>
             <Fld k="hsn_code" label="HSN code" req error={err('hsn_code')} hint={`A code from Masters > Tax and units > HSN and GST rates. ${shared}`}>

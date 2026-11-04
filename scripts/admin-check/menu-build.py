@@ -63,7 +63,13 @@ MAP = {
     'fulfilment/delivery/trips': [T('commerce/delivery', 'delivery', 'create', search='tab=trips'), T('commerce/my-trips', 'delivery', driver=True)],
     'fulfilment/delivery/courier-and-pickup': [T('commerce/delivery', 'delivery', 'create', search='tab=other')],
     'fulfilment/delivery/failed-short-refused': [T('commerce/delivery', 'delivery', 'create', search='tab=failed')],
-    'purchase/goods-in': [T('commerce/stock', 'inventory', search='tab=in')],
+    'purchase/indents': [T('indents', 'buying')],  # phase 16: section 3 Suppliers and buying
+    'purchase/purchase-orders': [T('purchase-orders', 'buying')],
+    'purchase/goods-in': [T('goods-in', 'buying')],
+    'purchase/quality-check': [T('quality-check', 'buying')],
+    'purchase/supplier-bills': [T('supplier-bills', 'buying')],
+    'purchase/claims-and-purchase-returns': [T('claims', 'buying')],
+    'money/payments/supplier-payments': [T('supplier-payments', 'money')],
     'inventory/stock-status': [T('commerce/stock', 'inventory')],
     'inventory/batches-and-expiry': [T('commerce/stock', 'inventory', search='tab=batches')],
     'inventory/stock-take': [T('commerce/stock', 'inventory', search='tab=counts')],
@@ -91,7 +97,7 @@ MAP = {
     'masters/prices/special-prices': [T('special-prices', 'prices')],
     'masters/tax-and-units/hsn-and-gst-rates': [T('hsn-rates', 'prices')],
     'website/brand-and-layout/logo-and-brand-images': [T('brand', 'content', **LIVE)],  # phase 15 step 9
-    'masters/partners/suppliers': [T('commerce/stock', 'inventory', search='tab=suppliers')],
+    'masters/partners/suppliers': [T('suppliers', 'buying')],  # phase 16
     'masters/partners/vehicles-and-drivers': [T('commerce-settings', 'settings', hash='cs-l-vehicles')],
     'masters/partners/couriers': [T('commerce-settings', 'settings', hash='cs-l-couriers')],
     'masters/tax-and-units/delivery-areas': [T('commerce-settings', 'settings', hash='cs-l-delivery_areas')],
@@ -124,8 +130,8 @@ MAP = {
 # placeholder: the permission section of an entry with no screen yet (what it will belong to), by entry id prefix
 PLACE_SECTION = [
     ('home/', None), ('sales/leads/', 'leads'), ('sales/customers/', 'customers'), ('sales/orders/', 'orders'), ('sales/returns/', 'returns'),
-    ('fulfilment/', 'delivery'), ('purchase/', 'inventory'), ('production/', 'inventory'), ('inventory/', 'inventory'),
-    ('money/payments/refunds', 'returns'), ('money/payments/supplier-payments', 'inventory'), ('money/billing/', 'orders'), ('money/payments/', 'orders'),
+    ('fulfilment/', 'delivery'), ('purchase/', 'buying'), ('production/', 'inventory'), ('inventory/', 'inventory'),
+    ('money/payments/refunds', 'returns'), ('money/payments/supplier-payments', 'money'), ('money/billing/', 'orders'), ('money/payments/', 'orders'),
     ('money/', 'reports'), ('gst/', 'reports'), ('marketing/', 'promotions'), ('reports/', 'reports'),
     ('masters/catalogue/raw-materials', 'inventory'), ('masters/prices/', 'prices'), ('masters/tax-and-units/hsn', 'prices'), ('masters/', 'products'), ('website/', 'content'),
     ('admin/users-and-security/', 'users'), ('admin/', 'settings'), ('online-store', 'settings'),

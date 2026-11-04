@@ -1,4 +1,5 @@
-// Documents as PDF (phase 10): the tax invoice, the credit note and the statement of account, attached to the
+// Documents as PDF (phase 10): the tax invoice, the credit note and the statement of account (phase 16: and the purchase
+// order, buying-routes.js poPdf, with this page writer), attached to the
 // notification mails (built when the mail is sent, outbox-worker.js) and downloadable in the admin. The same data as
 // the printed versions (invoiceData / creditNoteData feed GET /commerce/invoices/:id and /credit-notes/:id, and
 // src/admin/invoicePrint.js prints them in the browser), so the PDF and the print never disagree. A4, the dFresh logo
@@ -342,7 +343,8 @@ async function build(q, a) {
   if (a.kind === 'invoice') return invoicePdf(q, a.id);
   if (a.kind === 'credit_note') return creditNotePdf(q, a.id);
   if (a.kind === 'statement') return statementPdf(q, a.id, {});
+  if (a.kind === 'po') return require('./buying-routes').poPdf(q, a.id); // phase 16: a purchase order mailed to the supplier
   throw new Error(`unknown attachment kind ${a.kind}`);
 }
 
-module.exports = { SKU_NAME, SKU_JOIN, invoiceData, creditNoteData, statementData, invoicePdf, creditNotePdf, statementPdf, build };
+module.exports = { SKU_NAME, SKU_JOIN, invoiceData, creditNoteData, statementData, invoicePdf, creditNotePdf, statementPdf, build, Doc, money, day };

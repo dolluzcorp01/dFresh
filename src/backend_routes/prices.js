@@ -8,7 +8,8 @@
 //   price are refused; below cost plus the margin floor is saved as a waiting change PC-001 (approval kind
 //   margin_floor; never used for pricing until approved; nobody approves their own).
 // - Lists: name, who it is for, typed with / without GST (switching keeps old rows as typed and adds today's price in
-//   the new basis, v22), rounding, customer types (a type belongs to one list), one default list (never archived).
+//   the new basis, v22), rounding, customer types (a type belongs to one list; putting a type on another list waits for
+//   approval, rule cust_change, phase 16), one default list (never archived).
 // - Slabs per list (each more packs, more off; the top slab is checked for every pack without its own bands),
 //   change many prices with a preview, special prices (lower of the special and the normal price; more than the
 //   allowed % below, raised by someone without Approve, or below cost plus margin waits), Check a price, rate card,
@@ -20,6 +21,7 @@ const approvals = require('./approvals');
 const secondAdmin = require('./second-admin');
 const priceExcel = require('./price-excel');
 const theme = require('./excel-theme');
+const godowns = require('./godowns');
 
 const r2 = pricing.round2;
 const money = pricing.money;
@@ -51,10 +53,11 @@ function register({ route, tx, db, by, InputError, canDo, commerceGate, upload, 
     const rows = await pricing.rowsOn(db, today());
     const [slabs] = await db.query('SELECT list_key, COUNT(*) AS n FROM list_slabs GROUP BY list_key');
     const [waits] = await db.query("SELECT list_key, COUNT(*) AS n FROM price_requests WHERE status = 'pending' GROUP BY list_key");
+    const [tw] = await db.query("SELECT JSON_UNQUOTE(JSON_EXTRACT(payload, '$.key')) AS k FROM approvals WHERE kind = 'cust_change' AND status = 'pending'");
     return {
       lists: ls.map((l) => ({ ...l, type_labels: types.filter((t) => t.list_key === l.key).map((t) => t.label),
         priced: skus.filter((s) => (rows.get(s.sku_code) || {})[l.key] && rows.get(s.sku_code)[l.key].price !== null).length, packs: skus.length,
-        slabs: Number((slabs.find((x) => x.list_key === l.key) || {}).n || 0), waiting: Number((waits.find((x) => x.list_key === l.key) || {}).n || 0) })),
+        slabs: Number((slabs.find((x) => x.list_key === l.key) || {}).n || 0), waiting: Number((waits.find((x) => x.list_key === l.key) || {}).n || 0), types_waiting: tw.some((x) => x.k === l.key) })),
       types: types.map((t) => ({ type_key: t.type_key, label: t.label, list_key: t.list_key, is_active: Number(t.is_active) === 1 })),
       can: { create: canDo(req, 'prices', 'create'), edit: canDo(req, 'prices', 'edit'), export: canDo(req, 'prices', 'export'), approve: canDo(req, 'prices', 'approve'), admin: isAdmin(req), seeCost: seesCost(req) },
     };
@@ -112,7 +115,7 @@ function register({ route, tx, db, by, InputError, canDo, commerceGate, upload, 
     for (let i = 2; taken.has(key); i += 1) key = `${key.slice(0, 17)}_${i}`;
     await q.query('INSERT INTO price_lists (list_key, name, about, typed, round_to, sort_order, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)',
       [key, name, String(b.about || '').trim().slice(0, 120) || null, typed, round, ls.length + 1, by(req)]);
-    const note = await moveTypes(q, key, Array.isArray(b.types) ? b.types : [], by(req));
+    const note = await askTypes(q, req, key, name, Array.isArray(b.types) ? b.types : [], []);
     let copied = 0; let skipped = 0;
     if (src) {
       const rows = await priceExcel.listRows(q, src);
@@ -131,6 +134,37 @@ function register({ route, tx, db, by, InputError, canDo, commerceGate, upload, 
     await audit(q, { empId: by(req), action: 'create', entity: 'price_list', entityId: key, after: { name, typed, copy_from: src ? src.name : null, adjust: adj, copied, skipped } });
     return { list_key: key, message: `${name}${src ? `: ${copied} prices from ${src.name}${adj ? ` ${adj > 0 ? '+' : ''}${adj}%` : ''}` : ''}${skipped ? `, ${skipped} packs skipped: below their lowest allowed price or cost plus margin, or above MRP` : ''}.${note}` };
   })), G);
+
+  /**
+   * phase 16 (carry-over of phase 15, v23 cust_change): putting customer types on another price list waits for approval
+   * by someone with Approve on Customers (Accounts or an Admin), also when an Admin asks: a second person decides. With
+   * the rule switched off it is done at once. One change waits per list -> the note for the message
+   */
+  async function askTypes(q, req, key, listName, wanted, current) {
+    const want = [...new Set(wanted.map(String))].sort();
+    if (want.length === current.length && want.every((t) => current.includes(t))) return '';
+    if (!(await approvals.needed(q, 'cust_change', {}))) return moveTypes(q, key, want, by(req));
+    const [[w]] = await q.query("SELECT approval_id FROM approvals WHERE kind = 'cust_change' AND status = 'pending' AND JSON_UNQUOTE(JSON_EXTRACT(payload, '$.dk')) = ?", [`listtypes:${key}`]);
+    if (w) return ` A customer types change already waits for approval on this list: ${await secondAdmin.waitingLine(q, w.approval_id)}`;
+    const [types] = await q.query('SELECT type_key, label FROM customer_types');
+    const label = (k) => (types.find((t) => t.type_key === k) || { label: k }).label;
+    const aid = await approvals.request(q, { kind: 'cust_change', godownId: await godowns.defaultFor(q, req), refType: 'price_list', refId: key,
+      summary: `Price list ${listName}: customer types ${current.map(label).join(', ') || 'none'} to ${want.map(label).join(', ') || 'none'}`, payload: { t: 'listtypes', dk: `listtypes:${key}`, key, types: want } }, by(req));
+    await audit(q, { empId: by(req), action: 'request', entity: 'price_list', entityId: key, after: { customer_types: want.map(label), waiting: true } });
+    return ` The customer types change waits for approval: ${await secondAdmin.waitingLine(q, aid)}`;
+  }
+  approvals.onApproved('cust_change', async (q, p, empId) => {
+    if (!p || p.t !== 'listtypes') return;
+    const [[l]] = await q.query('SELECT list_key FROM price_lists WHERE list_key = ?', [p.key]);
+    if (l) await moveTypes(q, p.key, p.types, empId);
+  });
+  approvals.onRecheck('cust_change', async (q, p) => {
+    if (!p || p.t !== 'listtypes') return '';
+    const [[l]] = await q.query('SELECT status FROM price_lists WHERE list_key = ?', [p.key]);
+    if (!l) return 'The price list is gone.';
+    if (l.status === 'archived' && p.types.length) return 'The price list is archived now.';
+    return '';
+  });
 
   /** customer types ticked for a list: each leaves its old list -> the note */
   async function moveTypes(q, key, wanted, empId) {
@@ -168,9 +202,6 @@ function register({ route, tx, db, by, InputError, canDo, commerceGate, upload, 
     const types = Array.isArray(b.types) ? b.types.map(String) : null;
     const mine = ls.find((x) => x.key === l.list_key).types;
     if (status === 'archived' && (types || mine).length) f.status = 'Untick its customer types first; they will use the default list.';
-    if (types && (types.length !== mine.length || types.some((t) => !mine.includes(t))) && !isAdmin(req) && !canDo(req, 'prices', 'approve')) {
-      throw new InputError('Moving customer types between price lists is for an Admin or someone who approves prices.', 403);
-    }
     const typed = b.typed === 'inc' || b.typed === 'ex' ? b.typed : l.typed;
     const round = b.round_to !== undefined && [0, 0.5, 1].includes(Number(b.round_to)) ? Number(b.round_to) : Number(l.round_to);
     if (Object.keys(f).length) throw fieldsErr(f);
@@ -187,9 +218,10 @@ function register({ route, tx, db, by, InputError, canDo, commerceGate, upload, 
     }
     let basisMsg = '';
     if (typed !== l.typed) { basisMsg = await switchBasis(q, l.list_key, l.typed, typed, by(req)); put('typed', l.typed === 'inc' ? 'with GST' : 'without GST', typed === 'inc' ? 'with GST' : 'without GST', 'prices typed'); }
-    const note = types ? await moveTypes(q, l.list_key, types, by(req)) : '';
+    const note = types ? await askTypes(q, req, l.list_key, name, types, mine) : '';
     if (ch.length) await audit(q, { empId: by(req), action: 'update', entity: 'price_list', entityId: l.list_key, before, after });
-    return { message: `${ch.length + (note ? 1 : 0)} change${ch.length + (note ? 1 : 0) === 1 ? '' : 's'}.${basisMsg}${note}` };
+    const typesDone = note && !/waits for approval/.test(note) ? 1 : 0;
+    return { waiting: /waits for approval/.test(note), message: `${ch.length + typesDone} change${ch.length + typesDone === 1 ? '' : 's'}.${basisMsg}${note}` };
   })), G);
 
   /**

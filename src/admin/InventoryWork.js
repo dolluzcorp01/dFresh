@@ -1,6 +1,7 @@
-// Inventory (and Purchase > Goods in, Masters > Partners > Suppliers): the tabs where stock is changed (API in src/backend_routes/stock.js via Admin_server.js).
+// Inventory: the tabs where stock is changed (API in src/backend_routes/stock.js via Admin_server.js).
 // Godowns (phase 12a): a stock in, a write-off and a count each belong to one godown (the Godown select, GodownField.js).
-// - Stock in: Production (our Kanchipuram unit) or Purchase (a supplier); date, reference (bill / batch sheet no.),
+// - Stock in: Production (our Kanchipuram unit; until phase 17 Production runs). Bought goods come in through Purchase >
+//   Goods in (phase 16: against a PO, to QC hold); the purchase stock-ins of before stay listed. Date, reference (batch sheet no.),
 //   lines in packs or cartons with the cost per pack; a scanner (or typing a SKU and Enter) adds a line or one more of
 //   it. Batch-tracked products ask for batch no., manufacture and expiry date. A role that can see costs sees the
 //   average cost before -> after.
@@ -8,7 +9,6 @@
 //   reason, photo optional; above the Commerce setting thresholds it waits for approval.
 // - Counts: all SKUs or a category; enter or scan the counted packs, see the difference with the system; submit sends
 //   the differences to approval, which posts them as count movements.
-// - Suppliers: name, phone, GSTIN (optional), address.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from './adminApi';
 import { Drawer, Loading, Notice, Pill, Table, UploadProgress, fmtDate, useAction, useCan, useConfirm, useLoad, useUpload } from './ui';
@@ -67,12 +67,10 @@ export function StockIns({ stock }) {
 
 function StockInDrawer({ stock, onClose, onSaved }) {
   const act = useAction();
-  const sup = useLoad('/commerce/suppliers');
-  const [f, setF] = useState({ kind: 'production', supplier_id: '', received_on: today(), reference: '', note: '' });
+  const [f, setF] = useState({ kind: 'production', received_on: today(), reference: '', note: '' });
   const [godown, setGodown, godownList] = useGodown();
   const [lines, setLines] = useState([]);
   const [scanMsg, setScanMsg] = useState(null);
-  const [addingSupplier, setAddingSupplier] = useState(false);
   const skus = useMemo(() => skusOf(stock, godown), [stock, godown]);
   const seesCost = Boolean(stock.data && stock.data.seesCost);
   const add = async (raw, carton = null) => {
@@ -90,7 +88,7 @@ function StockInDrawer({ stock, onClose, onSaved }) {
     setLines((ls) => {
       const at = ls.findIndex((l) => l.sku_code === code);
       if (at >= 0) return ls.map((l, i) => (i === at ? { ...l, qty: String(Number(l.qty || 0) + 1) } : l));
-      return [...ls, { sku_code: code, qty: '1', unit: carton || (carton === null && Number(s.packs_per_carton) > 1 && f.kind === 'purchase') ? 'carton' : 'pack', unit_cost: '', batch_no: '', mfg_date: '', expiry_date: '' }];
+      return [...ls, { sku_code: code, qty: '1', unit: carton ? 'carton' : 'pack', unit_cost: '', batch_no: '', mfg_date: '', expiry_date: '' }];
     });
     setScanMsg({ kind: 'ok', text: `${code} ${s.name} - ${s.size_label}` });
   };
@@ -105,21 +103,12 @@ function StockInDrawer({ stock, onClose, onSaved }) {
     <Drawer title="New stock in" onClose={onClose} wide dirty={lines.length > 0}
       footer={<button type="button" className="a-btn" disabled={act.busy || !lines.length} onClick={save}>Save stock in</button>}>
       {act.note}
-      <div className="a-chips" role="group" aria-label="Kind">
-        <button type="button" className={`a-chip${f.kind === 'production' ? ' on' : ''}`} onClick={() => setF({ ...f, kind: 'production' })}>Production (our Kanchipuram unit)</button>
-        <button type="button" className={`a-chip${f.kind === 'purchase' ? ' on' : ''}`} onClick={() => setF({ ...f, kind: 'purchase' })}>Purchase (from a supplier)</button>
-      </div>
+      <Notice kind="info">Production from our Kanchipuram unit. Bought goods come in through Purchase &gt; Goods in, against a purchase order, and wait in QC hold.</Notice>
       <div className="a-grid2">
         <GodownField value={godown} onChange={setGodown} list={godownList} label="Into godown" disabled={lines.length > 0} />
-        {f.kind === 'purchase' && (
-          <label className="a-field"><span>Supplier <button type="button" className="a-link" onClick={() => setAddingSupplier(true)}>+ New supplier</button></span>
-            <select value={f.supplier_id} aria-label="Supplier" onChange={(e) => setF({ ...f, supplier_id: e.target.value })}><option value="">Choose...</option>
-              {((sup.data) || []).filter((s) => Number(s.is_active)).map((s) => <option key={s.supplier_id} value={s.supplier_id}>{s.name}</option>)}</select></label>
-        )}
         <label className="a-field"><span>Date received</span><input type="date" max={today()} value={f.received_on} onChange={(e) => setF({ ...f, received_on: e.target.value })} /></label>
-        <label className="a-field"><span>{f.kind === 'purchase' ? "Supplier's bill no. (required)" : 'Batch sheet no.'}</span><input value={f.reference} maxLength={60} aria-label="Reference" onChange={(e) => setF({ ...f, reference: e.target.value })} /></label>
+        <label className="a-field"><span>Batch sheet no.</span><input value={f.reference} maxLength={60} aria-label="Reference" onChange={(e) => setF({ ...f, reference: e.target.value })} /></label>
       </div>
-      {addingSupplier && <SupplierDrawer onClose={() => setAddingSupplier(false)} onSaved={(s) => { setAddingSupplier(false); sup.reload(); setF((x) => ({ ...x, supplier_id: String(s.supplier_id) })); }} />}
       <ScanBox onCode={add} />
       {scanMsg && <small className={scanMsg.kind === 'error' ? 'a-bad' : 'a-muted'} role="status">{scanMsg.text}</small>}
       <div className="a-scroll">
@@ -357,52 +346,3 @@ function CountDrawer({ id, onClose, onChanged }) {
   );
 }
 
-// ---------------------------------------------------------------- suppliers
-export function Suppliers() {
-  const list = useLoad('/commerce/suppliers');
-  const canCreate = useCan('inventory', 'create');
-  const [open, setOpen] = useState(null); // supplier | 'new'
-  return (
-    <>
-      {canCreate && <div className="a-toolbar"><button type="button" className="a-btn" onClick={() => setOpen('new')}>New supplier</button></div>}
-      <Loading state={list}>
-        {list.data && (
-          <Table label="Suppliers" rows={list.data} rowKey={(x) => x.supplier_id} onRowClick={setOpen} rowClass={(x) => (Number(x.is_active) ? undefined : 'a-off')}
-            empty={{ icon: 'truck', title: 'No supplier yet.' }}
-            columns={[
-              { key: 'name', label: 'Supplier', sort: true, render: (x) => <>{x.name}{Number(x.is_active) ? '' : ' (off)'}</> },
-              { key: 'phone', label: 'Phone' },
-              { key: 'gstin', label: 'GSTIN' },
-              { key: 'address', label: 'Address' },
-              { key: 'stock_ins', label: 'Stock-ins', num: true, sort: true },
-              { key: 'last_in', label: 'Last', sort: true, render: (x) => day(x.last_in) },
-            ]} />
-        )}
-      </Loading>
-      {open && <SupplierDrawer supplier={open === 'new' ? null : open} onClose={() => setOpen(null)} onSaved={() => { setOpen(null); list.reload(); }} />}
-    </>
-  );
-}
-
-export function SupplierDrawer({ supplier = null, onClose, onSaved }) {
-  const act = useAction();
-  const canEdit = useCan('inventory', supplier ? 'edit' : 'create');
-  const [f, setF] = useState(supplier ? { name: supplier.name, phone: supplier.phone || '', gstin: supplier.gstin || '', address: supplier.address || '', is_active: Number(supplier.is_active) === 1 }
-    : { name: '', phone: '', gstin: '', address: '', is_active: true });
-  const save = () => act.run(async () => onSaved(supplier ? await api.send('PUT', `/commerce/suppliers/${supplier.supplier_id}`, f) : await api.send('POST', '/commerce/suppliers', f)));
-  return (
-    <Drawer title={supplier ? supplier.name : 'New supplier'} onClose={onClose}
-      footer={canEdit ? <button type="button" className="a-btn" disabled={act.busy || !f.name.trim()} onClick={save}>Save supplier</button> : null}>
-      {act.note}
-      <fieldset className="a-plainset" disabled={!canEdit}>
-        <div className="a-grid2">
-          <label className="a-field"><span>Name</span><input value={f.name} maxLength={150} aria-label="Supplier name" onChange={(e) => setF({ ...f, name: e.target.value })} /></label>
-          <label className="a-field"><span>Phone</span><input value={f.phone} maxLength={20} onChange={(e) => setF({ ...f, phone: e.target.value })} /></label>
-          <label className="a-field"><span>GSTIN (optional)</span><input value={f.gstin} placeholder="33ABCDE1234F1Z5" onChange={(e) => setF({ ...f, gstin: e.target.value })} /></label>
-          <label className="a-field"><span>Address</span><input value={f.address} maxLength={255} onChange={(e) => setF({ ...f, address: e.target.value })} /></label>
-        </div>
-        {supplier && <label className="a-inline"><input type="checkbox" checked={f.is_active} onChange={(e) => setF({ ...f, is_active: e.target.checked })} /> Active (offered on new stock-ins)</label>}
-      </fieldset>
-    </Drawer>
-  );
-}
