@@ -126,7 +126,8 @@ export default function CommerceSkus() {
     ...(canView ? [{ key: 'all', label: 'All barcodes' }] : []),
     ...(canView || canInv ? [{ key: 'labels', label: 'Print labels' }] : []),
   ];
-  const [tab, setTab] = useState('scan');
+  // ?tab=labels&sku=..&type=carton&copies=.. (phase 17: Print labels on a finished production run)
+  const [tab, setTab] = useState(() => (new URLSearchParams(window.location.search).get('tab') === 'labels' && tabs.some((t) => t.key === 'labels') ? 'labels' : 'scan'));
   return (
     <section>
       <PageHead sub="Scan any barcode to find its SKU, see every barcode, print pack, carton and shelf labels." />
@@ -277,8 +278,10 @@ function LabelMaker() {
   const data = useLoad('/catalogue/labels');
   const toast = useToast();
   const [q, setQ] = useState('');
-  const [sel, setSel] = useState(() => new Set());
-  const [opt, setOpt] = useState({ type: 'pack', lang: 'en', copies: '1', month: thisMonth() });
+  const pre = new URLSearchParams(window.location.search);
+  const [sel, setSel] = useState(() => new Set(pre.get('sku') ? [pre.get('sku')] : []));
+  const [opt, setOpt] = useState({ type: ['pack', 'carton', 'shelf'].includes(pre.get('type')) ? pre.get('type') : 'pack', lang: 'en',
+    copies: /^\d+$/.test(pre.get('copies') || '') ? String(Math.min(50, Math.max(1, Number(pre.get('copies'))))) : '1', month: thisMonth() });
   const [shown, setShown] = useState(null); // the settings of the labels on screen
   const d = data.data;
   const rows = useMemo(() => (d ? d.rows : []), [d]);

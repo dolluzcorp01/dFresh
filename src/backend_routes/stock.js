@@ -7,8 +7,8 @@
 // - Available (per godown) = good stock - expired batches - active reservations of other orders.
 // - Every stock-out (dispatch) keeps the average cost at that moment (unit_cost): the margin uses it, never today's cost.
 //   The average cost is per SKU across every godown.
-// - Stock in (production from the Kanchipuram unit; purchase from a supplier only for the demo seed and the stock-ins of
-//   before phase 16: bought goods now come in through Purchase > Goods in, buying.js) into one godown: lines in packs
+// - Stock in (production or purchase) is only for the demo seed and the stock-ins of before: bought goods come in through
+//   Purchase > Goods in (phase 16, buying.js), made packs through a production run (phase 17, production.js); lines in packs
 //   with a cost per pack; each line updates the SKU's weighted average cost: (on hand x old average + qty x cost) /
 //   (on hand + qty).
 // - Batches (products.track_batches): a stock in of such a SKU needs batch no., manufacture and expiry date; dispatch
@@ -29,13 +29,15 @@ const MOVE_LABEL = {
   production: 'Stock in (production)', purchase: 'Stock in (purchase)', out: 'Dispatched', return: 'Back in', damaged: 'Moved to damaged',
   write_off: 'Write-off', count: 'Count difference', in: 'In', adjust: 'Adjust', recheck: 'Recheck (R) to good', shelf: 'Shelf move',
   grn_hold: 'Goods in, QC hold', qc: 'Quality check', grn: 'Goods in, accepted', qc_reject: 'Rejected at QC', sent_back: 'Sent back to the supplier', late_claim: 'Found faulty after QC', // phase 16
+  prod_issue: 'Issued to production', prod_return: 'Returned from production', made: 'Made, QC hold', prod_qc: 'Production QC', prod_pass: 'Passed production QC', prod_reject: 'Rejected at production QC', recheck_hold: 'Back to QC hold (check again)', // phase 17
 };
 const SHELVES = ['good', 'hold', 'dmg', 'ret', 'rej', 'disp'];
 const KIND_LABEL = { good: 'Good', hold: 'QC hold', dmg: 'Damaged', ret: 'Returned (R)', rej: 'Rejected (to go back)', disp: 'Disputed' };
-const WRITE_OFF_TYPES = { damaged: 'Damaged', expired: 'Expired', lost: 'Lost', sample: 'Sample' };
+const WRITE_OFF_TYPES = { damaged: 'Damaged', expired: 'Expired', lost: 'Lost', sample: 'Sample', prodqc: 'Rejected at production QC' }; // prodqc: phase 17, set by a run only
 // leaving Good for these, an expired lot is never taken (it stays blocked on the shelf)
-const SALE_OUT = ['out', 'transfer'];
+const SALE_OUT = ['out', 'transfer', 'prod_issue']; // phase 17: material issued to a run is never from an expired lot
 const round2 = (n) => Math.round(n * 100) / 100;
+const round3 = (n) => Math.round(n * 1000) / 1000; // phase 17: quantities in kg have up to 3 decimals
 const IST_TODAY = "DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+05:30'))";
 
 class StockError extends Error {
@@ -124,13 +126,15 @@ async function insertMove(q, m, empId) {
  * - In: one movement (on the named batch, if any). A recheck never brings an expired batch back to Good.
  * - Out: never below zero. A named batch is strict: only that batch, all of it there, else refused (strict false: that
  *   batch first, then the others). No batch named: lots by batch, earliest expiry first, lots without a batch last.
- *   Out of Good for a sale or transfer an expired lot is never taken (it stays blocked on the shelf).
+ *   Out of Good for a sale or transfer an expired lot is never taken (it stays blocked on the shelf). last: batch ids
+ *   taken only after the others (phase 17: batches other write-offs wait on).
  */
-async function moveStock(q, { sku, godown, shelf = 'good', qty, batch = null, strict, doc = null, what, unitCost = null, note = null, at = null }, empId) {
+async function moveStock(q, { sku, godown, shelf = 'good', qty, batch = null, strict, doc = null, what, unitCost = null, note = null, at = null, last = [] }, empId) {
   const g = needGodown(godown);
   if (!SHELVES.includes(shelf)) throw new Error(`stock: unknown shelf ${shelf}`);
-  const n = Number(qty);
-  if (!Number.isInteger(n) || n === 0) throw new StockError('Quantity: a whole number of packs');
+  const n = round3(Number(qty));
+  // packs are whole (every caller checks it); a raw material counted in kg moves with decimals (phase 17)
+  if (!Number.isFinite(n) || n === 0) throw new StockError('Quantity: a whole number of packs');
   if (!what) throw new Error('stock: what moves the stock (move type) is required');
   await books.assertOpen(q, at ? new Date(new Date(at).getTime() + 5.5 * 3600e3).toISOString().slice(0, 10) : pricing.istToday()); // phase 12b month lock
   const batchId = batch ? Number(batch) : null;
@@ -154,7 +158,8 @@ async function moveStock(q, { sku, godown, shelf = 'good', qty, batch = null, st
     if (saleOut && mine.some((b) => b.expired)) throw new StockError(`${sku}: that batch has expired, it cannot leave Good`, 409);
     usable = isStrict ? mine : [...mine, ...lots.filter((b) => b.batch_id !== batchId && !(saleOut && b.expired))];
   } else usable = lots.filter((b) => !(saleOut && b.expired));
-  const total = usable.reduce((a, b) => a + b.qty, 0);
+  if (last.length) usable = [...usable.filter((b) => !last.includes(b.batch_id)), ...usable.filter((b) => last.includes(b.batch_id))]; // phase 17 (N3)
+  const total = round3(usable.reduce((a, b) => a + b.qty, 0));
   if (total < need) {
     const blocked = saleOut ? lots.filter((b) => b.expired).reduce((a, b) => a + b.qty, 0) : 0;
     throw new StockError(`Not enough ${sku}${batchId && isStrict ? ' in that batch' : ''} on the ${KIND_LABEL[shelf]} shelf: ${total} there${blocked ? ` (${blocked} expired, blocked)` : ''}, ${need} needed`, 409);
@@ -163,10 +168,10 @@ async function moveStock(q, { sku, godown, shelf = 'good', qty, batch = null, st
   let left = need;
   for (const b of usable) {
     if (!left) break;
-    const take = Math.min(left, b.qty);
+    const take = round3(Math.min(left, b.qty));
     await insertMove(q, { ...base, delta: -take, batch: b.batch_id }, empId);
     moved.push({ batch_id: b.batch_id, batch_no: b.batch_no || null, expiry_date: b.expiry_date || null, qty: take });
-    left -= take;
+    left = round3(left - take);
   }
   return moved;
 }
@@ -330,8 +335,10 @@ async function batchesOfOrder(q, orderNo) {
 async function postWriteOff(q, id, empId) {
   const [[w]] = await q.query('SELECT write_off_id, godown_id, sku_code, stock_kind, batch_id, qty, reason_type, reason, status FROM write_offs WHERE write_off_id = ? FOR UPDATE', [id]);
   if (!w || w.status !== 'pending') return false;
+  // v23 N3: a write-off naming no batch takes other batches first, the ones other write-offs wait on last
+  const last = w.batch_id ? [] : (await pendingWriteOffs(q, { sku: w.sku_code, godown: w.godown_id, shelf: w.stock_kind }, id)).batches;
   try {
-    await moveStock(q, { sku: w.sku_code, godown: w.godown_id, shelf: w.stock_kind, qty: -w.qty, batch: w.batch_id, what: 'write_off', doc: { type: 'write_off', id }, note: `${WRITE_OFF_TYPES[w.reason_type]}: ${w.reason}` }, empId);
+    await moveStock(q, { sku: w.sku_code, godown: w.godown_id, shelf: w.stock_kind, qty: -w.qty, batch: w.batch_id, what: 'write_off', doc: { type: 'write_off', id }, note: `${WRITE_OFF_TYPES[w.reason_type]}: ${w.reason}`, last }, empId);
   } catch (e) {
     if (e instanceof StockError) throw new StockError(`Write-off #${id}: ${e.message}`, 409);
     throw e;
@@ -340,6 +347,19 @@ async function postWriteOff(q, id, empId) {
   await audit(q, { empId, action: 'write_off', entity: 'stock', entityId: w.sku_code, after: { write_off: id, godown: w.godown_id, qty: w.qty, shelf: w.stock_kind, batch_id: w.batch_id, type: w.reason_type } });
   return true;
 }
+
+/**
+ * packs of a shelf already claimed by write-offs waiting for approval (v23 N3): batch = that batch only; no batch = every
+ * write-off waiting on the shelf -> { n, batches: [batch ids they name] }
+ */
+async function pendingWriteOffs(q, { sku, godown, shelf, batch = null }, exceptId = 0) {
+  const [rows] = await q.query(`SELECT batch_id, SUM(qty) AS n FROM write_offs WHERE status = 'pending' AND sku_code = ? AND godown_id = ? AND stock_kind = ?
+      AND write_off_id <> ? ${batch ? 'AND batch_id = ?' : ''} GROUP BY batch_id`, batch ? [sku, godown, shelf, exceptId, batch] : [sku, godown, shelf, exceptId]);
+  return { n: rows.reduce((a, r) => a + Number(r.n), 0), batches: rows.map((r) => r.batch_id).filter(Boolean) };
+}
+// phase 17: what happens when a write-off of a production run is rejected (production.js registers it)
+const writeOffClosedHooks = [];
+const onWriteOffClosed = (fn) => writeOffClosedHooks.push(fn);
 
 /**
  * data = { godown_id, sku_code, stock_kind (shelf), batch_id, qty, reason_type, reason }, photo = { buffer, mimetype } | null
@@ -356,7 +376,7 @@ async function requestWriteOff(q, data, empId, photo = null) {
   if (!s) throw new StockError('Choose the SKU');
   if (!kind) throw new StockError('From: the shelf (Good, QC hold, Damaged, Returned, Rejected or Disputed)');
   if (!Number.isInteger(qty) || qty < 1) throw new StockError('Quantity: packs, a whole number from 1');
-  if (!type) throw new StockError('Why: damaged, expired, lost or sample');
+  if (!type || type === 'prodqc') throw new StockError('Why: damaged, expired, lost or sample'); // prodqc: production QC only (phase 17)
   if (!reason) throw new StockError('Say what happened');
   const pic = photo ? await storable(photo) : null; // checked by its bytes and made small (photo-check.js)
   if (photo && !pic) throw new StockError('Photo: a JPEG, PNG or WebP picture');
@@ -366,8 +386,13 @@ async function requestWriteOff(q, data, empId, photo = null) {
     const [[b]] = await q.query('SELECT batch_id FROM batches WHERE batch_id = ? AND sku_code = ?', [batchId, sku]);
     if (!b) throw new StockError('That batch is not of this SKU');
   } else batchId = null;
-  const there = await onShelf(q, { sku, godown, shelf: kind, batch: batchId });
-  if (there < qty) throw new StockError(`Only ${there} ${KIND_LABEL[kind].toLowerCase()} packs of ${sku}${batchId ? ' in that batch' : ''} at this godown`);
+  // phase 17 (v23 N3): the room is counted per batch: write-offs already waiting on the same batch count against it, and
+  // on the whole shelf every write-off waiting there does
+  for (const b of batchId ? [batchId, null] : [null]) {
+    const there = await onShelf(q, { sku, godown, shelf: kind, batch: b });
+    const waiting = (await pendingWriteOffs(q, { sku, godown, shelf: kind, batch: b })).n;
+    if (there - waiting < qty) throw new StockError(`Only ${Math.max(0, there - waiting)} ${KIND_LABEL[kind].toLowerCase()} packs of ${sku}${b ? ' in that batch' : ''} at this godown${waiting ? ` (${waiting} more wait in other write-offs)` : ''}`);
+  }
   const value = s.avg_cost === null ? null : round2(qty * Number(s.avg_cost));
   await books.assertOpen(q, pricing.istToday());
   const check = await approvals.check(q, 'write_off', { amount: value || 0, qty, by: empId });
@@ -409,6 +434,7 @@ approvals.onClosed('write_off', async (q, p, status, empId) => {
   if (!p || !p.write_off_id) return;
   await q.query("UPDATE write_offs SET status = 'rejected' WHERE write_off_id = ? AND status = 'pending'", [p.write_off_id]);
   await audit(q, { empId, action: status, entity: 'write_off', entityId: String(p.write_off_id) });
+  for (const fn of writeOffClosedHooks) await fn(q, p.write_off_id, status, empId);
 });
 
 /** good -> damaged (found damaged in the godown) or -> returned (R); from the Record form. data.godown_id required */
@@ -601,6 +627,6 @@ async function batchList(q, godownIds = null) {
 }
 
 module.exports = {
-  MOVE_LABEL, KIND_LABEL, SHELVES, WRITE_OFF_TYPES, StockError, availability, batchStock, onShelf, tracked, lockSkus, moveStock, moveShelf, stockIn, dispatchOut,
+  MOVE_LABEL, KIND_LABEL, SHELVES, WRITE_OFF_TYPES, StockError, pendingWriteOffs, onWriteOffClosed, round3, availability, batchStock, onShelf, tracked, lockSkus, moveStock, moveShelf, stockIn, dispatchOut,
   goodsBack, batchesOfOrder, costNow, costAt, requestWriteOff, postWriteOff, recordMove, startCount, countDetail, saveCount, submitCount, reorderList, batchList, IST_TODAY,
 };

@@ -3,16 +3,23 @@
 // rejected (accepted + rejected = received); a reason for what is rejected; a paper spec on the supplier's item list
 // asks for the GSM measured, and accepting outside spec +/- 1 needs a reason. Accepted goes to Good at landed cost and
 // moves the average; rejected goes to the Rejected shelf and starts a claim. Check needs Edit on Suppliers and buying.
+// Phase 17: production runs in QC hold and runs to "Check again" are listed too (rights: Production); they open the
+// run drawer (ProductionRuns.js), where the check is saved. Each part shows to the people with rights on it.
 import { useState } from 'react';
 import { api } from './adminApi';
 import { Alert, Drawer, Field, LIcon, Loading, PageHead, Pill, Table, useAction, useAdmin, useCan, useLoad, useToast } from './ui';
 import { In, ItemCell, SupCell, ViewOnlyB, at, fe, fieldsOf, useOpenParam } from './buyShared';
+import { RunDrawer } from './ProductionRuns';
 
 export default function QualityCheck() {
-  const data = useLoad('/buying/qc');
+  const canBuy = useCan('buying', 'view');
+  const canProd = useCan('production', 'view');
+  const data = useLoad(canBuy ? '/buying/qc' : null);
+  const prod = useLoad(canProd ? '/production/qc' : null);
   const { me } = useAdmin();
   const canEdit = useCan('buying', 'edit');
   const [open, setOpen] = useState(null);
+  const [run, setRun] = useState(null);
   const d = data.data;
   useOpenParam(Boolean(d), (id) => setOpen(Number(id)));
   const waiting = [
@@ -29,11 +36,50 @@ export default function QualityCheck() {
     { key: 'rej', label: 'Rejected', num: true, render: (g) => (g.rej ? <b className="a-bad">{g.rej.toLocaleString('en-IN')}</b> : '0') },
     { key: 'qc_by', label: 'Checked by', hideSm: true, render: (g) => `${g.qc_by} · ${at(g.qc_at)}` },
   ];
+  const p = prod.data;
+  const runCols = [
+    { key: 'run_no', label: 'Run', render: (r) => <><b className="a-mono">{r.run_no}</b><small className="a-muted a-p15-sub">{r.godown}{r.batch_no ? ` · batch ${r.batch_no}` : ''}</small></> },
+    { key: 'pack', label: 'Pack', render: (r) => <ItemCell name={r.name} code={r.sku_code} /> },
+    { key: 'out', label: 'Packs', num: true, render: (r) => Number(r.recheck || r.out).toLocaleString('en-IN') },
+    { key: 'ended_at', label: 'Finished', hideSm: true, render: (r) => at(r.ended_at) },
+    { key: 'act', label: '', render: (r) => (p && p.can.edit ? <button type="button" className="a-btn a-btn-sm" onClick={(e) => { e.stopPropagation(); setRun(r.run_id); }}>{r.recheck ? 'Check again' : 'Check'}</button> : null) },
+  ];
+  const runDone = [
+    { key: 'run_no', label: 'Run', render: (r) => <b className="a-mono">{r.run_no}</b> },
+    { key: 'pack', label: 'Pack', render: (r) => <ItemCell name={r.name} code={r.sku_code} /> },
+    { key: 'acc', label: 'Passed', num: true, render: (r) => Number(r.acc).toLocaleString('en-IN') },
+    { key: 'rej', label: 'Rejected', num: true, render: (r) => (r.rej ? <b className="a-bad">{Number(r.rej).toLocaleString('en-IN')}</b> : '0') },
+    { key: 'qc_by', label: 'Checked by', hideSm: true, render: (r) => `${r.qc_by} · ${at(r.qc_at)}` },
+  ];
   return (
     <section>
       <PageHead sub="Accept or reject what arrived" rules={['Accepted goes to stock at landed cost', 'Rejected starts a claim', "Reels: GSM checked against the supplier's spec"]} />
-      {!canEdit && <ViewOnlyB me={me} what="quality check" />}
-      <Loading state={data}>
+      {canBuy && !canEdit && <ViewOnlyB me={me} what="quality check" />}
+      {canProd && (
+        <Loading state={prod}>
+          {p && (
+            <>
+              <div className="a-card a-p16-qcard">
+                <div className="a-p15-cardhead"><h2 className="a-p16-h2">Production runs waiting for a check</h2><Pill tone={p.waiting.length ? 'warn' : 'gray'}>{p.waiting.length}</Pill></div>
+                <Table columns={runCols} rows={p.waiting} rowKey={(r) => r.run_id} label="Production runs waiting for a check" onRowClick={(r) => setRun(r.run_id)} empty={{ icon: 'inbox', title: 'Nothing waiting', text: 'Finished runs land here until somebody checks them.' }} />
+              </div>
+              {p.again.length > 0 && (
+                <div className="a-card a-p16-qcard">
+                  <div className="a-p15-cardhead"><h2 className="a-p16-h2">Check again</h2><Pill tone="warn">{p.again.length}</Pill><span className="a-p15-sp" /><small className="a-muted">A loss that was not approved: the packs are back on QC hold at their made cost.</small></div>
+                  <Table columns={runCols} rows={p.again} rowKey={(r) => r.run_id} label="Check again" onRowClick={(r) => setRun(r.run_id)} />
+                </div>
+              )}
+              {p.done.length > 0 && (
+                <div className="a-card a-p16-qcard">
+                  <div className="a-p15-cardhead"><h2 className="a-p16-h2">Runs checked lately</h2></div>
+                  <Table columns={runDone} rows={p.done} rowKey={(r) => r.run_id} label="Runs checked lately" onRowClick={(r) => setRun(r.run_id)} />
+                </div>
+              )}
+            </>
+          )}
+        </Loading>
+      )}
+      {canBuy && <Loading state={data}>
         {d && (
           <>
             {!d.quarantine && <Alert tone="info" title="QC hold is switched off.">New goods in are passed the moment they are counted (Admin &gt; Settings &gt; Switches).</Alert>}
@@ -49,8 +95,9 @@ export default function QualityCheck() {
             )}
           </>
         )}
-      </Loading>
+      </Loading>}
       {open && <QcDrawer id={open} onClose={() => setOpen(null)} onSaved={() => { setOpen(null); data.reload(); }} />}
+      {run && <RunDrawer id={run} onClose={() => setRun(null)} onChanged={() => prod.reload()} />}
     </section>
   );
 }

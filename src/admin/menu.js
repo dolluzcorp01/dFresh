@@ -427,6 +427,12 @@ export const MENU = [
       section: "buying",
       action: "view",
       commerce: true
+     },
+     {
+      path: "quality-check",
+      section: "production",
+      action: "view",
+      commerce: true
      }
     ]
    },
@@ -471,24 +477,42 @@ export const MENU = [
     label: "Recipes",
     see: "the raw material needed for one pack, and the wastage allowed.",
     use: "set or change a recipe; its cost becomes the pack's made cost.",
-    section: "inventory",
-    phase: 17
+    to: [
+     {
+      path: "recipes",
+      section: "production",
+      action: "view",
+      commerce: true
+     }
+    ]
    },
    {
     id: "production/production-runs",
     label: "Production runs",
     see: "each run - planned, started, finished - material issued and packs made.",
     use: "plan a run, issue material, finish it, and check the packs made.",
-    section: "inventory",
-    phase: 17
+    to: [
+     {
+      path: "production-runs",
+      section: "production",
+      action: "view",
+      commerce: true
+     }
+    ]
    },
    {
     id: "production/wastage",
     label: "Wastage",
     see: "material lost while making, against what the recipe allows.",
     use: "record the reason; wastage above the allowed % needs approval.",
-    section: "inventory",
-    phase: 17
+    to: [
+     {
+      path: "wastage",
+      section: "production",
+      action: "view",
+      commerce: true
+     }
+    ]
    },
    {
     id: "production/job-work",
@@ -496,7 +520,7 @@ export const MENU = [
     see: "work done for us by another factory.",
     use: "send material out and receive finished packs back (only if we use it).",
     tag: "later",
-    section: "inventory",
+    section: "production",
     phase: "later"
    }
   ]

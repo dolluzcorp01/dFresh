@@ -47,10 +47,21 @@ const handlers = {};
 /** a module registers what a waiting change of type t does once approved, and (optionally) when it is not */
 function on(t, { apply, closed = null, recheck = null }) { handlers[t] = { apply, closed, recheck }; }
 
-/** "Waiting for Shoban B" / "Nobody can sign it today ..." for a request just made */
+/**
+ * "Waiting for Shoban B" / "Nobody can sign it today ..." for a request just made. Phase 17 step 0: the words name who
+ * really signs it: "a second Admin" only for the rules only an Admin signs (rule changes, bank accounts); otherwise
+ * someone else with Approve on its section and a limit that covers it (v23 reqLine).
+ */
 async function waitingLine(q, approvalId) {
   const s = await approvals.signers(q, approvalId);
-  return s.length ? `Waiting for ${s.map((x) => x.name).join(' or ')}.` : 'Nobody can sign it today: it waits for a second Admin (an override is possible only when every other Admin is away).';
+  if (s.length) return `Waiting for ${s.map((x) => x.name).join(' or ')}.`;
+  const [[a]] = await q.query('SELECT kind, section FROM approvals WHERE approval_id = ?', [approvalId]);
+  if (a && engine.SECOND_ADMIN_KINDS.includes(a.kind)) {
+    return a.kind === 'rule_change' ? 'Nobody can sign it today: it waits for a second Admin (an override is possible only when every other Admin is away).'
+      : 'Nobody can sign it today: it waits for a second Admin, and a bank change is never overridden.';
+  }
+  const sec = (require('../shared/permissions').SECTIONS.find((x) => x.key === (a && a.section)) || { label: a ? a.section : '' }).label; // eslint-disable-line global-require
+  return `Nobody can sign it today: give someone else Approve on ${sec} with a limit that covers it.`;
 }
 
 /**

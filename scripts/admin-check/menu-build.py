@@ -66,10 +66,13 @@ MAP = {
     'purchase/indents': [T('indents', 'buying')],  # phase 16: section 3 Suppliers and buying
     'purchase/purchase-orders': [T('purchase-orders', 'buying')],
     'purchase/goods-in': [T('goods-in', 'buying')],
-    'purchase/quality-check': [T('quality-check', 'buying')],
+    'purchase/quality-check': [T('quality-check', 'buying'), T('quality-check', 'production')],  # phase 17: production runs are checked here too
     'purchase/supplier-bills': [T('supplier-bills', 'buying')],
     'purchase/claims-and-purchase-returns': [T('claims', 'buying')],
     'money/payments/supplier-payments': [T('supplier-payments', 'money')],
+    'production/recipes': [T('recipes', 'production')],  # phase 17: section 4 Production
+    'production/production-runs': [T('production-runs', 'production')],
+    'production/wastage': [T('wastage', 'production')],
     'inventory/stock-status': [T('commerce/stock', 'inventory')],
     'inventory/batches-and-expiry': [T('commerce/stock', 'inventory', search='tab=batches')],
     'inventory/stock-take': [T('commerce/stock', 'inventory', search='tab=counts')],
@@ -130,7 +133,7 @@ MAP = {
 # placeholder: the permission section of an entry with no screen yet (what it will belong to), by entry id prefix
 PLACE_SECTION = [
     ('home/', None), ('sales/leads/', 'leads'), ('sales/customers/', 'customers'), ('sales/orders/', 'orders'), ('sales/returns/', 'returns'),
-    ('fulfilment/', 'delivery'), ('purchase/', 'buying'), ('production/', 'inventory'), ('inventory/', 'inventory'),
+    ('fulfilment/', 'delivery'), ('purchase/', 'buying'), ('production/', 'production'), ('inventory/', 'inventory'),
     ('money/payments/refunds', 'returns'), ('money/payments/supplier-payments', 'money'), ('money/billing/', 'orders'), ('money/payments/', 'orders'),
     ('money/', 'reports'), ('gst/', 'reports'), ('marketing/', 'promotions'), ('reports/', 'reports'),
     ('masters/catalogue/raw-materials', 'inventory'), ('masters/prices/', 'prices'), ('masters/tax-and-units/hsn', 'prices'), ('masters/', 'products'), ('website/', 'content'),

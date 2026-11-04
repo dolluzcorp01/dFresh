@@ -1,21 +1,19 @@
 // Inventory: the tabs where stock is changed (API in src/backend_routes/stock.js via Admin_server.js).
 // Godowns (phase 12a): a stock in, a write-off and a count each belong to one godown (the Godown select, GodownField.js).
-// - Stock in: Production (our Kanchipuram unit; until phase 17 Production runs). Bought goods come in through Purchase >
-//   Goods in (phase 16: against a PO, to QC hold); the purchase stock-ins of before stay listed. Date, reference (batch sheet no.),
-//   lines in packs or cartons with the cost per pack; a scanner (or typing a SKU and Enter) adds a line or one more of
-//   it. Batch-tracked products ask for batch no., manufacture and expiry date. A role that can see costs sees the
-//   average cost before -> after.
+// - Stock in: the stock-ins of before stay listed (read only). Bought goods come in through Purchase > Goods in (phase 16:
+//   against a PO, to QC hold) and made packs through Production > Production runs (phase 17). A role that can see costs
+//   sees the cost per pack and the average cost before -> after.
 // - Write-offs: damaged / expired / lost / sample, from a shelf (good, QC hold, damaged, returned...: labels from the API) (a batch for tracked products),
 //   reason, photo optional; above the Commerce setting thresholds it waits for approval.
 // - Counts: all SKUs or a category; enter or scan the counted packs, see the difference with the system; submit sends
 //   the differences to approval, which posts them as count movements.
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api } from './adminApi';
 import { Drawer, Loading, Notice, Pill, Table, UploadProgress, fmtDate, useAction, useCan, useConfirm, useLoad, useUpload } from './ui';
 import GodownField, { useGodown } from './GodownField';
 const rs = (n) => (n === null || n === undefined ? '-' : `Rs ${Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
 const day = (d) => (d ? new Date(`${String(d).slice(0, 10)}T00:00:00Z`).toLocaleDateString('en-IN', { timeZone: 'UTC', day: 'numeric', month: 'short', year: 'numeric' }) : '');
-const today = () => new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10);
 // a stock row's packs on a shelf (the /commerce/stock row's field for each shelf)
 const SHELF_FIELD = { good: 'good', hold: 'hold', dmg: 'damaged', ret: 'returned', rej: 'rejected', disp: 'display' };
 /** the /commerce/stock rows of one godown, by SKU */
@@ -33,16 +31,12 @@ function ScanBox({ onCode, label = 'Scan a barcode or type a SKU and press Enter
 }
 
 // ---------------------------------------------------------------- stock in
-export function StockIns({ stock }) {
+export function StockIns() {
   const list = useLoad('/commerce/stock-ins');
-  const canCreate = useCan('inventory', 'create');
-  const [open, setOpen] = useState(false);
-  const [msg, setMsg] = useState(null);
   const d = list.data;
   return (
     <>
-      {msg && <Notice kind="ok" onClose={() => setMsg(null)}>{msg}</Notice>}
-      {canCreate && <div className="a-toolbar"><button type="button" className="a-btn" onClick={() => setOpen(true)}>New stock in</button></div>}
+      <Notice kind="info">The stock-ins of before, kept as they were. Made packs now come in through <Link to="/admin/production-runs">Production runs</Link>; bought goods through <Link to="/admin/goods-in">Goods in</Link>.</Notice>
       <Loading state={list}>
         {d && (
           <Table label="Stock in" rows={d.rows} rowKey={(x) => x.stock_in_id} empty={{ icon: 'package', title: 'No stock in yet.' }}
@@ -60,89 +54,7 @@ export function StockIns({ stock }) {
             ].filter(Boolean)} />
         )}
       </Loading>
-      {open && <StockInDrawer stock={stock} onClose={() => setOpen(false)} onSaved={(text) => { setOpen(false); setMsg(text); list.reload(); stock.reload(); }} />}
     </>
-  );
-}
-
-function StockInDrawer({ stock, onClose, onSaved }) {
-  const act = useAction();
-  const [f, setF] = useState({ kind: 'production', received_on: today(), reference: '', note: '' });
-  const [godown, setGodown, godownList] = useGodown();
-  const [lines, setLines] = useState([]);
-  const [scanMsg, setScanMsg] = useState(null);
-  const skus = useMemo(() => skusOf(stock, godown), [stock, godown]);
-  const seesCost = Boolean(stock.data && stock.data.seesCost);
-  const add = async (raw, carton = null) => {
-    let code = raw;
-    let s = skus.get(code);
-    if (!s && carton === null) {
-      // phase 14: a supplier EAN or a carton code finds its SKU too (Masters > Catalogue > Barcodes and labels)
-      const hit = await api.send('POST', '/catalogue/scan', { code: raw }).catch(() => null);
-      if (hit && hit.sku && skus.get(hit.sku)) { add(hit.sku, hit.kind === 'carton'); return; }
-      setScanMsg({ kind: 'error', text: hit && hit.bad ? `${raw} is a misread: its EAN-13 check digit is wrong. Scan it again.` : `${raw}: no such SKU${hit && hit.noted ? ' (noted for the office)' : ''}` });
-      return;
-    }
-    if (!s) { setScanMsg({ kind: 'error', text: `${code}: no such SKU` }); return; }
-    code = s.sku_code || code;
-    setLines((ls) => {
-      const at = ls.findIndex((l) => l.sku_code === code);
-      if (at >= 0) return ls.map((l, i) => (i === at ? { ...l, qty: String(Number(l.qty || 0) + 1) } : l));
-      return [...ls, { sku_code: code, qty: '1', unit: carton ? 'carton' : 'pack', unit_cost: '', batch_no: '', mfg_date: '', expiry_date: '' }];
-    });
-    setScanMsg({ kind: 'ok', text: `${code} ${s.name} - ${s.size_label}` });
-  };
-  const setLine = (n, patch) => setLines((ls) => ls.map((l, i) => (i === n ? { ...l, ...patch } : l)));
-  const packs = (l) => { const s = skus.get(l.sku_code); return (Number(l.qty) || 0) * (l.unit === 'carton' && s ? Number(s.packs_per_carton) : 1); };
-  const save = () => act.run(async () => {
-    const r = await api.send('POST', '/commerce/stock-ins', { ...f, godown_id: godown, lines: lines.map((l) => ({ sku_code: l.sku_code, qty: packs(l), unit_cost: l.unit_cost, batch_no: l.batch_no, mfg_date: l.mfg_date, expiry_date: l.expiry_date })) });
-    onSaved(`Stock in SI-${r.stock_in_id} saved: ${r.lines.map((l) => `${l.qty} x ${l.sku_code}${l.avg_after !== undefined ? ` (avg ${rs(l.avg_before)} -> ${rs(l.avg_after)})` : ''}`).join(', ')}.`);
-  });
-  const total = lines.reduce((a, l) => a + packs(l) * (Number(l.unit_cost) || 0), 0);
-  return (
-    <Drawer title="New stock in" onClose={onClose} wide dirty={lines.length > 0}
-      footer={<button type="button" className="a-btn" disabled={act.busy || !lines.length} onClick={save}>Save stock in</button>}>
-      {act.note}
-      <Notice kind="info">Production from our Kanchipuram unit. Bought goods come in through Purchase &gt; Goods in, against a purchase order, and wait in QC hold.</Notice>
-      <div className="a-grid2">
-        <GodownField value={godown} onChange={setGodown} list={godownList} label="Into godown" disabled={lines.length > 0} />
-        <label className="a-field"><span>Date received</span><input type="date" max={today()} value={f.received_on} onChange={(e) => setF({ ...f, received_on: e.target.value })} /></label>
-        <label className="a-field"><span>Batch sheet no.</span><input value={f.reference} maxLength={60} aria-label="Reference" onChange={(e) => setF({ ...f, reference: e.target.value })} /></label>
-      </div>
-      <ScanBox onCode={add} />
-      {scanMsg && <small className={scanMsg.kind === 'error' ? 'a-bad' : 'a-muted'} role="status">{scanMsg.text}</small>}
-      <div className="a-scroll">
-        <table className="a-table a-silines-form">
-          <thead><tr><th>SKU</th><th className="a-num">Qty</th><th className="a-num">Cost / pack (Rs)</th><th>Batch</th><th /></tr></thead>
-          <tbody>{lines.map((l, n) => {
-            const s = skus.get(l.sku_code);
-            const p = packs(l);
-            const after = seesCost && s && Number(l.unit_cost) > 0 && p > 0 ? (s.avg_cost == null || s.good <= 0 ? Number(l.unit_cost) : (s.good * s.avg_cost + p * Number(l.unit_cost)) / (s.good + p)) : null;
-            return (
-              <tr key={l.sku_code}>
-                <td><code>{l.sku_code}</code><small className="a-muted a-person-sub">{s.name} - {s.size_label}</small>
-                  {after !== null && <small className="a-muted a-person-sub">avg cost {rs(s.avg_cost)} -&gt; {rs(after)}</small>}</td>
-                <td className="a-num"><span className="a-row">
-                  <input type="number" min="1" step="1" className="a-qty" value={l.qty} aria-label={`Qty ${l.sku_code}`} onChange={(e) => setLine(n, { qty: e.target.value })} />
-                  {Number(s.packs_per_carton) > 1 ? <select value={l.unit} aria-label={`Unit ${l.sku_code}`} onChange={(e) => setLine(n, { unit: e.target.value })}><option value="pack">packs</option><option value="carton">cartons</option></select> : <span className="a-muted">packs</span>}
-                </span>{l.unit === 'carton' && <small className="a-muted a-ordernote">= {p} packs</small>}</td>
-                <td className="a-num"><input inputMode="decimal" className="a-price" value={l.unit_cost} aria-label={`Cost ${l.sku_code}`} onChange={(e) => setLine(n, { unit_cost: e.target.value })} /></td>
-                <td>{s.track_batches ? (
-                  <span className="a-batchfields">
-                    <input value={l.batch_no} placeholder="Batch no." aria-label={`Batch ${l.sku_code}`} onChange={(e) => setLine(n, { batch_no: e.target.value })} />
-                    <label>Made <input type="date" value={l.mfg_date} aria-label={`Made ${l.sku_code}`} onChange={(e) => setLine(n, { mfg_date: e.target.value })} /></label>
-                    <label>Expires <input type="date" value={l.expiry_date} aria-label={`Expires ${l.sku_code}`} onChange={(e) => setLine(n, { expiry_date: e.target.value })} /></label>
-                  </span>) : <span className="a-muted">not tracked</span>}</td>
-                <td><button type="button" className="a-btn a-btn-sm a-btn-ghost" aria-label="Remove line" onClick={() => setLines((ls) => ls.filter((_, i) => i !== n))}>x</button></td>
-              </tr>
-            );
-          })}</tbody>
-        </table>
-      </div>
-      {!lines.length && <p className="a-muted">Scan or type a SKU above to add the first line.</p>}
-      {lines.length > 0 && <p><b>{lines.reduce((a, l) => a + packs(l), 0)} packs</b>{total > 0 ? `, ${rs(total)} at cost` : ''}</p>}
-      <label className="a-field"><span>Note</span><input value={f.note} maxLength={255} onChange={(e) => setF({ ...f, note: e.target.value })} /></label>
-    </Drawer>
   );
 }
 

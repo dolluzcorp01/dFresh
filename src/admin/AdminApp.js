@@ -57,6 +57,9 @@ import Indents from './Indents';
 import PurchaseOrders from './PurchaseOrders';
 import GoodsIn from './GoodsIn';
 import QualityCheck from './QualityCheck';
+import Recipes from './Recipes';
+import ProductionRuns from './ProductionRuns';
+import Wastage from './Wastage';
 import SupplierBills from './SupplierBills';
 import Claims from './Claims';
 import SupplierPayments from './SupplierPayments';
@@ -208,10 +211,14 @@ export default function AdminApp() {
             <Route path="indents" element={<Need section="buying" commerce><Indents /></Need>} />
             <Route path="purchase-orders" element={<Need section="buying" commerce><PurchaseOrders /></Need>} />
             <Route path="goods-in" element={<Need section="buying" commerce><GoodsIn /></Need>} />
-            <Route path="quality-check" element={<Need section="buying" commerce><QualityCheck /></Need>} />
+            <Route path="quality-check" element={<Need section={['buying', 'production']} commerce><QualityCheck /></Need>} />
             <Route path="supplier-bills" element={<Need section="buying" commerce><SupplierBills /></Need>} />
             <Route path="claims" element={<Need section="buying" commerce><Claims /></Need>} />
             <Route path="supplier-payments" element={<Need section="money" commerce><SupplierPayments /></Need>} />
+            {/* phase 17: section 4 Production */}
+            <Route path="recipes" element={<Need section="production" commerce><Recipes /></Need>} />
+            <Route path="production-runs" element={<Need section="production" commerce><ProductionRuns /></Need>} />
+            <Route path="wastage" element={<Need section="production" commerce><Wastage /></Need>} />
             <Route path="commerce/packing" element={<Need section="packing" commerce><CommercePacking /></Need>} />
             <Route path="commerce/delivery" element={<Need section="delivery" action="create" commerce><CommerceDelivery /></Need>} />
             <Route path="commerce/my-trips" element={<Need section="delivery" commerce><MyTrips /></Need>} />

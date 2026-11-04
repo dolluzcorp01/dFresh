@@ -1727,7 +1727,7 @@ async function movementRows(req, limit) {
       WHERE ${where.join(' AND ')} ORDER BY m.move_id DESC LIMIT ?`, [...params, limit]
   );
   const cost = seesCost(req);
-  return rows.map(({ unit_cost: uc, ...r }) => ({ ...r, type_label: stock.MOVE_LABEL[r.move_type] || r.move_type, shelf_label: stock.KIND_LABEL[r.stock_kind] || r.stock_kind,
+  return rows.map(({ unit_cost: uc, ...r }) => ({ ...r, delta: Number(r.delta), type_label: stock.MOVE_LABEL[r.move_type] || r.move_type, shelf_label: stock.KIND_LABEL[r.stock_kind] || r.stock_kind,
     ...(cost ? { unit_cost: uc === null ? null : Number(uc) } : {}) }));
 }
 route('get', '/commerce/movements', 'inventory:view', async (req) => {
@@ -1776,12 +1776,9 @@ route('get', '/commerce/stock-ins', 'inventory:view', async (req) => {
   }) };
 });
 route('post', '/commerce/stock-ins', 'inventory:create', async (req) => {
-  // phase 16: bought goods come in through Purchase > Goods in (to QC hold, against a PO); Stock in keeps Production
-  if ((req.body || {}).kind !== 'production') throw new InputError('Bought goods come in through Purchase > Goods in. Stock in is for production only.');
-  try {
-    const r = await tx(async (q) => stock.stockIn(q, { ...req.body, godown_id: await godowns.resolve(q, req, req.body.godown_id) }, by(req)));
-    return seesCost(req) ? r : { stock_in_id: r.stock_in_id, lines: r.lines.map(({ avg_before: ab, avg_after: aa, ...l }) => l) }; // eslint-disable-line no-unused-vars
-  } catch (e) { throw asStock(e); }
+  // phase 16: bought goods come in through Purchase > Goods in (to QC hold, against a PO); phase 17: made packs come in
+  // only through a production run (Production > Production runs). The stock-ins of before stay listed (GET above).
+  throw new InputError((req.body || {}).kind === 'purchase' ? 'Bought goods come in through Purchase > Goods in.' : 'Made packs come in through a production run: Production > Production runs.', 410);
 });
 
 // Batches: expired / near expiry / ok with their good stock (the godowns in view); the batches of one SKU on one shelf
@@ -3115,6 +3112,8 @@ require('./brand').register({ route, tx, db, by, InputError, upload }); // phase
 // phase 16: section 3 Suppliers and buying (buying.js rules, buying-routes.js screens) and Money > Payments > Supplier payments
 require('./buying-routes').register({ route, tx, db, by, InputError, canDo, commerceGate, seesCost: seesCosts });
 require('./supplier-pay').register({ route, tx, db, by, InputError, canDo, commerceGate });
+// phase 17: section 4 Production (production.js rules, production-routes.js screens)
+require('./production-routes').register({ route, tx, db, by, InputError, canDo, commerceGate, seesCost: seesCosts });
 
 // ---------------------------------------------------------------------------------------------
 // Roles and permissions (docs/COMMERCE-SPEC.md 1; migration 20261021_commerce_01_access.sql)

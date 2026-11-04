@@ -39,6 +39,8 @@ const KINDS = {
   excess_in: { label: 'Goods in beyond the delivery tolerance', section: 'buying' },
   no_po_in: { label: 'Goods in without a purchase order', section: 'buying' },
   supplier_pay: { label: 'Pay a supplier', section: 'money' },
+  recipe: { label: 'Change a recipe', section: 'production' },
+  prod_scrap: { label: 'Production wastage above the recipe', section: 'production' },
   cust_change: { label: 'Put a customer type on another price list', section: 'customers' },
   refund: { label: 'Refund', section: 'returns' },
   write_off: { label: 'Stock write-off', section: 'inventory' },

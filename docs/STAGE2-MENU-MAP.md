@@ -6,7 +6,7 @@ paths = the first one the user may open. "(live)" = also shown while Commerce is
 site's screens); every other entry shows only while Commerce is on. A placeholder shows the guide's texts and
 the phase that builds it (gap map build order; Website entries with no screen: phase 24, agreed 2 Nov 2026).
 
-148 menu lines = 13 groups + Online store + 23 sub-groups + 111 pages. Of the 112 entries that open something (pages and Online store), 77 open a screen and 35 the placeholder.
+148 menu lines = 13 groups + Online store + 23 sub-groups + 111 pages. Of the 112 entries that open something (pages and Online store), 80 open a screen and 32 the placeholder.
 
 | Menu page | Opens |
 |---|---|
@@ -37,12 +37,12 @@ the phase that builds it (gap map build order; Website entries with no screen: p
 | Purchase / Indents | /admin/indents |
 | Purchase / Purchase orders | /admin/purchase-orders |
 | Purchase / Goods in | /admin/goods-in |
-| Purchase / Quality check | /admin/quality-check |
+| Purchase / Quality check | /admin/quality-check; /admin/quality-check |
 | Purchase / Supplier bills | /admin/supplier-bills |
 | Purchase / Claims and purchase returns | /admin/claims |
-| Production / Recipes | placeholder: Not built yet - phase 17 |
-| Production / Production runs | placeholder: Not built yet - phase 17 |
-| Production / Wastage | placeholder: Not built yet - phase 17 |
+| Production / Recipes | /admin/recipes |
+| Production / Production runs | /admin/production-runs |
+| Production / Wastage | /admin/wastage |
 | Production / Job work | placeholder: Later |
 | Inventory / Stock status | /admin/commerce/stock |
 | Inventory / Batches and expiry | /admin/commerce/stock?tab=batches |

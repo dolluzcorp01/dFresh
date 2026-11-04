@@ -1361,6 +1361,14 @@ td.a-pending { background: #fff8e1; box-shadow: inset 3px 0 0 #e3b44f; }
   .a-p16-crow > :first-child { grid-column: 1 / -1; }
   .a-p16-calc, .a-p16-f4, .a-p16-payrow { grid-template-columns: minmax(0, 1fr); }
 }
+/* phase 17: section 4 Production (Recipes, Production runs, Wastage, production QC) */
+.a-p17-pills { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+.a-p17-calc { margin-top: 12px; }
+.a-p17-used { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 10px; }
+.a-p17-vers { margin: 0; padding-left: 18px; font-size: 13.5px; color: var(--text-2); display: flex; flex-direction: column; gap: 4px; }
+@media (max-width: 899px) {
+  .a-p17-used { grid-template-columns: minmax(0, 1fr); }
+}
 @media print {
   body.a-printing-card * { visibility: hidden; }
   body.a-printing-card .a-printonly-area, body.a-printing-card .a-printonly-area * { visibility: visible; }

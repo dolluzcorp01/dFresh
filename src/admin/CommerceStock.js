@@ -36,7 +36,7 @@ export default function CommerceStock() {
       <PageHead sub="What we have in each godown, how it came in and how it left." />
       <InfoCard title="Stock per godown">
         <ul>
-          <li>Stock is the sum of movements, never typed in. It comes in through Stock in (production) or Purchase > Goods in (bought, after Quality check) and goes out at dispatch, by write-off or by an approved count.</li>
+          <li>Stock is the sum of movements, never typed in. It comes in through Production runs (made, after the production check) or Purchase > Goods in (bought, after Quality check) and goes out at dispatch, by write-off or by an approved count.</li>
           <li>Available = good stock - expired batches - stock reserved by confirmed orders. Products tracked by batch go out earliest expiry first; expired stock cannot be ordered.</li>
           <li>Each godown has its own stock, reorder levels and counts; the godown picker at the top shows one godown or all of yours.</li>
           <li>Write-offs above the threshold and count differences wait for approval (Approvals, top of the menu).</li>
@@ -44,7 +44,7 @@ export default function CommerceStock() {
       </InfoCard>
       <Tabs tabs={TABS.map(([key, label]) => ({ key, label }))} value={tab} onChange={setTab} label="Inventory" />
       {tab === 'stock' && <StockTab stock={stock} />}
-      {tab === 'in' && <StockIns stock={stock} />}
+      {tab === 'in' && <StockIns />}
       {tab === 'batches' && <Batches />}
       {tab === 'writeoffs' && <WriteOffs stock={stock} />}
       {tab === 'counts' && <Counts />}

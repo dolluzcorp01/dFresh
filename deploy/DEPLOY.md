@@ -165,7 +165,7 @@ for f in $(ls database/migrations/*.sql | sort); do
   echo "== $f"; sudo mysql --default-character-set=utf8mb4 dfresh < "$f" || { echo "FAILED: $f"; break; }
 done
 ```
-The 54 migrations, in the order they must run (tick each; a later update applies only the new ones):
+The 55 migrations, in the order they must run (tick each; a later update applies only the new ones):
 
 - [ ] `20261009_phase3_home_ui_text.sql`
 - [ ] `20261009_phase4_products_ui_text.sql`
@@ -271,6 +271,11 @@ The 54 migrations, in the order they must run (tick each; a later update applies
       a customer type on another price list; the Stock switches QC hold, freight into the average cost and days to
       claim; the indent, PO, goods in, bill, supplier, debit note, return challan, claim and supplier payment series.
       No stock, batch or average cost changes.
+- [ ] `20261104_stage2_17_01_production.sql` - section 4 Production: stock quantities with 3 decimals (a reel is issued
+      by the kilo) and the average cost with 6 (no paisa lost); machines, recipes with dated versions, production runs
+      and the material they used; write-offs remember their run and kind of loss; the "Production" rights row; the
+      approval rules "Change a recipe" and "Production wastage above the recipe"; the production run series goes
+      live. Existing stock and average costs do not change.
 
 The 11 commerce files replace the 12 of the commerce branch's phases (consolidated on 21 Oct 2026, never applied on
 any database but the `dfresh_commerce` demo): each table in its final shape, no file patches another. Built on a

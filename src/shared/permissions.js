@@ -21,6 +21,7 @@ const SECTIONS = [
   { key: 'products', label: 'Products and catalogue', covers: 'Products, SKUs, categories, kits, raw materials, units, barcodes and labels, photos, size picker, Excel import / export' },
   { key: 'prices', label: 'Prices and tax', commerce: true, covers: 'Price lists, quantity slabs, special prices (Approve: price changes and special prices), HSN and GST rates (v23 section 2)' },
   { key: 'buying', label: 'Suppliers and buying', commerce: true, covers: 'Suppliers, indents, purchase orders, goods in, quality check, supplier bills, claims (Edit shows purchase rates; v23 section 3)' },
+  { key: 'production', label: 'Production', commerce: true, covers: 'Recipes, machines, production runs, production quality check, wastage (Approve: recipe changes and wastage; v23 section 4)' },
   { key: 'money', label: 'Payments', commerce: true, covers: 'Supplier payments (Approve: payments above the limit; v23 section 11)' },
   { key: 'reports', label: 'Reports', commerce: true, covers: 'Sales, GST, stock, returns, wallet and customer reports' },
   { key: 'content', label: 'Content', covers: 'Banners, translations, towns, form options, brochures, languages' },

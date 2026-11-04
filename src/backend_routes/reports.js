@@ -325,11 +325,11 @@ async function stockReport(q, p, { seesCost }) {
   if (view === 'movement') {
     const [rows] = await q.query(`SELECT sku_code,
         SUM(CASE WHEN created_at < CONVERT_TZ(?, '+05:30', '+00:00') THEN delta ELSE 0 END) AS opening,
-        SUM(CASE WHEN ${IN('created_at')} AND move_type IN ('production', 'purchase') THEN delta ELSE 0 END) AS stock_in,
+        SUM(CASE WHEN ${IN('created_at')} AND move_type IN ('production', 'purchase', 'grn', 'prod_pass') THEN delta ELSE 0 END) AS stock_in,
         SUM(CASE WHEN ${IN('created_at')} AND move_type = 'out' THEN -delta ELSE 0 END) AS stock_out,
         SUM(CASE WHEN ${IN('created_at')} AND move_type IN ('return', 'recheck') THEN delta ELSE 0 END) AS returns,
         SUM(CASE WHEN ${IN('created_at')} AND move_type = 'write_off' THEN -delta ELSE 0 END) AS write_offs,
-        SUM(CASE WHEN ${IN('created_at')} AND move_type NOT IN ('production', 'purchase', 'out', 'return', 'recheck', 'write_off') THEN delta ELSE 0 END) AS other,
+        SUM(CASE WHEN ${IN('created_at')} AND move_type NOT IN ('production', 'purchase', 'grn', 'prod_pass', 'out', 'return', 'recheck', 'write_off') THEN delta ELSE 0 END) AS other,
         SUM(CASE WHEN created_at < CONVERT_TZ(DATE_ADD(?, INTERVAL 1 DAY), '+05:30', '+00:00') THEN delta ELSE 0 END) AS closing
       FROM stock_movements WHERE stock_kind = 'good' AND ${GS} GROUP BY sku_code ORDER BY sku_code`, [`${p.from} 00:00:00`, ...span(p), ...span(p), ...span(p), ...span(p), ...span(p), p.to]);
     const r = rows.map((x) => ({ sku_code: x.sku_code, name: label(x.sku_code), ...Object.fromEntries(['opening', 'stock_in', 'stock_out', 'returns', 'write_offs', 'other', 'closing'].map((k) => [k, Number(x[k])])) }));
