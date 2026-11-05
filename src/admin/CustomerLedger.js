@@ -1,0 +1,41 @@
+// Sales > Customers > Customer ledger (phase 19, v23 viewCLedger; API /commerce/customers/:id/statement, customers.js
+// statement). Pick a customer you see (godowns and own customers only): every invoice, payment, credit note and refund by
+// date with the running balance, what is still open with its due date (overdue in red) and the ageing; the statement as
+// a PDF to print or send. Receipts per customer and the rest of the money pages come with sections 10 and 11.
+import { useState } from 'react';
+import { useLoad, Loading, PageHead, Pill, money } from './ui';
+import { In } from './buyShared';
+
+export default function CustomerLedger() {
+  const list = useLoad('/sales/credit');
+  const [id, setId] = useState('');
+  const rows = list.data ? list.data.rows : [];
+  const cur = id || (rows[0] ? String(rows[0].customer_id) : '');
+  const st = useLoad(cur ? `/commerce/customers/${cur}/statement` : null);
+  const s = st.data;
+  return (
+    <section>
+      <PageHead sub="Every invoice, payment and note of a customer, with the balance" />
+      <Loading state={list}>
+        <div className="a-listcard">
+          <div className="a-p18-filters">
+            <In label="Customer" box="a-p19-pick"><select value={cur} onChange={(e) => setId(e.target.value)}>{rows.map((c) => <option key={c.customer_id} value={String(c.customer_id)}>{c.customer_no} · {c.name}</option>)}</select></In>
+            {cur && <a className="a-btn a-btn-ghost a-btn-sm" href={`/api/dfresh/admin/commerce/customers/${cur}/statement.pdf`} target="_blank" rel="noreferrer">Statement (PDF)</a>}
+          </div>
+          <Loading state={st}>{s && <>
+            <div className="a-scroll"><table className="a-table"><thead><tr><th>Date</th><th>What</th><th className="a-num">Charged</th><th className="a-num">Paid or credited</th><th className="a-num">Balance</th></tr></thead>
+              <tbody>{Number(s.opening) ? <tr><td /><td>Opening balance</td><td /><td /><td className="a-num"><b>{money(s.opening)}</b></td></tr> : null}
+                {s.lines.map((l, i) => <tr key={i}><td className="a-p18-nowrap">{l.day}</td><td>{l.text}</td><td className="a-num">{l.debit ? money(l.debit) : ''}</td><td className="a-num">{l.credit ? money(l.credit) : ''}</td><td className="a-num"><b>{money(l.balance)}</b></td></tr>)}
+                {!s.lines.length && <tr><td colSpan={5} className="a-muted">Nothing yet.</td></tr>}</tbody></table></div>
+            <h3 className="a-h3s">Open invoices</h3>
+            <div className="a-scroll"><table className="a-table"><thead><tr><th>Invoice</th><th>Order</th><th>Due</th><th className="a-num">Owes</th></tr></thead>
+              <tbody>{s.open.map((o) => <tr key={o.invoice_no}><td className="a-mono">{o.invoice_no}</td><td className="a-mono">{o.order_no}</td><td>{o.due_on} {o.overdue && <Pill tone="bad">Overdue</Pill>}</td><td className="a-num">{money(o.amount_due)}</td></tr>)}
+                {!s.open.length && <tr><td colSpan={4} className="a-muted">Nothing open.</td></tr>}</tbody></table></div>
+            <div className="a-scroll"><table className="a-table"><thead><tr><th className="a-num">Owes</th><th className="a-num">0-30 days</th><th className="a-num">31-60</th><th className="a-num">61-90</th><th className="a-num">90+</th></tr></thead>
+              <tbody><tr><td className="a-num"><b>{money(s.outstanding)}</b></td><td className="a-num">{money(s.ageing.d0_30)}</td><td className="a-num">{money(s.ageing.d31_60)}</td><td className="a-num">{money(s.ageing.d61_90)}</td><td className="a-num">{money(s.ageing.d90)}</td></tr></tbody></table></div>
+          </>}</Loading>
+        </div>
+      </Loading>
+    </section>
+  );
+}

@@ -33,7 +33,7 @@ export default function CustomerDrawer({ id, onClose, onChanged }) {
         {d && (
           <>
             {d.merged_into && <Notice kind="warn">Merged into {d.merged_into_no}: open that customer.</Notice>}
-            {d.status !== 'active' && d.hold_reason && <Notice kind={d.status === 'on_hold' ? 'warn' : 'info'}>{d.status_label}: {d.hold_reason}{d.status === 'on_hold' ? ' - a new order waits for approval.' : ''}</Notice>}
+            {d.status !== 'active' && d.hold_reason && <Notice kind={d.status === 'hold' ? 'warn' : 'bad'}>{d.status_label}: {d.hold_reason}{d.status === 'hold' ? ' - a new order waits for approval.' : d.status === 'blocked' ? ' - no orders.' : ''}</Notice>}
             {d.pending.map((p) => <Notice key={p.approval_id} kind="info">Waiting for approval (#{p.approval_id}): {p.summary}</Notice>)}
             <Tabs tabs={TABS.map(([key, label]) => ({ key, label }))} value={tab} onChange={setTab} label="Customer" />
             {tab === 'overview' && <Overview d={d} reload={reload} />}
@@ -63,7 +63,11 @@ function Overview({ d, reload }) {
   const [credit, setCredit] = useState({ credit_days: String(d.credit_days), credit_limit: String(d.credit_limit) });
   const [pl, setPl] = useState(d.price_list || '');
   const save = () => act.run(async () => { await api.send('PUT', `/commerce/customers/${d.customer_id}`, { ...f, tags: f.tags.split(',') }); reload(); }, 'Saved');
-  const saveStatus = () => act.run(async () => { await api.send('PUT', `/commerce/customers/${d.customer_id}/status`, st); reload(); }, `Status: ${d.statuses[st.status]}`);
+  // phase 19 (D3): tightening is done at once; easing (or a type change) is for Accounts or an Admin and may wait for a second person
+  const saveStatus = () => act.run(async () => {
+    const r = await api.send('PUT', `/commerce/customers/${d.customer_id}/status`, st); reload();
+    act.setMsg(r.pending ? { kind: 'info', text: `Waiting for approval (#${r.approval_id}): ${d.statuses[st.status]}. It stays ${d.status_label.toLowerCase()} until a second person signs it.` } : { kind: 'ok', text: `State: ${d.statuses[st.status]}` });
+  });
   const saveCredit = () => act.run(async () => { const r = await api.send('PUT', `/commerce/customers/${d.customer_id}/credit`, credit); reload(); act.setMsg({ kind: r.pending ? 'info' : 'ok', text: r.pending ? `The higher limit waits for approval (#${r.approval_id}).` : 'Credit terms saved' }); });
   const savePl = () => act.run(async () => { const r = await api.send('PUT', `/commerce/customers/${d.customer_id}/price-list`, { price_list: pl }); reload(); act.setMsg({ kind: r.pending ? 'info' : 'ok', text: r.pending ? `The price list waits for approval (#${r.approval_id}).` : 'Price list saved' }); });
   const owner = (e) => (d.owners.find((o) => o.emp_id === e) || { name: e }).name;

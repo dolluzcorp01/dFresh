@@ -56,6 +56,7 @@ const EVENTS = {
   cash_difference: { audience: 'staff', label: 'Cash handover difference', vars: ['name', 'trip', 'driver', 'collected', 'handed', 'difference', 'note', 'link'] },
   daily_summary: { audience: 'staff', label: 'Daily summary for Admin', vars: ['name', 'date', 'summary', 'link'] },
   admin_alert: { audience: 'staff', label: 'Admin alert (override, Admin left, leave for an Admin)', vars: ['name', 'subject', 'body', 'link'] },
+  hold_ended: { audience: 'staff', label: 'Stock hold ended on an order', vars: ['name', 'order_no', 'customer', 'hours', 'packs', 'link'] }, // phase 19: to the salesperson
 };
 const settingKey = (event) => `notify_ev_${event}`;
 const DAILY = ['overdue', 'wallet_expiring', 'stock_daily', 'follow_ups', 'daily_summary'];
@@ -262,6 +263,12 @@ const STATUS_EVENT = { packed: 'order_packed', out_for_delivery: 'order_out', wi
 
 /** an order became confirmed for the first time (never while it waits for approval) */
 const orderConfirmed = (q, orderId) => safely('order_confirmed', () => orderEvent(q, 'order_confirmed', orderId));
+/** phase 19: the held packs of an unpacked order went back to free stock: the customer's salesperson is told */
+const holdEnded = (q, o, packs, hours) => safely('hold_ended', async () => {
+  if (!(await isOn(q, 'hold_ended'))) return;
+  const users = (await staffUsers(q)).filter((u) => u.emp_id === o.owner_emp_id);
+  await toStaff(q, 'hold_ended', users, () => ({ order_no: o.order_no, customer: o.customer, hours, packs, link: link(`commerce/orders?open=${encodeURIComponent(o.order_no)}`) }), { orderId: o.order_id, ref: o.order_no });
+});
 
 /** commerce.setStatus: packed (not the re-pack after a failed delivery), out, courier, delivered; failed -> staff */
 const orderStatus = (q, orderId, from, to, note) => safely(`order ${to}`, async () => {
@@ -440,8 +447,8 @@ async function jobStock(q) {
 }
 
 async function jobFollowUps(q) {
-  const [rows] = await q.query(`SELECT f.assignee, f.note, DATE_FORMAT(f.due_on, '%Y-%m-%d') AS due_on, c.customer_no, c.name
-      FROM follow_ups f JOIN customers c ON c.customer_id = f.customer_id WHERE f.status = 'open' AND f.due_on <= ${IST_TODAY} ORDER BY f.assignee, f.due_on`);
+  const [rows] = await q.query(`SELECT f.assignee, f.note, DATE_FORMAT(f.due_on, '%Y-%m-%d') AS due_on, COALESCE(c.customer_no, l.lead_ref) AS customer_no, COALESCE(c.name, l.business_name, l.full_name) AS name
+      FROM follow_ups f LEFT JOIN customers c ON c.customer_id = f.customer_id LEFT JOIN leads l ON l.lead_id = f.lead_id WHERE f.status = 'open' AND f.due_on <= ${IST_TODAY} ORDER BY f.assignee, f.due_on`);
   const byOwner = new Map();
   rows.forEach((r) => byOwner.set(r.assignee, [...(byOwner.get(r.assignee) || []), r]));
   const users = (await staffUsers(q)).filter((u) => byOwner.has(u.emp_id));
@@ -601,6 +608,7 @@ async function sampleFor(q, event, me, lang = null) {
     }
     case 'stock_daily': s = { vars: { low_count: 2, expiry_count: 1, expiry_days: 60, low_list: '- DF001-M100: 12 available, reorder level 20', expiry_list: '- DF044-M100 batch B2: 40 packs, expires in 30 days', link: link('commerce/stock') }, sample: 'example lines' }; break;
     case 'follow_ups': s = { vars: { count: 1, list: '- CUS-0001: call about the next order (due today)', link: link('commerce/follow-ups') }, sample: 'example lines' }; break;
+    case 'hold_ended': s = { vars: { order_no: 'DFO-260029', customer: 'Kamatchi Stores', hours: 48, packs: 40, link: link('commerce/orders') }, sample: 'an example order' }; break;
     case 'daily_summary': s = { vars: { date: day(istToday()), summary: '- Orders: 3 (Rs 12,000.00)\n- Payments received: Rs 5,000.00', link: link('commerce/ops') }, sample: 'example numbers' }; break;
     default: break;
   }
@@ -645,6 +653,6 @@ async function sendTest(q, event, lang, draft, me) {
 
 module.exports = {
   EVENTS, DAILY, settingKey, setMuted, isOn, template, unknownVars, compose, customerRecipients, staffUsers, staffWith, record,
-  orderConfirmed, orderStatus, invoiceIssued, paymentReceived, returnAccepted, returnPicked, returnRefunded, walletCredited, approvalWaiting, cashDifference, adminAlert,
+  orderConfirmed, holdEnded, orderStatus, invoiceIssued, paymentReceived, returnAccepted, returnPicked, returnRefunded, walletCredited, approvalWaiting, cashDifference, adminAlert,
   runDaily, startJobs, stopJobs, preview, sendTest, JOBS,
 };

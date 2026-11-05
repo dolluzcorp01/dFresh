@@ -6,7 +6,7 @@ paths = the first one the user may open. "(live)" = also shown while Commerce is
 site's screens); every other entry shows only while Commerce is on. A placeholder shows the guide's texts and
 the phase that builds it (gap map build order; Website entries with no screen: phase 24, agreed 2 Nov 2026).
 
-148 menu lines = 13 groups + Online store + 23 sub-groups + 111 pages. Of the 112 entries that open something (pages and Online store), 81 open a screen and 31 the placeholder.
+148 menu lines = 13 groups + Online store + 23 sub-groups + 111 pages. Of the 112 entries that open something (pages and Online store), 86 open a screen and 26 the placeholder.
 
 | Menu page | Opens |
 |---|---|
@@ -17,13 +17,13 @@ the phase that builds it (gap map build order; Website entries with no screen: p
 | Sales / Leads / Enquiries | /admin/leads (live) |
 | Sales / Leads / Follow-ups | /admin/commerce/follow-ups |
 | Sales / Customers / Customer list | /admin/commerce/customers |
-| Sales / Customers / Customer types | /admin/commerce-settings#cs-l-customer_types |
-| Sales / Customers / Credit limits | placeholder: Not built yet - phase 19 |
-| Sales / Customers / Customer ledger | placeholder: Not built yet - phase 21 |
-| Sales / Orders / Quotes | placeholder: Not built yet - phase 19 |
+| Sales / Customers / Customer types | /admin/customer-types |
+| Sales / Customers / Credit limits | /admin/credit-limits |
+| Sales / Customers / Customer ledger | /admin/customer-ledger |
+| Sales / Orders / Quotes | /admin/quotes |
 | Sales / Orders / Orders | /admin/commerce/orders |
-| Sales / Orders / Standing orders | placeholder: Not built yet - phase 19 |
-| Sales / Orders / Back-orders | placeholder: Not built yet - phase 19 |
+| Sales / Orders / Standing orders | /admin/standing-orders |
+| Sales / Orders / Back-orders | /admin/back-orders |
 | Sales / Returns / Return requests | /admin/commerce/returns |
 | Sales / Returns / Inspection | /admin/commerce/returns?status=received |
 | Fulfilment / Packing / To pick | /admin/commerce/packing?tab=pick |

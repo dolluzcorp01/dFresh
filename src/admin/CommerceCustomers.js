@@ -10,14 +10,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { api } from './adminApi';
-import { Drawer, InfoCard, Loading, Notice, PageHead, Pill, Table, useAction, useCan, useConfirm, useLoad, useUpload, UploadProgress } from './ui';
+import { Drawer, LIcon, Loading, Notice, PageHead, Pill, Table, Tabs, useAction, useCan, useConfirm, useLoad, useUpload, UploadProgress } from './ui';
 import { rs } from './printKit';
 import { GST_STATES } from '../shared/gstStates';
 import CustomerDrawer from './CustomerDrawer';
 import GodownField, { useGodown } from './GodownField';
 
 const day = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric' }) : '');
-const STATUS_TONE = { active: 'good', on_hold: 'warn', inactive: 'gray' };
+const STATUS_TONE = { active: 'good', hold: 'warn', blocked: 'bad', merged: 'gray' };
 export const StatusChip = ({ s, label }) => <Pill tone={STATUS_TONE[s] || 'gray'}>{label}</Pill>;
 const F0 = { q: '', type: '', status: '', town: '', tag: '', owner: '', no_order_days: '', outstanding_min: '', wallet_min: '' };
 
@@ -56,26 +56,21 @@ export default function CommerceCustomers() {
   const filtered = Object.values(f).some(Boolean);
   return (
     <section>
-      <PageHead sub="Every shop, hotel, office and distributor that buys, with their addresses, contacts and follow-ups."
+      <PageHead sub="Every shop, hotel, office and distributor that buys, with their addresses and contacts." rules={['The type sets the price list', 'GSTIN checked by its state', 'Same phone, e-mail or GSTIN is caught']}
         actions={<>
           {canCreate && canEdit && <button type="button" className="a-btn a-btn-ghost" onClick={() => setPanel('import')}>Import</button>}
           {canExport && <button type="button" className="a-btn a-btn-ghost" disabled={act.busy} onClick={exportXlsx}>Excel</button>}
           {canEdit && <button type="button" className="a-btn a-btn-ghost" onClick={() => setPanel('merge')}>Merge duplicates</button>}
-          {canCreate && <button type="button" className="a-btn" onClick={() => setPanel('new')}>New customer</button>}
+          {canCreate && <button type="button" className="a-btn" onClick={() => setPanel('new')}><LIcon name="plus" size="sm" />New customer</button>}
         </>} />
-      <InfoCard title="Customers, branches and follow-ups">
-        <ul>
-          <li>Each customer has billing addresses (each with its own GSTIN and state, for B2B branches) and shipping addresses; an order picks one of each and the GST follows the shipping state.</li>
-          <li>On hold: a new order waits for approval. Inactive: no new orders. A price list of its own (not its type&apos;s) and a merge of duplicates wait for approval too.</li>
-          <li>The timeline shows calls, WhatsApp, visits, mails and notes next to the orders, payments, returns and wallet; follow-ups go to My follow-ups.</li>
-        </ul>
-      </InfoCard>
       {act.note}
       {d && d.ownOnly && <Notice kind="info">You see only the customers you own (Commerce settings &gt; Customers).</Notice>}
       <div className="a-toolbar">
         <label className="a-inline">Segment <select value={segment} aria-label="Segment" onChange={(e) => chooseSegment(e.target.value)}><option value="">None</option>{meta && meta.segments.map((sg) => <option key={sg.segment_id} value={sg.segment_id}>{sg.name}</option>)}</select></label>
         {segment && canEdit && <button type="button" className="a-btn a-btn-sm a-btn-ghost" onClick={deleteSegment}>Delete segment</button>}
       </div>
+      <Tabs label="State" value={['active', 'held'].includes(f.status) ? f.status : ''} onChange={(k) => set({ status: k })}
+        tabs={[{ key: 'active', label: 'Active' }, { key: 'held', label: 'On hold and blocked' }, { key: '', label: 'All' }]} />
       <div className="a-filters">
         <input type="search" placeholder="CUS no., name, phone or GSTIN" aria-label="Search customers" value={search} onChange={(e) => setSearch(e.target.value)} />
         <label>Type <select value={f.type} aria-label="Filter type" onChange={(e) => set({ type: e.target.value })}><option value="">All</option>{meta && meta.types.map((t) => <option key={t.type_key} value={t.type_key}>{t.label}</option>)}</select></label>
@@ -95,7 +90,7 @@ export default function CommerceCustomers() {
       <Loading state={list}>
         {d && (
           <>
-            <Table label="Customers" rows={d.rows} rowKey={(c) => c.customer_id} onRowClick={(c) => setOpen(c.customer_id)}
+            <div className="a-listcard"><Table label="Customers" rows={d.rows} rowKey={(c) => c.customer_id} onRowClick={(c) => setOpen(c.customer_id)}
               empty={{ icon: 'users', title: filtered ? 'No customer matches.' : 'No customers yet.' }}
               columns={[
                 { key: 'name', label: 'Customer', sort: true, render: (c) => <><code>{c.customer_no}</code> {c.name}{c.business_name && c.business_name !== c.name && <small className="a-muted a-person-sub">{c.business_name}</small>}<small className="a-muted a-person-sub">{c.phone}</small></> },
@@ -110,7 +105,7 @@ export default function CommerceCustomers() {
                 { key: 'wallet', label: 'Wallet', num: true, sort: true, render: (c) => (c.wallet ? rs(c.wallet) : '') },
                 { key: 'next_follow_up', label: 'Follow-up', sort: true, render: (c) => (c.next_follow_up ? <span className={new Date(c.next_follow_up) < new Date(new Date().toDateString()) ? 'a-bad' : undefined}>{day(c.next_follow_up)}</span> : '') },
               ]} />
-            <p className="a-muted">{d.rows.length} customer(s){filtered ? ' match' : ''}.</p>
+            </div><p className="a-muted">{d.rows.length} customer(s){filtered ? ' match' : ''}.</p>
           </>
         )}
       </Loading>

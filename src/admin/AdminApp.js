@@ -43,7 +43,13 @@ import CommerceStock from './CommerceStock';
 import CommerceOrders from './CommerceOrders';
 import CommerceReturns from './CommerceReturns';
 import CommerceReports from './CommerceReports';
-import MyFollowUps from './MyFollowUps';
+import FollowUps from './FollowUps';
+import Quotes from './Quotes';
+import StandingOrders from './StandingOrders';
+import BackOrders from './BackOrders';
+import CreditLimits from './CreditLimits';
+import CustomerTypes from './CustomerTypes';
+import CustomerLedger from './CustomerLedger';
 import CommerceCustomers from './CommerceCustomers';
 import CommercePromotions from './CommercePromotions';
 import CommerceOps from './CommerceOps';
@@ -203,7 +209,13 @@ export default function AdminApp() {
             <Route path="commerce/orders" element={<Need section="orders" commerce><CommerceOrders /></Need>} />
             <Route path="commerce/returns" element={<Need section="returns" commerce><CommerceReturns /></Need>} />
             <Route path="commerce/reports" element={<Need commerce><CommerceReports /></Need>} />
-            <Route path="commerce/follow-ups" element={<Need section="customers" commerce><MyFollowUps /></Need>} />
+            <Route path="commerce/follow-ups" element={<Need section="customers" commerce><FollowUps /></Need>} />
+            <Route path="customer-types" element={<Need section="customers" commerce><CustomerTypes /></Need>} />
+            <Route path="credit-limits" element={<Need section="customers" commerce><CreditLimits /></Need>} />
+            <Route path="customer-ledger" element={<Need section="customers" commerce><CustomerLedger /></Need>} />
+            <Route path="quotes" element={<Need section="orders" commerce><Quotes /></Need>} />
+            <Route path="standing-orders" element={<Need section="orders" commerce><StandingOrders /></Need>} />
+            <Route path="back-orders" element={<Need section="orders" commerce><BackOrders /></Need>} />
             <Route path="commerce/customers" element={<Need section="customers" commerce><CommerceCustomers /></Need>} />
             <Route path="commerce/promotions" element={<Need section="promotions" commerce><CommercePromotions /></Need>} />
             <Route path="commerce/ops" element={<Need commerce><CommerceOps /></Need>} />

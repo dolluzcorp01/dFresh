@@ -128,11 +128,10 @@ export const MENU = [
       use: "add a type or change its price list (moving to another list needs Accounts or an Admin to approve). │",
       to: [
        {
-        path: "commerce-settings",
-        section: "settings",
+        path: "customer-types",
+        section: "customers",
         action: "view",
-        commerce: true,
-        hash: "cs-l-customer_types"
+        commerce: true
        }
       ]
      },
@@ -141,16 +140,28 @@ export const MENU = [
       label: "Credit limits",
       see: "each customer's limit, what they owe now, and how much is overdue.",
       use: "set how much a customer may owe before new orders stop (a higher limit needs approval). │",
-      section: "customers",
-      phase: 19
+      to: [
+       {
+        path: "credit-limits",
+        section: "customers",
+        action: "view",
+        commerce: true
+       }
+      ]
      },
      {
       id: "sales/customers/customer-ledger",
       label: "Customer ledger",
       see: "one customer's full account - every invoice, payment, credit note, debit note and charge, with the running balance.",
       use: "answer \"how much do I owe you?\" and send the customer a statement.",
-      section: "customers",
-      phase: 21
+      to: [
+       {
+        path: "customer-ledger",
+        section: "customers",
+        action: "view",
+        commerce: true
+       }
+      ]
      }
     ]
    },
@@ -163,8 +174,14 @@ export const MENU = [
       label: "Quotes",
       see: "price offers sent to customers or enquiries, with their valid-until date.",
       use: "make a quote, send it, and turn it into an order with one press. │",
-      section: "orders",
-      phase: 19
+      to: [
+       {
+        path: "quotes",
+        section: "orders",
+        action: "view",
+        commerce: true
+       }
+      ]
      },
      {
       id: "sales/orders/orders",
@@ -185,16 +202,28 @@ export const MENU = [
       label: "Standing orders",
       see: "repeat orders, e.g. every Monday the same items for a hotel.",
       use: "set them once; the system makes the order on each date. │",
-      section: "orders",
-      phase: 19
+      to: [
+       {
+        path: "standing-orders",
+        section: "orders",
+        action: "view",
+        commerce: true
+       }
+      ]
      },
      {
       id: "sales/orders/back-orders",
       label: "Back-orders",
       see: "items we could not supply yet - who is owed what, and what is free now.",
       use: "see when stock has arrived (it is held for the oldest order first), hold it now, or drop what the customer no longer wants.",
-      section: "orders",
-      phase: 19
+      to: [
+       {
+        path: "back-orders",
+        section: "orders",
+        action: "view",
+        commerce: true
+       }
+      ]
      }
     ]
    },

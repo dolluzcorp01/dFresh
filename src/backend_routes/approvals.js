@@ -41,7 +41,7 @@ const KINDS = {
   supplier_pay: { label: 'Pay a supplier', section: 'money' },
   recipe: { label: 'Change a recipe', section: 'production' },
   prod_scrap: { label: 'Production wastage above the recipe', section: 'production' },
-  cust_change: { label: 'Put a customer type on another price list', section: 'customers' },
+  cust_change: { label: 'Lift a customer hold or block, change a customer type, or put a type on another price list', section: 'customers' },
   refund: { label: 'Refund', section: 'returns' },
   write_off: { label: 'Stock write-off', section: 'inventory' },
   discount: { label: 'Discount above the limit', section: 'orders' },
@@ -74,14 +74,17 @@ class ApprovalError extends Error {
   constructor(message, status = 400) { super(message); this.status = status; }
 }
 
+// phase 19: several modules may register for one kind (cust_change: price lists in prices.js, a customer's status and
+// type in customers.js); each looks at its own payload. They run in the order registered; a check or "Send again"
+// answers with the first reason any of them gives.
 /** a module registers what runs when its kind of request is approved: fn(q, payload, deciderEmpId) */
-function onApproved(kind, fn) { handlers[kind] = fn; }
+function onApproved(kind, fn) { const prev = handlers[kind]; handlers[kind] = prev ? async (...a) => { await prev(...a); await fn(...a); } : fn; }
 /** ... and what runs when it ends without approval: fn(q, payload, status, empId) */
-function onClosed(kind, fn) { closers[kind] = fn; }
+function onClosed(kind, fn) { const prev = closers[kind]; closers[kind] = prev ? async (...a) => { await prev(...a); await fn(...a); } : fn; }
 /** ... and the check at the moment it is signed: fn(q, payload, row) -> '' or why it cannot go through now */
-function onRecheck(kind, fn) { recheckers[kind] = fn; }
+function onRecheck(kind, fn) { const prev = recheckers[kind]; recheckers[kind] = prev ? async (...a) => (await prev(...a)) || fn(...a) : fn; }
 /** ... and how "Send again" opens its record again after it expired: fn(q, payload, row) -> '' or why it cannot */
-function onAgain(kind, fn) { agains[kind] = fn; }
+function onAgain(kind, fn) { const prev = agains[kind]; agains[kind] = prev ? async (...a) => (await prev(...a)) || fn(...a) : fn; }
 const payloadOf = (row) => (typeof row.payload === 'string' ? JSON.parse(row.payload) : row.payload);
 const excludedOf = (row) => { const x = typeof row.excluded === 'string' ? JSON.parse(row.excluded) : row.excluded; return Array.isArray(x) ? x : []; };
 async function close(q, row, status, empId) {

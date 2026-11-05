@@ -165,7 +165,7 @@ for f in $(ls database/migrations/*.sql | sort); do
   echo "== $f"; sudo mysql --default-character-set=utf8mb4 dfresh < "$f" || { echo "FAILED: $f"; break; }
 done
 ```
-The 56 migrations, in the order they must run (tick each; a later update applies only the new ones):
+The 57 migrations, in the order they must run (tick each; a later update applies only the new ones):
 
 - [ ] `20261009_phase3_home_ui_text.sql`
 - [ ] `20261009_phase4_products_ui_text.sql`
@@ -280,6 +280,14 @@ The 56 migrations, in the order they must run (tick each; a later update applies
       transfers and their lines (batches loaded, quantity counted in, the loss of a short); write-offs also hold shelf
       moves and remember the transfer they settle; stock take counts with decimals (raw materials by the kilo); the
       approval rule "Short receipt on a transfer". Existing stock and average costs do not change.
+- [ ] `20261106_stage2_19_01_sales.sql` - sections 6 and 7 Leads, customers, quotes and orders: customer status
+      active / hold / blocked / merged (today's on_hold and inactive are mapped); follow-ups, calls and samples on
+      enquiries too; the first reply and lost reason of an enquiry; quotes (DFQ) with lines and revisions; orders gain
+      a draft status, revisions, the quote or standing order they came from, the hold time and the note of a rejected
+      check; order lines gain the back-order, what was dropped, a kit sold as one line and the reason of a free line;
+      standing orders; the switches "Part shipments and back-orders" (on), "Stock is held for ... hours" (48) and
+      "Standing orders are made confirmed" (off); the "Stock hold ended" staff message. Every order, invoice,
+      payment, held quantity and customer balance stays as it is (orders confirmed before keep their hold until packed).
 
 The 11 commerce files replace the 12 of the commerce branch's phases (consolidated on 21 Oct 2026, never applied on
 any database but the `dfresh_commerce` demo): each table in its final shape, no file patches another. Built on a

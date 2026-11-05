@@ -36,7 +36,7 @@ async function buildWorkbook(q, rows, { who = 'dFresh admin', filters = null } =
       ['How to use', true],
       ['• Customers sheet: one row per customer with its default billing and shipping address. Edit, then import in the admin (Customers > Excel): a dry run shows every change first.'],
       ['• A row without Customer_no is a new customer. Phone: a 10-digit Indian mobile. Type: Home, Hotel, Hospital, Office or Distributor.'],
-      ['• Status: active, on_hold or inactive (Status_reason is required for on_hold and inactive). Owner: the emp id of an admin user. Tags: comma separated.'],
+      ['• Status: active, hold or blocked (Status_reason is required for hold and blocked). Owner: the emp id of an admin user. Tags: comma separated.'],
       ['• Bill_GSTIN must belong to Bill_state (2-digit state code, e.g. 33 Tamil Nadu, 29 Karnataka). Empty Ship_name = shipped to the billing address (new customers).'],
       ['• Duplicates (same phone, e-mail or GSTIN as another customer or another row) are refused: merge in the admin instead.'],
       ['• Read-only: Price_list, Credit_days, Credit_limit, Outstanding, Wallet, Last_order (change them in the customer drawer; some need approval).'],
@@ -85,8 +85,8 @@ async function diffWorkbook(q, buffer, opts = {}) { // opts.own: a user limited 
       source: txt(r.Source) || 'Import', owner_emp_id: txt(r.Owner) }, { keep });
     const errs = Object.values(core.errors);
     const tags = txt(r.Tags).split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
-    const status = txt(r.Status).toLowerCase().replace(' ', '_') || 'active';
-    if (!customers.STATUS[status]) errs.push('Status: active, on_hold or inactive');
+    const status = ({ on_hold: 'hold', 'on hold': 'hold', inactive: 'blocked' })[txt(r.Status).toLowerCase()] || txt(r.Status).toLowerCase() || 'active';
+    if (!customers.STATUS[status]) errs.push('Status: active, hold or blocked');
     if (status !== 'active' && !txt(r.Status_reason) && header.includes('Status')) errs.push(`Status ${status}: give the Status_reason`);
     const bill = hasAddr(r, 'Bill') ? await customers.checkAddress(q, addrOf(r, 'Bill'), 'billing') : null;
     const ship = hasAddr(r, 'Ship') ? await customers.checkAddress(q, addrOf(r, 'Ship'), 'shipping') : null;

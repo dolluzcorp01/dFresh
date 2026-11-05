@@ -1,8 +1,12 @@
 // Customers (CRM, docs/COMMERCE-SPEC.md 4.5; migration 20261021_commerce_06_customers.sql). Shared by the admin routes,
 // the order logic (default and chosen addresses, status, price list), the Excel import and the demo seed. Every change
 // is audited.
-// - CUS-0001 numbers (setting customer_prefix; never DFC, the credit note series). Status: active, on hold (a new order
-//   waits for the customer_hold approval), inactive (no new orders). A sales owner (admin user); with the setting
+// - CUS-0001 numbers (setting customer_prefix; never DFC, the credit note series). Status (phase 19, D3): active, on
+//   hold (a new order waits for the customer_hold approval), blocked (no orders), merged. Anyone with Edit on Customers
+//   may tighten it (hold or block); easing it (back to active, or blocked to on hold) and changing the customer type
+//   (it changes the price list) are for Accounts (Approve on Money) or an Admin, and wait for a second person (rule
+//   cust_change). A new customer on a type outside the standard price list, added by someone else, starts on a
+//   standard-list type and the wanted type waits the same way (v23 N4). A sales owner (admin user); with the setting
 //   own customers only (a right of the role, Admin > Roles): its people see only their own customers and their orders.
 // - Duplicates: the same mobile (last 10 digits), e-mail or GSTIN (any billing address) as another customer is refused
 //   on create and edit with that customer named; Merge moves everything of one customer to another (approval).
@@ -18,8 +22,13 @@ const numbering = require('./numbering');
 const { checkSetting } = require('../shared/settingRules');
 const { isStateCode, stateName } = require('../shared/gstStates');
 const { indianMobile, phoneDigits } = require('../shared/customerRules');
+const permissions = require('../shared/permissions');
 
-const STATUS = { active: 'Active', on_hold: 'On hold', inactive: 'Inactive' };
+const STATUS = { active: 'Active', hold: 'On hold', blocked: 'Blocked' };
+const STATUS_ALL = { ...STATUS, merged: 'Merged' };
+const RANK = { active: 0, hold: 1, blocked: 2 };
+/** easing a status or changing the type: Accounts (Approve on Money) or an Admin (v23 C1) */
+const mayEase = (admin) => Boolean(admin && (admin.is_admin || permissions.can(admin.perms, 'money', 'approve')));
 const ACTIVITY = { call: 'Call', whatsapp: 'WhatsApp', visit: 'Visit', mail: 'Mail', note: 'Note' };
 const EMAIL = /^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]{2,}$/;
 const round2 = (n) => Math.round(n * 100) / 100;
@@ -147,7 +156,7 @@ async function insertAddress(q, customerId, v, isDefault) {
  * source, owner_emp_id, bill: address, ship: address | null (= the billing one), contacts: [contact], tags: [tag], lead_id }
  * -> { customer_id, customer_no, name }
  */
-async function createCustomer(q, data, empId, { allowDuplicate = false } = {}) {
+async function createCustomer(q, data, empId, { allowDuplicate = false, admin = null } = {}) {
   const core = await checkCore(q, { source: 'Phone', ...data });
   const errors = { ...core.errors };
   const godown = await checkGodown(q, data.godown_id);
@@ -165,6 +174,14 @@ async function createCustomer(q, data, empId, { allowDuplicate = false } = {}) {
     if (d.length) throw dupError(d);
   }
   const s = await commerceSettings.read(q);
+  // v23 N4: on a type outside the standard price list, someone who may not change types starts on a standard-list type
+  const wanted = core.values.type_key;
+  let waitType = null;
+  if (admin && !mayEase(admin) && !(await onStandardList(q, wanted)) && await approvals.needed(q, 'cust_change', {})) {
+    const std = await standardType(q);
+    if (!std) fail({ type_key: 'No customer type buys on the standard price list, so a new customer on another list is for Accounts or an Admin.' });
+    waitType = wanted; core.values.type_key = std;
+  }
   const [[ct]] = await q.query('SELECT default_credit_days, default_credit_limit FROM customer_types WHERE type_key = ?', [core.values.type_key]);
   const no = `${s.customer_prefix || 'CUS'}-${numbering.pad(await numbering.next(q, s.customer_prefix || 'CUS', 1))}`;
   const v = core.values;
@@ -179,7 +196,8 @@ async function createCustomer(q, data, empId, { allowDuplicate = false } = {}) {
   }
   await setTags(q, id, data.tags || [], null);
   await audit(q, { empId, action: 'create', entity: 'customer', entityId: no, after: { name: v.name, type: v.type_key, owner: v.owner_emp_id, source: v.source, gstin: bill.values.gstin, state: ship.values.state_code, lead_id: data.lead_id || null, contacts: contacts.length } });
-  return { customer_id: id, customer_no: no, name: v.name, type_key: v.type_key, phone: v.phone };
+  const waiting = waitType ? await askType(q, { customer_id: id, customer_no: no, name: v.name, type_key: v.type_key, godown_id: godown }, waitType, empId, true) : null;
+  return { customer_id: id, customer_no: no, name: v.name, type_key: v.type_key, phone: v.phone, waiting };
 }
 
 async function lockCustomer(q, id) {
@@ -191,7 +209,7 @@ async function lockCustomer(q, id) {
 const CORE_COLS = ['name', 'business_name', 'type_key', 'phone', 'phone_digits', 'email', 'source', 'owner_emp_id', 'lang_code', 'opt_out_reminders', 'opt_out_offers'];
 
 /** edit the customer itself (duplicates checked against the others) */
-async function updateCore(q, id, raw, empId) {
+async function updateCore(q, id, raw, empId, admin = null) {
   const c = await lockCustomer(q, id);
   const { values, errors } = await checkCore(q, raw, { partial: true, keep: c.source });
   if (raw.godown_id !== undefined && raw.godown_id !== null && raw.godown_id !== '') {
@@ -200,24 +218,98 @@ async function updateCore(q, id, raw, empId) {
   }
   if (Object.keys(errors).length) fail(errors);
   const changed = Object.fromEntries(Object.entries(values).filter(([k, v]) => (CORE_COLS.includes(k) || k === 'godown_id') && String(c[k] ?? '') !== String(v ?? '')));
-  if (!Object.keys(changed).length) return { customer_id: c.customer_id, changed: 0 };
+  // the type decides the price list: Accounts or an Admin only, through a second person (v23 C1)
+  let waiting = null;
+  if (changed.type_key && admin) {
+    if (!mayEase(admin)) throw new CustomerError('Changing the customer type (it changes the price list) is for Accounts or an Admin', 403);
+    if (await approvals.needed(q, 'cust_change', {})) { waiting = await askType(q, c, changed.type_key, empId, false); delete changed.type_key; }
+  }
+  if (!Object.keys(changed).length) return { customer_id: c.customer_id, changed: 0, waiting };
   const d = await duplicates(q, { phone_digits: changed.phone_digits, email: changed.email }, c.customer_id);
   if (d.length) throw dupError(d);
   await q.query(`UPDATE customers SET ${Object.keys(changed).map((k) => `${k} = ?`).join(', ')}, updated_by = ?, updated_at = UTC_TIMESTAMP() WHERE customer_id = ?`, [...Object.values(changed), empId, c.customer_id]);
   await audit(q, { empId, action: 'update', entity: 'customer', entityId: c.customer_no, before: Object.fromEntries(Object.keys(changed).map((k) => [k, c[k]])), after: changed });
-  return { customer_id: c.customer_id, changed: Object.keys(changed).length };
+  return { customer_id: c.customer_id, changed: Object.keys(changed).length, waiting };
 }
 
-/** status: active / on_hold (reason) / inactive */
-async function setStatus(q, id, status, reason, empId) {
+/**
+ * status: active / hold (reason) / blocked (reason). admin (the person asking; null = the system, the seed, the import):
+ * tightening is done at once; easing is for Accounts or an Admin and waits for a second person (rule cust_change)
+ * -> { status, changed } | { pending, approval_id, status }
+ */
+async function setStatus(q, id, status, reason, empId, admin = null) {
   const c = await lockCustomer(q, id);
-  if (!STATUS[status]) throw new CustomerError('Status: active, on hold or inactive');
+  if (!STATUS[status]) throw new CustomerError('State: active, on hold or blocked');
   const why = String(reason || '').trim().slice(0, 255) || null;
-  if (status !== 'active' && !why) throw new CustomerError(`Say why ${c.name} is ${STATUS[status].toLowerCase()}`);
-  await q.query('UPDATE customers SET status = ?, hold_reason = ?, updated_by = ?, updated_at = UTC_TIMESTAMP() WHERE customer_id = ?', [status, status === 'active' ? null : why, empId, c.customer_id]);
-  await audit(q, { empId, action: 'status', entity: 'customer', entityId: c.customer_no, before: { status: c.status }, after: { status, reason: why } });
-  return { status };
+  if (status !== 'active' && !why) throw new CustomerError('Say why. The salesperson and the order desk see it.', 400, { code: 'fields', fields: { reason: 'Say why. The salesperson and the order desk see it.' } });
+  if (status === c.status && (status === 'active' || why === c.hold_reason)) return { status, changed: false };
+  const ease = RANK[status] < (RANK[c.status] ?? 0);
+  if (ease && admin) {
+    if (!mayEase(admin)) throw new CustomerError(`Easing a customer's status (${STATUS_ALL[c.status].toLowerCase()} to ${STATUS[status].toLowerCase()}) is for Accounts or an Admin`, 403);
+    if (await approvals.needed(q, 'cust_change', {})) {
+      const [[had]] = await q.query("SELECT approval_id FROM approvals WHERE kind = 'cust_change' AND status = 'pending' AND JSON_UNQUOTE(JSON_EXTRACT(payload, '$.dk')) = ?", [`cust:${c.customer_id}`]);
+      if (had) throw new CustomerError(`A change for ${c.name} already waits for approval (#${had.approval_id})`, 409);
+      const what = status === 'active' ? `lift the ${c.status === 'hold' ? 'hold' : 'block'}` : 'block to on hold';
+      const aid = await approvals.request(q, { kind: 'cust_change', godownId: c.godown_id, target: `cust:${c.customer_id}`, refType: 'customer', refId: String(c.customer_id),
+        summary: `${c.customer_no} ${c.name}: ${what} (${c.hold_reason || STATUS_ALL[c.status]})`, payload: { t: 'status', dk: `cust:${c.customer_id}`, customer_id: c.customer_id, status, reason: why } }, empId);
+      await audit(q, { empId, action: 'request', entity: 'customer', entityId: c.customer_no, before: { status: c.status }, after: { status, waiting: true } });
+      return { pending: true, approval_id: aid, status: c.status };
+    }
+  }
+  await applyStatus(q, c, status, why, empId);
+  return { status, changed: true };
 }
+async function applyStatus(q, c, status, why, empId) {
+  await q.query('UPDATE customers SET status = ?, hold_reason = ?, updated_by = ?, updated_at = UTC_TIMESTAMP() WHERE customer_id = ?', [status, status === 'active' ? null : why, empId, c.customer_id]);
+  await audit(q, { empId, action: 'status', entity: 'customer', entityId: c.customer_no, before: { status: c.status, reason: c.hold_reason }, after: { status, reason: status === 'active' ? null : why } });
+}
+
+// ---------------------------------------------------------------- the type and the standard price list (v23 C1, N4)
+/** the default price list's key; a type with no list of its own buys on it */
+async function standardKey(q) {
+  const [[l]] = await q.query('SELECT list_key FROM price_lists WHERE is_default = 1 LIMIT 1');
+  return l ? l.list_key : null;
+}
+async function onStandardList(q, typeKey) {
+  const [[ty]] = await q.query('SELECT list_key FROM customer_types WHERE type_key = ?', [typeKey]);
+  const std = await standardKey(q);
+  return !ty || !ty.list_key || ty.list_key === std;
+}
+/** the first type offered on the standard list (a new customer starts on it while the wanted type waits) */
+async function standardType(q) {
+  const std = await standardKey(q);
+  const [[ty]] = await q.query('SELECT type_key FROM customer_types WHERE is_active = 1 AND (list_key IS NULL OR list_key = ?) ORDER BY sort_order, label LIMIT 1', [std]);
+  return ty ? ty.type_key : null;
+}
+/** ask for a customer's type change (a second person) -> { approval_id, type_key, label, list } */
+async function askType(q, c, typeKey, empId, isNew) {
+  const [[had]] = await q.query("SELECT approval_id FROM approvals WHERE kind = 'cust_change' AND status = 'pending' AND JSON_UNQUOTE(JSON_EXTRACT(payload, '$.dk')) = ?", [`cust:${c.customer_id}`]);
+  if (had) throw new CustomerError(`A change for ${c.name} already waits for approval (#${had.approval_id})`, 409);
+  const [tys] = await q.query('SELECT t.type_key, t.label, COALESCE(l.name, d.name) AS list FROM customer_types t LEFT JOIN price_lists l ON l.list_key = t.list_key JOIN price_lists d ON d.is_default = 1 WHERE t.type_key IN (?, ?)', [c.type_key, typeKey]);
+  const of = (k) => tys.find((x) => x.type_key === k) || { label: k, list: '' };
+  const aid = await approvals.request(q, { kind: 'cust_change', godownId: c.godown_id, target: `cust:${c.customer_id}`, refType: 'customer', refId: String(c.customer_id),
+    summary: `${c.customer_no} ${c.name}: ${isNew ? 'new customer, ' : ''}type ${of(c.type_key).label} to ${of(typeKey).label} (price list ${of(c.type_key).list} to ${of(typeKey).list})`,
+    payload: { t: 'type', dk: `cust:${c.customer_id}`, customer_id: c.customer_id, type_key: typeKey } }, empId);
+  await audit(q, { empId, action: 'request', entity: 'customer', entityId: c.customer_no, before: { type: c.type_key }, after: { type: typeKey, waiting: true } });
+  return { approval_id: aid, type_key: typeKey, label: of(typeKey).label, list: of(typeKey).list };
+}
+approvals.onApproved('cust_change', async (q, p, empId) => {
+  if (!p || !['status', 'type'].includes(p.t)) return;
+  const [[c]] = await q.query('SELECT * FROM customers WHERE customer_id = ? FOR UPDATE', [p.customer_id]);
+  if (!c || c.merged_into) return;
+  if (p.t === 'status') await applyStatus(q, c, p.status, p.reason, empId);
+  else {
+    await q.query('UPDATE customers SET type_key = ?, updated_by = ?, updated_at = UTC_TIMESTAMP() WHERE customer_id = ?', [p.type_key, empId, c.customer_id]);
+    await audit(q, { empId, action: 'update', entity: 'customer', entityId: c.customer_no, before: { type_key: c.type_key }, after: { type_key: p.type_key, approved: true } });
+  }
+});
+approvals.onRecheck('cust_change', async (q, p) => {
+  if (!p || !['status', 'type'].includes(p.t)) return '';
+  const [[c]] = await q.query('SELECT name, merged_into FROM customers WHERE customer_id = ?', [p.customer_id]);
+  if (!c) return 'The customer is gone.';
+  if (c.merged_into) return `${c.name} was merged into another customer.`;
+  return '';
+});
 
 /** an active godown id, or null (the caller checks the person works there: godowns.resolve / assertWorks) */
 async function checkGodown(q, raw) {
@@ -378,7 +470,9 @@ async function requestMerge(q, keepId, mergeId, reason, empId) {
     summary: `Merge ${gone.customer_no} ${gone.name} into ${keep.customer_no} ${keep.name}: ${why}`, payload: { keep_id: keep.customer_id, merge_id: gone.customer_id, reason: why } }, empId);
   return { approval_id: id };
 }
-const MERGE_TABLES = ['orders', 'customer_addresses', 'customer_contacts', 'customer_activity', 'follow_ups', 'wallet_entries', 'coupon_redemptions'];
+// phase 19 (v23 Y8): orders move, so their money (the ledger) is the survivor's; invoices and credit notes keep the buyer
+// they were issued to (buyer_json, GST). Open quotes, standing orders and samples move too.
+const MERGE_TABLES = ['orders', 'customer_addresses', 'customer_contacts', 'customer_activity', 'follow_ups', 'wallet_entries', 'coupon_redemptions', 'standing_orders', 'samples'];
 async function doMerge(q, keepId, mergeId, reason, empId) {
   const keep = await lockCustomer(q, keepId);
   const gone = await lockCustomer(q, mergeId);
@@ -389,10 +483,12 @@ async function doMerge(q, keepId, mergeId, reason, empId) {
     moved[tbl] = r.affectedRows;
   }
   await q.query("UPDATE coupon_scope SET customer_id = ? WHERE customer_id = ? AND scope = 'customer'", [keep.customer_id, gone.customer_id]);
+  const [mq] = await q.query("UPDATE quotes SET customer_id = ? WHERE customer_id = ? AND status NOT IN ('won', 'lost')", [keep.customer_id, gone.customer_id]);
+  moved.quotes = mq.affectedRows;
   await q.query('INSERT IGNORE INTO customer_tags (customer_id, tag) SELECT ?, tag FROM customer_tags WHERE customer_id = ?', [keep.customer_id, gone.customer_id]);
   await q.query('DELETE FROM customer_tags WHERE customer_id = ?', [gone.customer_id]);
   if (!keep.lead_id && gone.lead_id) await q.query('UPDATE customers SET lead_id = ? WHERE customer_id = ?', [gone.lead_id, keep.customer_id]);
-  await q.query("UPDATE customers SET status = 'inactive', merged_into = ?, hold_reason = ?, updated_by = ?, updated_at = UTC_TIMESTAMP() WHERE customer_id = ?",
+  await q.query("UPDATE customers SET status = 'merged', merged_into = ?, hold_reason = ?, updated_by = ?, updated_at = UTC_TIMESTAMP() WHERE customer_id = ?",
     [keep.customer_id, `Merged into ${keep.customer_no}`, empId, gone.customer_id]);
   await q.query("INSERT INTO customer_activity (customer_id, kind, happened_at, note, emp_id) VALUES (?, 'note', UTC_TIMESTAMP(), ?, ?)",
     [keep.customer_id, `${gone.customer_no} ${gone.name} merged into this customer (${reason}): ${Object.entries(moved).filter(([, n]) => n).map(([k, n]) => `${n} ${k.replace('customer_', '').replace('_', ' ')}`).join(', ') || 'nothing to move'}`, empId]);
@@ -499,9 +595,19 @@ async function fromLead(q, leadId, raw, empId) {
     godown_id: raw.godown_id, name, business_name: l.business_name || null, type_key: raw.type_key || type, phone: l.phone, email: l.email, source: 'Lead', owner_emp_id: raw.owner_emp_id || l.assigned_to || null, lead_id: l.lead_id,
     bill: addr, ship: { ...addr, gstin: null, contact_person: l.full_name || name },
     contacts: l.full_name ? [{ name: l.full_name, role: l.business_name ? 'Contact from the website' : null, phone: l.phone, email: l.email, whatsapp: true, gets_invoices: Boolean(l.email) }] : [],
-  }, empId);
+  }, empId, { admin: raw.admin || null });
+  await moveLeadRecords(q, l.lead_id, r.customer_id);
+  // v23: the enquiry is won and shows the customer; making the customer is a reply too
+  await q.query("UPDATE leads SET status = 'won', first_reply_at = COALESCE(first_reply_at, UTC_TIMESTAMP()), updated_at = UTC_TIMESTAMP() WHERE lead_id = ?", [l.lead_id]);
+  await q.query("UPDATE follow_ups SET status = 'done', done_at = UTC_TIMESTAMP(), done_by = ?, done_note = 'Made a customer' WHERE lead_id = ? AND status = 'open'", [empId, l.lead_id]);
   return { ...r, existed: false };
 }
 
-module.exports = { STATUS, ACTIVITY, CustomerError, types, checkCore, checkAddress, checkContact, duplicates, createCustomer, updateCore, setStatus, saveAddress, saveContact,
+/** an enquiry became (or was linked to) a customer: its quotes, calls, follow-ups and samples belong to the customer */
+async function moveLeadRecords(q, leadId, customerId) {
+  await q.query('UPDATE quotes SET customer_id = ? WHERE lead_id = ? AND customer_id IS NULL', [customerId, leadId]);
+  for (const tbl of ['follow_ups', 'customer_activity', 'samples']) await q.query(`UPDATE ${tbl} SET customer_id = ? WHERE lead_id = ? AND customer_id IS NULL`, [customerId, leadId]);
+}
+
+module.exports = { STATUS, STATUS_ALL, RANK, mayEase, standardType, onStandardList, moveLeadRecords, applyStatus, ACTIVITY, CustomerError, types, checkCore, checkAddress, checkContact, duplicates, createCustomer, updateCore, setStatus, saveAddress, saveContact,
   setTags, addActivity, addFollowUp, updateFollowUp, requestPriceList, requestMerge, doMerge, ownScope, addressesOf, timeline, statement, fromLead, lockCustomer };

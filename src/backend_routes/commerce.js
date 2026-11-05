@@ -34,6 +34,18 @@
 // credit limit or with overdue invoices (new orders only).
 //
 // Invoice: issued at dispatch (or at confirm: setting), numbered DFI/26-27/0001 (invoices.js).
+//
+// Phase 19 (sections 6 and 7, v23): an order may be saved as a draft (numbered, nothing held, nothing asked); Confirm
+// asks for what it needs ("Waiting for approval", no stock held) or holds the stock at once ("Confirmed", status new).
+// A rejected (or expired) check sends it back to draft with the reason; the other checks on it close. Changing an order
+// that is no longer a draft makes the next revision (rev, order_revisions keeps the lines before). With the switch
+// "Part shipments and back-orders" on, a short line holds what is free (less what older orders are owed) and the rest
+// waits as a back-order (order_items.back_qty); new stock on Good is held for the oldest order first, after the action
+// that brought it in (boAfter). Held stock goes back after the switch's hours if the order is not packed (sweepHolds,
+// the salesperson is told; Hold again). A kit is sold as one line: its parts are lines with kit_key and the number of
+// kits, priced from the kit's price (or its parts' prices) spread over the parts. A discontinued pack sells only what
+// is in stock. An order made from a quote keeps the quoted prices until the quote expires; after that a draft prices
+// again from today's list (a typed discount keeps its % off the list).
 const pricing = require('./pricing');
 const tax = require('./tax');
 const books = require('./books');
@@ -52,7 +64,7 @@ const { checkSetting } = require('../shared/settingRules');
 const { isStateCode, stateName, placeOfSupply } = require('../shared/gstStates');
 
 const STATUS_LABEL = {
-  approval: 'Waiting for approval', new: 'New', packing: 'Packing', packed: 'Packed', out_for_delivery: 'Out for delivery', with_courier: 'Handed to courier',
+  draft: 'Draft', approval: 'Waiting for approval', new: 'Confirmed', packing: 'Packing', packed: 'Packed', out_for_delivery: 'Out for delivery', with_courier: 'Handed to courier',
   failed: 'Delivery failed', delivered: 'Delivered', cancelled: 'Cancelled',
 };
 const GONE = ['out_for_delivery', 'with_courier', 'failed']; // the goods have left the godown
@@ -63,7 +75,8 @@ const PAYMENT_STATUS = { unpaid: 'Unpaid', partly_paid: 'Part paid', paid: 'Paid
 // phase 15 (D7): an order line below the lowest allowed price or below cost plus the margin floor waits (price_floor,
 // margin_floor); price_below_list ("% below the list") is gone, its handler stays for any old request
 const HOLD_KINDS = ['price_below_list', 'price_floor', 'margin_floor', 'over_available', 'credit_order', 'discount', 'customer_hold'];
-const EDITABLE = { approval: 'free', new: 'free', packing: 'reason', packed: 'reason' };
+const EDITABLE = { draft: 'free', approval: 'free', new: 'free', packing: 'reason', packed: 'reason' };
+const OPEN = ['new', 'packing', 'packed']; // confirmed and not yet gone: what they hold and owe counts
 const round2 = (n) => Math.round(n * 100) / 100;
 // An invoice is overdue when its order still owes money after the due date (issue day + the credit days); a pay-on-
 // delivery order only once it is delivered. SQL with i = invoices, o = orders.
@@ -82,6 +95,48 @@ const walletBalance = (q, customerId) => wallet.balance(q, customerId);
 
 /** good stock, expired, reserved by other orders and available per SKU (stock.js) */
 const availability = (q, skuCodes, exceptOrderId = 0, opts = {}) => stock.availability(q, skuCodes, exceptOrderId, opts);
+
+/** the order switches (Admin > Switches > Orders) */
+async function orderSwitches(q) {
+  const s = await commerceSettings.read(q);
+  const on = (v, d) => (v === undefined || v === null ? d : v === true || Number(v) === 1);
+  return { split: on(s.split_shipments, true), hours: Number(s.hold_hours) > 0 ? Number(s.hold_hours) : 48, standingConfirm: on(s.standing_confirm, false), settings: s };
+}
+/** back-orders owed to other open orders at a godown, those confirmed before `before` (null: all of them) */
+async function owedBefore(q, sku, godown, exceptOrderId, before = null) {
+  const [[r]] = await q.query(`SELECT COALESCE(SUM(i.back_qty), 0) AS n FROM order_items i JOIN orders o ON o.order_id = i.order_id
+      WHERE i.sku_code = ? AND o.godown_id = ? AND o.order_id <> ? AND o.status IN (?) AND (? IS NULL OR o.confirmed_at <= ?)`, [sku, godown, exceptOrderId, OPEN, before, before]);
+  return Number(r.n);
+}
+/** what an order may hold of each SKU now: free stock less what older orders are owed -> Map sku -> n */
+async function holdable(q, skus, godown, exceptOrderId = 0, before = null) {
+  const av = await availability(q, skus, exceptOrderId, { godown });
+  const out = new Map();
+  for (const k of skus) out.set(k, Math.max(0, (av.get(k) ? av.get(k).available : 0) - await owedBefore(q, k, godown, exceptOrderId, before)));
+  return out;
+}
+
+/** what a back-order of this order can take now: free stock (every hold counted) less what older orders are owed */
+async function freeForBack(q, sku, godown, orderId, before) {
+  const av = await availability(q, [sku], 0, { godown });
+  return Math.max(0, (av.get(sku) ? av.get(sku).available : 0) - await owedBefore(q, sku, godown, orderId, before));
+}
+/** a kit as one line: its parts and its price (the kit's own, else its parts' prices for this customer) */
+async function kitOf(q, kitKey) {
+  const [[k]] = await q.query("SELECT k.kit_key, k.kit_code, k.status, k.price, COALESCE(t.name, k.kit_key) AS name FROM kits k LEFT JOIN kit_translations t ON t.kit_key = k.kit_key AND t.lang_code = 'en' WHERE k.kit_key = ? OR k.kit_code = ?", [kitKey, kitKey]);
+  if (!k) return null;
+  const [parts] = await q.query('SELECT sku_code, qty FROM kit_parts WHERE kit_key = ? ORDER BY sort_order, sku_code', [k.kit_key]);
+  return { ...k, price: k.price === null ? null : Number(k.price), parts: parts.map((p) => ({ sku_code: p.sku_code, qty: Number(p.qty) })) };
+}
+/** a kit price per kit spread over its parts by their list value (price per pack, paise; the last single pack takes the rest) */
+function spreadKit(kitPrice, parts) {
+  const weights = parts.map((p) => (p.list || 0) * p.per);
+  const sum = weights.reduce((a, w) => a + w, 0);
+  const prices = parts.map((p, i) => round2(sum > 0 ? (kitPrice * weights[i]) / sum / p.per : kitPrice / parts.reduce((a, x) => a + x.per, 0)));
+  const fix = parts.findIndex((p) => p.per === 1);
+  if (fix >= 0) prices[fix] = round2(prices[fix] + round2(kitPrice - parts.reduce((a, p, i) => a + prices[i] * p.per, 0)));
+  return prices;
+}
 
 /** round2 parts of `total` in proportion to `weights`, adding up to `total` exactly (the last non-zero takes the cents) */
 function spread(total, weights) {
@@ -205,24 +260,49 @@ async function prepare(q, data, opts = {}) {
   const godown = editing ? Number(editing.godown_id) : Number(cust.godown_id);
   if (opts.admin && !godowns.covers(opts.admin, godown)) throw new CommerceError('This customer belongs to a godown you do not work at', 403);
   if (cust.merged_into) throw new CommerceError(`${cust.customer_no} was merged into another customer: choose that one`);
-  if (cust.status === 'inactive' && !editing && !opts.replacement) throw new CommerceError(`${cust.name} is inactive: no new orders (Customers: make it active first)`);
+  if (cust.status === 'blocked' && !opts.replacement && (!editing || !opts.keepBlocked)) throw new CommerceError(`Blocked: ${cust.hold_reason || `${cust.name} takes no orders`}`);
   const terms = String(data.payment_terms || (editing ? editing.payment_terms : 'cod'));
   if (!TERMS[terms]) throw new CommerceError('Choose the payment terms: pay on delivery, paid in advance or on credit');
 
-  // lines
+  // lines (phase 19: a kit is one line, { kit_key, qty = kits, price per kit }; its parts become lines with kit_key)
   const merged = new Map();
+  const kits = [];
+  // a quote's prices are kept until it expires (v23 O4); after that a draft is priced again from today's list
+  const fromQuote = await quoteFacts(q, data.quote_no || (editing && editing.quote_id ? editing.quote_id : null));
+  const keepQuote = fromQuote && !fromQuote.expired ? fromQuote : null;
+  const quoteGone = fromQuote && fromQuote.expired && (!editing || editing.status === 'draft');
   for (const it of Array.isArray(data.items) ? data.items : []) {
+    const kitKey = String(it.kit_key || '').trim();
     const sku = String(it.sku_code || '').trim().toUpperCase();
-    if (!sku) continue;
+    if (!sku && !kitKey) continue;
     const qty = Number(it.qty);
     const p = pricing.parsePrice(it.price);
-    if (!Number.isInteger(qty) || qty < 1 || qty > 100000) throw new CommerceError(`${sku}: quantity must be a whole number from 1`);
-    if (p.error) throw new CommerceError(`${sku}: ${p.error}`);
+    const what = kitKey || sku;
+    if (!Number.isInteger(qty) || qty < 1 || qty > 100000) throw new CommerceError(`${what}: quantity must be a whole number from 1`);
+    if (p.error) throw new CommerceError(`${what}: ${p.error}`);
+    if (kitKey) {
+      const k = await kitOf(q, kitKey);
+      if (!k || !k.parts.length) throw new CommerceError(`Unknown kit: ${kitKey}`);
+      if (k.status !== 'active' && !opts.replacement) throw new CommerceError(`${k.kit_code || k.kit_key} is not sold now (${k.status})`);
+      if (kits.some((x) => x.kit_key === k.kit_key)) throw new CommerceError(`${k.kit_code || k.kit_key} is already on this order: change its quantity there`);
+      kits.push({ ...k, qty, entered: p.value, why: String(it.free_why || '').trim().slice(0, 80) || null });
+      for (const pt of k.parts) merged.set(`${k.kit_key}|${pt.sku_code}`, { sku_code: pt.sku_code, kit_key: k.kit_key, kit_qty: qty, per: pt.qty, qty: pt.qty * qty, entered: null });
+      continue;
+    }
+    let entered = p.value;
+    let kept = null;
+    // a kept price (from the quote) belongs to that item at that quantity (v23)
+    const ql = fromQuote ? fromQuote.lines.find((x) => x.sku_code === sku && !x.kit_key && !x.is_free) : null;
+    if (it.kept && ql && entered !== null && Math.abs(entered - ql.price) < 0.005 && qty === ql.qty) {
+      if (keepQuote) kept = 'kept';
+      else if (quoteGone) { kept = 'repriced'; entered = ql.list_price && Math.abs(ql.price - ql.list_price) > 0.004 ? { pct: ql.price / ql.list_price } : null; }
+    }
     const had = merged.get(sku);
-    merged.set(sku, { sku_code: sku, qty: (had ? had.qty : 0) + qty, entered: had && had.entered !== null ? had.entered : p.value });
+    if (had) throw new CommerceError(`${sku} is already on this order: change the quantity there`);
+    merged.set(sku, { sku_code: sku, kit_key: '', kit_qty: null, qty, entered, kept, free_why: null });
   }
   if (!merged.size) throw new CommerceError('Add at least one SKU');
-  const keys = [...merged.keys()];
+  const keys = [...new Set([...merged.values()].map((x) => x.sku_code))];
   const [known] = await q.query(
     `SELECT s.sku_code, s.is_active, s.status, s.packs_per_carton, s.min_order_qty, s.step_qty, s.sell_unit, p.gst_rate, p.hsn_code, p.category_key
        FROM skus s JOIN products p ON p.product_id = s.product_id WHERE s.sku_code IN (?)`, [keys]
@@ -241,27 +321,45 @@ async function prepare(q, data, opts = {}) {
   const inclusive = list.list.typed === 'inc';
   const rates = await tax.ratesOn(q, priceDay);
   const auto = new Map();
-  for (const i of merged.values()) auto.set(i.sku_code, await pricing.quote(q, { customerId, sku: i.sku_code, qty: i.qty, date: priceDay }));
+  for (const i of merged.values()) auto.set(i.kit_key ? `${i.kit_key}|${i.sku_code}` : i.sku_code, await pricing.quote(q, { customerId, sku: i.sku_code, qty: i.qty, date: priceDay }));
   const rule = await pricing.marginRule(q);
   await stockLib.lockSkus(q, keys);
   const stock = await availability(q, keys, editing ? editing.order_id : 0, { lock: true, godown });
+  const sw = await orderSwitches(q);
+  // what older orders are owed comes first (v23): it is not free for this order
+  for (const k of keys) {
+    const st = stock.get(k);
+    if (st) { st.owed = await owedBefore(q, k, godown, editing ? editing.order_id : 0, editing && editing.confirmed_at ? editing.confirmed_at : null); st.available -= st.owed; }
+  }
+  // a kit's price per pack of each part: its own price (or typed) spread over the parts by their list value
+  for (const k of kits) {
+    const parts = k.parts.map((pt) => { const qt = auto.get(`${k.kit_key}|${pt.sku_code}`); return { per: pt.qty, list: qt && qt.ex !== null ? qt.ex : 0 }; });
+    const listSum = round2(parts.reduce((a, x) => a + x.list * x.per, 0));
+    k.list = k.price !== null ? k.price : listSum;
+    const per = k.entered !== null ? k.entered : k.list;
+    k.unit = per;
+    const prices = spreadKit(per, parts);
+    k.parts.forEach((pt, n) => { const m = merged.get(`${k.kit_key}|${pt.sku_code}`); m.kitPrice = prices[n]; m.typedKit = k.entered !== null; });
+  }
   const problems = [];
   const short = [];
   const lines = [...merged.values()].map((i) => {
     const s = info.get(i.sku_code);
-    if (!opts.replacement) { const bad = pricing.qtyProblem(s, i.qty); if (bad) problems.push(bad); }
+    if (!opts.replacement && !i.kit_key) { const bad = pricing.qtyProblem(s, i.qty); if (bad) problems.push(bad); } // a kit's parts follow the kit
     const rate = rates.has(s.hsn_code) ? rates.get(s.hsn_code) : null;
     if (rate === null) problems.push(`${i.sku_code}: HSN ${s.hsn_code} is not in the HSN list, so GST is unknown (Masters > Tax and units > HSN and GST rates)`);
-    const qt = auto.get(i.sku_code);
+    const qt = auto.get(i.kit_key ? `${i.kit_key}|${i.sku_code}` : i.sku_code);
     const listPrice = qt.ex === null || rate === null ? null : pricing.fromEx(qt.ex, list.list.typed, rate);
     let entered = i.entered;
+    if (entered && entered.pct) entered = listPrice === null ? null : round2(listPrice * entered.pct); // a typed discount keeps its % off today's list
+    if (i.kit_key) entered = rate === null ? 0 : pricing.fromEx(i.kitPrice, list.list.typed, rate);
     if (entered === null) {
       if (listPrice === null && rate !== null) problems.push(`${i.sku_code} has no price on the ${list.label} or ${list.def.label} list: set it in Masters > Prices > Price lists`);
       entered = listPrice || 0;
     }
     const below = listPrice && entered < listPrice ? round2(((listPrice - entered) / listPrice) * 100) : 0;
-    return { sku_code: i.sku_code, qty: i.qty, entered, typed: i.entered !== null, list_price: listPrice, below, gst_rate: rate || 0, hsn: s.hsn_code, category_key: s.category_key,
-      packs_per_carton: Number(s.packs_per_carton) || 1, is_free: 0, price: inclusive ? round2(entered / (1 + rate / 100)) : entered };
+    return { sku_code: i.sku_code, kit_key: i.kit_key || '', kit_qty: i.kit_qty || null, qty: i.qty, entered, typed: i.kit_key ? i.typedKit : i.entered !== null, kept: i.kept || null, list_price: listPrice, below, gst_rate: rate || 0, hsn: s.hsn_code, category_key: s.category_key,
+      packs_per_carton: Number(s.packs_per_carton) || 1, is_free: 0, free_why: null, price: inclusive ? round2(entered / (1 + rate / 100)) : entered };
   });
   // automatic offers: slab % on the line, buy X get Y = free lines (their stock counts like any line)
   const offers = opts.replacement ? { lines: lines.map((l) => ({ ...l, offer_id: null, offer_label: null, offer_discount: 0 })), free: [], applied: [] }
@@ -290,8 +388,11 @@ async function prepare(q, data, opts = {}) {
   const gone = opts.replacement ? [] : short.filter((x) => info.has(x.sku_code) && info.get(x.sku_code).status === 'discontinued');
   gone.forEach((x) => problems.push(`${x.sku_code} is discontinued: only the ${Math.max(x.available, 0)} in stock can be sold, never back-ordered; ${x.qty} asked`));
   for (const x of gone) short.splice(short.indexOf(x), 1);
-  if (short.length && !data.override_stock) {
-    short.forEach((x) => problems.push(`${x.sku_code}: only ${Math.max(x.available, 0)} available (${x.good} in stock${x.expired ? `, ${x.expired} expired` : ''}, ${x.reserved} reserved for other orders); ${x.qty} asked${x.free ? ' (with the free packs of an offer)' : ''}`));
+  // phase 19: with part shipments on, a short line holds what is free and the rest waits as a back-order (no approval)
+  const backs = sw.split && !opts.replacement ? short.map((x) => ({ sku_code: x.sku_code, qty: x.qty, free: Math.max(x.available, 0), back: x.qty - Math.max(x.available, 0) })) : [];
+  if (sw.split) short.length = 0;
+  if (short.length && !data.override_stock && !data.draft) {
+    short.forEach((x) => problems.push(`${x.sku_code}: only ${Math.max(x.available, 0)} available (${x.good} in stock${x.expired ? `, ${x.expired} expired` : ''}, ${x.reserved} reserved for other orders${x.owed ? `, ${x.owed} owed to older orders` : ''}); ${x.qty} asked${x.free ? ' (with the free packs of an offer)' : ''}`));
   }
   if (short.length && data.override_stock && !opts.canOverride) problems.push('Ordering more than the available stock needs a role with "approve" on Orders');
   for (const i of lines.filter((x) => x.typed && x.gst_rate !== null)) { // a typed price above the MRP is never allowed
@@ -386,7 +487,7 @@ async function prepare(q, data, opts = {}) {
 
   // what holds the order
   const holds = [];
-  if (!opts.replacement && cust.status === 'on_hold' && (opts.isNew || ['approval', 'new'].includes(editing && editing.status))) {
+  if (!opts.replacement && cust.status === 'hold' && (opts.isNew || ['draft', 'approval', 'new'].includes(editing && editing.status))) {
     holds.push({ kind: 'customer_hold', amount: null, what: `${cust.customer_no} is on hold${cust.hold_reason ? ` (${cust.hold_reason})` : ''}` });
   }
   if (!opts.replacement && discountTotal > 0 && await approvals.needed(q, 'discount', { pct: discountPct })) {
@@ -408,13 +509,16 @@ async function prepare(q, data, opts = {}) {
         lines: lowF.map((i) => ({ sku_code: i.sku_code, qty: i.qty, price: i.entered, list_price: i.list_price })) });
     }
     if (lowM.length && (await pricing.marginRule(q)).on) {
-      holds.push({ kind: 'margin_floor', amount: null, what: lowM.map((i) => `${i.sku_code} at Rs ${i.entered}: below cost plus the margin floor`).join('; '),
+      // v23 Low4 e: without See cost the check is a "Price check" and its text never names cost plus margin
+      const blind = opts.admin && !opts.admin.seesCost;
+      holds.push({ kind: 'margin_floor', amount: null, label: blind ? 'Price check' : null,
+        what: blind ? `price check on ${[...new Set(lowM.map((i) => i.sku_code))].join(', ')}` : lowM.map((i) => `${i.sku_code} at Rs ${i.entered}: below cost plus the margin floor`).join('; '),
         lines: lowM.map((i) => ({ sku_code: i.sku_code, qty: i.qty, price: i.entered, list_price: i.list_price })) });
     }
     if (short.length && await approvals.needed(q, 'over_available')) {
       holds.push({ kind: 'over_available', amount: null, what: short.map((x) => `${x.sku_code} ${x.qty} asked, ${Math.max(x.available, 0)} available`).join('; '), lines: short });
     }
-    if (opts.isNew || ['approval', 'new', 'packing', 'packed'].includes(editing && editing.status)) { // an edit is checked too (security review M2)
+    if (opts.isNew || ['draft', 'approval', 'new', 'packing', 'packed'].includes(editing && editing.status)) { // an edit is checked too (security review M2)
       const over = await overdueOf(q, customerId);
       const outstanding = await outstandingOf(q, customerId, editing ? editing.order_id : 0);
       const thisDue = round2(t.total - (walletUsed - t.wallet_discount));
@@ -439,7 +543,17 @@ async function prepare(q, data, opts = {}) {
   return { cust, godown, list, terms, creditDays: Number(cust.credit_days) || 0, lines: t.lines, contactId, totals: t, coupon: coupon ? coupon.code : null, couponInfo: coupon, offers: offers.applied,
     manualReason, walletUsed, walletGst: walletUsed > 0 ? walletGst : null, walletCap, walletPlan, discountTotal, discountPct, deliveryWaived: waived,
     billAddressId: chose('bill') || !editing ? (billAddr ? billAddr.address_id : null) : editing.bill_address_id, shipAddressId: chose('ship') || !editing ? (shipAddr ? shipAddr.address_id : null) : editing.ship_address_id,
-    bill: bill.values, ship: ship.values, pos, posReason: posInfo.reason, gstType, holds, settings, method, area: delivery.area };
+    bill: bill.values, ship: ship.values, pos, posReason: posInfo.reason, gstType, holds, settings, method, area: delivery.area,
+    backs, kits: kits.map((k) => ({ kit_key: k.kit_key, kit_code: k.kit_code, name: k.name, qty: k.qty, list: k.list, price: k.unit })), quote: fromQuote, quoteGone, sw };
+}
+
+/** the quote an order comes from: its lines and whether it has expired (null when none) */
+async function quoteFacts(q, ref) {
+  if (!ref) return null;
+  const [[qt]] = await q.query(`SELECT quote_id, quote_no, customer_id, status, DATE_FORMAT(valid_until, '%Y-%m-%d') AS valid_until FROM quotes WHERE ${typeof ref === 'number' ? 'quote_id' : 'quote_no'} = ?`, [ref]);
+  if (!qt) throw new CommerceError(`No quote ${ref}`, 404);
+  const [lines] = await q.query('SELECT sku_code, kit_key, qty, price, list_price, is_free FROM quote_lines WHERE quote_id = ? ORDER BY sort_order, line_id', [qt.quote_id]);
+  return { ...qt, expired: qt.valid_until < pricing.istToday(), lines: lines.map((l) => ({ ...l, qty: Number(l.qty), price: Number(l.price), list_price: l.list_price === null ? null : Number(l.list_price), is_free: Number(l.is_free) === 1 })) };
 }
 
 async function history(q, orderId, from, to, note, empId) {
@@ -450,11 +564,37 @@ async function history(q, orderId, from, to, note, empId) {
 async function release(q, orderId) {
   await q.query("UPDATE stock_reservations SET status = 'released', closed_at = UTC_TIMESTAMP() WHERE order_id = ? AND status = 'active'", [orderId]);
 }
+/**
+ * hold the order's stock again. Part shipments on (phase 19): each SKU holds what is free less what older orders are
+ * owed, the rest is owed as a back-order (back_qty, the plain line first, then kit parts); off: everything (an over-
+ * stock order was approved). -> { held, back }
+ */
 async function reserve(q, orderId) {
   await release(q, orderId);
-  const [[o]] = await q.query('SELECT godown_id FROM orders WHERE order_id = ?', [orderId]);
-  const [items] = await q.query('SELECT sku_code, SUM(qty) AS qty FROM order_items WHERE order_id = ? GROUP BY sku_code ORDER BY sku_code', [orderId]);
-  for (const i of items) await q.query('INSERT INTO stock_reservations (order_id, sku_code, location_id, qty) VALUES (?, ?, ?, ?)', [orderId, i.sku_code, o.godown_id, Number(i.qty)]);
+  const [[o]] = await q.query('SELECT godown_id, confirmed_at FROM orders WHERE order_id = ?', [orderId]);
+  const [items] = await q.query('SELECT line_id, sku_code, qty FROM order_items WHERE order_id = ? ORDER BY sku_code, kit_key, is_free, line_id', [orderId]);
+  const skus = [...new Set(items.map((i) => i.sku_code))];
+  const sw = await orderSwitches(q);
+  const can = sw.split ? await holdable(q, skus, o.godown_id, orderId, o.confirmed_at) : null;
+  let held = 0; let back = 0;
+  for (const sku of skus) {
+    const lines = items.filter((i) => i.sku_code === sku);
+    const want = lines.reduce((a, i) => a + Number(i.qty), 0);
+    const n = can ? Math.min(want, can.get(sku)) : want;
+    if (n > 0) await q.query('INSERT INTO stock_reservations (order_id, sku_code, location_id, qty) VALUES (?, ?, ?, ?)', [orderId, sku, o.godown_id, n]);
+    let left = n;
+    for (const l of lines) {
+      const h = Math.min(Number(l.qty), left); left -= h;
+      await q.query('UPDATE order_items SET back_qty = ? WHERE line_id = ?', [Number(l.qty) - h, l.line_id]);
+    }
+    held += n; back += want - n;
+  }
+  return { held, back };
+}
+/** the hold clock starts (again) now: the switch's hours */
+async function holdFrom(q, orderId) {
+  const { hours } = await orderSwitches(q);
+  await q.query('UPDATE orders SET hold_until = DATE_ADD(UTC_TIMESTAMP(), INTERVAL ? HOUR), hold_gone = 0 WHERE order_id = ?', [hours, orderId]);
 }
 const reservesNow = (status, settings) => (status === 'new' && settings.stock_reserve_at !== 'packing') || status === 'packing' || status === 'packed';
 
@@ -524,26 +664,30 @@ async function withdrawHolds(q, orderNo, why) {
 async function requestHolds(q, orderNo, custName, holds, empId, godownId, customerId) {
   const ids = [];
   for (const h of holds) {
-    ids.push(await approvals.request(q, { kind: h.kind, godownId, target: customerId ? `cust:${customerId}` : null, refType: 'order', refId: orderNo, summary: `${orderNo} for ${custName}: ${h.what}`, amount: h.amount, payload: { order_no: orderNo, lines: h.lines || null } }, empId));
+    ids.push(await approvals.request(q, { kind: h.kind, godownId, target: customerId ? `cust:${customerId}` : null, refType: 'order', refId: orderNo, summary: `${orderNo} for ${custName}: ${h.what}`, amount: h.amount, payload: { order_no: orderNo, lines: h.lines || null, label: h.label || null } }, empId));
   }
   return ids;
 }
 
 /** an order became confirmed: time stamp, reservation (setting), invoice (setting), the customer told (the first time) */
 async function confirmed(q, orderId, empId, settings) {
-  const [[was]] = await q.query('SELECT confirmed_at FROM orders WHERE order_id = ?', [orderId]);
-  await q.query('UPDATE orders SET confirmed_at = COALESCE(confirmed_at, UTC_TIMESTAMP()) WHERE order_id = ?', [orderId]);
-  if (reservesNow('new', settings)) await reserve(q, orderId);
+  const [[was]] = await q.query('SELECT confirmed_at, quote_id, order_no FROM orders WHERE order_id = ?', [orderId]);
+  await q.query('UPDATE orders SET confirmed_at = COALESCE(confirmed_at, UTC_TIMESTAMP()), rej_note = NULL WHERE order_id = ?', [orderId]);
+  let h = { held: 0, back: 0 };
+  if (reservesNow('new', settings)) { h = await reserve(q, orderId); await holdFrom(q, orderId); }
   if (!was.confirmed_at) await notifications.orderConfirmed(q, orderId);
   if (settings.invoice_issue_at === 'confirm') await invoices.issue(q, orderId, empId);
+  // the quote it came from is won (v23)
+  if (was.quote_id) await q.query("UPDATE quotes SET status = 'won', order_id = ? WHERE quote_id = ? AND status IN ('sent', 'draft', 'approval')", [orderId, was.quote_id]);
+  return h;
 }
 
 async function insertLines(q, orderId, lines) {
   for (const i of lines) {
     await q.query(
-      `INSERT INTO order_items (order_id, sku_code, is_free, qty, price, list_price, offer_id, offer_discount, coupon_discount, wallet_discount, hsn, gst_rate, taxable, cgst, sgst, igst, line_total)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [orderId, i.sku_code, i.is_free ? 1 : 0, i.qty, i.price, i.list_price, i.offer_id || null, i.offer_discount || 0, i.coupon_discount || 0, i.wallet_discount || 0, i.hsn, i.gst_rate, i.taxable, i.cgst, i.sgst, i.igst, i.line_total]
+      `INSERT INTO order_items (order_id, sku_code, is_free, kit_key, kit_qty, free_why, qty, price, list_price, offer_id, offer_discount, coupon_discount, wallet_discount, hsn, gst_rate, taxable, cgst, sgst, igst, line_total)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [orderId, i.sku_code, i.is_free ? 1 : 0, i.kit_key || '', i.kit_qty || null, i.free_why || null, i.qty, i.price, i.list_price, i.offer_id || null, i.offer_discount || 0, i.coupon_discount || 0, i.wallet_discount || 0, i.hsn, i.gst_rate, i.taxable, i.cgst, i.sgst, i.igst, i.line_total]
     );
   }
 }
@@ -560,7 +704,12 @@ async function createOrder(q, data, empId, opts = {}) {
   const t = p.totals;
   const yy = String(istYear()).padStart(2, '0');
   const orderNo = `${p.settings.order_prefix}-${yy}${numbering.pad(await numbering.next(q, `${p.settings.order_prefix}-${yy}`, 1))}`;
-  const status = p.holds.length ? 'approval' : 'new';
+  if (p.quote && p.quote.customer_id && Number(p.quote.customer_id) !== Number(p.cust.customer_id)) throw new CommerceError(`${p.quote.quote_no} is for another customer`);
+  if (p.quote) {
+    const [[made]] = await q.query("SELECT order_no, status FROM orders WHERE quote_id = ? AND status <> 'cancelled'", [p.quote.quote_id]);
+    if (made) throw new CommerceError(`Already an order: ${made.order_no} was made from ${p.quote.quote_no} (${STATUS_LABEL[made.status]}). A quote becomes one order; open that one.`, 409);
+  }
+  const status = data.draft ? 'draft' : p.holds.length ? 'approval' : 'new';
   const [ins] = await q.query(
     `INSERT INTO orders (order_no, customer_id, godown_id, price_list, status, payment_terms, credit_days, delivery_method_id, delivery_kind, delivery_area_id,
        bill_name, bill_gstin, bill_address, bill_town, bill_state_code, bill_pincode, bill_phone, bill_address_id,
@@ -573,18 +722,20 @@ async function createOrder(q, data, empId, opts = {}) {
       p.walletUsed, t.wallet_discount, p.walletGst, round2(t.total - (p.walletUsed - t.wallet_discount)), data.note ? String(data.note).slice(0, 255) : null, empId]
   );
   const orderId = ins.insertId;
+  await q.query('UPDATE orders SET quote_id = ?, standing_id = ? WHERE order_id = ?', [p.quote ? p.quote.quote_id : null, data.standing_id ? Number(data.standing_id) : null, orderId]);
   await insertLines(q, orderId, p.lines);
   if (p.coupon) await promotions.redeem(q, orderId, p.cust.customer_id, p.coupon, p.couponInfo.discount || p.couponInfo.delivery_waived);
   if (p.walletUsed > 0) await wallet.use(q, p.cust.customer_id, p.walletUsed, orderId, orderNo, empId);
-  await history(q, orderId, null, status, p.holds.length ? `Waits for: ${p.holds.map((h) => approvals.KINDS[h.kind].label).join(', ')}` : null, empId);
-  const ids = await requestHolds(q, orderNo, p.cust.name, p.holds, empId, p.godown, p.cust.customer_id);
-  if (status === 'new') await confirmed(q, orderId, empId, p.settings);
+  await history(q, orderId, null, status, status === 'approval' ? `Waits for: ${p.holds.map((h) => h.label || approvals.KINDS[h.kind].label).join(', ')}` : status === 'draft' ? 'Saved as a draft' : null, empId);
+  const ids = status === 'approval' ? await requestHolds(q, orderNo, p.cust.name, p.holds, empId, p.godown, p.cust.customer_id) : [];
+  const h = status === 'new' ? await confirmed(q, orderId, empId, p.settings) : { held: 0, back: 0 };
   await refreshPayment(q, orderId);
   await audit(q, { empId, action: 'create', entity: 'order', entityId: orderNo,
     after: { customer: p.cust.name, status, total: t.total, price_list: p.list.key, gst_type: p.gstType, terms: p.terms, delivery: p.method.label, delivery_charge: t.delivery_charge,
       lines: p.lines.map((i) => `${i.qty} x ${i.sku_code} @ ${i.price}${i.is_free ? ' (free)' : ''}`), offers: p.offers.map((x) => x.name), coupon: p.coupon, manual_discount: t.manual_discount,
       wallet_used: p.walletUsed, wallet_discount: t.wallet_discount, holds: p.holds.map((h) => h.kind) } });
-  return { order_id: orderId, order_no: orderNo, status, held: status === 'approval', approvals: ids, price_list: p.list.label, gst_type: p.gstType, ...t, walletUsed: p.walletUsed };
+  return { order_id: orderId, order_no: orderNo, status, status_label: STATUS_LABEL[status], held: status === 'approval', approvals: ids, waits: p.holds.map((x) => x.label || approvals.KINDS[x.kind].label),
+    packs_held: h.held, back: h.back, price_list: p.list.label, gst_type: p.gstType, ...t, walletUsed: p.walletUsed };
 }
 
 /** what an order would be (the New / Edit order form, as you type): totals, lines with offers and free lines, coupon, wallet, holds */
@@ -610,8 +761,15 @@ async function previewOrder(q, data, empId, opts = {}) {
     } else if (data.wallet_use && /wallet/i.test(e.message)) { walletError = e.message; p = await tryPrepare({ ...data, wallet_use: 0 }); } else throw e;
   }
   const t = p.totals;
+  // v23 Low4 e: without See cost the form never shows where cost plus margin starts: a priced line only says it is checked
+  const blind = opts.admin && !opts.admin.seesCost;
+  const holds = blind ? p.holds.filter((h) => h.kind !== 'margin_floor') : p.holds;
+  const stockNow = await holdable(q, [...new Set(p.lines.map((l) => l.sku_code))], p.godown, order ? order.order_id : 0, order && order.confirmed_at ? order.confirmed_at : null);
   return {
-    lines: p.lines.map((l) => ({ sku_code: l.sku_code, qty: l.qty, price: l.price, entered: l.entered, list_price: l.list_price, is_free: l.is_free, offer_id: l.offer_id || null, offer_label: l.offer_label || null,
+    switches: { split: p.sw.split, hold_hours: p.sw.hours }, backs: p.backs, kits: p.kits, free_now: Object.fromEntries(stockNow),
+    quote: p.quote ? { quote_no: p.quote.quote_no, valid_until: p.quote.valid_until, expired: p.quote.expired } : null,
+    price_note: blind && p.lines.some((l) => !l.is_free && l.price > 0) ? 'Prices are also checked against cost when you save. It may then wait for a price check.' : null,
+    lines: p.lines.map((l) => ({ sku_code: l.sku_code, kit_key: l.kit_key || '', kit_qty: l.kit_qty || null, kept: l.kept || null, qty: l.qty, price: l.price, entered: l.entered, list_price: l.list_price, gst_rate: l.gst_rate, is_free: l.is_free, offer_id: l.offer_id || null, offer_label: l.offer_label || null,
       offer_discount: l.offer_discount, coupon_discount: l.coupon_discount, wallet_discount: l.wallet_discount, taxable: l.taxable, line_total: l.line_total })),
     totals: { ...t, lines: undefined, wallet_used: p.walletUsed, wallet_paid: round2(p.walletUsed - t.wallet_discount), due: round2(t.total - (p.walletUsed - t.wallet_discount)) },
     gst_type: p.gstType, place_of_supply: p.pos, pos_reason: p.posReason, offers: p.offers, coupon: p.couponInfo ? { code: p.couponInfo.code, kind: p.couponInfo.kind, discount: p.couponInfo.discount, delivery_waived: p.couponInfo.delivery_waived,
@@ -619,11 +777,11 @@ async function previewOrder(q, data, empId, opts = {}) {
     wallet: { used: p.walletUsed, cap: p.walletCap, max_pct: Number(p.settings.wallet_max_use_pct), gst: p.settings.cashback_gst_treatment === 'payment' ? 'payment' : 'discount', by_source: p.walletPlan ? p.walletPlan.bySource : {},
       usable: (await wallet.plan(q, p.cust.customer_id, 1e9, order ? order.order_id : 0)).total },
     discount: { total: p.discountTotal, pct: p.discountPct, limit: p.settings.approve_discount_on ? Number(p.settings.approve_discount_pct_above) : null },
-    holds: p.holds.map((h) => ({ kind: h.kind, label: approvals.KINDS[h.kind].label, what: h.what })), delivery_area: p.area, coupon_error: couponError, wallet_error: walletError,
+    holds: holds.map((h) => ({ kind: h.kind, label: h.label || approvals.KINDS[h.kind].label, what: h.what })), delivery_area: p.area, coupon_error: couponError, wallet_error: walletError,
   };
 }
 
-const ORDER_COLS = `order_id, order_no, customer_id, godown_id, status, payment_terms, credit_days, delivery_method_id, delivery_area_id, coupon_code, wallet_used, version, total,
+const ORDER_COLS = `order_id, order_no, customer_id, godown_id, status, payment_terms, credit_days, delivery_method_id, delivery_area_id, coupon_code, wallet_used, version, rev, quote_id, confirmed_at, hold_gone, total,
   bill_name, bill_gstin, bill_address, bill_town, bill_state_code, bill_pincode, bill_phone, bill_address_id,
   ship_name, ship_address, ship_town, ship_state_code, ship_pincode, ship_phone, ship_address_id, contact_id`;
 
@@ -640,9 +798,18 @@ async function updateOrder(q, orderNo, data, empId, opts = {}) {
   if (Number(data.version) !== Number(o.version)) throw new CommerceError(`${orderNo} changed since you opened it: reload it and make your change again`, 409);
   const reason = String(data.reason || '').trim().slice(0, 255);
   if (mode === 'reason' && !reason) throw new CommerceError(`${orderNo} is packed: say why it is changed (the packer re-packs it)`);
-  const [beforeItems] = await q.query('SELECT sku_code, qty, price, is_free FROM order_items WHERE order_id = ? ORDER BY sku_code, is_free', [o.order_id]);
-  const p = await prepare(q, data, { ...opts, order: o, isNew: false });
+  const [beforeItems] = await q.query('SELECT sku_code, kit_key, qty, price, is_free FROM order_items WHERE order_id = ? ORDER BY sku_code, is_free', [o.order_id]);
+  // a draft stays a draft until Confirm; Confirm on a draft or a change of anything else asks or holds again
+  const keepDraft = o.status === 'draft' && !data.confirm;
+  const p = await prepare(q, { ...data, draft: keepDraft }, { ...opts, order: o, isNew: false });
   const t = p.totals;
+  // a change of an order that is no longer a draft is its next revision (the lines before are kept)
+  let rev = Number(o.rev) || 1;
+  if (o.status !== 'draft') {
+    await q.query('INSERT INTO order_revisions (order_id, rev, total, `lines`, emp_id) VALUES (?, ?, ?, ?, ?)', [o.order_id, rev, Number(o.total),
+      JSON.stringify(beforeItems.map((i) => ({ sku_code: i.sku_code, kit_key: i.kit_key || null, qty: Number(i.qty), price: Number(i.price), is_free: Number(i.is_free) === 1 }))), empId]);
+    rev += 1;
+  }
   await q.query('DELETE FROM order_items WHERE order_id = ?', [o.order_id]);
   await insertLines(q, o.order_id, p.lines);
   // coupon and wallet follow the edit: the old use goes back, the new one is taken (oldest credits first)
@@ -656,7 +823,7 @@ async function updateOrder(q, orderNo, data, empId, opts = {}) {
   // approvals: the old requests are withdrawn, the edit asks again for what it still needs
   await withdrawHolds(q, orderNo, 'Order edited: asked again if still needed');
   let status = o.status;
-  if (!['packing', 'packed'].includes(o.status)) status = p.holds.length ? 'approval' : 'new';
+  if (!['packing', 'packed'].includes(o.status)) status = keepDraft ? 'draft' : p.holds.length ? 'approval' : 'new';
   if (o.status === 'packed') status = 'packing'; // the packer checks it again
   await q.query(
     `UPDATE orders SET status = ?, payment_terms = ?, delivery_method_id = ?, delivery_kind = ?, delivery_area_id = ?,
@@ -664,15 +831,16 @@ async function updateOrder(q, orderNo, data, empId, opts = {}) {
        ship_name = ?, ship_address = ?, ship_town = ?, ship_state_code = ?, ship_pincode = ?, ship_phone = ?, ship_address_id = ?, contact_id = ?, place_of_supply = ?, gst_type = ?,
        coupon_code = ?, subtotal = ?, discount = ?, offer_discount = ?, manual_discount = ?, manual_discount_reason = ?, delivery_charge = ?, delivery_gst = ?, delivery_waived = ?,
        taxable = ?, cgst = ?, sgst = ?, igst = ?, gst = ?, round_off = ?, total = ?, wallet_used = ?, wallet_discount = ?, wallet_gst = ?,
-       note = ?, version = version + 1, updated_by = ?, updated_at = UTC_TIMESTAMP() WHERE order_id = ?`,
+       note = ?, rev = ?, rej_note = NULL, version = version + 1, updated_by = ?, updated_at = UTC_TIMESTAMP() WHERE order_id = ?`,
     [status, p.terms, p.method.method_id, p.method.kind, p.area ? p.area.area_id : null, ...addrCols(p), p.pos, p.gstType, p.coupon, t.subtotal, t.discount, t.offer_discount, t.manual_discount, p.manualReason,
       t.delivery_charge, t.delivery_gst, p.deliveryWaived, t.taxable, t.cgst, t.sgst, t.igst, t.gst, t.round_off, t.total, p.walletUsed, t.wallet_discount, p.walletGst,
-      String(data.note || '').trim().slice(0, 255) || null, empId, o.order_id]
+      String(data.note || '').trim().slice(0, 255) || null, rev, empId, o.order_id]
   );
-  await requestHolds(q, orderNo, p.cust.name, p.holds, empId, p.godown, p.cust.customer_id);
-  if (status === 'approval') await release(q, o.order_id);
-  else if (o.status === 'approval' && status === 'new') await confirmed(q, o.order_id, empId, p.settings);
-  else if (reservesNow(status, p.settings)) await reserve(q, o.order_id);
+  if (status === 'approval') await requestHolds(q, orderNo, p.cust.name, p.holds, empId, p.godown, p.cust.customer_id);
+  let h = { held: 0, back: 0 };
+  if (status === 'approval' || status === 'draft') { await release(q, o.order_id); await q.query('UPDATE order_items SET back_qty = 0 WHERE order_id = ?', [o.order_id]); }
+  else if (['draft', 'approval'].includes(o.status) && status === 'new') h = await confirmed(q, o.order_id, empId, p.settings);
+  else if (reservesNow(status, p.settings)) { h = await reserve(q, o.order_id); if (status === 'new') await holdFrom(q, o.order_id); }
   if (status === 'packing') { await q.query('DELETE FROM pack_scans WHERE order_id = ?', [o.order_id]); await pickFor(q, o.order_id); } // picked and checked again
   // an invoice issued at confirm follows the edit: cancelled with a credit note, issued again
   const [[live]] = await q.query('SELECT invoice_no FROM invoices WHERE live_order_id = ?', [o.order_id]);
@@ -684,7 +852,8 @@ async function updateOrder(q, orderNo, data, empId, opts = {}) {
     before: { status: o.status, total: Number(o.total), lines: beforeItems.map((i) => `${i.qty} x ${i.sku_code} @ ${Number(i.price)}${Number(i.is_free) ? ' (free)' : ''}`) },
     after: { status, total: t.total, lines: p.lines.map((i) => `${i.qty} x ${i.sku_code} @ ${i.price}${i.is_free ? ' (free)' : ''}`), coupon: p.coupon, manual_discount: t.manual_discount, wallet_used: p.walletUsed,
       reason: reason || null, gst_type: p.gstType, holds: p.holds.map((h) => h.kind) } });
-  return { order_no: orderNo, status, version: Number(o.version) + 1, holds: p.holds.map((h) => h.kind), total: t.total };
+  return { order_no: orderNo, status, status_label: STATUS_LABEL[status], rev, version: Number(o.version) + 1, holds: p.holds.map((x) => x.kind), waits: status === 'approval' ? p.holds.map((x) => x.label || approvals.KINDS[x.kind].label) : [],
+    packs_held: h.held, back: h.back, total: t.total };
 }
 
 /** cancel for good: reservations released, goods back after dispatch, invoice cancelled + credit note, coupon / wallet back */
@@ -800,14 +969,26 @@ async function holdApproved(q, p, empId) {
   const [[o]] = await q.query('SELECT order_id, order_no, status FROM orders WHERE order_no = ? FOR UPDATE', [p.order_no]);
   if (!o || o.status !== 'approval') return;
   if ((await pendingHolds(q, o.order_no)).length) return; // another approval still pending
-  await q.query("UPDATE orders SET status = 'new', version = version + 1 WHERE order_id = ?", [o.order_id]);
+  await q.query("UPDATE orders SET status = 'new', ok_by = ?, version = version + 1 WHERE order_id = ?", [empId, o.order_id]);
   await history(q, o.order_id, 'approval', 'new', 'Approved', empId);
   await confirmed(q, o.order_id, empId, await commerceSettings.read(q));
 }
+// phase 19 (v23): a rejected, withdrawn or expired check sends the order back to draft with the reason; the other checks
+// on it close too. Nothing was held while it waited. (Before phase 19 it was cancelled.)
 async function holdClosed(q, p, status, empId) {
-  const [[o]] = await q.query('SELECT order_id, status FROM orders WHERE order_no = ?', [p.order_no]);
-  if (!o || ['cancelled', 'delivered', ...GONE].includes(o.status)) return;
-  await doCancel(q, o.order_id, `Approval ${status}`, empId);
+  const [[o]] = await q.query('SELECT order_id, order_no, status FROM orders WHERE order_no = ? FOR UPDATE', [p.order_no]);
+  if (!o || o.status !== 'approval') return;
+  const [[a]] = await q.query("SELECT approval_id, kind, decided_by, note, JSON_UNQUOTE(JSON_EXTRACT(payload, '$.label')) AS label FROM approvals WHERE ref_type = 'order' AND ref_id = ? AND status = ? ORDER BY decided_at DESC, approval_id DESC LIMIT 1", [o.order_no, status]);
+  const [[who]] = a && a.decided_by ? await q.query(`SELECT TRIM(CONCAT(COALESCE(emp_first_name, ''), ' ', COALESCE(emp_last_name, ''))) AS name FROM \`${require('./auth').DADMIN}\`.employee WHERE emp_id = ?`, [a.decided_by]) : [[null]]; // eslint-disable-line global-require
+  const label = a ? (a.label && a.label !== 'null' ? a.label : (approvals.KINDS[a.kind] || {}).label || a.kind) : 'A check';
+  const note = `${label}: ${status}${who ? ` by ${who.name}` : ''}${a && a.note ? ` (${a.note})` : ''}`.slice(0, 255);
+  const rows = await pendingHolds(q, o.order_no);
+  for (const r of rows) {
+    await q.query("UPDATE approvals SET status = 'withdrawn', decided_by = ?, decided_at = UTC_TIMESTAMP(), note = ? WHERE approval_id = ? AND status = 'pending'", [empId, `Closed: another check on ${o.order_no} was ${status}`, r.approval_id]);
+  }
+  await release(q, o.order_id);
+  await q.query("UPDATE orders SET status = 'draft', rej_note = ?, version = version + 1, updated_at = UTC_TIMESTAMP() WHERE order_id = ?", [note, o.order_id]);
+  await history(q, o.order_id, 'approval', 'draft', note, empId);
 }
 for (const k of HOLD_KINDS) { approvals.onApproved(k, holdApproved); approvals.onClosed(k, holdClosed); }
 approvals.onApproved('cancel_after_dispatch', async (q, p, empId) => {
@@ -815,8 +996,116 @@ approvals.onApproved('cancel_after_dispatch', async (q, p, empId) => {
   if (o) await doCancel(q, o.order_id, `${p.reason} (approved after dispatch)`, empId);
 });
 
+// ---------------------------------------------------------------- hold time and back-orders (phase 19)
+/** confirmed orders not packed within the switch's hours give their held stock back; the salesperson is told -> n */
+async function sweepHolds(q) {
+  const { hours } = await orderSwitches(q);
+  const [rows] = await q.query(`SELECT o.order_id, o.order_no, o.godown_id, c.name AS customer, c.owner_emp_id FROM orders o JOIN customers c ON c.customer_id = o.customer_id
+      WHERE o.status = 'new' AND o.hold_gone = 0 AND o.hold_until IS NOT NULL AND o.hold_until <= UTC_TIMESTAMP()
+        AND EXISTS (SELECT 1 FROM stock_reservations r WHERE r.order_id = o.order_id AND r.status = 'active') ORDER BY o.order_id FOR UPDATE`);
+  for (const o of rows) {
+    const [[r]] = await q.query("SELECT COALESCE(SUM(qty), 0) AS n FROM stock_reservations WHERE order_id = ? AND status = 'active'", [o.order_id]);
+    await release(q, o.order_id);
+    await q.query('UPDATE orders SET hold_gone = 1, version = version + 1 WHERE order_id = ?', [o.order_id]);
+    await history(q, o.order_id, 'new', 'new', `Hold ended: ${Number(r.n)} packs back to free to sell after ${hours} hours`, 'system');
+    await audit(q, { empId: 'system', action: 'hold_ended', entity: 'order', entityId: o.order_no, before: { held: Number(r.n) }, after: { held: 0, hours } });
+    if (o.owner_emp_id) await notifications.holdEnded(q, o, Number(r.n), hours);
+  }
+  return rows.length;
+}
+/** Hold again (after the hold ended): what is free now, for another hold time -> { held, back } */
+async function holdAgain(q, orderNo, empId) {
+  const [[o]] = await q.query('SELECT order_id, order_no, status, hold_gone FROM orders WHERE order_no = ? FOR UPDATE', [orderNo]);
+  if (!o) throw new CommerceError(`No order ${orderNo}`, 404);
+  if (o.status !== 'new') throw new CommerceError(`${orderNo} is ${STATUS_LABEL[o.status]}: only a confirmed order is held again`, 409);
+  await stockLib.lockSkus(q, (await q.query('SELECT DISTINCT sku_code FROM order_items WHERE order_id = ?', [o.order_id]))[0].map((x) => x.sku_code));
+  await q.query('UPDATE orders SET confirmed_at = UTC_TIMESTAMP() WHERE order_id = ?', [o.order_id]); // the back of the queue, as a new order
+  const h = await reserve(q, o.order_id);
+  await holdFrom(q, o.order_id);
+  await history(q, o.order_id, 'new', 'new', `Held again: ${h.held} packs${h.back ? `, ${h.back} on back-order` : ''}`, empId);
+  await audit(q, { empId, action: 'hold_again', entity: 'order', entityId: orderNo, after: h });
+  return h;
+}
+/** the back-orders of one SKU at a godown are held from what is free now, oldest order first -> packs held */
+async function boAuto(q, sku, godown, empId = 'system', only = null) {
+  const [rows] = await q.query(`SELECT i.line_id, i.back_qty, o.order_id, o.order_no, o.confirmed_at FROM order_items i JOIN orders o ON o.order_id = i.order_id
+      WHERE i.sku_code = ? AND o.godown_id = ? AND o.status = 'new' AND i.back_qty > 0 ${only ? 'AND o.order_id = ?' : ''} ORDER BY o.confirmed_at, o.order_id, i.line_id FOR UPDATE`, only ? [sku, godown, only] : [sku, godown]);
+  let total = 0;
+  for (const r of rows) {
+    const free = await freeForBack(q, sku, godown, r.order_id, r.confirmed_at);
+    const n = Math.min(Number(r.back_qty), free);
+    if (n <= 0) { if (only) break; continue; }
+    const [[res]] = await q.query("SELECT reservation_id FROM stock_reservations WHERE order_id = ? AND sku_code = ? AND status = 'active' LIMIT 1", [r.order_id, sku]);
+    if (res) await q.query('UPDATE stock_reservations SET qty = qty + ? WHERE reservation_id = ?', [n, res.reservation_id]);
+    else await q.query('INSERT INTO stock_reservations (order_id, sku_code, location_id, qty) VALUES (?, ?, ?, ?)', [r.order_id, sku, godown, n]);
+    await q.query('UPDATE order_items SET back_qty = back_qty - ? WHERE line_id = ?', [n, r.line_id]);
+    await q.query('UPDATE orders SET hold_until = COALESCE(hold_until, DATE_ADD(UTC_TIMESTAMP(), INTERVAL ? HOUR)), version = version + 1 WHERE order_id = ?', [(await orderSwitches(q)).hours, r.order_id]);
+    await history(q, r.order_id, 'new', 'new', `Back-order held: ${sku} ${n}${Number(r.back_qty) - n ? `, ${Number(r.back_qty) - n} still owed` : ''}`, empId);
+    await audit(q, { empId, action: 'back_order_held', entity: 'order', entityId: r.order_no, after: { sku, held: n, still_owed: Number(r.back_qty) - n } });
+    total += n;
+  }
+  return total;
+}
+// new stock on Good is held for back-orders after the action that brought it in has finished (its own transaction)
+const BO_PEND = new Set();
+let boTimer = null;
+let boPool = null;
+function boAfter(sku, godown) {
+  if (!boPool) return;
+  BO_PEND.add(`${sku}|${godown}`);
+  if (boTimer) return;
+  boTimer = setTimeout(async () => {
+    boTimer = null;
+    const keys = [...BO_PEND]; BO_PEND.clear();
+    for (const k of keys) {
+      const [sku, g] = k.split('|');
+      // nothing owed for this pack at this godown (the usual case): no transaction at all
+      const [[owed]] = await boPool.query("SELECT 1 AS x FROM order_items i JOIN orders o ON o.order_id = i.order_id WHERE i.sku_code = ? AND o.godown_id = ? AND o.status = 'new' AND i.back_qty > 0 LIMIT 1", [sku, Number(g)]).catch(() => [[null]]);
+      if (!owed) continue;
+      const c = await boPool.getConnection();
+      try { await c.beginTransaction(); await boAuto(c, sku, Number(g)); await c.commit(); } catch (e) { await c.rollback().catch(() => {}); console.error('[back-orders]', e.message); } finally { c.release(); }
+    }
+  }, 50);
+}
+/** the API's pool: back-orders are held after stock comes in (stock.js calls boAfter) */
+function startBackOrders(pool) { boPool = pool; stock.onGoodIn(boAfter); }
+/** the customer no longer wants what is still owed on a line: it leaves the order (prices kept), any wallet kept for it is freed */
+async function dropBack(q, orderNo, sku, empId) {
+  const [[o]] = await q.query(`SELECT ${ORDER_COLS}, gst_type, discount, manual_discount, delivery_charge, delivery_gst, wallet_discount FROM orders WHERE order_no = ? FOR UPDATE`, [orderNo]);
+  if (!o) throw new CommerceError(`No order ${orderNo}`, 404);
+  if (['packing', 'packed'].includes(o.status)) throw new CommerceError('Not yet: drop it after this shipment leaves', 409);
+  if (o.status !== 'new') throw new CommerceError(`${orderNo} is ${STATUS_LABEL[o.status]}: nothing is owed on it`, 409);
+  const [lines] = await q.query('SELECT * FROM order_items WHERE order_id = ? ORDER BY line_id', [o.order_id]);
+  const hit = lines.filter((l) => l.sku_code === sku && Number(l.back_qty) > 0);
+  if (!hit.length) throw new CommerceError(`${orderNo} owes no ${sku}`, 409);
+  const n = hit.reduce((a, l) => a + Number(l.back_qty), 0);
+  const [[live]] = await q.query("SELECT invoice_no FROM invoices WHERE live_order_id = ? AND status = 'issued'", [o.order_id]);
+  if (live) throw new CommerceError(`Invoice ${live.invoice_no} stands: cancel it first (Invoices), then drop the back-order`, 409);
+  for (const l of hit) await q.query('UPDATE order_items SET qty = qty - back_qty, dropped_qty = dropped_qty + back_qty, back_qty = 0 WHERE line_id = ?', [l.line_id]);
+  await q.query('DELETE FROM order_items WHERE order_id = ? AND qty <= 0', [o.order_id]);
+  // the money again on the lines that stay, at their prices
+  const [left] = await q.query('SELECT * FROM order_items WHERE order_id = ? ORDER BY line_id', [o.order_id]);
+  const settings = await commerceSettings.read(q);
+  const charge = Number(o.delivery_charge);
+  const t = taxTotals(left.map((l) => ({ ...l, qty: Number(l.qty), price: Number(l.price), gst_rate: Number(l.gst_rate), offer_discount: Number(l.offer_discount), is_free: Number(l.is_free) === 1 })), o.gst_type, settings.invoice_round_off,
+    { charge, rate: charge > 0 ? round2((Number(o.delivery_gst) / charge) * 100) : 0 }, { coupon: Number(o.discount), manual: Number(o.manual_discount) });
+  for (const l of t.lines) await q.query('UPDATE order_items SET coupon_discount = ?, taxable = ?, cgst = ?, sgst = ?, igst = ?, line_total = ? WHERE line_id = ?', [l.coupon_discount, l.taxable, l.cgst, l.sgst, l.igst, l.line_total, l.line_id]);
+  // the wallet kept for the order shrinks with it (v23 Low4 c)
+  const oldTotal = Number(o.total);
+  const keepW = oldTotal > 0 ? round2(Math.min(Number(o.wallet_used), (Number(o.wallet_used) * t.total) / oldTotal)) : 0;
+  const freed = round2(Number(o.wallet_used) - keepW);
+  if (freed > 0.004) { await wallet.giveBack(q, o.order_id, `Given back: ${orderNo} back-order dropped`, empId); if (keepW > 0) await wallet.use(q, o.customer_id, keepW, o.order_id, `${orderNo} (back-order dropped)`, empId); }
+  await q.query(`UPDATE orders SET subtotal = ?, discount = ?, manual_discount = ?, taxable = ?, cgst = ?, sgst = ?, igst = ?, gst = ?, round_off = ?, total = ?, wallet_used = ?,
+      version = version + 1, updated_by = ?, updated_at = UTC_TIMESTAMP() WHERE order_id = ?`, [t.subtotal, t.discount, t.manual_discount, t.taxable, t.cgst, t.sgst, t.igst, t.gst, t.round_off, t.total, keepW, empId, o.order_id]);
+  await refreshPayment(q, o.order_id);
+  await history(q, o.order_id, 'new', 'new', `Back-order dropped: ${sku} ${n}${freed > 0.004 ? `, wallet ${rs(freed)} freed` : ''}`, empId);
+  await audit(q, { empId, action: 'back_order_dropped', entity: 'order', entityId: orderNo, before: { sku, owed: n, total: oldTotal, wallet: Number(o.wallet_used) }, after: { owed: 0, total: t.total, wallet: keepW } });
+  return { dropped: n, total: t.total, wallet_freed: freed };
+}
+
 module.exports = {
-  STATUS_LABEL, GONE, HELD, TERMS, MODES, PAYMENT_STATUS, EDITABLE, CommerceError, deliveryCharge, deliveryMethod,
-  createOrder, updateOrder, previewOrder, cancelOrder, doCancel, leaveGodown, setStatus, pickFor, reserve, pendingHolds, recordPayment, walletBalance, availability, spread,
+  STATUS_LABEL, OPEN, GONE, HELD, TERMS, MODES, PAYMENT_STATUS, EDITABLE, CommerceError, deliveryCharge, deliveryMethod, orderSwitches, owedBefore, holdable, freeForBack, kitOf, spreadKit, quoteFacts,
+  sweepHolds, holdAgain, boAuto, boAfter, startBackOrders, dropBack, history, release, requestHolds, pendingHolds,
+  createOrder, updateOrder, previewOrder, cancelOrder, doCancel, leaveGodown, setStatus, pickFor, reserve, recordPayment, walletBalance, availability, spread,
   overdueOf, outstandingOf, modesOffered, OVERDUE_SQL, taxTotals, istYear, refreshPayment,
 };

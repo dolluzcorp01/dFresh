@@ -123,6 +123,20 @@ async function insertMove(q, m, empId) {
     [m.sku, m.godown, m.shelf, m.what, m.delta, m.batch || null, m.unitCost ?? null, m.doc && m.doc.type ? m.doc.type : null,
       m.doc && m.doc.id !== undefined && m.doc.id !== null ? String(m.doc.id) : null, m.note ? String(m.note).slice(0, 255) : null, empId, ...(m.at ? [m.at] : [])]
   );
+  if (m.shelf === 'good' && Number(m.delta) > 0 && goodInHooks.length) {
+    // phase 19: back-orders are held from new Good stock after the action has finished: inside a transaction the
+    // connection remembers it until the commit (flushGoodIn), otherwise at once
+    if (typeof q.beginTransaction === 'function') (q.goodIn || (q.goodIn = new Set())).add(`${m.sku}|${m.godown}`);
+    else goodInHooks.forEach((fn) => fn(m.sku, Number(m.godown)));
+  }
+}
+const goodInHooks = [];
+/** fn(sku, godown) runs after stock came onto a Good shelf (commerce.js: back-orders, oldest first) */
+function onGoodIn(fn) { goodInHooks.push(fn); }
+/** after a commit: tell the hooks what came in on Good in that transaction; after a rollback: forget it */
+function flushGoodIn(conn, committed = true) {
+  const s = conn.goodIn; conn.goodIn = null;
+  if (s && committed) for (const k of s) { const [sku, g] = k.split('|'); goodInHooks.forEach((fn) => fn(sku, Number(g))); }
 }
 
 /**
@@ -705,6 +719,6 @@ async function batchList(q, godownIds = null) {
 }
 
 module.exports = {
-  MOVE_LABEL, KIND_LABEL, SHELVES, WRITE_OFF_TYPES, WRITE_OFF_NEXT, StockError, pendingWriteOffs, onWriteOffClosed, round3, frozenBy, scannedLots, goodRoom, expiredBatch, availability, batchStock, onShelf, tracked, lockSkus, moveStock, moveShelf, stockIn, dispatchOut,
+  onGoodIn, flushGoodIn, MOVE_LABEL, KIND_LABEL, SHELVES, WRITE_OFF_TYPES, WRITE_OFF_NEXT, StockError, pendingWriteOffs, onWriteOffClosed, round3, frozenBy, scannedLots, goodRoom, expiredBatch, availability, batchStock, onShelf, tracked, lockSkus, moveStock, moveShelf, stockIn, dispatchOut,
   goodsBack, batchesOfOrder, costNow, costAt, requestWriteOff, postWriteOff, recordMove, startCount, countDetail, saveCount, submitCount, reorderList, batchList, IST_TODAY,
 };

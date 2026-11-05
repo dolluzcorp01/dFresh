@@ -533,7 +533,7 @@ async function inTx(fn) {
     await fu('Demo Distributor Vellore', 'DZIND148', 0, 'DEMO - monthly order call');
     await fu('Demo Tech Park Office', 'DZIND002', 5, 'DEMO - quarterly review');
     await fu('Demo Home Priya', 'DZIND148', 8, 'DEMO - festival offer reminder');
-    await customers.setStatus(q, await cid('Demo Bank Branch'), 'on_hold', 'DEMO - invoice dispute, new orders need approval', 'DZIND002');
+    await customers.setStatus(q, await cid('Demo Bank Branch'), 'hold', 'DEMO - invoice dispute, new orders need approval', 'DZIND002');
     // the same lodge entered twice (another number): the duplicate pair to merge
     const d = await customers.createCustomer(q, { godown_id: K, name: 'Demo Lodge Kamakshi', type_key: 'hotel', phone: '9800000214', email: 'demo.kamakshi@example.com', source: 'WhatsApp', owner_emp_id: 'DZIND002', tags: ['horeca'],
       bill: { label: 'Main', name: 'Demo Lodge Kamakshi', address: 'East Raja Street', town: 'Kanchipuram', state_code: '33', pincode: '631501' },

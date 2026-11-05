@@ -519,7 +519,7 @@ function register({ route, tx, db, by, InputError, canDo, commerceGate, upload, 
   }
   route('get', '/prices/specials', 'prices:view', wrap(async (req) => {
     const [rows] = await db.query(`SELECT ${SP_COLS} FROM special_prices sp JOIN customers c ON c.customer_id = sp.customer_id ORDER BY sp.sp_id DESC`);
-    const [custs] = await db.query("SELECT customer_id, customer_no, name, type_key FROM customers WHERE status <> 'inactive' AND merged_into IS NULL ORDER BY name");
+    const [custs] = await db.query("SELECT customer_id, customer_no, name, type_key FROM customers WHERE status NOT IN ('blocked', 'merged') AND merged_into IS NULL ORDER BY name");
     const skus = (await pricing.skuRows(db)).filter((s) => s.is_active && s.status === 'active' && s.product_status === 'active');
     const [[rule]] = await db.query("SELECT is_on, limit_value FROM approval_rules WHERE kind = 'special_price'");
     return { rows: await spOut(db, rows), customers: custs, skus: skus.map((s) => ({ sku_code: s.sku_code, name: `${s.name} ${s.size_label || ''}`.trim(), min_price: s.min_price })),

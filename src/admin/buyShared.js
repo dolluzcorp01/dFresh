@@ -73,9 +73,9 @@ export function TotalsBox({ t, seeBuy = true }) {
 }
 
 /** one small input with its label and error (the line rows of the buying forms) */
-export function In({ label, error, hint, wide, children, ...props }) {
+export function In({ label, error, hint, wide, box = '', children, ...props }) {
   return (
-    <label className={`a-field${error ? ' a-err' : ''}${wide ? ' a-wide' : ''}`}>
+    <label className={`a-field${error ? ' a-err' : ''}${wide ? ' a-wide' : ''}${box ? ` ${box}` : ''}`}>
       <span>{label}</span>
       {children || <input {...props} />}
       {error ? <small className="a-emsg" role="alert">{error}</small> : hint ? <small className="a-hint">{hint}</small> : null}

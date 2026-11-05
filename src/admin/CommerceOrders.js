@@ -16,7 +16,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { api } from './adminApi';
-import { Drawer, InfoCard, Loading, Notice, PageHead, Table, Tabs, fmtDate, money, useAction, useCan, useConfirm, useLoad } from './ui';
+import { Drawer, LIcon, Loading, Notice, PageHead, Pill, Table, Tabs, fmtDate, money, useAction, useCan, useConfirm, useLoad } from './ui';
+import { ItemPic } from './buyShared';
 import { NewReturn, ReturnDrawer, ReturnsTable } from './CommerceReturns';
 import { addrLines, printCreditNote, printInvoice as printInvoiceDoc, signed } from './invoicePrint';
 import { NewCustomerDrawer } from './CommerceCustomers';
@@ -30,11 +31,20 @@ const FLOWS = {
 const STATUSES = ['approval', 'new', 'packing', 'packed', 'out_for_delivery', 'with_courier', 'failed', 'delivered', 'cancelled'];
 // status chips in the order the work happens: waiting for approval, new, packing, packed, on the way (own vehicle or
 // courier: one chip), delivered, cancelled; delivery failed only when there is one; Overdue is its own filter
-const CHIPS = [['approval', ['approval']], ['new', ['new']], ['packing', ['packing']], ['packed', ['packed']], ['out', ['out_for_delivery', 'with_courier']],
-  ['failed', ['failed']], ['delivered', ['delivered']], ['cancelled', ['cancelled']]];
-const CHIP_LABEL = { approval: 'Waiting for approval', new: 'New', packing: 'Packing', packed: 'Packed', out: 'Out for delivery / With courier', failed: 'Delivery failed', delivered: 'Delivered', cancelled: 'Cancelled' };
+// phase 19 (v23 tabs): Draft, Waiting for approval, Confirmed, Packing and packed, Dispatched, Delivered, Cancelled
+const CHIPS = [['draft', ['draft']], ['approval', ['approval']], ['new', ['new']], ['packs', ['packing', 'packed']], ['dispatched', ['out_for_delivery', 'with_courier', 'failed']],
+  ['delivered', ['delivered']], ['cancelled', ['cancelled']]];
+const CHIP_LABEL = { draft: 'Draft', approval: 'Waiting for approval', new: 'Confirmed', packs: 'Packing and packed', dispatched: 'Dispatched', delivered: 'Delivered', cancelled: 'Cancelled' };
 const GONE = ['out_for_delivery', 'with_courier', 'failed'];
-const LABEL = { approval: 'Waiting for approval', new: 'New', packing: 'Packing', packed: 'Packed', out_for_delivery: 'Out for delivery', with_courier: 'Handed to courier', failed: 'Delivery failed', delivered: 'Delivered', cancelled: 'Cancelled' };
+const LABEL = { draft: 'Draft', approval: 'Waiting for approval', new: 'Confirmed', packing: 'Packing', packed: 'Packed', out_for_delivery: 'Out for delivery', with_courier: 'Handed to courier', failed: 'Delivery failed', delivered: 'Delivered', cancelled: 'Cancelled' };
+const TONE = { draft: 'gray', approval: 'warn', new: 'info', packing: 'gold', packed: 'gold', out_for_delivery: 'info', with_courier: 'info', failed: 'bad', delivered: 'good', cancelled: 'gray' };
+/** the Stock cell of an order (v23 heldCell): held of what is still to go, back-order, hours left or Hold ended */
+function HeldCell({ o }) {
+  if (!['new', 'packing', 'packed', 'out_for_delivery', 'with_courier', 'failed'].includes(o.status)) return <span className="a-muted">-</span>;
+  if (o.status !== 'new') return o.back ? <Pill tone="warn">{o.back} on back-order</Pill> : <span className="a-muted">-</span>;
+  return (<>{o.units ? <><b>{o.held}</b> of {o.units} held</> : null}{o.back > 0 && <small className="a-p15-sub"><Pill tone="warn">{o.back} on back-order</Pill></small>}
+    {o.hold_gone ? <small className="a-p15-sub"><Pill tone="bad">Hold ended</Pill></small> : o.held > 0 && o.hours_left !== null ? <small className={`a-p15-sub${o.hours_left <= 12 ? ' a-bad' : ' a-muted'}`}>{o.hours_left} h left</small> : null}</>);
+}
 const STAMP = { new: 'confirmed_at', packing: 'packing_at', packed: 'packed_at', out_for_delivery: 'out_at', with_courier: 'courier_at', delivered: 'delivered_at' };
 const PAY = { unpaid: 'Unpaid', partly_paid: 'Part paid', paid: 'Paid', refunded: 'Refunded', part_refunded: 'Part refunded' };
 const rs = (n) => money(n || 0); // empty = Rs 0.00 here (totals and lines)
@@ -45,14 +55,18 @@ const round2 = (n) => Math.round(n * 100) / 100;
 export default function CommerceOrders() {
   const location = useLocation();
   const urlStatus = new URLSearchParams(location.search).get('status') || '';
-  const [f, setF] = useState({ status: STATUSES.includes(urlStatus) || urlStatus === 'out' ? urlStatus : '', pay: '', overdue: '', type: '', from: '', to: '', q: '' });
-  useEffect(() => { if (STATUSES.includes(urlStatus) || urlStatus === 'out') setF((x) => ({ ...x, status: urlStatus })); }, [urlStatus]);
+  const okStatus = (s) => STATUSES.includes(s) || ['out', 'packs', 'dispatched', 'draft'].includes(s);
+  const [f, setF] = useState({ status: okStatus(urlStatus) ? urlStatus : 'new', pay: '', overdue: '', type: '', from: '', to: '', q: '' });
+  useEffect(() => { if (okStatus(urlStatus)) setF((x) => ({ ...x, status: urlStatus })); }, [urlStatus]); // eslint-disable-line react-hooks/exhaustive-deps
   const [search, setSearch] = useState('');
   useEffect(() => { const t = setTimeout(() => setF((x) => (x.q === search.trim() ? x : { ...x, q: search.trim() })), 350); return () => clearTimeout(t); }, [search]);
   const qs = Object.entries(f).filter(([, v]) => v).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
   const list = useLoad(`/commerce/orders${qs ? `?${qs}` : ''}`);
   const [open, setOpen] = useState(null); // order_no
   const [creating, setCreating] = useState(false);
+  // ?open=DFO-260030 (&edit=1: straight into its form, e.g. a draft just made from a quote)
+  const [editFirst, setEditFirst] = useState(false);
+  useEffect(() => { const p = new URLSearchParams(location.search); if (p.get('open')) { setOpen(p.get('open')); setEditFirst(p.get('edit') === '1'); } }, [location.search]);
   const canEdit = useCan('orders', 'edit');
   const canCreate = useCan('orders', 'create');
   const canExport = useCan('orders', 'export');
@@ -69,18 +83,12 @@ export default function CommerceOrders() {
   return (
     <section>
       <PageHead sub="Phone, WhatsApp and B2B orders, from confirmation to delivery and payment."
-        actions={canCreate && <button type="button" className="a-btn" onClick={() => setCreating(true)}>New order</button>} />
-      <InfoCard title="Orders entered in the admin">
-        <ul>
-          <li>Phone, WhatsApp and B2B orders. New &gt; Packing &gt; Packed (Packing) &gt; Out for delivery, Handed to courier or collected (Delivery) &gt; Delivered. The goods leave the godown with the tax invoice.</li>
-          <li>Edit a New order freely, a Packing or Packed one with a reason (it is checked again); never once the goods left. Cancel asks for a reason; after the goods left it needs approval.</li>
-          <li>Payments are recorded by hand on the order; an unpaid invoice after its due date is <span className="a-overdue">Overdue</span>.</li>
-        </ul>
-      </InfoCard>
+        rules={['Confirmed = packs held at once', d && d.hold_hours ? `Held ${d.hold_hours} hours, then free again` : 'Held for the hold time, then free again', 'Short items wait as back-orders']}
+        actions={canCreate && <button type="button" className="a-btn" onClick={() => setCreating(true)}><LIcon name="plus" size="sm" />New order</button>} />
+      {d && d.hold_gone > 0 && <Notice kind="warn">{d.hold_gone} confirmed order{d.hold_gone === 1 ? '' : 's'} lost {d.hold_gone === 1 ? 'its' : 'their'} held packs: not packed within the hold time, so the packs went back to free to sell. Open it and press Hold again.</Notice>}
       {act.note}
       <Tabs label="Status" value={f.overdue ? null : f.status}
-        tabs={[{ key: '', label: 'All', count: all },
-          ...CHIPS.map(([k, sts]) => [k, sts.reduce((a, s) => a + (counts[s] || 0), 0)]).filter(([k, n]) => k !== 'failed' || n).map(([k, n]) => ({ key: k, label: CHIP_LABEL[k], count: n }))]}
+        tabs={[...CHIPS.map(([k, sts]) => ({ key: k, label: CHIP_LABEL[k], count: sts.reduce((a, s) => a + (counts[s] || 0), 0) })), { key: '', label: 'All', count: all }]}
         onChange={(k) => set({ status: k, overdue: '' })} />
       <div className="a-filters">
         <button type="button" className={`a-chip${f.overdue ? ' on' : ''}`} aria-pressed={Boolean(f.overdue)} onClick={() => set({ overdue: f.overdue ? '' : '1', status: '' })}>Overdue {(d && d.overdue) || 0}</button>
@@ -92,31 +100,31 @@ export default function CommerceOrders() {
         {canExport && <button type="button" className="a-btn a-btn-ghost" disabled={act.busy} onClick={exportXlsx}>Excel</button>}
       </div>
       <Loading state={list}>
-        <Table label="Orders" className="a-orders" rows={(d && d.rows) || []} rowKey={(o) => o.order_no} onRowClick={(o) => setOpen(o.order_no)}
+        <div className="a-listcard"><Table label="Orders" className="a-orders" rows={(d && d.rows) || []} rowKey={(o) => o.order_no} onRowClick={(o) => setOpen(o.order_no)}
           empty={d ? { icon: 'inbox', title: 'No order matches.' } : null}
           columns={[
-            { key: 'order_no', label: 'Order', sort: true, render: (o) => <code>{o.order_no}</code> },
-            { key: 'customer', label: 'Customer', sort: true, render: (o) => <>{o.customer} <small className="a-muted">{o.ctype}, {o.town}{o.gst_type === 'inter' ? ', IGST' : ''}</small></> },
-            { key: 'status', label: 'Status', render: (o) => <span className={`a-ostatus a-ostatus-${o.status}`}>{LABEL[o.status]}</span> },
-            { key: 'payment_status', label: 'Payment', render: (o) => <><span className={`a-pay a-pay-${o.payment_status}`}>{PAY[o.payment_status]}</span>{o.overdue && <span className="a-overdue">Overdue</span>}</> },
-            { key: 'total', label: 'Total', num: true, sort: true, render: (o) => rs(o.total) },
-            { key: 'amount_due', label: 'Due', num: true, sort: true, render: (o) => (o.status !== 'cancelled' && o.amount_due > 0 ? rs(o.amount_due) : o.amount_due < 0 ? <span className="a-bad">refund {rs(-o.amount_due)}</span> : '') },
-            { key: 'invoice_no', label: 'Invoice', render: (o) => <>{o.invoice_no || ''}{o.due_on && <small className="a-muted a-person-sub">due {day(o.due_on)}</small>}</> },
-            { key: 'created_at', label: 'Received', sort: true, render: (o) => fmtDate(o.created_at) },
-          ]} />
+            { key: 'order_no', label: 'Order', sort: true, render: (o) => <><b className="a-mono">{o.order_no}</b>{o.rev > 1 && <> <Pill>Rev {o.rev}</Pill></>}<small className="a-muted a-p15-sub">{o.godown_code} · {day(o.created_at)}</small></> },
+            { key: 'customer', label: 'Customer', sort: true, render: (o) => <><b>{o.customer}</b><small className="a-muted a-p15-sub">{o.ctype}{o.town ? `, ${o.town}` : ''}{o.gst_type === 'inter' ? ', IGST' : ''}</small></> },
+            { key: 'items', label: 'Items', hideSm: true, render: (o) => <>{o.first_name}{o.n_lines > 1 && <span className="a-muted"> +{o.n_lines - 1} more</span>}</> },
+            { key: 'total', label: 'Total', num: true, sort: true, render: (o) => <><b>{rs(o.total)}</b>{o.status !== 'cancelled' && o.amount_due > 0 && o.amount_due < o.total ? <small className="a-muted a-p15-sub">due {rs(o.amount_due)}</small> : null}</> },
+            { key: 'stock', label: 'Stock', render: (o) => <HeldCell o={o} /> },
+            { key: 'status', label: 'Status', render: (o) => <><Pill tone={TONE[o.status]}>{LABEL[o.status]}</Pill>{o.overdue && <span className="a-overdue">Overdue</span>}</> },
+            { key: 'payment_status', label: 'Payment', hideSm: true, render: (o) => <><span className={`a-pay a-pay-${o.payment_status}`}>{PAY[o.payment_status]}</span>{o.invoice_no && <small className="a-muted a-person-sub">{o.invoice_no}</small>}</> },
+          ]} /></div>
       </Loading>
-      {open && <OrderDrawer no={open} canEdit={canEdit} onClose={() => setOpen(null)} onChanged={list.reload} />}
+      {open && <OrderDrawer no={open} canEdit={canEdit} editFirst={editFirst} onClose={() => { setOpen(null); setEditFirst(false); }} onChanged={list.reload} />}
       {creating && <OrderForm onClose={() => setCreating(false)} onSaved={(no) => { setCreating(false); list.reload(); setOpen(no); }} />}
     </section>
   );
 }
 
 // ---------------------------------------------------------------- order drawer
-function OrderDrawer({ no, canEdit, onClose, onChanged }) {
+function OrderDrawer({ no, canEdit, editFirst = false, onClose, onChanged }) {
   const o = useLoad(`/commerce/orders/${no}`);
   const canReturn = useCan('returns', 'create');
   const rets = useLoad(`/commerce/returns?order=${no}`);
-  const [panel, setPanel] = useState(null); // 'return' | 'cancel' | 'edit'
+  const [panel, setPanel] = useState(editFirst ? 'edit' : null); // 'return' | 'cancel' | 'edit'
+  const holdAgain = () => act.run(async () => { const h = await api.send('POST', `/commerce/orders/${no}/hold-again`); reload(); act.setMsg({ kind: h.back ? 'info' : 'ok', text: `Held again: ${h.held} packs held${h.back ? `, ${h.back} short (back-order)` : ''}.` }); });
   const [openReturn, setOpenReturn] = useState(null);
   const act = useAction();
   const confirm = useConfirm();
@@ -136,22 +144,29 @@ function OrderDrawer({ no, canEdit, onClose, onChanged }) {
   const pendingCancel = d && d.approvals.find((a) => a.kind === 'cancel_after_dispatch' && a.status === 'pending');
   if (panel === 'edit' && d) return <OrderForm order={d} onClose={() => setPanel(null)} onSaved={() => { setPanel(null); reload(); act.setMsg({ kind: 'ok', text: `${no} saved.` }); }} />;
   return (
-    <Drawer title={`Order ${no}`} onClose={onClose} wide
-      footer={d ? (
+    // phase 19 (v23 DRAWERS.ord): the status and Rev with the actions in the status bar; the foot only closes
+    <Drawer title={`Order ${no}`} onClose={onClose} thumb={<LIcon name="shopping-cart" />}
+      status={d ? (
         <>
-          {canEdit && d.editable && <button type="button" className="a-btn a-btn-ghost" onClick={() => setPanel('edit')}>Edit{d.editable === 'reason' ? ' (with reason)' : ''}</button>}
-          {canPack && d.status === 'new' && <button type="button" className="a-btn" disabled={act.busy} onClick={startPacking}>Start packing</button>}
-          {d.status === 'packing' && <Link className="a-btn" to="/admin/commerce/packing">Scan in Packing</Link>}
-          {live && <button type="button" className="a-btn a-btn-ghost" onClick={() => printInvoice(live.invoice_id)}>Invoice {live.invoice_no}</button>}
-          {canReturn && d.status === 'delivered' && <button type="button" className="a-btn a-btn-ghost" onClick={() => setPanel('return')}>New return</button>}
-          {canCancel && !['cancelled', 'delivered'].includes(d.status) && !pendingCancel && <button type="button" className="a-btn a-btn-danger" onClick={() => setPanel('cancel')}>Cancel order</button>}
+          <Pill tone={TONE[d.status]}>{LABEL[d.status]}</Pill>{d.rev > 1 && <Pill>Rev {d.rev}</Pill>}<span className="a-p15-sp" />
+          {canEdit && d.editable && <button type="button" className={`a-btn a-btn-sm${d.status === 'draft' ? '' : ' a-btn-ghost'}`} onClick={() => setPanel('edit')}>{d.status === 'draft' ? 'Open draft' : `Change${d.editable === 'reason' ? ' (with reason)' : ''}`}</button>}
+          {canEdit && d.status === 'new' && d.hold_gone && <button type="button" className="a-btn a-btn-sm" disabled={act.busy} onClick={holdAgain}>Hold again</button>}
+          {canPack && d.status === 'new' && <button type="button" className="a-btn a-btn-sm a-btn-ghost" disabled={act.busy} onClick={startPacking}>Start packing</button>}
+          {d.status === 'packing' && <Link className="a-btn a-btn-sm" to="/admin/commerce/packing">Scan in Packing</Link>}
+          {live && <button type="button" className="a-btn a-btn-sm a-btn-ghost" onClick={() => printInvoice(live.invoice_id)}>Invoice {live.invoice_no}</button>}
+          {canReturn && d.status === 'delivered' && <button type="button" className="a-btn a-btn-sm a-btn-ghost" onClick={() => setPanel('return')}>New return</button>}
         </>
-      ) : null}>
+      ) : null}
+      footer={<><span className="a-p15-sp" />{d && canCancel && !['cancelled', 'delivered'].includes(d.status) && !pendingCancel && <button type="button" className="a-btn a-btn-ghost" onClick={() => setPanel('cancel')}>Cancel order</button>}
+        <button type="button" className="a-btn a-btn-ghost" onClick={onClose}>Close</button></>}>
       <Loading state={o}>
         {d && (
           <>
             {act.note}
-            {d.status === 'approval' && <Notice kind="warn">Waiting for approval ({d.approvals.filter((a) => a.status === 'pending').map((a) => a.kind_label).join(', ')}). It cannot be packed until someone else approves (Approvals, top of the menu).</Notice>}
+            {d.status === 'approval' && <Notice kind="warn">Waiting for approval. No stock is held yet ({d.approvals.filter((a) => a.status === 'pending').map((a) => a.kind_label).join(', ')}). It cannot be packed until someone else approves (Approvals, top of the menu).</Notice>}
+            {d.status === 'draft' && <Notice kind={d.rej_note ? 'error' : 'info'}>{d.rej_note ? `Sent back. ${d.rej_note}` : 'A draft: nothing is held and nothing asked yet. Open draft, then Confirm order.'}</Notice>}
+            {d.status === 'new' && d.hold_gone && <Notice kind="error">Hold ended. Not packed within the hold time; the packs went back to free to sell. Hold again takes what is free now.</Notice>}
+            {d.status === 'new' && !d.hold_gone && d.hold_until && <Notice kind="info">Held until {fmtDate(d.hold_until)} ({d.hours_left} hours left){d.back_total ? `; ${d.back_total} on back-order, held first when stock arrives` : ''}. Packing takes the held packs off the shelf.</Notice>}
             {d.status === 'packed' && d.approvals.some((a) => a.status === 'pending' && a.kind !== 'cancel_after_dispatch') && <Notice kind="warn">An edit waits for approval: it cannot be dispatched until then.</Notice>}
             {pendingCancel && <Notice kind="warn">Cancelling waits for approval (request #{pendingCancel.approval_id}): {pendingCancel.summary}</Notice>}
             {d.status === 'cancelled' && <Notice kind="error">Cancelled: {d.cancel_reason}. Reserved stock released, coupon and wallet use given back{d.invoices.length ? ', invoice cancelled with a credit note' : ''}.</Notice>}
@@ -162,12 +177,13 @@ function OrderDrawer({ no, canEdit, onClose, onChanged }) {
               </ol>
             )}
             {d.status === 'failed' && <Notice kind="error">Delivery failed: {d.failed_reason}. Re-attempt or return it to the godown in Fulfilment &gt; Delivery &gt; Failed.</Notice>}
-            <dl className="a-dl">
-              <div><dt>Customer</dt><dd>{d.customer} ({d.ctype}) - {d.phone}</dd></div>
-              <div><dt>Terms</dt><dd>{d.terms_label}{d.payment_terms === 'credit' ? `, ${d.credit_days} days` : ''}</dd></div>
-              <div><dt>Price list</dt><dd>{d.price_list_label} (list prices {d.prices_basis})</dd></div>
-              <div><dt>Delivery messages to</dt><dd>{d.contact ? `${d.contact.name}${d.contact.email ? ` <${d.contact.email}>` : ' (no e-mail)'}` : 'The contact with the shipping phone, else the first contact with an e-mail'}</dd></div>
-              {d.note && <div><dt>Note</dt><dd>{d.note}</dd></div>}
+            <dl className="a-kv">
+              <dt>Customer</dt><dd>{d.customer} ({d.ctype}) - {d.phone}</dd>
+              {(d.rev > 1 || d.quote || d.standing_no || d.ok_by_name) && <><dt>Made</dt><dd>{d.rev > 1 ? `Rev ${d.rev}` : 'Rev 1'}{d.quote ? ` · from quote ${d.quote.quote_no}` : ''}{d.standing_no ? ` · standing order ${d.standing_no}` : ''}{d.ok_by_name ? ` · approved by ${d.ok_by_name}` : ''}</dd></>}
+              <dt>Terms</dt><dd>{d.terms_label}{d.payment_terms === 'credit' ? `, ${d.credit_days} days` : ''}</dd>
+              <dt>Price list</dt><dd>{d.price_list_label} (list prices {d.prices_basis})</dd>
+              <dt>Delivery messages to</dt><dd>{d.contact ? `${d.contact.name}${d.contact.email ? ` <${d.contact.email}>` : ' (no e-mail)'}` : 'The contact with the shipping phone, else the first contact with an e-mail'}</dd>
+              {d.note && <><dt>Note</dt><dd>{d.note}</dd></>}
             </dl>
             <div className="a-addr">
               <div className="a-card"><h4>Bill to</h4>{addrLines({ name: d.bill_name, address: d.bill_address, town: d.bill_town, pincode: d.bill_pincode, gstin: d.bill_gstin, phone: d.bill_phone }, `${d.bill_state} (${d.bill_state_code})`).map((l) => <div key={l}>{l}</div>)}</div>
@@ -184,15 +200,15 @@ function OrderDrawer({ no, canEdit, onClose, onChanged }) {
             </div>
             <div className="a-scroll">
               <table className="a-table">
-                <thead><tr><th>SKU</th><th>Item</th><th className="a-num">Qty</th><th className="a-num">Price</th><th className="a-num">Taxable</th>
+                <thead><tr><th>SKU</th><th>Item</th><th className="a-num">Qty</th>{(d.back_total > 0 || d.status === 'new') && <><th className="a-num">Held</th><th className="a-num">Back-order</th></>}<th className="a-num">Price</th><th className="a-num">Taxable</th>
                   {d.gst_type === 'intra' ? <><th className="a-num">CGST</th><th className="a-num">SGST</th></> : <th className="a-num">IGST</th>}<th className="a-num">Amount</th></tr></thead>
                 <tbody>{d.items.map((i) => (
-                  <tr key={`${i.sku_code}${i.is_free ? '-free' : ''}`} className={i.is_free ? 'a-freeline' : undefined}><td><code>{i.sku_code}</code>{i.is_free && <> <span className="a-status a-ap-approved">Free</span></>}</td>
-                    <td>{i.name}<small className="a-muted a-person-sub">HSN {i.hsn} · GST {Number(i.gst_rate)}%{!i.is_free && i.list_price != null && Number(i.list_price) !== Number(i.price) ? ` · list ${rs(i.list_price)}` : ''}</small>
+                  <tr key={`${i.sku_code}${i.is_free ? '-free' : ''}${i.kit_key || ''}`} className={i.is_free ? 'a-freeline' : undefined}><td><span className="a-p16-item"><ItemPic code={i.sku_code} /><code>{i.sku_code}</code></span>{i.is_free && <> <span className="a-status a-ap-approved">Free</span></>}</td>
+                    <td>{i.name}{i.kit_key && <small className="a-muted a-person-sub">Part of kit {(d.kits[i.kit_key] || {}).code || i.kit_key} ({i.kit_qty} kit{i.kit_qty === 1 ? '' : 's'})</small>}{i.free_why && <small className="a-muted a-person-sub">{i.free_why}</small>}<small className="a-muted a-person-sub">HSN {i.hsn} · GST {Number(i.gst_rate)}%{!i.is_free && i.list_price != null && Number(i.list_price) !== Number(i.price) ? ` · list ${rs(i.list_price)}` : ''}</small>
                       {i.offer_label && <small className="a-ok a-person-sub">{i.offer_label}{Number(i.offer_discount) > 0 ? `: - ${rs(i.offer_discount)}` : ''}</small>}
                       {Number(i.coupon_discount) > 0 && <small className="a-muted a-person-sub">coupon / manual share - {rs(i.coupon_discount)}</small>}
                       {Number(i.wallet_discount) > 0 && <small className="a-muted a-person-sub">wallet cashback share - {rs(i.wallet_discount)} (taxable)</small>}</td>
-                    <td className="a-num">{i.qty}</td><td className="a-num">{rs(i.price)}</td><td className="a-num">{rs(i.taxable)}</td>
+                    <td className="a-num">{i.qty}</td>{(d.back_total > 0 || d.status === 'new') && <><td className="a-num">{Math.max(0, i.qty - (i.back_qty || 0) - (d.hold_gone ? i.qty : 0)) || '-'}</td><td className="a-num">{i.back_qty ? <b className="a-bad">{i.back_qty}</b> : '-'}</td></>}<td className="a-num">{rs(i.price)}</td><td className="a-num">{rs(i.taxable)}</td>
                     {d.gst_type === 'intra' ? <><td className="a-num">{rs(i.cgst)}</td><td className="a-num">{rs(i.sgst)}</td></> : <td className="a-num">{rs(i.igst)}</td>}
                     <td className="a-num">{rs(i.line_total)}</td></tr>
                 ))}</tbody>
@@ -379,7 +395,10 @@ function OrderForm({ order = null, onClose, onSaved }) {
   const act = useAction();
   const [customerId, setCustomerId] = useState(editing ? String(order.customer_id) : '');
   const [terms, setTerms] = useState(editing ? order.payment_terms : 'cod');
-  const [lines, setLines] = useState(() => (editing ? order.items.map((i) => ({ sku_code: i.sku_code, qty: i.qty, unit: 'pack', price: Number(i.list_price) === Number(i.price) ? '' : String(Number(i.price)), auto: Number(i.list_price) === Number(i.price) })) : [blankLine()]));
+  // phase 19: a kit is one line (its parts are kept apart); a line made from a quote keeps the quoted price (kept)
+  const [lines, setLines] = useState(() => (editing ? order.items.filter((i) => !i.kit_key && !i.is_free).map((i) => ({ sku_code: i.sku_code, qty: i.qty, unit: 'pack', price: Number(i.list_price) === Number(i.price) ? '' : String(Number(i.price)), auto: Number(i.list_price) === Number(i.price),
+    kept: Boolean(order.quote) ? { price: Number(i.price), qty: i.qty } : null })) : [blankLine()]));
+  const [kits, setKits] = useState(() => (editing ? [...new Map(order.items.filter((i) => i.kit_key).map((i) => [i.kit_key, { kit_key: i.kit_key, qty: String(i.kit_qty || 1) }])).values()] : []));
   const [bill, setBill] = useState(editing ? fromOrder(order, 'bill') : null);
   const [ship, setShip] = useState(editing ? fromOrder(order, 'ship') : null);
   const [billId, setBillId] = useState(editing && order.bill_address_id ? String(order.bill_address_id) : '');
@@ -442,7 +461,8 @@ function OrderForm({ order = null, onClose, onSaved }) {
   const items = rows.filter((r) => r.sku).map((r) => ({ sku_code: r.sku.sku_code, qty: r.packs, gst_rate: r.sku.gst_rate,
     price: r.price === null ? 0 : inclusive ? round2(r.price / (1 + r.sku.gst_rate / 100)) : r.price }));
   const anyShort = rows.some((r) => r.short);
-  const blocked = rows.some((r) => r.problem || (r.sku && r.price === null)) || (anyShort && !override) || !bill || !bill.name || (editing && order.editable === 'reason' && !reason.trim());
+  const split = Boolean(pv && pv.switches && pv.switches.split);
+  const blocked = rows.some((r) => r.problem || (r.sku && r.price === null)) || (anyShort && !override && !split) || !bill || !bill.name || (editing && order.editable === 'reason' && !reason.trim());
   // delivery: the method (own vehicle by default), the area from the shipping PIN code or town (or chosen), its charge
   const method = f ? (f.methods.find((m) => String(m.method_id) === methodId) || f.methods.find((m) => m.kind === 'own') || f.methods[0]) : null;
   const words = (a) => String(a.towns || '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
@@ -462,7 +482,9 @@ function OrderForm({ order = null, onClose, onSaved }) {
   const body = () => ({
     payment_terms: terms, note, coupon_code: couponApplied.trim().toUpperCase() || null, wallet_use: Number(wallet) || 0,
     manual_discount: manual.amount, manual_discount_reason: manual.reason,
-    items: rows.filter((r) => r.l.sku_code && r.sku).map((r) => ({ sku_code: r.l.sku_code.trim().toUpperCase(), qty: r.packs, price: r.l.auto ? '' : r.l.price })),
+    items: [...rows.filter((r) => r.l.sku_code && r.sku).map((r) => ({ sku_code: r.l.sku_code.trim().toUpperCase(), qty: r.packs, price: r.l.auto ? '' : r.l.price,
+      kept: Boolean(r.l.kept && !r.l.auto && Number(r.l.price) === r.l.kept.price && r.packs === r.l.kept.qty) })),
+    ...kits.filter((k) => k.kit_key && Number(k.qty) > 0).map((k) => ({ kit_key: k.kit_key, qty: Number(k.qty), price: '' }))],
     bill, ship: ship || { ...bill }, bill_address_id: billId, ship_address_id: shipId, contact_id: contactId, override_stock: override, delivery_method_id: method ? method.method_id : '', delivery_area_id: areaId,
   });
   const ready = Boolean(customerId && bill && bill.name && rows.some((r) => r.sku) && !rows.some((r) => r.problem));
@@ -491,12 +513,14 @@ function OrderForm({ order = null, onClose, onSaved }) {
     }
     return nl;
   }));
-  const save = () => act.run(async () => {
+  // phase 19: Save draft (nothing held, nothing asked) or Confirm order (asks for what it needs, or holds the stock)
+  const isDraft = !editing || order.status === 'draft';
+  const save = (asDraft = false) => act.run(async () => {
     const b = { ...body(), coupon_code: P && P.coupon ? P.coupon.code : null, wallet_use: P ? P.totals.wallet_used : 0 };
     const r = editing
-      ? await api.send('PUT', `/commerce/orders/${order.order_no}`, { ...b, version: order.version, reason })
-      : await api.send('POST', '/commerce/orders', { ...b, customer_id: customerId });
-    onSaved(r.order_no);
+      ? await api.send('PUT', `/commerce/orders/${order.order_no}`, { ...b, version: order.version, reason, confirm: !asDraft })
+      : await api.send('POST', '/commerce/orders', { ...b, customer_id: customerId, draft: asDraft });
+    onSaved(r.order_no, r);
   });
   const addr = (a, setA, which) => a && (
     <div className="a-card">
@@ -516,13 +540,17 @@ function OrderForm({ order = null, onClose, onSaved }) {
   return (
     <Drawer title={editing ? `Edit ${order.order_no}` : 'New order'} onClose={onClose} dirty={dirty} wide
       footer={<>
-        <button type="button" className="a-btn" disabled={act.busy || !customerId || !items.length || blocked || !P || Boolean(pv && pv.error)} onClick={save}>{held ? 'Save - send for approval' : editing ? 'Save changes' : 'Save order'}</button>
+        {isDraft && <button type="button" className="a-btn a-btn-ghost" disabled={act.busy || !customerId || (!items.length && !kits.length) || !bill || Boolean(pv && pv.error)} onClick={() => save(true)}>Save draft</button>}
+        <button type="button" className="a-btn" disabled={act.busy || !customerId || (!items.length && !kits.length) || blocked || !P || Boolean(pv && pv.error)} onClick={() => save(false)}>{isDraft ? 'Confirm order' : `Save Rev ${(order.rev || 1) + 1}`}</button>
         {held && P && <span className="a-muted">It waits for approval: {P.holds.map((h) => h.label.toLowerCase()).join(', ')}.</span>}
       </>}>
       <Loading state={form}>
         {f && (
           <>
             {act.note}
+            {editing && !isDraft && <Notice kind="warn">Changing {order.order_no} (now Rev {order.rev || 1}). Saving makes Rev {(order.rev || 1) + 1} and keeps Rev {order.rev || 1} in the history. The held packs are worked out again; if the change needs approval they go back to free stock until it is approved.</Notice>}
+            {editing && order.rej_note && <Notice kind="error">Sent back. {order.rej_note}</Notice>}
+            {P && P.quote && <Notice kind={P.quote.expired ? 'warn' : 'info'}>From quote {P.quote.quote_no}. {P.quote.expired ? `It expired on ${P.quote.valid_until}: the lines are priced again from today's list (a typed discount keeps its % off).` : 'The quoted prices are kept.'}</Notice>}
             <PriceBasis basis={listBasis} />
             {editing && order.editable === 'reason' && (
               <Notice kind="warn">{order.order_no} is packed: changing it needs a reason; the stock is re-reserved and the packer re-packs it.</Notice>
@@ -531,7 +559,7 @@ function OrderForm({ order = null, onClose, onSaved }) {
               <label className="a-field"><span>Customer <button type="button" className="a-link a-newcust" onClick={() => setAddingCustomer(true)}>+ New customer</button></span>
                 <select value={customerId} aria-label="Customer" onChange={(e) => { setCustomerId(e.target.value); setWallet(''); }}>
                   <option value="">Choose...</option>
-                  {f.customers.map((c) => <option key={c.customer_id} value={c.customer_id}>{c.customer_no} {c.name} - {c.ctype}{c.town ? `, ${c.town}` : ''} ({c.phone}){c.status === 'on_hold' ? ' - ON HOLD' : ''}{c.overdue ? ' - OVERDUE' : ''}</option>)}
+                  {f.customers.map((c) => <option key={c.customer_id} value={c.customer_id}>{c.customer_no} {c.name} - {c.ctype}{c.town ? `, ${c.town}` : ''} ({c.phone}){c.status === 'hold' ? ' - ON HOLD' : ''}{c.overdue ? ' - OVERDUE' : ''}</option>)}
                 </select>
               </label>
             )}
@@ -540,7 +568,21 @@ function OrderForm({ order = null, onClose, onSaved }) {
               <p className="a-muted a-custline">Price list: <b>{list.label}</b>{customer.own_list ? ' (its own, not its type\'s)' : ''}. Credit: {customer.credit_limit > 0 ? `${customer.credit_days} days, limit ${rs(customer.credit_limit)}` : 'none'}; owes {rs(customer.outstanding)}
                 {customer.overdue > 0 && <span className="a-overdue">{customer.overdue} overdue</span>}</p>
             )}
-            {customer && customer.status === 'on_hold' && <Notice kind="warn">{customer.name} is on hold{customer.hold_reason ? `: ${customer.hold_reason}` : ''}. A new order waits for approval.</Notice>}
+            {customer && customer.status === 'hold' && <Notice kind="warn">{customer.name} is on hold{customer.hold_reason ? `: ${customer.hold_reason}` : ''}. A new order waits for approval.</Notice>}
+            {P && P.backs && P.backs.length > 0 && <Notice kind="warn">Short: {P.backs.map((b) => `${b.sku_code} ${b.free} free, ${b.back} would go on back-order`).join('; ')}. Confirmed, what is free is held now; the rest waits as a back-order and is held first when stock arrives.</Notice>}
+            {P && P.price_note && <Notice kind="info">{P.price_note}</Notice>}
+            {P && P.lines.some((l) => l.kept) && <p className="a-muted">{P.lines.filter((l) => l.kept).map((l) => `${l.sku_code}: ${l.kept === 'kept' ? 'kept from when it was made' : 'priced again from today\'s list: the quote has expired'}`).join(' · ')}</p>}
+            {f.kits && f.kits.length > 0 && (
+              <div className="a-p19-kits"><h3>Kits (one line each, stock from their parts)</h3>
+                {kits.map((k, n) => (
+                  <div key={n} className="a-grid2">
+                    <label className="a-field"><span>Kit</span><select value={k.kit_key} onChange={(e) => setKits(kits.map((x, i) => (i === n ? { ...x, kit_key: e.target.value } : x)))}><option value="">Choose...</option>{f.kits.map((x) => <option key={x.kit_key} value={x.kit_key}>{x.kit_code} · {x.name}</option>)}</select></label>
+                    <label className="a-field"><span>Kits {P && P.kits.find((x) => x.kit_key === k.kit_key) ? `(${rs(P.kits.find((x) => x.kit_key === k.kit_key).price)} a kit, no GST)` : ''}</span><input type="number" min="1" step="1" value={k.qty} onChange={(e) => setKits(kits.map((x, i) => (i === n ? { ...x, qty: e.target.value } : x)))} /></label>
+                  </div>
+                ))}
+                <button type="button" className="a-btn a-btn-ghost a-btn-sm" onClick={() => setKits([...kits, { kit_key: '', qty: '1' }])}>Add a kit</button>
+              </div>
+            )}
             {overdueHold && <Notice kind="warn">{customer.name} has {customer.overdue} overdue invoice{customer.overdue === 1 ? '' : 's'}: a new order waits for approval.</Notice>}
             {bill && (
               <>

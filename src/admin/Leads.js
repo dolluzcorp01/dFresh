@@ -6,6 +6,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { api } from './adminApi';
 import { Drawer, Loading, PageHead, fmtDate, useAction, useAdmin, useCan, useConfirm, useLoad } from './ui';
 import rules from '../shared/rules.json';
+import { CallDrawer } from './FollowUps';
 
 // Lead drawer: every field of the lead's form, in the form's own order (src/shared/rules.json, the same file the site
 // and the API use), always shown, so leads of one form type line up when compared; an empty one is the label with a
@@ -115,10 +116,13 @@ export default function Leads() {
     setParams(next);
   };
 
-  // ?ref= from the alert e-mail: open the single match.
+  // ?ref= from the alert e-mail: open the single match. ?open=<id> (Follow-ups, a quote for an enquiry: &convert=1)
   useEffect(() => {
     if (params.get('ref') && list.data && list.data.rows.length === 1) setOpenId(list.data.rows[0].lead_id);
   }, [params, list.data]);
+  useEffect(() => { if (params.get('open')) setOpenId(Number(params.get('open'))); }, [params]);
+  // phase 19 (v23): an open enquiry nobody has answered 24 hours after it came in is late
+  const late = (r) => ['new', 'contacted', 'qualified'].includes(r.status) && !r.first_reply_at && Date.now() - new Date(r.created_at).getTime() > 24 * 3600e3;
 
   const exportCsv = () => dl.run(() => api.download(`/leads/export.csv?${query}`, 'dfresh-leads.csv'));
   const exportXlsx = () => dl.run(() => api.download(`/leads/export.xlsx?${query}`, 'dFresh_Leads.xlsx'));
@@ -127,7 +131,7 @@ export default function Leads() {
 
   return (
     <section>
-      <PageHead sub="Forms people filled on dfresh.us, and who in sales has picked each one up."
+      <PageHead sub="Forms people filled on dfresh.us, and who in sales has picked each one up." rules={['Every form on dfresh.us lands here (live)', 'First reply within 24 hours', 'Convert to customer: nothing typed twice']}
         actions={me && me.commerce_enabled ? <Link className="a-btn a-btn-ghost" to="/admin">Leads summary</Link> : null} />
       <div className="a-toolbar">
         <select aria-label="Form" value={params.get('form') || ''} onChange={(e) => setFilter('form', e.target.value)}>
@@ -156,7 +160,7 @@ export default function Leads() {
         {d && (
           <>
             <p className="a-muted">{d.total} lead(s)</p>
-            <div className="a-scroll">
+            <div className="a-scroll a-listcard">
               <table className="a-table a-hover">
                 <thead><tr><th>Ref</th><th>Received</th><th>Form</th><th>Name</th><th>Business / town</th><th>Phone</th><th>Lang</th><th>Status</th><th>Assigned</th></tr></thead>
                 <tbody>
@@ -169,7 +173,7 @@ export default function Leads() {
                       <td>{[r.business_name, r.town].filter(Boolean).join(', ')}</td>
                       <td>{r.phone}</td>
                       <td>{r.lang_code}</td>
-                      <td><span className={`a-pill a-st-${r.status}`}>{r.status}</span></td>
+                      <td><span className={`a-pill a-st-${r.status}`}>{r.status}</span>{late(r) && <> <span className="a-pill a-st-lost">No reply in 24 h</span></>}</td>
                       <td>{r.assigned_to || ''}</td>
                     </tr>
                   ))}
@@ -186,13 +190,15 @@ export default function Leads() {
           </>
         )}
       </Loading>
-      {openId && <LeadDrawer id={openId} onClose={() => setOpenId(null)} onChanged={list.reload} />}
+      {openId && <LeadDrawer id={openId} convertFirst={params.get('convert') === '1'} onClose={() => setOpenId(null)} onChanged={list.reload} />}
     </section>
   );
 }
 
-function LeadDrawer({ id, onClose, onChanged }) {
+function LeadDrawer({ id, convertFirst = false, onClose, onChanged }) {
   const lead = useLoad(`/leads/${id}`);
+  const [call, setCall] = useState(false);
+  const [lostWhy, setLostWhy] = useState('');
   const people = useLoad('/assignees');
   const canEdit = useCan('leads', 'edit');
   const act = useAction();
@@ -222,6 +228,15 @@ function LeadDrawer({ id, onClose, onChanged }) {
   const canCreateCustomer = useCan('customers', 'create');
   const { me: meNow } = useAdmin();
   const canConvert = canCreateCustomer && Boolean(meNow && meNow.commerce_enabled);
+  // phase 19 (v23 Enquiries): calls on the enquiry, Log a call, Mark lost with a reason, Spam (commerce on)
+  const commerceOn = Boolean(meNow && meNow.commerce_enabled);
+  const calls = useLoad(commerceOn ? `/sales/calls?lead=${id}` : null);
+  const close = (how) => act.run(async () => {
+    await api.send('POST', `/sales/leads/${id}/close`, { how, reason: lostWhy });
+    lead.reload(); onChanged();
+    act.setMsg({ kind: 'ok', text: how === 'spam' ? 'Moved to Spam: out of the lists and the late count.' : `Marked lost: ${lostWhy}.` });
+  });
+  useEffect(() => { if (convertFirst && canConvert) convert(); }, [convertFirst, canConvert]); // eslint-disable-line react-hooks/exhaustive-deps
   const confirm = useConfirm();
   const remove = async () => {
     const yes = await confirm({
@@ -275,6 +290,23 @@ function LeadDrawer({ id, onClose, onChanged }) {
                 <textarea rows={4} disabled={!canEdit} value={form.staff_notes} onChange={(e) => setForm({ ...form, staff_notes: e.target.value })} />
               </label>
             </div>
+            {commerceOn && (
+              <>
+                <h3>Calls{calls.data && calls.data.next_on ? ` (next call ${calls.data.next_on})` : ''}</h3>
+                {calls.data && calls.data.rows.length ? <ul className="a-p17-vers">{calls.data.rows.map((c) => <li key={c.activity_id}>{fmtDate(c.happened_at)} · {c.by_name}: {c.note}</li>)}</ul> : <p className="a-muted">No call yet.</p>}
+                {canEdit && ['new', 'contacted', 'qualified'].includes(l.status) && (
+                  <div className="a-p16-endbox">
+                    <button type="button" className="a-btn a-btn-sm" onClick={() => setCall(true)}>Log a call</button>
+                    <label className="a-field"><span>Lost because</span><select value={lostWhy} onChange={(e) => setLostWhy(e.target.value)}><option value="">Choose...</option>
+                      {['Price too high', 'Too far to deliver', 'Quality or sample not liked', 'No reply after 3 tries', 'Buys elsewhere', 'Other'].map((w) => <option key={w}>{w}</option>)}</select></label>
+                    <button type="button" className="a-btn a-btn-ghost a-btn-sm" disabled={act.busy} onClick={() => close('lost')}>Mark lost</button>
+                    <button type="button" className="a-btn a-btn-danger a-btn-sm" disabled={act.busy} onClick={() => close('spam')}>Spam</button>
+                  </div>
+                )}
+                {l.lost_reason && <p className="a-muted">Lost because: {l.lost_reason}</p>}
+              </>
+            )}
+            {call && <CallDrawer pre={{ lead_id: id }} onClose={() => setCall(false)} onSaved={() => { setCall(false); calls.reload(); lead.reload(); onChanged(); }} />}
             <h3>E-mail and sheet</h3>
             {/* its own sideways scroll on a phone; long addresses wrap first */}
             <div className="a-scroll">

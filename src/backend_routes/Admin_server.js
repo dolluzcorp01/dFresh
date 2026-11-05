@@ -107,16 +107,18 @@ function route(method, path, perm, handler, opts = {}) {
   });
 }
 
-/** Runs fn(conn) in a transaction. */
+/** Runs fn(conn) in a transaction. After the commit, stock that came onto Good is offered to back-orders (phase 19). */
 async function tx(fn) {
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
     const out = await fn(conn);
     await conn.commit();
+    require('./stock').flushGoodIn(conn); // eslint-disable-line global-require
     return out;
   } catch (err) {
     await conn.rollback().catch(() => {});
+    require('./stock').flushGoodIn(conn, false); // eslint-disable-line global-require
     throw err;
   } finally {
     conn.release();
@@ -226,7 +228,7 @@ route('get', '/nav-counts', 'any', async (req) => {
 // ---------------------------------------------------------------------------------------------
 const LEAD_STATUS = ['new', 'contacted', 'qualified', 'won', 'lost', 'spam'];
 const LEAD_LIST_COLS = `l.lead_id, l.lead_ref, l.form_type, l.full_name, l.first_name, l.last_name, l.business_name,
-  l.business_type, l.town, l.phone, l.email, l.lang_code, l.status, l.assigned_to, l.source_page, l.source_ref, l.created_at`;
+  l.business_type, l.town, l.phone, l.email, l.lang_code, l.status, l.assigned_to, l.source_page, l.source_ref, l.created_at, l.first_reply_at, l.lost_reason`;
 
 // A lead with a failed e-mail (mail_outbox) or a failed Google Sheet row (sync_outbox). Alias l = leads.
 const FAILED_OUTBOX_SQL = `(EXISTS (SELECT 1 FROM mail_outbox m WHERE m.lead_id = l.lead_id AND m.status = 'failed')
@@ -344,8 +346,16 @@ route('get', '/leads/changes', 'leads:view', async (req) => {
   return { lastId: Number(r.last_id), added: Number(r.added) || 0, newLeads: Number(r.new_leads) || 0 };
 });
 
+// phase 19 (v23): a role with "Own customers only" sees the enquiries given to them and new ones nobody has picked up
+const leadOwn = (req) => (req.admin && req.admin.ownOnly ? req.admin.emp_id : null);
+function leadScoped(req, f) {
+  const own = leadOwn(req);
+  if (!own) return f;
+  const cond = "(l.assigned_to = ? OR (l.assigned_to IS NULL AND l.status = 'new'))";
+  return { sql: f.sql ? `${f.sql} AND ${cond}` : `WHERE ${cond}`, params: [...f.params, own] };
+}
 route('get', '/leads', 'leads:view', async (req) => {
-  const f = leadFilters(req.query);
+  const f = leadScoped(req, leadFilters(req.query));
   const pg = page(req);
   const [rows] = await db.query(`SELECT ${LEAD_LIST_COLS} FROM leads l ${f.sql} ORDER BY l.lead_id DESC LIMIT ? OFFSET ?`, [...f.params, pg.limit, pg.offset]);
   const [[c]] = await db.query(`SELECT COUNT(*) AS n FROM leads l ${f.sql}`, f.params);
@@ -375,6 +385,8 @@ async function leadDetail(id) {
 route('get', '/leads/:id', 'leads:view', async (req) => {
   const lead = await leadDetail(Number(req.params.id));
   if (!lead) throw new InputError('Lead not found', 404);
+  const own = leadOwn(req);
+  if (own && lead.assigned_to !== own && !(lead.assigned_to === null && lead.status === 'new')) throw new InputError('This enquiry is given to someone else', 403);
   return lead;
 });
 
@@ -382,6 +394,9 @@ route('patch', '/leads/:id', 'leads:edit', async (req) => {
   const id = Number(req.params.id);
   const before = await leadDetail(id);
   if (!before) throw new InputError('Lead not found', 404);
+  const own = leadOwn(req);
+  if (own && before.assigned_to !== own && !(before.assigned_to === null && before.status === 'new')) throw new InputError('This enquiry is given to someone else', 403);
+  if (own && 'assigned_to' in req.body && str(req.body.assigned_to, 20) && str(req.body.assigned_to, 20) !== own) throw new InputError('Sales can pick up an enquiry for themselves, not give it to someone else.', 403);
   const set = {};
   if ('status' in req.body) {
     if (!LEAD_STATUS.includes(req.body.status)) throw new InputError(`status: one of ${LEAD_STATUS.join(', ')}`);
@@ -1303,6 +1318,25 @@ async function roleExists(q, roleId) {
  * who works there); their leave ends and nobody stands in for them any more, nor do they stand in for anyone.
  * Refused (409, with what needs someone) until the takers are chosen. -> what moved
  */
+/**
+ * phase 19 (v23 Y11): a role change away from Edit on Customers hands over the same way as leaving: their customers,
+ * open enquiries and open follow-ups go to body.hand_over_to (refused, field hand_over_to, until chosen) -> what moved
+ */
+async function handOverSales(q, empId, body) {
+  const [[c]] = await q.query('SELECT COUNT(*) AS n FROM customers WHERE owner_emp_id = ? AND merged_into IS NULL', [empId]);
+  const [[l]] = await q.query("SELECT COUNT(*) AS n FROM leads WHERE assigned_to = ? AND status IN ('new', 'contacted', 'qualified')", [empId]);
+  const [[f]] = await q.query("SELECT COUNT(*) AS n FROM follow_ups WHERE assignee = ? AND status = 'open'", [empId]);
+  if (!Number(c.n) && !Number(l.n) && !Number(f.n)) return null;
+  const t = (await approvals.people(q)).find((x) => x.emp_id === String(body.hand_over_to || '') && x.active && !x.pending && x.emp_id !== empId);
+  if (!t) {
+    const e = new InputError(`Hand over first: ${c.n} customer(s), ${l.n} open enquiries and ${f.n} open follow-up(s) are on them, and the new role cannot keep customers. Choose who takes over.`, 409);
+    e.code = 'fields'; e.fields = { hand_over_to: 'Choose who takes over their customers and enquiries.' }; throw e;
+  }
+  await q.query('UPDATE customers SET owner_emp_id = ? WHERE owner_emp_id = ?', [t.emp_id, empId]);
+  await q.query("UPDATE leads SET assigned_to = ? WHERE assigned_to = ? AND status IN ('new', 'contacted', 'qualified')", [t.emp_id, empId]);
+  await q.query("UPDATE follow_ups SET assignee = ? WHERE assignee = ? AND status = 'open'", [t.emp_id, empId]);
+  return { customers: Number(c.n), enquiries: Number(l.n), follow_ups: Number(f.n), to: t.emp_id, to_name: t.name };
+}
 async function handOver(q, empId, body, byEmp) {
   const [[c]] = await q.query('SELECT COUNT(*) AS n FROM customers WHERE owner_emp_id = ?', [empId]);
   const [[l]] = await q.query("SELECT COUNT(*) AS n FROM leads WHERE assigned_to = ? AND status IN ('new', 'contacted', 'qualified')", [empId]);
@@ -1496,6 +1530,9 @@ route('put', '/users/:empId', 'users:edit', async (req) => tx(async (q) => {
   if (set.is_active === 0 && Number(before.is_active) === 1) {
     set.left_at = new Date(); set.left_by = by(req);
     handedOver = await handOver(q, before.emp_id, req.body || {}, by(req));
+  } else if (set.role_id && Number(set.role_id) !== Number(before.role_id)) {
+    const next = await foundation.roleInfo(q, set.role_id);
+    if (next && !permissions.can(next.perms, 'customers', 'edit')) handedOver = await handOverSales(q, before.emp_id, req.body || {});
   }
   if (Object.keys(set).length) await q.query(`UPDATE admin_users SET ${Object.keys(set).map((c) => `${c} = ?`).join(', ')} WHERE emp_id = ?`, [...Object.values(set), before.emp_id]);
   if (superBack) { // every Admin is told at once
@@ -1869,7 +1906,7 @@ route('get', '/commerce/order-form', 'orders:view', async (req) => {
             (SELECT COALESCE(SUM(w.amount), 0) FROM wallet_entries w WHERE w.customer_id = c.customer_id) AS wallet,
             (SELECT COALESCE(SUM(o.amount_due), 0) FROM orders o WHERE o.customer_id = c.customer_id AND o.status <> 'cancelled' AND o.amount_due > 0) AS outstanding,
             (SELECT COUNT(*) FROM invoices i JOIN orders o ON o.order_id = i.order_id WHERE o.customer_id = c.customer_id AND ${commerce.OVERDUE_SQL}) AS overdue
-       FROM customers c JOIN customer_types ct ON ct.type_key = c.type_key WHERE c.merged_into IS NULL AND (c.status <> 'inactive' OR c.customer_id = ?) ${ownEmp ? 'AND c.owner_emp_id = ?' : ''}
+       FROM customers c JOIN customer_types ct ON ct.type_key = c.type_key WHERE c.merged_into IS NULL AND (c.status <> 'blocked' OR c.customer_id = ?) ${ownEmp ? 'AND c.owner_emp_id = ?' : ''}
         AND ${inScope('c.godown_id', gScope)} ORDER BY c.name`,
     [except ? (await db.query('SELECT customer_id FROM orders WHERE order_id = ?', [except]))[0][0].customer_id : 0, ...(ownEmp ? [ownEmp] : [])]
   );
@@ -1894,6 +1931,7 @@ route('get', '/commerce/order-form', 'orders:view', async (req) => {
   return {
     customers: customers.map((c) => ({ ...c, wallet: Number(c.wallet), outstanding: Number(c.outstanding), overdue: Number(c.overdue), credit_limit: Number(c.credit_limit) })),
     skus, stockByGodown, coupons, terms: commerce.TERMS, lists: await pricing.lists(db), basis: await pricing.basis(db), today, states: GST_STATES,
+    kits: (await db.query("SELECT k.kit_key, k.kit_code, COALESCE(t.name, k.kit_key) AS name FROM kits k LEFT JOIN kit_translations t ON t.kit_key = k.kit_key AND t.lang_code = 'en' WHERE k.status = 'active' ORDER BY k.sort_order"))[0],
     sellerState: cs.invoice_seller_state_code, posRule: cs.place_of_supply_rule, roundOff: Boolean(cs.invoice_round_off), canOverride: canDo(req, 'orders', 'approve'),
     methods: (await db.query('SELECT method_id, label, kind FROM delivery_methods WHERE is_active = 1 ORDER BY sort_order, method_id'))[0],
     areas: (await db.query('SELECT area_id, label, towns, charge, free_above FROM delivery_areas WHERE is_active = 1 ORDER BY sort_order, area_id'))[0]
@@ -1930,6 +1968,8 @@ async function orderRows(req, limit = 500) {
   const st = String(req.query.status || '');
   if (commerce.STATUS_LABEL[st]) { where.push('o.status = ?'); params.push(st); }
   if (st === 'out') where.push("o.status IN ('out_for_delivery', 'with_courier')"); // the list's "Out for delivery / With courier" chip
+  if (st === 'packs') where.push("o.status IN ('packing', 'packed')"); // phase 19 (v23 tabs): Packing and packed
+  if (st === 'dispatched') where.push("o.status IN ('out_for_delivery', 'with_courier', 'failed')"); // Dispatched
   if (commerce.PAYMENT_STATUS[req.query.pay]) { where.push('o.payment_status = ?'); params.push(req.query.pay); }
   if (req.query.overdue === '1') where.push(`i.invoice_id IS NOT NULL AND ${commerce.OVERDUE_SQL}`);
   for (const [k, op] of [['from', '>='], ['to', '<=']]) {
@@ -1950,22 +1990,32 @@ async function orderRows(req, limit = 500) {
             o.dispatched_at, o.delivered_at, c.name AS customer, c.phone, ct.label AS ctype, c.type_key, o.ship_town AS town,
             i.invoice_no, DATE_FORMAT(i.due_on, '%Y-%m-%d') AS due_on,
             (i.invoice_id IS NOT NULL AND ${commerce.OVERDUE_SQL}) AS overdue,
-            (SELECT SUM(qty) FROM order_items it WHERE it.order_id = o.order_id) AS units
+            (SELECT SUM(qty) FROM order_items it WHERE it.order_id = o.order_id) AS units,
+            (SELECT COALESCE(SUM(qty), 0) FROM stock_reservations r WHERE r.order_id = o.order_id AND r.status = 'active') AS held,
+            (SELECT COALESCE(SUM(back_qty), 0) FROM order_items it WHERE it.order_id = o.order_id) AS back, o.hold_until, o.hold_gone, o.rev, o.delivery_kind,
+            (SELECT it.sku_code FROM order_items it WHERE it.order_id = o.order_id ORDER BY it.line_id LIMIT 1) AS first_sku, (SELECT COUNT(*) FROM order_items it WHERE it.order_id = o.order_id) AS n_lines
        FROM orders o JOIN customers c ON c.customer_id = o.customer_id
        JOIN customer_types ct ON ct.type_key = c.type_key
        LEFT JOIN invoices i ON i.live_order_id = o.order_id
       WHERE ${where.join(' AND ')} ORDER BY o.order_id DESC LIMIT ?`, [...params, limit]
   );
-  return rows.map((r) => ({ ...r, total: Number(r.total), amount_due: Number(r.amount_due), overdue: Number(r.overdue) === 1, units: Number(r.units) }));
+  const [nm] = rows.length ? await db.query(`SELECT s.sku_code, ${SKU_NAME} AS name FROM skus s ${SKU_JOIN} WHERE s.sku_code IN (?)`, [[...new Set(rows.map((r) => r.first_sku).filter(Boolean)), '']]) : [[]];
+  const names = Object.fromEntries(nm.map((x) => [x.sku_code, x.name]));
+  const now = Date.now();
+  return rows.map((r) => ({ ...r, total: Number(r.total), amount_due: Number(r.amount_due), overdue: Number(r.overdue) === 1, units: Number(r.units), held: Number(r.held), back: Number(r.back),
+    hold_gone: Number(r.hold_gone) === 1, hours_left: r.hold_until && r.status === 'new' ? Math.round((new Date(r.hold_until).getTime() - now) / 36e5) : null, first_name: names[r.first_sku] || r.first_sku, n_lines: Number(r.n_lines) }));
 }
 
 route('get', '/commerce/orders', 'orders:view', async (req) => {
+  await tx((q) => commerce.sweepHolds(q)); // held stock past the hold time goes back first (phase 19)
   const rows = await orderRows(req);
   const own = await ownOnly(req);
   const mine = `${own ? ' AND o.customer_id IN (SELECT customer_id FROM customers WHERE owner_emp_id = ?)' : ''} AND ${inScope('o.godown_id', godowns.viewScope(req))}`;
   const [counts] = await db.query(`SELECT o.status, COUNT(*) AS n FROM orders o WHERE 1 = 1${mine} GROUP BY o.status`, own ? [own] : []);
   const [[od]] = await db.query(`SELECT COUNT(*) AS n FROM orders o JOIN invoices i ON i.live_order_id = o.order_id WHERE ${commerce.OVERDUE_SQL}${mine}`, own ? [own] : []);
-  return { rows, counts: Object.fromEntries(counts.map((c) => [c.status, Number(c.n)])), overdue: Number(od.n), labels: commerce.STATUS_LABEL, payLabels: commerce.PAYMENT_STATUS, lists: await pricing.lists(db) };
+  const [[hg]] = await db.query(`SELECT COUNT(*) AS n FROM orders o WHERE o.status = 'new' AND o.hold_gone = 1${mine}`, own ? [own] : []);
+  return { rows, counts: Object.fromEntries(counts.map((c) => [c.status, Number(c.n)])), overdue: Number(od.n), labels: commerce.STATUS_LABEL, payLabels: commerce.PAYMENT_STATUS, lists: await pricing.lists(db),
+    hold_hours: (await commerce.orderSwitches(db)).hours, hold_gone: Number(hg.n) };
 });
 
 route('get', '/commerce/orders/export.xlsx', 'orders:export', async (req, res) => {
@@ -1992,7 +2042,7 @@ route('get', '/commerce/orders/:no', 'orders:view', async (req) => {
   if (!o) throw new InputError('Order not found', 404);
   const ownO = await ownOnly(req);
   if (ownO && o.owner_emp_id !== ownO) throw new InputError('This order is for a customer of another sales owner', 403);
-  const [items] = await db.query(`SELECT i.sku_code, i.is_free, i.qty, i.price, i.list_price, i.offer_id, i.offer_discount, i.coupon_discount, i.wallet_discount, i.hsn, i.gst_rate, i.taxable, i.cgst, i.sgst, i.igst,
+  const [items] = await db.query(`SELECT i.sku_code, i.is_free, i.kit_key, i.kit_qty, i.free_why, i.back_qty, i.dropped_qty, i.qty, i.price, i.list_price, i.offer_id, i.offer_discount, i.coupon_discount, i.wallet_discount, i.hsn, i.gst_rate, i.taxable, i.cgst, i.sgst, i.igst,
        i.line_total, ${SKU_NAME} AS name, s.size_label, s.packs_per_carton, s.min_order_qty, s.sell_unit, f.name AS offer_name, f.kind AS offer_kind, f.pct AS offer_pct, f.min_qty AS offer_min_qty,
        f.min_unit AS offer_min_unit, f.buy_qty AS offer_buy, f.get_qty AS offer_get, f.get_sku_code AS offer_get_sku
        FROM order_items i JOIN skus s ON s.sku_code = i.sku_code ${SKU_JOIN} LEFT JOIN offers f ON f.offer_id = i.offer_id WHERE i.order_id = ? ORDER BY i.sku_code, i.is_free`, [o.order_id]);
@@ -2016,8 +2066,19 @@ route('get', '/commerce/orders/:no', 'orders:view', async (req) => {
   const msgs = await notificationRows('n.order_id = ?', [o.order_id], 100);
   const [[contact]] = o.contact_id ? await db.query('SELECT name, email FROM customer_contacts WHERE contact_id = ?', [o.contact_id]) : [[null]];
   const overdue = Boolean(live && o.status !== 'cancelled' && Number(o.amount_due) > 0.005 && live.due_on < pricing.istToday() && (o.payment_terms !== 'cod' || o.status === 'delivered'));
+  // phase 19: revisions, the quote or standing order it came from, the kits on it, who approved it, the hold time
+  const [revs] = await db.query('SELECT rev, total, `lines`, saved_at, emp_id FROM order_revisions WHERE order_id = ? ORDER BY rev DESC', [o.order_id]);
+  const [[fromQ]] = o.quote_id ? await db.query("SELECT quote_no, DATE_FORMAT(valid_until, '%Y-%m-%d') AS valid_until FROM quotes WHERE quote_id = ?", [o.quote_id]) : [[null]];
+  const [kitNames] = await db.query("SELECT k.kit_key, k.kit_code, COALESCE(t.name, k.kit_key) AS name FROM kits k LEFT JOIN kit_translations t ON t.kit_key = k.kit_key AND t.lang_code = 'en'");
+  const okBy = o.ok_by ? { name: await empName(db, o.ok_by) } : null;
+  const heldBy = Object.fromEntries(res.map((x) => [x.sku_code, Number(x.qty)]));
   return {
     ...o, history: hist, payments: pays, batches: batchesOut,
+    revisions: revs.map((x) => ({ ...x, total: Number(x.total), lines: typeof x.lines === 'string' ? JSON.parse(x.lines) : x.lines })), quote: fromQ || null,
+    standing_no: o.standing_id ? `STO-${String(o.standing_id).padStart(4, '0')}` : null, ok_by_name: okBy ? okBy.name : null, held_by_sku: heldBy,
+    held_total: res.reduce((a, x) => a + Number(x.qty), 0), back_total: items.reduce((a, i) => a + Number(i.back_qty), 0), hold_gone: Number(o.hold_gone) === 1,
+    hours_left: o.hold_until && o.status === 'new' ? Math.round((new Date(o.hold_until).getTime() - Date.now()) / 36e5) : null,
+    kits: Object.fromEntries(kitNames.map((k) => [k.kit_key, { code: k.kit_code, name: k.name }])),
     invoices: invs.map((i) => ({ ...i, is_demo: Number(i.is_demo) === 1, credit_notes: cnotes.filter((c) => c.invoice_id === i.invoice_id).map((c) => ({ ...c, total: Number(c.total) })) })),
     approvals: appr.map((a) => ({ ...a, kind_label: (approvals.KINDS[a.kind] || {}).label || a.kind })), reserved: res,
     status_label: commerce.STATUS_LABEL[o.status], pay_label: commerce.PAYMENT_STATUS[o.payment_status], terms_label: commerce.TERMS[o.payment_terms],
@@ -2601,7 +2662,7 @@ async function customerRows(req, filters) {
   const own = await ownOnly(req);
   if (own) { where.push('c.owner_emp_id = ?'); args.push(own); }
   if (f.status === 'merged') where.push('c.merged_into IS NOT NULL');
-  else { where.push('c.merged_into IS NULL'); if (customers.STATUS[f.status]) { where.push('c.status = ?'); args.push(f.status); } }
+  else { where.push('c.merged_into IS NULL'); if (customers.STATUS[f.status]) { where.push('c.status = ?'); args.push(f.status); } if (f.status === 'held') where.push("c.status IN ('hold', 'blocked')"); }
   if (f.q) {
     const like = likeOf(String(f.q).trim().slice(0, 60)); const digits = String(f.q).replace(/\D/g, '');
     where.push(`(c.customer_no LIKE ? OR c.name LIKE ? OR c.business_name LIKE ?${digits.length >= 4 ? ' OR c.phone_digits LIKE ?' : ''}
@@ -2621,7 +2682,7 @@ async function customerRows(req, filters) {
   const [rows] = await db.query(`${CUSTOMER_LIST} ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ${having.length ? `HAVING ${having.join(' AND ')}` : ''} ORDER BY c.name LIMIT 1000`,
     [...args, ...(Number(f.outstanding_min) > 0 ? [Number(f.outstanding_min)] : []), ...(Number(f.wallet_min) > 0 ? [Number(f.wallet_min)] : [])]);
   return rows.map((r) => ({ ...r, tags: r.tags ? r.tags.split(',') : [], orders: Number(r.orders), outstanding: Number(r.outstanding), overdue: Number(r.overdue), wallet: Number(r.wallet),
-    credit_limit: Number(r.credit_limit), status_label: customers.STATUS[r.status] }));
+    credit_limit: Number(r.credit_limit), status_label: customers.STATUS_ALL[r.status] }));
 }
 const FILTER_KEYS = ['q', 'type', 'status', 'town', 'tag', 'owner', 'no_order_days', 'outstanding_min', 'wallet_min'];
 async function filtersOf(req) {
@@ -2693,7 +2754,7 @@ route('post', '/commerce/customers/import', 'customers:create', async (req) => {
 route('post', '/commerce/customers', 'customers:create', async (req) => {
   const own = await ownOnly(req);
   const { lead_id: _lead, ...body } = req.body || {}; // eslint-disable-line no-unused-vars
-  try { return await tx(async (q) => customers.createCustomer(q, { ...body, owner_emp_id: own || body.owner_emp_id, godown_id: await godowns.resolve(q, req, body.godown_id) }, by(req))); } catch (e) { throw asCustomer(e); }
+  try { return await tx(async (q) => customers.createCustomer(q, { ...body, owner_emp_id: own || body.owner_emp_id, godown_id: await godowns.resolve(q, req, body.godown_id) }, by(req), { admin: req.admin })); } catch (e) { throw asCustomer(e); }
 }, { status: 201 });
 
 // duplicate pairs (same phone, e-mail, GSTIN or name) for the Merge tool
@@ -2756,7 +2817,7 @@ route('get', '/commerce/customers/:id', 'customers:view', async (req) => {
   }
   const lists = await pricing.lists(db);
   return {
-    ...c, phone_digits: undefined, credit_limit: Number(c.credit_limit), status_label: customers.STATUS[c.status], tags: tags.map((x) => x.tag),
+    ...c, phone_digits: undefined, credit_limit: Number(c.credit_limit), status_label: customers.STATUS_ALL[c.status], tags: tags.map((x) => x.tag),
     addresses: await customers.addressesOf(db, id), contacts: contacts.map((x) => ({ ...x, whatsapp: Number(x.whatsapp) === 1, gets_invoices: Number(x.gets_invoices) === 1 })),
     followUps: follow.map((x) => ({ ...x, overdue: Number(x.overdue) === 1 })), orders: orders.map((o) => ({ ...o, overdue: Number(o.overdue) === 1 })),
     outstanding: orders.filter((o) => o.status !== 'cancelled' && Number(o.amount_due) > 0).reduce((a, o) => a + Number(o.amount_due), 0), wallet: await wallet.balance(db, id),
@@ -2797,11 +2858,11 @@ route('put', '/commerce/customers/:id', 'customers:edit', custTx(async (q, req) 
   const body = { ...(req.body || {}) };
   if (own) delete body.owner_emp_id; // a limited user cannot give the customer away
   if (body.godown_id !== undefined && body.godown_id !== null && body.godown_id !== '') body.godown_id = await godowns.resolve(q, req, body.godown_id); // moved only to a godown they work at
-  const r = await customers.updateCore(q, Number(req.params.id), body, by(req));
+  const r = await customers.updateCore(q, Number(req.params.id), body, by(req), req.admin);
   if (Array.isArray(body.tags)) await customers.setTags(q, Number(req.params.id), body.tags, by(req));
   return r;
 }));
-route('put', '/commerce/customers/:id/status', 'customers:edit', custTx((q, req) => customers.setStatus(q, Number(req.params.id), req.body.status, req.body.reason, by(req))));
+route('put', '/commerce/customers/:id/status', 'customers:edit', custTx((q, req) => customers.setStatus(q, Number(req.params.id), req.body.status, req.body.reason, by(req), req.admin)));
 route('put', '/commerce/customers/:id/price-list', 'customers:edit', custTx((q, req) => customers.requestPriceList(q, Number(req.params.id), req.body.price_list || null, by(req))));
 route('post', '/commerce/customers/:id/addresses', 'customers:edit', custTx((q, req) => customers.saveAddress(q, Number(req.params.id), null, req.body || {}, by(req))), { status: 201 });
 route('put', '/commerce/customers/:id/addresses/:aid', 'customers:edit', custTx((q, req) => customers.saveAddress(q, Number(req.params.id), Number(req.params.aid), req.body || {}, by(req))));
@@ -2844,7 +2905,7 @@ route('post', '/commerce/customers/from-lead/:leadId', 'customers:create', async
   const own = await ownOnly(req);
   try {
     return await tx(async (q) => customers.fromLead(q, Number(req.params.leadId), { ...(req.body || {}), owner_emp_id: own || (req.body || {}).owner_emp_id,
-      godown_id: await godowns.resolve(q, req, (req.body || {}).godown_id) }, by(req)));
+      godown_id: await godowns.resolve(q, req, (req.body || {}).godown_id), admin: req.admin }, by(req)));
   } catch (e) { throw asCustomer(e); }
 });
 
@@ -3116,6 +3177,11 @@ require('./supplier-pay').register({ route, tx, db, by, InputError, canDo, comme
 require('./production-routes').register({ route, tx, db, by, InputError, canDo, commerceGate, seesCost: seesCosts });
 // phase 18: section 5 Inventory (inventory.js rules, inventory-routes.js screens)
 require('./inventory-routes').register({ route, tx, db, by, InputError, canDo, commerceGate, seesCost: seesCosts });
+// phase 19: sections 6 and 7 Leads, customers, quotes and orders (sales.js rules, sales-routes.js screens). Back-orders
+// are held when stock comes onto Good; held stock of an unpacked order goes back after the switch's hours (every 5 min).
+require('./sales-routes').register({ route, tx, db, by, InputError, canDo, commerceGate });
+commerce.startBackOrders(db);
+setInterval(() => { tx((q) => commerce.sweepHolds(q)).catch((e) => console.error('[hold time]', e.message)); }, 5 * 60e3).unref();
 
 // ---------------------------------------------------------------------------------------------
 // Roles and permissions (docs/COMMERCE-SPEC.md 1; migration 20261021_commerce_01_access.sql)
@@ -3232,6 +3298,13 @@ route('put', '/roles/:id', 'users:edit', async (req) => tx(async (q) => {
   // phase 12b: wider rights (any Approve, a higher limit, See cost) wait for a second Admin; the whole change waits
   const nowInfo = await foundation.roleInfo(q, role.role_id);
   const nextInfo = { perms: grid, limit: { kind: extras.limit_kind, amount: extras.limit_amount }, see_cost: Boolean(extras.see_cost) };
+  // phase 19 (v23 N10): taking Edit on Customers off a role whose people still own customers waits until they hand over
+  if (permissions.can(nowInfo.perms, 'customers', 'edit') && !(grid.customers && grid.customers.edit)) {
+    const [owners] = await q.query(`SELECT a.emp_id, (SELECT COUNT(*) FROM customers c WHERE c.owner_emp_id = a.emp_id AND c.merged_into IS NULL) AS n
+        FROM admin_users a WHERE a.role_id = ? AND a.is_active = 1 HAVING n > 0`, [role.role_id]);
+    for (const o of owners) o.name = await empName(q, o.emp_id);
+    if (owners.length) throw new InputError(`Hand over first: ${owners.map((o) => `${o.name} has ${o.n} customer(s)`).join(', ')}. Move them to someone else in Staff (change the person's role there), then take Edit on Customers off ${role.name}.`, 409);
+  }
   if (foundation.roleWider(nowInfo, nextInfo)) {
     const wider = [
       ...permissions.SECTION_KEYS.filter((s) => grid[s] && grid[s].approve && !permissions.can(nowInfo.perms, s, 'approve')).map((s) => `Approve on ${(permissions.SECTIONS.find((x) => x.key === s) || {}).label || s}`),
