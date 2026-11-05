@@ -98,6 +98,16 @@ export function PageHead({ title, sub, tag, actions, rules, crumb }) {
 }
 
 /** Empty state for a list or a page: icon in a circle, a title, a line and optional buttons. */
+/** a stat tile (v23 stat()): the label, the figure, a line under it and, on the right, a round icon in a tone */
+export function Stat({ label, value, sub, icon, tone = 'gray' }) {
+  return (
+    <div className="a-stat a-stat-ic">
+      <div className="a-stat-tx"><span>{label}</span><b>{value}</b>{sub ? <small>{sub}</small> : null}</div>
+      {icon ? <span className={`a-stat-i a-tone-${tone}`} aria-hidden="true"><LIcon name={icon} /></span> : null}
+    </div>
+  );
+}
+
 export function Empty({ icon = 'inbox', title, children, actions }) {
   return (
     <div className="a-empty">

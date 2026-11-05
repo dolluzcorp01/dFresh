@@ -538,7 +538,7 @@ export const MENU = [
     use: "answer \"do we have it?\" before promising a customer.",
     to: [
      {
-      path: "commerce/stock",
+      path: "stock-status",
       section: "inventory",
       action: "view",
       commerce: true
@@ -552,11 +552,10 @@ export const MENU = [
     use: "sell older batches first; expired batches are blocked from sale.",
     to: [
      {
-      path: "commerce/stock",
+      path: "batches-and-expiry",
       section: "inventory",
       action: "view",
-      commerce: true,
-      search: "tab=batches"
+      commerce: true
      }
     ]
    },
@@ -565,8 +564,14 @@ export const MENU = [
     label: "Transfers",
     see: "stock moving between godowns - on the road, received, short.",
     use: "send stock to another godown and receive it there; shorts are settled as Found or Lost (with approval).",
-    section: "inventory",
-    phase: 18
+    to: [
+     {
+      path: "transfers",
+      section: "inventory",
+      action: "view",
+      commerce: true
+     }
+    ]
    },
    {
     id: "inventory/stock-take",
@@ -575,11 +580,10 @@ export const MENU = [
     use: "count shelves; the difference is posted after approval.",
     to: [
      {
-      path: "commerce/stock",
+      path: "stock-take",
       section: "inventory",
       action: "view",
-      commerce: true,
-      search: "tab=counts"
+      commerce: true
      }
     ]
    },
@@ -590,11 +594,10 @@ export const MENU = [
     use: "remove stock from the books (needs approval) or move packs between shelves such as Good and Damaged.",
     to: [
      {
-      path: "commerce/stock",
+      path: "write-offs",
       section: "inventory",
       action: "view",
-      commerce: true,
-      search: "tab=writeoffs"
+      commerce: true
      }
     ]
    },
@@ -605,11 +608,10 @@ export const MENU = [
     use: "decide what to buy or make next.",
     to: [
      {
-      path: "commerce/stock",
+      path: "reorder",
       section: "inventory",
       action: "view",
-      commerce: true,
-      search: "tab=reorder"
+      commerce: true
      }
     ]
    },
@@ -620,11 +622,10 @@ export const MENU = [
     use: "trace where any pack came from and where it went.",
     to: [
      {
-      path: "commerce/stock",
+      path: "stock-ledger",
       section: "inventory",
       action: "view",
-      commerce: true,
-      search: "tab=moves"
+      commerce: true
      }
     ]
    }

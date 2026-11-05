@@ -56,9 +56,10 @@ const KINDS = {
   over_available: { label: 'Order above the available stock', section: 'orders' },
   credit_order: { label: 'Order over the credit limit or with overdue invoices', section: 'customers' },
   stock_count: { label: 'Stock count differences', section: 'inventory' },
+  transit_loss: { label: 'Short receipt on a transfer', section: 'inventory' }, // phase 18
   return_window: { label: 'Return outside the window', section: 'returns' },
   no_refund: { label: 'Return with no refund', section: 'returns' },
-  restock: { label: 'Recheck: returned (R) to good stock', section: 'inventory' },
+  restock: { label: 'Returned stock back to Good', section: 'inventory' }, // phase 18: also Damaged back to Good and a transfer short Found
   price_list: { label: 'Customer price list', section: 'customers' },
   customer_merge: { label: 'Merge customers', section: 'customers' },
   customer_hold: { label: 'Order for a customer on hold', section: 'customers' },
@@ -271,7 +272,7 @@ async function list(req, status) {
     const asker = ctx.people.find((p) => p.emp_id === r.requested_by);
     out.push({
       ...r, payload: undefined, excluded: q.excluded, kind_label: (payloadOf(r) || {}).label || (KINDS[r.kind] || {}).label || r.kind, godown: ctx.godownNames[r.godown_id] || null,
-      amount: admin.seesCost || !['write_off', 'stock_count', 'restock'].includes(r.kind) ? r.amount : null, // a cost figure: See cost only
+      amount: admin.seesCost || !['write_off', 'stock_count', 'restock', 'transit_loss'].includes(r.kind) ? r.amount : null, // a cost figure: See cost only
       requested_by_name: asker ? asker.name : r.requested_by, decided_by_name: dec ? dec.name : r.decided_by,
       decided_via_name: r.decided_via === 'override' ? 'an override (24 hours, nobody cancelled)' : via ? via.name : null,
       override: o ? { ...o, set_by_name: (ctx.people.find((p) => p.emp_id === o.set_by) || {}).name || o.set_by,

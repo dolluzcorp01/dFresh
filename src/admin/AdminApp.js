@@ -60,6 +60,13 @@ import QualityCheck from './QualityCheck';
 import Recipes from './Recipes';
 import ProductionRuns from './ProductionRuns';
 import Wastage from './Wastage';
+import StockStatus from './StockStatus';
+import BatchesExpiry from './BatchesExpiry';
+import Transfers from './Transfers';
+import StockTake from './StockTake';
+import InvWriteOffs from './InvWriteOffs';
+import Reorder from './Reorder';
+import StockLedger from './StockLedger';
 import SupplierBills from './SupplierBills';
 import Claims from './Claims';
 import SupplierPayments from './SupplierPayments';
@@ -219,6 +226,14 @@ export default function AdminApp() {
             <Route path="recipes" element={<Need section="production" commerce><Recipes /></Need>} />
             <Route path="production-runs" element={<Need section="production" commerce><ProductionRuns /></Need>} />
             <Route path="wastage" element={<Need section="production" commerce><Wastage /></Need>} />
+            {/* phase 18: section 5 Inventory */}
+            <Route path="stock-status" element={<Need section="inventory" commerce><StockStatus /></Need>} />
+            <Route path="batches-and-expiry" element={<Need section="inventory" commerce><BatchesExpiry /></Need>} />
+            <Route path="transfers" element={<Need section="inventory" commerce><Transfers /></Need>} />
+            <Route path="stock-take" element={<Need section="inventory" commerce><StockTake /></Need>} />
+            <Route path="write-offs" element={<Need section="inventory" commerce><InvWriteOffs /></Need>} />
+            <Route path="reorder" element={<Need section="inventory" commerce><Reorder /></Need>} />
+            <Route path="stock-ledger" element={<Need section="inventory" commerce><StockLedger /></Need>} />
             <Route path="commerce/packing" element={<Need section="packing" commerce><CommercePacking /></Need>} />
             <Route path="commerce/delivery" element={<Need section="delivery" action="create" commerce><CommerceDelivery /></Need>} />
             <Route path="commerce/my-trips" element={<Need section="delivery" commerce><MyTrips /></Need>} />

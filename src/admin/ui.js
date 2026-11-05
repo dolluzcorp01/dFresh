@@ -12,7 +12,7 @@ import { useToast } from './ui/Toast';
 import LIcon from './ui/LIcon';
 
 export { AdminContext, useAdmin };
-export { Alert, Empty, PageHead, Pill, RuleChips, Tabs, Tag, costText, money } from './ui/blocks';
+export { Alert, Empty, PageHead, Pill, RuleChips, Stat, Tabs, Tag, costText, money } from './ui/blocks';
 export { default as Table } from './ui/Table';
 export { ToastProvider, useToast } from './ui/Toast';
 export { default as ApprovalCard } from './ui/ApprovalCard';

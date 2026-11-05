@@ -408,31 +408,13 @@ function register({ route, tx, db, by, InputError, canDo, commerceGate, seesCost
   }
   route('post', '/buying/indents/:id/approve', 'buying:edit', wrap((req) => decideIndent(req, true)), G);
   route('post', '/buying/indents/:id/reject', 'buying:edit', wrap((req) => decideIndent(req, false)), G);
-  /** what is on the shelf, in QC hold, ordered (open PO quantity; whole lines of drafts and waiting POs) and asked for */
-  async function incoming(q, sku, gid) {
-    const [[h]] = await q.query("SELECT COALESCE(SUM(delta), 0) AS n FROM stock_movements WHERE sku_code = ? AND location_id = ? AND stock_kind = 'hold'", [sku, gid]);
-    let n = Number(h.n);
-    const [pos] = await q.query("SELECT po_id FROM purchase_orders WHERE godown_id = ? AND status IN ('draft', 'waiting', 'open') AND po_id IN (SELECT po_id FROM po_lines WHERE sku_code = ?)", [gid, sku]);
-    for (const r of pos) {
-      const p = await buy.poOf(q, r.po_id); const l = p.lines.find((x) => x.sku === sku);
-      if (['draft', 'waiting'].includes(p.status)) n += l.qty;
-      else { const got = await buy.received(q, p.po_id); n += buy.openOf(l, got); }
-    }
-    const [[ind]] = await q.query("SELECT COALESCE(SUM(l.qty), 0) AS n FROM indent_lines l JOIN indents i ON i.indent_id = l.indent_id WHERE l.sku_code = ? AND i.godown_id = ? AND i.status IN ('open', 'approved')", [sku, gid]);
-    return n + Number(ind.n);
-  }
-  /** the cheapest active supplier with this item on their list */
-  async function bestItem(q, sku) {
-    const [[r]] = await q.query("SELECT i.supplier_id, i.price, i.moq FROM supplier_items i JOIN suppliers s ON s.supplier_id = i.supplier_id WHERE i.sku_code = ? AND s.status = 'active' ORDER BY i.price, s.supplier_id LIMIT 1", [sku]);
-    return r ? { supplier_id: r.supplier_id, price: Number(r.price), moq: Number(r.moq) } : null;
-  }
   // an approved indent as a new PO: the cheapest active supplier of its first item, each line at the last price paid
   route('get', '/buying/indents/:id/po-draft', 'buying:edit', wrap(async (req) => {
     const [x] = await indentRows(db, 'i.indent_id = ?', [Number(req.params.id)]);
     if (!x) throw new InputError('No such indent', 404);
     sees(req, x.godown_id); works(req, x.godown_id);
     if (x.status !== 'approved') throw new InputError('Only an approved indent becomes a purchase order.', 409);
-    const best = await bestItem(db, x.lines[0].sku_code);
+    const best = await buy.bestItem(db, x.lines[0].sku_code);
     const lines = [];
     for (const l of x.lines) { const lp = best ? await buy.lastPrice(db, best.supplier_id, l.sku_code) : null; lines.push({ sku_code: l.sku_code, qty: String(l.qty), rate: lp ? String(lp.rate) : '', disc: '0' }); }
     return { indent_id: x.indent_id, indent_no: x.indent_no, supplier_id: best ? best.supplier_id : '', godown_id: x.godown_id, lines };
@@ -448,11 +430,11 @@ function register({ route, tx, db, by, InputError, canDo, commerceGate, seesCost
         const it = its.get(r.sku_code);
         if (!it || !it.buyable) continue;
         const [[st]] = await q.query("SELECT COALESCE(SUM(delta), 0) AS n FROM stock_movements WHERE sku_code = ? AND location_id = ? AND stock_kind = 'good'", [r.sku_code, g.godown_id]);
-        const have = Number(st.n) + (await incoming(q, r.sku_code, g.godown_id));
+        const have = Number(st.n) + (await buy.incoming(q, r.sku_code, g.godown_id));
         const level = Number(r.reorder_level);
         if (have >= level) continue;
         let qty = level * 2 - have;
-        const best = await bestItem(q, r.sku_code);
+        const best = await buy.bestItem(q, r.sku_code);
         if (best && qty < best.moq) qty = best.moq;
         lines.push({ sku: r.sku_code, qty });
       }

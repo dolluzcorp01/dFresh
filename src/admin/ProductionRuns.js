@@ -11,7 +11,8 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from './adminApi';
 import { Alert, Drawer, Field, LIcon, Loading, PageHead, Pill, Table, Tabs, useAction, useAdmin, useCan, useLoad, useToast } from './ui';
-import { In, ItemCell, ViewOnlyB, at, bm, fe, fieldsOf, useOpenParam } from './buyShared';
+import { In, ItemCell, ViewOnlyB, addDays, at, bm, fe, fieldsOf, useOpenParam, useSkuImages } from './buyShared';
+import { mediaUrl } from '../utils/api';
 
 const RUN_TONE = { planned: 'info', started: 'warn', done: 'good', cancelled: 'gray' };
 const TABS = [['planned', 'Planned'], ['started', 'Running'], ['done', 'Finished and cancelled'], ['machines', 'Machines']];
@@ -40,7 +41,8 @@ export default function ProductionRuns() {
   const act = useAction();
   const toast = useToast();
   const [open, setOpen] = useState(null);
-  const [plan, setPlan] = useState(false);
+  // ?plan=<sku>&qty=&godown= (Inventory > Reorder, Plan a run): the plan opens filled in
+  const [plan, setPlan] = useState(() => { const x = new URLSearchParams(window.location.search); return x.get('plan') ? { sku_code: x.get('plan'), qty: x.get('qty') || '', godown_id: x.get('godown') || '' } : false; });
   const [mOpen, setMOpen] = useState(null);
   const d = data.data;
   useOpenParam(Boolean(d), (id) => setOpen(Number(id)));
@@ -81,7 +83,7 @@ export default function ProductionRuns() {
           </>
         )}
       </Loading>
-      {plan && <PlanDrawer onClose={() => setPlan(false)} onSaved={() => { setPlan(false); setTab('planned'); reload(); }} />}
+      {plan && <PlanDrawer pre={plan === true ? null : plan} onClose={() => setPlan(false)} onSaved={() => { setPlan(false); setTab('planned'); reload(); }} />}
       {open && <RunDrawer id={open} onClose={() => setOpen(null)} onChanged={(t) => { if (t) setTab(t); reload(); }} />}
       {mOpen && mach.data && <MachineDrawer id={mOpen} data={mach.data} onClose={() => setMOpen(null)} onSaved={() => { setMOpen(null); reload(); }} />}
     </section>
@@ -113,7 +115,7 @@ function MachineDrawer({ id, data, onClose, onSaved }) {
         <Field def={{ name: 'godown_id', label: 'Godown', type: 'select', allowEmpty: false, required: true, error: err.godown_id, options: (isNew ? data.godowns : [{ godown_id: m.godown_id, name: m.godown }]).map((g) => ({ value: String(g.godown_id), label: g.name })) }}
           value={f.godown_id} onChange={set('godown_id')} disabled={!ed || !isNew} />
       </div>
-      <h3>Makes *</h3>
+      <h3 className="a-h3s">Makes *</h3>
       <div className="a-chkgrid">{data.categories.filter((c) => c.key !== 'wipes').map((c) => (
         <label key={c.key} className="a-check"><input type="checkbox" disabled={!ed} checked={f.makes.includes(c.key)} onChange={(e) => set('makes')(e.target.checked ? [...f.makes, c.key] : f.makes.filter((x) => x !== c.key))} /> {c.name}</label>
       ))}</div>
@@ -137,16 +139,18 @@ function NeedTable({ lines, godown, issued }) {
   );
 }
 
-function PlanDrawer({ onClose, onSaved }) {
+function PlanDrawer({ pre, onClose, onSaved }) {
   const opts = useLoad('/production/options');
   const o = opts.data;
   if (!o) return <Drawer title="Plan a run" onClose={onClose}><Loading state={opts}>{null}</Loading></Drawer>;
-  return <PlanForm o={o} onClose={onClose} onSaved={onSaved} />;
+  return <PlanForm o={o} pre={pre} onClose={onClose} onSaved={onSaved} />;
 }
-function PlanForm({ o, onClose, onSaved }) {
+function PlanForm({ o, pre, onClose, onSaved }) {
   const act = useAction();
   const toast = useToast();
-  const start = { sku_code: '', godown_id: String((o.godowns[0] || {}).godown_id || ''), qty: '', machine_id: '', run_date: o.today, shift: o.shifts[0], operator: '' };
+  const g0 = (pre && o.godowns.find((g) => String(g.godown_id) === String(pre.godown_id))) || o.godowns[0] || {};
+  const m0 = pre ? o.machines.find((m) => m.godown_id === g0.godown_id && m.status === 'active' && m.makes.includes((o.packs.find((p) => p.sku_code === pre.sku_code) || {}).category)) : null;
+  const start = { sku_code: pre ? pre.sku_code : '', godown_id: String(g0.godown_id || ''), qty: pre ? String(pre.qty) : '', machine_id: m0 ? String(m0.machine_id) : '', run_date: pre ? addDays(o.today, 1) : o.today, shift: o.shifts[0], operator: '' };
   const [f, setF] = useState(start);
   const [err, setErr] = useState({});
   const [calc, setCalc] = useState(null);
@@ -201,6 +205,7 @@ export function RunDrawer({ id, onClose, onChanged }) {
   const [re, setRe] = useState('');
   const [why, setWhy] = useState('');
   const [err, setErr] = useState({});
+  const imgs = useSkuImages();
   const r = one.data;
   if (!r) return <Drawer title="Run" onClose={onClose}><Loading state={one}>{null}</Loading></Drawer>;
   const f = fin || { out: String(r.qty), scrap: '', reason: '', used: (r.issued || []).map((l) => String(l.issued)) };
@@ -213,7 +218,7 @@ export function RunDrawer({ id, onClose, onChanged }) {
   const KV = ({ k, children }) => <><dt>{k}</dt><dd>{children}</dd></>;
   const L = r.losses;
   return (
-    <Drawer title={`Run ${r.run_no}`} onClose={onClose} thumb={<LIcon name="factory" />} dirty={Boolean(fin || qc || re || why)}
+    <Drawer title={`Run ${r.run_no}`} onClose={onClose} thumb={imgs[r.sku_code] ? mediaUrl(`/media/products/400/${imgs[r.sku_code]}`) : <LIcon name="factory" />} dirty={Boolean(fin || qc || re || why)}
       status={<><RunPills r={r} /><span className="a-p15-sp" />
         {r.can.start && <button type="button" className="a-btn a-btn-sm" disabled={act.busy} onClick={() => post('start', {}, 'started')}><LIcon name="factory" size="sm" />Start: issue materials</button>}
         {r.labels && <button type="button" className="a-btn a-btn-ghost a-btn-sm" onClick={() => nav(`/admin/commerce/skus?tab=labels&sku=${encodeURIComponent(r.labels.sku)}&type=carton&copies=${r.labels.copies}`)}><LIcon name="tag" size="sm" />Print labels</button>}</>}
@@ -238,11 +243,11 @@ export function RunDrawer({ id, onClose, onChanged }) {
         {r.made_cost !== undefined && r.made_cost !== null && <KV k="Made cost">{bm(r.made_cost)} per pack{r.run_cost !== null ? <> · run {bm(r.run_cost)}</> : null}</KV>}
         {r.qc_done && r.qc_done.unit_passed !== null && r.qc_done.rej > 0 && <KV k="Passed packs carry">{bm(r.qc_done.unit_passed)} each</KV>}
       </dl>
-      {r.need && <><h3>What it needs</h3><NeedTable lines={r.need} godown={r.godown} /></>}
-      {r.status === 'started' && r.issued && <><h3>Issued at start</h3><NeedTable lines={r.issued} godown={r.godown} issued /></>}
+      {r.need && <><h3 className="a-h3s">What it needs</h3><NeedTable lines={r.need} godown={r.godown} /></>}
+      {r.status === 'started' && r.issued && <><h3 className="a-h3s">Issued at start</h3><NeedTable lines={r.issued} godown={r.godown} issued /></>}
       {r.can.finish && (
         <>
-          <h3>Finish the run</h3>
+          <h3 className="a-h3s">Finish the run</h3>
           <div className="a-grid2">
             <In label="Packs made *" type="number" min="0" step="1" value={f.out} error={err.out} hint="Part output is fine: the rest is not made." onChange={(e) => setFin({ ...f, out: e.target.value })} />
             <In label="Reusable trim kept (kg)" type="number" min="0" step="0.1" value={f.scrap} error={err.scrap} hint="Kept as scrap, not counted as lost." onChange={(e) => setFin({ ...f, scrap: e.target.value })} />
@@ -257,7 +262,7 @@ export function RunDrawer({ id, onClose, onChanged }) {
       )}
       {r.waste && (
         <>
-          <h3>Used</h3>
+          <h3 className="a-h3s">Used</h3>
           <div className="a-scroll"><table className="a-table a-p16-dt"><thead><tr><th>Material</th><th className="a-num">Standard for {r.out} packs</th><th className="a-num">Used</th></tr></thead>
             <tbody>{r.waste.lines.map((l) => <tr key={l.sku_code}><td><ItemCell name={l.name} code={l.sku_code} /></td><td className="a-num">{l.std_text}</td><td className="a-num">{l.used_text}</td></tr>)}</tbody></table></div>
           <Alert tone={r.wst === 'waiting' || r.wst === 'rejected' ? 'warn' : 'info'} title={`Wastage ${r.waste.wpct}% on ${r.waste.on} (recipe allows ${r.waste.allowed}%).`}>

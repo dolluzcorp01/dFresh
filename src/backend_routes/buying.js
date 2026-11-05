@@ -441,9 +441,28 @@ async function rating(q, supplierId) {
   return { n, ontime: n ? Math.round((Number(r.ontime) / n) * 100) : null, rej_pct: Number(c.chk) ? Math.round((Number(c.rej) / Number(c.chk)) * 1000) / 10 : null };
 }
 
+// ---------------------------------------------------------------- reorder
+/** (phase 18: shared with Inventory > Reorder) what is in QC hold, ordered (open PO quantity; whole lines of drafts and waiting POs) and asked for */
+async function incoming(q, sku, gid) {
+  const [[h]] = await q.query("SELECT COALESCE(SUM(delta), 0) AS n FROM stock_movements WHERE sku_code = ? AND location_id = ? AND stock_kind = 'hold'", [sku, gid]);
+  let n = Number(h.n);
+  const [pos] = await q.query("SELECT po_id FROM purchase_orders WHERE godown_id = ? AND status IN ('draft', 'waiting', 'open') AND po_id IN (SELECT po_id FROM po_lines WHERE sku_code = ?)", [gid, sku]);
+  for (const r of pos) {
+    const p = await poOf(q, r.po_id); const l = p.lines.find((x) => x.sku === sku);
+    if (['draft', 'waiting'].includes(p.status)) n += l.qty;
+    else { const got = await received(q, p.po_id); n += openOf(l, got); }
+  }
+  const [[ind]] = await q.query("SELECT COALESCE(SUM(l.qty), 0) AS n FROM indent_lines l JOIN indents i ON i.indent_id = l.indent_id WHERE l.sku_code = ? AND i.godown_id = ? AND i.status IN ('open', 'approved')", [sku, gid]);
+  return n + Number(ind.n);
+}
+/** the cheapest active supplier with this item on their list */
+async function bestItem(q, sku) {
+  const [[r]] = await q.query("SELECT i.supplier_id, i.price, i.moq FROM supplier_items i JOIN suppliers s ON s.supplier_id = i.supplier_id WHERE i.sku_code = ? AND s.status = 'active' ORDER BY i.price, s.supplier_id LIMIT 1", [sku]);
+  return r ? { supplier_id: r.supplier_id, price: Number(r.price), moq: Number(r.moq) } : null;
+}
 module.exports = {
   BuyError, bad, r2, rs, rs0, today, addDays, addMonths, dayDiff, ymd, STATE_CODE, settings, items, qtyText, gstRates, supplierOf, godownOf, interState, msmeSmall,
   lineVal, unitRate, totals, poOf, poRef, poValue, received, openOf, poState, lastPrice, freightShare, goodAll, addStock, passQc, newClaim,
   billedQty, unbilled, freightBilled, poLastBill, grnLeft, costApply, poFreightAdj, billCost, dueFor, acceptedOn, payable, oweText, setBillPaid,
-  supplierCredit, billCreditWait, rating,
+  supplierCredit, billCreditWait, rating, incoming, bestItem,
 };

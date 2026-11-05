@@ -3114,6 +3114,8 @@ require('./buying-routes').register({ route, tx, db, by, InputError, canDo, comm
 require('./supplier-pay').register({ route, tx, db, by, InputError, canDo, commerceGate });
 // phase 17: section 4 Production (production.js rules, production-routes.js screens)
 require('./production-routes').register({ route, tx, db, by, InputError, canDo, commerceGate, seesCost: seesCosts });
+// phase 18: section 5 Inventory (inventory.js rules, inventory-routes.js screens)
+require('./inventory-routes').register({ route, tx, db, by, InputError, canDo, commerceGate, seesCost: seesCosts });
 
 // ---------------------------------------------------------------------------------------------
 // Roles and permissions (docs/COMMERCE-SPEC.md 1; migration 20261021_commerce_01_access.sql)

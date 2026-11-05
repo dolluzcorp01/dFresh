@@ -61,7 +61,7 @@ const PARTS = {
   ...Object.fromEntries(['godowns', 'staff', 'roles', 'approval rules', 'stand-ins', 'approvals', 'export', 'company', 'numbering', 'switches', 'audit', 'outbox',
     'products', 'raw materials', 'units', 'kits', 'categories',
     'price lists', 'price list', 'quantity slabs', 'special prices', 'hsn rates', 'brand',
-    'suppliers', 'purchase orders', 'goods in', 'quality check', 'supplier bills', 'supplier payments', 'recipes', 'production runs', 'wastage'].map((k) => [`${k} page`, [['#page', '.a-main'], [
+    'suppliers', 'purchase orders', 'goods in', 'quality check', 'supplier bills', 'supplier payments', 'recipes', 'production runs', 'wastage', 'stock status', 'batches and expiry', 'transfers', 'stock take', 'write-offs', 'reorder', 'stock ledger'].map((k) => [`${k} page`, [['#page', '.a-main'], [
     ['page', '#page', '.a-main'], ['crumb', '.crumb', '.a-crumb'], ['title', '.ph h1', '.a-ph h1'], ['subtitle', '.ph p', '.a-ph p'],
     ['rule chips', '.rchips', '.a-rchips'], ['rule chip', '.rchips .pill', '.a-rchips .a-pill'], ['primary button', '.ph .acts .btn.primary', '.a-ph-acts .a-btn:not(.a-btn-ghost)'],
     ['card', '#page .card', k === 'roles' ? '.a-main .a-roleedit' : '.a-main .a-listcard, .a-main .a-card'], ['th', '#page table.t th', '.a-main .a-table th'], ['td', '#page table.t tbody td', '.a-main .a-table tbody td'],
@@ -84,7 +84,8 @@ const PARTS = {
   ]]])),
   // phase 16: a supplier (Velan Converters, tabs) and a purchase order (DFP/26-27/0043, ours 0003), the same parts as the drawer
   // phase 17: the running run DFM/26-27/0003 (the finish form) and a recipe (Table Napkins 20x20)
-  ...Object.fromEntries(['supplier drawer', 'po drawer', 'run drawer', 'recipe drawer'].map((k) => [k, [['.drawer', '.a-drawer'], [
+  // phase 18: an item's stock (Wet Wipes) and a transfer on the road
+  ...Object.fromEntries(['supplier drawer', 'po drawer', 'run drawer', 'recipe drawer', 'stock drawer', 'transfer drawer'].map((k) => [k, [['.drawer', '.a-drawer'], [
     ['drawer', '.drawer', '.a-drawer'], ['head', '.drawer .dh', '.a-drawer > header'], ['title', '.drawer .dh h2', '.a-drawer > header h2'],
     ['close', '.drawer .dh .iconbtn', '.a-drawer > header .a-iconbtn'], ['body', '.drawer .db', '.a-drawer-body'], ['status bar', '.drawer .statusbar', '.a-drawer .a-statusbar'],
     ['tabs', '.drawer .dtabs', '.a-drawer .a-tabs'], ['field label', '.drawer .fld label', '.a-drawer .a-field > span'], ['input', '.drawer .fld input', '.a-drawer .a-field input'],
@@ -137,7 +138,9 @@ const OUR_PATH = { 'list page': 'commerce/orders', 'godowns page': 'godowns', 's
   'hsn rates page': 'hsn-rates', 'brand page': 'brand', 'price drawer': 'prices?list=default', // phase 15
   'suppliers page': 'suppliers', 'purchase orders page': 'purchase-orders', 'goods in page': 'goods-in', 'quality check page': 'quality-check',
   'supplier bills page': 'supplier-bills', 'supplier payments page': 'supplier-payments', 'supplier drawer': 'suppliers?open=3', 'po drawer': 'purchase-orders?open=3', // phase 16
-  'recipes page': 'recipes', 'production runs page': 'production-runs', 'wastage page': 'wastage', 'run drawer': 'production-runs?open=3', 'recipe drawer': 'recipes?open=DF001-M100' }; // phase 17
+  'recipes page': 'recipes', 'production runs page': 'production-runs', 'wastage page': 'wastage', 'run drawer': 'production-runs?open=3', 'recipe drawer': 'recipes?open=DF001-M100', // phase 17
+  'stock status page': 'stock-status', 'batches and expiry page': 'batches-and-expiry', 'transfers page': 'transfers', 'stock take page': 'stock-take', 'write-offs page': 'write-offs',
+  'reorder page': 'reorder', 'stock ledger page': 'stock-ledger', 'stock drawer': 'stock-status?open=DF044-M100', 'transfer drawer': 'transfers?open=1' }; // phase 18
 // v23's page per part (default: the Customer list)
 const V23_PAGE = { 'godowns page': 'admin/organisation/godowns', 'staff page': 'admin/users-and-security/staff', 'roles page': 'admin/users-and-security/roles',
   'approval rules page': 'admin/users-and-security/approval-rules', 'stand-ins page': 'admin/users-and-security/stand-ins',
@@ -154,7 +157,9 @@ const V23_PAGE = { 'godowns page': 'admin/organisation/godowns', 'staff page': '
   'supplier bills page': 'purchase/supplier-bills', 'supplier payments page': 'money/payments/supplier-payments',
   'supplier drawer': 'masters/partners/suppliers', 'po drawer': 'purchase/purchase-orders', // phase 16
   'recipes page': 'production/recipes', 'production runs page': 'production/production-runs', 'wastage page': 'production/wastage',
-  'run drawer': 'production/production-runs', 'recipe drawer': 'production/recipes' }; // phase 17
+  'run drawer': 'production/production-runs', 'recipe drawer': 'production/recipes', // phase 17
+  'stock status page': 'inventory/stock-status', 'batches and expiry page': 'inventory/batches-and-expiry', 'transfers page': 'inventory/transfers', 'stock take page': 'inventory/stock-take',
+  'write-offs page': 'inventory/write-offs', 'reorder page': 'inventory/reorder', 'stock ledger page': 'inventory/stock-ledger', 'stock drawer': 'inventory/stock-status', 'transfer drawer': 'inventory/transfers' }; // phase 18
 // ONLY=part,part limits the run (e.g. ONLY="godowns page,staff page")
 const ONLY = process.env.ONLY ? process.env.ONLY.split(',').map((x) => x.trim()) : null;
 async function ourPage(browser, w, h, part) {
@@ -189,6 +194,8 @@ const SETUP = {
   'po drawer': [async (p) => { await p.click('#page tr[data-po="DFP/26-27/0043"]'); await wait(600); }, async () => { await wait(1200); }],
   'run drawer': [async (p) => { await p.click('[data-a="p4tab"][data-i="1"]'); await wait(400); await p.click('#page tr[data-run="DFM/26-27/0003"]'); await wait(600); }, async () => { await wait(1200); }],
   'recipe drawer': [async (p) => { await p.click('#page tr[data-rec="DF001-M100"]'); await wait(600); }, async () => { await wait(1200); }],
+  'stock drawer': [async (p) => { await p.click('#page tr[data-stk="DF044-M100"]'); await wait(600); }, async () => { await wait(1200); }],
+  'transfer drawer': [async (p) => { await p.click('#page tr[data-tr]'); await wait(600); }, async () => { await wait(1200); }],
   toast: [async (p) => { await p.evaluate(() => window.toast('good', 'Customer saved', 'CUS-0141 Hotel Kanchi Residency')); await wait(300); },
     async (p) => {
       await p.evaluate(() => {

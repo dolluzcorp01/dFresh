@@ -474,16 +474,28 @@ async function retThere(q, sku, godown, batchId) {
   return Number(st.n);
 }
 // requests raised before phase 12a carry no godown: they were all at Kanchipuram (godown 1)
+// phase 18: a shelf move back to Good (Damaged or Returned) and a transfer short Found use this rule too: inventory.js
+const inv = () => require('./inventory'); // eslint-disable-line global-require
 approvals.onRecheck('restock', async (q, p) => {
+  if (p.move_id) return inv().moveRecheck(q, p.move_id);
   const there = await retThere(q, p.sku_code, p.godown_id || 1, p.batch_id);
   return there < p.qty ? `only ${there} packs of ${p.sku_code} are left in Returned (R)` : '';
 });
 approvals.onApproved('restock', async (q, p, empId) => {
+  if (p.move_id) { await inv().postMove(q, p.move_id, empId); return; }
   const godown = p.godown_id || 1;
   const there = await retThere(q, p.sku_code, godown, p.batch_id);
   if (there < p.qty) throw new ReturnError(`Only ${there} packs left in Returned (R): the recheck cannot post`, 409);
   await stock.moveShelf(q, { sku: p.sku_code, godown, from: 'ret', to: 'good', qty: p.qty, batch: p.batch_id, what: 'recheck', doc: { type: 'recheck', id: null }, note: `Recheck: ${p.note}` }, empId);
   await audit(q, { empId, action: 'recheck', entity: 'stock', entityId: p.sku_code, after: { godown, qty: p.qty, batch_id: p.batch_id } });
+});
+approvals.onClosed('restock', async (q, p, status, empId) => { if (p && p.move_id) await inv().moveClosed(q, p.move_id, status, empId); });
+approvals.onAgain('restock', async (q, p) => {
+  if (!p.move_id) return '';
+  const [[w]] = await q.query('SELECT status FROM write_offs WHERE write_off_id = ? FOR UPDATE', [p.move_id]);
+  if (!w || w.status !== 'rejected') return 'the move is no longer there';
+  await q.query("UPDATE write_offs SET status = 'pending' WHERE write_off_id = ?", [p.move_id]);
+  return inv().moveRecheck(q, p.move_id);
 });
 
 module.exports = { STATUS_LABEL, COLLECTION, METHODS, ReturnError, returnable, createReturn, addPhoto, setCourier, onTrip, pickedUp, pickupFailed, opsCounts, receiveState, receiveScan, inspect, decide, leftOf, recheckRequest, finalize };

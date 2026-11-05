@@ -165,7 +165,7 @@ for f in $(ls database/migrations/*.sql | sort); do
   echo "== $f"; sudo mysql --default-character-set=utf8mb4 dfresh < "$f" || { echo "FAILED: $f"; break; }
 done
 ```
-The 55 migrations, in the order they must run (tick each; a later update applies only the new ones):
+The 56 migrations, in the order they must run (tick each; a later update applies only the new ones):
 
 - [ ] `20261009_phase3_home_ui_text.sql`
 - [ ] `20261009_phase4_products_ui_text.sql`
@@ -276,6 +276,10 @@ The 55 migrations, in the order they must run (tick each; a later update applies
       and the material they used; write-offs remember their run and kind of loss; the "Production" rights row; the
       approval rules "Change a recipe" and "Production wastage above the recipe"; the production run series goes
       live. Existing stock and average costs do not change.
+- [ ] `20261105_stage2_18_01_inventory.sql` - section 5 Inventory: a shelf On the road (a transfer in a lorry);
+      transfers and their lines (batches loaded, quantity counted in, the loss of a short); write-offs also hold shelf
+      moves and remember the transfer they settle; stock take counts with decimals (raw materials by the kilo); the
+      approval rule "Short receipt on a transfer". Existing stock and average costs do not change.
 
 The 11 commerce files replace the 12 of the commerce branch's phases (consolidated on 21 Oct 2026, never applied on
 any database but the `dfresh_commerce` demo): each table in its final shape, no file patches another. Built on a

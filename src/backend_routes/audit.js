@@ -64,7 +64,7 @@ const SCREENS = [
   { key: 'buying', label: 'Purchase', section: 'buying', match: [{ types: ['indent', 'purchase_order', 'goods_in', 'quality_check', 'supplier_bill', 'claim'] }] }, // phase 16
   { key: 'production', label: 'Production', section: 'production', match: [{ types: ['recipe', 'machine', 'production_run'] }] }, // phase 17
   { key: 'supplier_payments', label: 'Supplier payments', section: 'money', match: [{ types: ['supplier_payment'] }] }, // phase 16
-  { key: 'stock', label: 'Stock', section: 'inventory', match: [{ types: ['stock', 'stock_count', 'stock_level', 'write_off'] }] },
+  { key: 'stock', label: 'Stock', section: 'inventory', match: [{ types: ['stock', 'stock_count', 'stock_level', 'write_off', 'transfer'] }] }, // transfer: phase 18
   { key: 'delivery', label: 'Delivery', section: 'delivery', match: [{ types: ['trip'] }] },
   { key: 'promotions', label: 'Promotions', section: 'promotions', match: [{ types: ['coupon', 'cashback_rule', 'offer', 'promotions'] }] },
   { key: 'wallet', label: 'Wallet', section: 'promotions', match: [{ types: ['wallet'] }] },

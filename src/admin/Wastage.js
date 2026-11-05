@@ -3,7 +3,7 @@
 // the recipe's, the reason and the approval. Above the recipe by more than the "Production wastage above the recipe"
 // rule waits for approval. Totals: reel lost, reusable trim kept, and reel lost per machine. Rows open the run.
 import { useState } from 'react';
-import { Loading, PageHead, Pill, Table, useLoad } from './ui';
+import { Loading, PageHead, Pill, Stat, Table, useLoad } from './ui';
 import { ItemCell } from './buyShared';
 import { RunDrawer } from './ProductionRuns';
 
@@ -15,7 +15,7 @@ export default function Wastage() {
   const [open, setOpen] = useState(null);
   const d = data.data;
   const cols = [
-    { key: 'run_no', label: 'Run', render: (r) => <><b className="a-mono">{r.run_no}</b><small className="a-muted a-p15-sub">{r.machine} · {r.run_date}</small></> },
+    { key: 'run_no', label: 'Run', render: (r) => <><b className="a-mono">{r.run_no}</b><small className="a-muted a-p15-sub a-p18-nowrap">{r.machine} · {r.run_date}</small></> },
     { key: 'pack', label: 'Pack', render: (r) => <ItemCell name={r.name} code={r.sku_code} /> },
     { key: 'std', label: 'Reel standard', num: true, render: (r) => kg(r.reel_std) },
     { key: 'used', label: 'Reel used', num: true, render: (r) => kg(r.reel_used) },
@@ -30,9 +30,9 @@ export default function Wastage() {
         {d && (
           <>
             <div className="a-stats">
-              <div className="a-stat"><span>Reel lost in runs</span><b>{kg(d.stats.lost)}</b><small>{d.stats.runs} finished run{d.stats.runs === 1 ? '' : 's'}</small></div>
-              <div className="a-stat"><span>Reusable trim kept</span><b>{kg(d.stats.scrap)}</b><small>can be sold as scrap</small></div>
-              {d.stats.machines.map((m) => <div key={m.name} className="a-stat"><span>{m.name}</span><b>{kg(m.kg)}</b><small>reel lost</small></div>)}
+              <Stat label="Reel lost in runs" value={kg(d.stats.lost)} sub={`${d.stats.runs} finished run${d.stats.runs === 1 ? '' : 's'}`} icon="factory" tone="warn" />
+              <Stat label="Reusable trim in stock" value={kg(d.stats.scrap)} sub="can be sold as scrap" icon="package" tone="good" />
+              {d.stats.machines.map((m) => <Stat key={m.name} label={m.name} value={kg(m.kg)} sub="reel lost" icon="factory" tone="bad" />)}
             </div>
             <div className="a-listcard"><Table columns={cols} rows={d.rows} rowKey={(r) => r.run_id} label="Wastage per run" onRowClick={(r) => setOpen(r.run_id)}
               empty={{ icon: 'inbox', title: 'No finished runs yet', text: 'Wastage shows here when a run is finished.' }} /></div>

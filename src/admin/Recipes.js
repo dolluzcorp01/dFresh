@@ -6,7 +6,8 @@
 import { useState } from 'react';
 import { api } from './adminApi';
 import { Alert, Drawer, LIcon, Loading, PageHead, Pill, Table, useAction, useAdmin, useCan, useLoad, useToast } from './ui';
-import { In, ItemCell, ViewOnlyB, addDays, bm, fe, fieldsOf, useOpenParam } from './buyShared';
+import { In, ItemCell, ViewOnlyB, addDays, bm, fe, fieldsOf, useOpenParam, useSkuImages } from './buyShared';
+import { mediaUrl } from '../utils/api';
 
 export default function Recipes() {
   const data = useLoad('/production/recipes');
@@ -63,6 +64,7 @@ const r2 = (n) => Math.round(n * 100) / 100;
 function RecipeForm({ r, onClose, onSaved, onChanged }) {
   const act = useAction();
   const toast = useToast();
+  const imgs = useSkuImages();
   const base = r.cur || { out: r.per_carton * 10, waste: 3, labour: 0, power: 0, lines: [] };
   const start = { out_packs: String(base.out), from_date: r.cur ? addDays(r.today, 1) : r.today, waste_pct: String(base.waste), labour: String(base.labour), power: String(base.power),
     lines: base.lines.length ? base.lines.map((l) => ({ sku_code: l.sku_code, qty: String(l.qty) })) : [{ sku_code: '', qty: '' }] };
@@ -95,7 +97,7 @@ function RecipeForm({ r, onClose, onSaved, onChanged }) {
   const copyFrom = (code) => { setCopy(code); const x = r.copy_from.find((c) => c.sku_code === code); if (x) setF((y) => ({ ...y, lines: x.lines.map((l) => ({ sku_code: l.sku_code, qty: String(l.qty) })) })); };
   const money = (v) => `Rs ${Number(v).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   return (
-    <Drawer title={`Recipe: ${r.name}`} pill={<Pill>{r.sku_code}</Pill>} onClose={onClose} dirty={ed && dirty} thumb={<LIcon name="clipboard-list" />}
+    <Drawer title={`Recipe: ${r.name}`} pill={<Pill>{r.sku_code}</Pill>} onClose={onClose} dirty={ed && dirty} thumb={imgs[r.sku_code] ? mediaUrl(`/media/products/400/${imgs[r.sku_code]}`) : <LIcon name="clipboard-list" />}
       status={<>{r.cur ? <Pill tone="good">v{r.cur.ver} from {r.cur.from}</Pill> : <Pill tone="warn">No recipe yet</Pill>}{r.waiting && <Pill tone="warn">v{r.waiting.ver} waiting for approval</Pill>}<span className="a-p15-sp" /><small className="a-muted">{r.per_carton} packs per carton</small></>}
       footer={<><span className="a-p15-sp" /><button type="button" className="a-btn a-btn-ghost" onClick={onClose}>{ed ? 'Cancel' : 'Close'}</button>
         {ed && <button type="button" className="a-btn" disabled={act.busy} onClick={save}><LIcon name="check" size="sm" />{r.cur ? `Save as v${r.next_ver}` : 'Save recipe'}</button>}</>}>
@@ -110,7 +112,7 @@ function RecipeForm({ r, onClose, onSaved, onChanged }) {
       )}
       {ed && (
         <>
-          <h3>{r.cur ? `Change the recipe (new version v${r.next_ver})` : 'Add the recipe'}</h3>
+          <h3 className="a-h3s">{r.cur ? `Change the recipe (new version v${r.next_ver})` : 'Add the recipe'}</h3>
           {r.change_waits && <p className="a-hint-s a-p16-mt0">A change waits for a second person (Approval rules). Runs already started keep their version.</p>}
           <div className="a-grid2">
             <In label="One batch makes (packs) *" type="number" min="1" step="1" value={f.out_packs} error={err.out_packs} hint={`${r2(Number(f.out_packs) / r.per_carton) || 0} cartons of ${r.per_carton}.`} onChange={(e) => set('out_packs')(e.target.value)} />
@@ -134,7 +136,7 @@ function RecipeForm({ r, onClose, onSaved, onChanged }) {
       )}
       {r.versions.length > 0 && (
         <>
-          <h3>Versions</h3>
+          <h3 className="a-h3s">Versions</h3>
           <ul className="a-p17-vers">{r.versions.map((v) => <li key={v.ver}>v{v.ver} · from {v.from} · {v.out} packs: {v.uses} · waste {v.waste}% · {v.status} · {v.by}</li>)}</ul>
         </>
       )}

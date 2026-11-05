@@ -6,7 +6,7 @@ paths = the first one the user may open. "(live)" = also shown while Commerce is
 site's screens); every other entry shows only while Commerce is on. A placeholder shows the guide's texts and
 the phase that builds it (gap map build order; Website entries with no screen: phase 24, agreed 2 Nov 2026).
 
-148 menu lines = 13 groups + Online store + 23 sub-groups + 111 pages. Of the 112 entries that open something (pages and Online store), 80 open a screen and 32 the placeholder.
+148 menu lines = 13 groups + Online store + 23 sub-groups + 111 pages. Of the 112 entries that open something (pages and Online store), 81 open a screen and 31 the placeholder.
 
 | Menu page | Opens |
 |---|---|
@@ -44,13 +44,13 @@ the phase that builds it (gap map build order; Website entries with no screen: p
 | Production / Production runs | /admin/production-runs |
 | Production / Wastage | /admin/wastage |
 | Production / Job work | placeholder: Later |
-| Inventory / Stock status | /admin/commerce/stock |
-| Inventory / Batches and expiry | /admin/commerce/stock?tab=batches |
-| Inventory / Transfers | placeholder: Not built yet - phase 18 |
-| Inventory / Stock take | /admin/commerce/stock?tab=counts |
-| Inventory / Write-offs | /admin/commerce/stock?tab=writeoffs |
-| Inventory / Reorder | /admin/commerce/stock?tab=reorder |
-| Inventory / Stock ledger | /admin/commerce/stock?tab=moves |
+| Inventory / Stock status | /admin/stock-status |
+| Inventory / Batches and expiry | /admin/batches-and-expiry |
+| Inventory / Transfers | /admin/transfers |
+| Inventory / Stock take | /admin/stock-take |
+| Inventory / Write-offs | /admin/write-offs |
+| Inventory / Reorder | /admin/reorder |
+| Inventory / Stock ledger | /admin/stock-ledger |
 | Money / Billing / Invoices | placeholder: Not built yet - phase 21 |
 | Money / Billing / Credit notes | placeholder: Not built yet - phase 21 |
 | Money / Billing / Debit notes | placeholder: Not built yet - phase 21 |

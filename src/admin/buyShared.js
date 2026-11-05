@@ -1,9 +1,11 @@
 // Section 3 Suppliers and buying (phase 16): the pieces every buying screen shares (v23 "SECTION 3 ... PAGES AND
 // PANELS"): purchase rates and values shown only to See cost or Buying Edit (the API sends null, shown as "hidden"),
 // the totals box, an item or supplier cell, an input with its error, the view-only notice, and ?open= to open a record
-// from another page.
-import { useEffect } from 'react';
+// from another page. Phase 18: every item shows its photo (ItemCell, ItemPic).
+import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { api } from './adminApi';
+import { mediaUrl } from '../utils/api';
 import { Alert, LIcon, money } from './ui';
 
 /** a cost or value: "hidden" when the API sent null for this role */
@@ -18,10 +20,36 @@ export function ViewOnlyB({ me, what }) {
   return <Alert tone="info" title="View only.">{me && me.role_name ? `${me.role_name} can` : 'Your role can'} see {what} but not change it. Rights come from the role in Foundation.</Alert>;
 }
 
-/** an item: name, then its code (raw materials show the package icon) */
-export function ItemCell({ name, code, sub }) {
+// phase 18 (house rule "every product is shown with its image"): the photo of every pack, loaded once for every page
+let skuImages = null;
+let skuImagesLoading = null;
+const skuImageSubs = new Set();
+export function useSkuImages() {
+  const [m, setM] = useState(skuImages);
+  useEffect(() => {
+    if (skuImages) return undefined;
+    skuImageSubs.add(setM);
+    if (!skuImagesLoading) {
+      skuImagesLoading = api.get('/sku-images').then((x) => x || {}, () => ({})).then((x) => { skuImages = x; skuImageSubs.forEach((f) => f(x)); });
+    }
+    return () => skuImageSubs.delete(setM);
+  }, []);
+  return m || {};
+}
+/** the pack's photo (a raw material, or a pack with no photo: the package icon) */
+export function ItemPic({ code, image, size = 34 }) {
+  const map = useSkuImages();
+  const file = image || map[code];
   return (
-    <span className="a-p16-item"><span className="a-p16-ic" aria-hidden="true"><LIcon name="package" size="sm" /></span>
+    <span className="a-p16-ic" style={{ width: size, height: size }} aria-hidden="true">
+      {file ? <img src={mediaUrl(`/media/products/400/${file}`)} alt="" width={size} height={size} loading="lazy" /> : <LIcon name="package" size="sm" />}
+    </span>
+  );
+}
+/** an item: its photo, name, then its code */
+export function ItemCell({ name, code, sub, image }) {
+  return (
+    <span className="a-p16-item"><ItemPic code={code} image={image} />
       <span><b>{name || code}</b><small className="a-muted a-p15-sub">{code}{sub ? ` · ${sub}` : ''}</small></span></span>
   );
 }
