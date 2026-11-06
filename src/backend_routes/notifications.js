@@ -57,6 +57,8 @@ const EVENTS = {
   daily_summary: { audience: 'staff', label: 'Daily summary for Admin', vars: ['name', 'date', 'summary', 'link'] },
   admin_alert: { audience: 'staff', label: 'Admin alert (override, Admin left, leave for an Admin)', vars: ['name', 'subject', 'body', 'link'] },
   hold_ended: { audience: 'staff', label: 'Stock hold ended on an order', vars: ['name', 'order_no', 'customer', 'hours', 'packs', 'link'] }, // phase 19: to the salesperson
+  quote_sent: { audience: 'customer', label: 'Quote sent (PDF)', to: 'customer', attach: 'quote', vars: ['customer', 'contact', 'quote_no', 'valid_until', 'total', 'notes'] }, // phase 20
+  statement: { audience: 'customer', label: 'Statement of account (PDF)', to: 'invoice', attach: 'statement', vars: ['customer', 'contact', 'outstanding'] }, // phase 20: Customer ledger, Mail statement
 };
 const settingKey = (event) => `notify_ev_${event}`;
 const DAILY = ['overdue', 'wallet_expiring', 'stock_daily', 'follow_ups', 'daily_summary'];
@@ -263,6 +265,34 @@ const STATUS_EVENT = { packed: 'order_packed', out_for_delivery: 'order_out', wi
 
 /** an order became confirmed for the first time (never while it waits for approval) */
 const orderConfirmed = (q, orderId) => safely('order_confirmed', () => orderEvent(q, 'order_confirmed', orderId));
+/**
+ * phase 20: a quotation mailed from Sales > Quotes (its PDF attached), to the customer's contacts, or to the e-mail an
+ * enquiry gave -> { queued, to }
+ */
+async function quoteSent(q, quoteId, by) {
+  const [[x]] = await q.query(`SELECT q.quote_id, q.quote_no, q.customer_id, DATE_FORMAT(q.valid_until, '%Y-%m-%d') AS valid_until, q.total, q.notes, l.email AS lead_email, COALESCE(l.full_name, l.business_name) AS lead_name, l.business_name, l.lang_code
+      FROM quotes q LEFT JOIN leads l ON l.lead_id = q.lead_id WHERE q.quote_id = ?`, [quoteId]);
+  const vars = { quote_no: x.quote_no, valid_until: day(x.valid_until), total: money(x.total), notes: x.notes || '' };
+  const attach = { kind: 'quote', id: x.quote_id };
+  if (x.customer_id) {
+    const n = await toCustomer(q, 'quote_sent', { customerId: x.customer_id, vars, attach, ref: x.quote_no, by });
+    const [[last]] = await q.query("SELECT recipient, status, skip_reason FROM notification_log WHERE event_key = 'quote_sent' AND ref = ? ORDER BY log_id DESC LIMIT 1", [x.quote_no]);
+    return { queued: n, to: last ? last.recipient : null, skip: last && last.status === 'skipped' ? last.skip_reason : null };
+  }
+  if (!EMAIL.test(x.lead_email || '')) { await record(q, { event: 'quote_sent', audience: 'customer', to: { email: null, name: x.lead_name }, skip: 'the enquiry has no e-mail address', ref: x.quote_no, by }); return { queued: 0, to: null, skip: 'the enquiry has no e-mail address' }; }
+  const tpl = await template(q, 'quote_sent', x.lang_code);
+  if (!tpl) return { queued: 0, to: null, skip: 'no template' };
+  const footer = await footerFor(q, 'customer');
+  await record(q, { event: 'quote_sent', audience: 'customer', to: { email: x.lead_email, name: x.lead_name }, lang: tpl.lang_code, rendered: compose(tpl, { customer: x.business_name || x.lead_name, contact: x.lead_name, ...vars }, footer), attachments: [attach], ref: x.quote_no, by });
+  return { queued: 1, to: x.lead_email };
+}
+/** phase 20: the statement of account mailed from Sales > Customers > Customer ledger -> { queued, to } */
+async function statementMail(q, customerId, by) {
+  const st = await require('./doc-pdf').statementData(q, customerId, {}); // eslint-disable-line global-require
+  const n = await toCustomer(q, 'statement', { customerId, vars: { outstanding: money(st ? st.outstanding : 0) }, attach: { kind: 'statement', id: customerId }, ref: `statement ${customerId}`, by });
+  const [[last]] = await q.query("SELECT recipient, status, skip_reason FROM notification_log WHERE event_key = 'statement' AND customer_id = ? ORDER BY log_id DESC LIMIT 1", [customerId]);
+  return { queued: n, to: last ? last.recipient : null, skip: last && last.status === 'skipped' ? last.skip_reason : null };
+}
 /** phase 19: the held packs of an unpacked order went back to free stock: the customer's salesperson is told */
 const holdEnded = (q, o, packs, hours) => safely('hold_ended', async () => {
   if (!(await isOn(q, 'hold_ended'))) return;
@@ -609,6 +639,8 @@ async function sampleFor(q, event, me, lang = null) {
     case 'stock_daily': s = { vars: { low_count: 2, expiry_count: 1, expiry_days: 60, low_list: '- DF001-M100: 12 available, reorder level 20', expiry_list: '- DF044-M100 batch B2: 40 packs, expires in 30 days', link: link('commerce/stock') }, sample: 'example lines' }; break;
     case 'follow_ups': s = { vars: { count: 1, list: '- CUS-0001: call about the next order (due today)', link: link('commerce/follow-ups') }, sample: 'example lines' }; break;
     case 'hold_ended': s = { vars: { order_no: 'DFO-260029', customer: 'Kamatchi Stores', hours: 48, packs: 40, link: link('commerce/orders') }, sample: 'an example order' }; break;
+    case 'quote_sent': s = { vars: { quote_no: 'DFQ/26-27/0004', valid_until: day(istToday()), total: money(5706), notes: 'Delivered free in Kanchipuram town.' }, sample: 'an example quote' }; break;
+    case 'statement': s = { vars: { outstanding: money(14160) }, sample: 'an example balance' }; break;
     case 'daily_summary': s = { vars: { date: day(istToday()), summary: '- Orders: 3 (Rs 12,000.00)\n- Payments received: Rs 5,000.00', link: link('commerce/ops') }, sample: 'example numbers' }; break;
     default: break;
   }
@@ -653,6 +685,6 @@ async function sendTest(q, event, lang, draft, me) {
 
 module.exports = {
   EVENTS, DAILY, settingKey, setMuted, isOn, template, unknownVars, compose, customerRecipients, staffUsers, staffWith, record,
-  orderConfirmed, holdEnded, orderStatus, invoiceIssued, paymentReceived, returnAccepted, returnPicked, returnRefunded, walletCredited, approvalWaiting, cashDifference, adminAlert,
+  orderConfirmed, holdEnded, quoteSent, statementMail, orderStatus, invoiceIssued, paymentReceived, returnAccepted, returnPicked, returnRefunded, walletCredited, approvalWaiting, cashDifference, adminAlert,
   runDaily, startJobs, stopJobs, preview, sendTest, JOBS,
 };

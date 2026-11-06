@@ -1,9 +1,10 @@
 // Sales > Customers > Customer ledger (phase 19, v23 viewCLedger; API /commerce/customers/:id/statement, customers.js
 // statement). Pick a customer you see (godowns and own customers only): every invoice, payment, credit note and refund by
 // date with the running balance, what is still open with its due date (overdue in red) and the ageing; the statement as
-// a PDF to print or send. Receipts per customer and the rest of the money pages come with sections 10 and 11.
+// a PDF to print, or mailed through the Outbox (phase 20). Receipts per customer and the rest of the money pages come with sections 10 and 11.
 import { useState } from 'react';
-import { useLoad, Loading, PageHead, Pill, money } from './ui';
+import { api } from './adminApi';
+import { LIcon, useAction, useLoad, useToast, Loading, PageHead, Pill, money } from './ui';
 import { In } from './buyShared';
 
 export default function CustomerLedger() {
@@ -13,6 +14,12 @@ export default function CustomerLedger() {
   const cur = id || (rows[0] ? String(rows[0].customer_id) : '');
   const st = useLoad(cur ? `/commerce/customers/${cur}/statement` : null);
   const s = st.data;
+  const act = useAction();
+  const toast = useToast();
+  const mail = () => act.run(async () => { // phase 20: the statement as a PDF, prepared in the Outbox
+    const r = await api.send('POST', `/sales/customers/${cur}/mail-statement`);
+    if (r.queued) toast('good', 'Mail prepared', `The statement (PDF) to ${r.to}, in Admin > Communications > Outbox.`); else toast('warn', 'Not mailed', r.skip || 'No e-mail address.');
+  });
   return (
     <section>
       <PageHead sub="Every invoice, payment and note of a customer, with the balance" />
@@ -21,7 +28,9 @@ export default function CustomerLedger() {
           <div className="a-p18-filters">
             <In label="Customer" box="a-p19-pick"><select value={cur} onChange={(e) => setId(e.target.value)}>{rows.map((c) => <option key={c.customer_id} value={String(c.customer_id)}>{c.customer_no} · {c.name}</option>)}</select></In>
             {cur && <a className="a-btn a-btn-ghost a-btn-sm" href={`/api/dfresh/admin/commerce/customers/${cur}/statement.pdf`} target="_blank" rel="noreferrer">Statement (PDF)</a>}
+            {cur && <button type="button" className="a-btn a-btn-ghost a-btn-sm" disabled={act.busy} onClick={mail}><LIcon name="mail" size="sm" />Mail statement</button>}
           </div>
+          {act.note}
           <Loading state={st}>{s && <>
             <div className="a-scroll"><table className="a-table"><thead><tr><th>Date</th><th>What</th><th className="a-num">Charged</th><th className="a-num">Paid or credited</th><th className="a-num">Balance</th></tr></thead>
               <tbody>{Number(s.opening) ? <tr><td /><td>Opening balance</td><td /><td /><td className="a-num"><b>{money(s.opening)}</b></td></tr> : null}

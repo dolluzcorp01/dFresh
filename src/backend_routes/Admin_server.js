@@ -2132,7 +2132,12 @@ route('post', '/commerce/orders/:no/payments', 'orders:edit', async (req) => {
 // create) acts only on trips whose driver is linked to them (Commerce settings > Drivers).
 // ---------------------------------------------------------------------------------------------
 const delivery = require('./delivery');
-const asDelivery = (e) => (e instanceof delivery.DeliveryError || e instanceof commerce.CommerceError ? new InputError(e.message, e.status) : e);
+const asDelivery = (e) => {
+  if (!(e instanceof delivery.DeliveryError || e instanceof commerce.CommerceError)) return e;
+  const x = new InputError(e.message, e.status);
+  if (e.fields) { x.code = 'fields'; x.fields = e.fields; } // phase 20: the field to mark red
+  return x;
+};
 const office = (req) => canDo(req, 'delivery', 'create');
 const ORDER_LIST = `SELECT o.order_no, o.godown_id, (SELECT g.code FROM locations g WHERE g.location_id = o.godown_id) AS godown_code, o.status, o.delivery_kind, o.payment_terms, o.amount_due, o.total, o.cartons, o.weight_kg, o.created_at, o.packed_at, o.packing_at,
        o.ship_name, o.ship_address, o.ship_town, o.ship_pincode, o.ship_phone, o.delivery_area_id, o.awb_no, o.courier_id, o.failed_reason, o.failed_at, o.courier_at,
@@ -2173,7 +2178,10 @@ route('get', '/commerce/packing/:no', 'packing:view', async (req) => {
   return { order: orderOut(o), ...(await delivery.packState(db, id.order_id)), scans, canOverride: canDo(req, 'packing', 'approve') };
 });
 route('post', '/commerce/packing/:no/scan', 'packing:edit', async (req) => {
-  try { return await tx((q) => delivery.packScan(q, req.params.no, req.body.code, by(req))); } catch (e) { throw asDelivery(e); }
+  try { return await tx((q) => delivery.packScan(q, req.params.no, req.body.code, by(req), { n: req.body.n, batch: req.body.batch })); } catch (e) { throw asDelivery(e); }
+});
+route('post', '/commerce/packing/:no/undo', 'packing:edit', async (req) => { // phase 20: one scan off
+  try { return await tx((q) => delivery.undoScan(q, req.params.no, (req.body || {}).scan_id, by(req))); } catch (e) { throw asDelivery(e); }
 });
 route('post', '/commerce/packing/:no/reset', 'packing:edit', async (req) => {
   try { return await tx((q) => delivery.resetScans(q, req.params.no, by(req))); } catch (e) { throw asDelivery(e); }
@@ -2209,17 +2217,23 @@ route('get', '/commerce/delivery', 'delivery:create', async (req) => {
   const [trips] = await db.query(`SELECT t.trip_id, t.godown_id, (SELECT g.code FROM locations g WHERE g.location_id = t.godown_id) AS godown_code, DATE_FORMAT(t.trip_date, '%Y-%m-%d') AS trip_date, t.status, t.cash_expected, t.cash_collected, t.cash_handed, t.started_at, t.ended_at,
       v.number AS vehicle, d.name AS driver, a.label AS area,
       (SELECT COUNT(*) FROM trip_stops s WHERE s.trip_id = t.trip_id) AS stops, (SELECT SUM(s.status IN ('delivered', 'picked_up')) FROM trip_stops s WHERE s.trip_id = t.trip_id) AS delivered,
-      (SELECT SUM(s.status = 'failed') FROM trip_stops s WHERE s.trip_id = t.trip_id) AS failed
+      (SELECT SUM(s.status = 'failed') FROM trip_stops s WHERE s.trip_id = t.trip_id) AS failed,
+      (SELECT SUM(s.status <> 'pending') FROM trip_stops s WHERE s.trip_id = t.trip_id) AS done,
+      (SELECT COALESCE(SUM(o.weight_kg), 0) FROM trip_stops s JOIN orders o ON o.order_id = s.order_id WHERE s.trip_id = t.trip_id AND s.kind = 'delivery') AS load_kg,
+      (SELECT COALESCE(SUM(o.cartons), 0) FROM trip_stops s JOIN orders o ON o.order_id = s.order_id WHERE s.trip_id = t.trip_id AND s.kind = 'delivery') AS load_boxes,
+      (SELECT COALESCE(SUM(GREATEST(o.amount_due, 0)), 0) FROM trip_stops s JOIN orders o ON o.order_id = s.order_id WHERE s.trip_id = t.trip_id AND s.kind = 'delivery' AND s.status = 'pending' AND o.payment_terms = 'cod') AS due_now,
+      v.max_kg, v.max_boxes, (SELECT g.name FROM locations g WHERE g.location_id = t.godown_id) AS godown
       FROM delivery_trips t JOIN vehicles v ON v.vehicle_id = t.vehicle_id JOIN drivers d ON d.driver_id = t.driver_id LEFT JOIN delivery_areas a ON a.area_id = t.area_id
       WHERE ${inScope('t.godown_id', gScope)} ORDER BY t.trip_id DESC LIMIT 60`);
-  const [vehicles] = await db.query('SELECT vehicle_id, number, type FROM vehicles WHERE is_active = 1 ORDER BY sort_order, vehicle_id');
-  const [drivers] = await db.query('SELECT driver_id, name, phone, emp_id FROM drivers WHERE is_active = 1 ORDER BY sort_order, driver_id');
+  const [vehicles] = await db.query("SELECT vehicle_id, number, type, godown_id, max_kg, max_boxes, DATE_FORMAT(insurance_until, '%Y-%m-%d') AS insurance_until, DATE_FORMAT(fitness_until, '%Y-%m-%d') AS fitness_until FROM vehicles WHERE is_active = 1 ORDER BY sort_order, vehicle_id");
+  const [drivers] = await db.query("SELECT driver_id, name, phone, emp_id, licence_no, DATE_FORMAT(licence_until, '%Y-%m-%d') AS licence_until FROM drivers WHERE is_active = 1 ORDER BY sort_order, driver_id");
   const [couriers] = await db.query('SELECT courier_id, name, tracking_url FROM couriers WHERE is_active = 1 ORDER BY sort_order, courier_id');
   const [areas] = await db.query('SELECT area_id, label FROM delivery_areas WHERE is_active = 1 ORDER BY sort_order, area_id');
   const cs = await commerceSettings.read(db);
   return {
     orders: rows.map((r) => ({ ...orderOut(r), trip_id: planned.get(r.order_no) || null })), pickups,
-    trips: trips.map((t) => ({ ...t, stops: Number(t.stops), delivered: Number(t.delivered) || 0, failed: Number(t.failed) || 0 })),
+    trips: trips.map((t) => ({ ...t, stops: Number(t.stops), delivered: Number(t.delivered) || 0, failed: Number(t.failed) || 0, done: Number(t.done) || 0, load_kg: Number(t.load_kg), load_boxes: Number(t.load_boxes),
+      due_now: Number(t.due_now), max_kg: t.max_kg === null ? null : Number(t.max_kg), max_boxes: t.max_boxes === null ? null : Number(t.max_boxes) })),
     vehicles, drivers, couriers, areas, failReasons: delivery.FAIL_REASONS, eway: { required: Boolean(cs.eway_bill_required), above: Number(cs.eway_bill_above) },
   };
 });
@@ -2230,21 +2244,36 @@ route('post', '/commerce/trips', 'delivery:create', async (req) => {
 /** a trip with its stops (an office user: any trip; a driver: only their own) */
 async function tripDetail(req, tripId) {
   const [[t]] = await db.query(`SELECT t.trip_id, DATE_FORMAT(t.trip_date, '%Y-%m-%d') AS trip_date, t.status, t.cash_expected, t.cash_collected, t.cash_handed, t.end_note,
-      t.started_at, t.started_by, t.ended_at, t.ended_by, t.created_by, v.number AS vehicle, v.type AS vehicle_type, d.name AS driver, d.phone AS driver_phone, d.emp_id AS driver_emp, a.label AS area
+      t.started_at, t.started_by, t.ended_at, t.ended_by, t.created_by, v.number AS vehicle, v.type AS vehicle_type, v.max_kg, v.max_boxes, d.name AS driver, d.phone AS driver_phone, d.emp_id AS driver_emp, a.label AS area,
+      t.godown_id, (SELECT g.name FROM locations g WHERE g.location_id = t.godown_id) AS godown
       FROM delivery_trips t JOIN vehicles v ON v.vehicle_id = t.vehicle_id JOIN drivers d ON d.driver_id = t.driver_id LEFT JOIN delivery_areas a ON a.area_id = t.area_id WHERE t.trip_id = ?`, [tripId]);
   if (!t) throw new InputError('Trip not found', 404);
   const isOffice = office(req);
   if (!isOffice && t.driver_emp !== by(req)) throw new InputError('This is not one of your trips', 403);
-  const [stops] = await db.query(`SELECT s.stop_id, s.seq, s.kind, s.status, s.otp, s.receiver_name, s.photo IS NOT NULL AS has_photo, s.failed_reason, s.cash_collected, s.done_at, s.done_by,
+  const [stops] = await db.query(`SELECT s.stop_id, s.seq, s.kind, s.status, s.otp, s.receiver_name, s.photo IS NOT NULL AS has_photo, s.failed_reason, s.cash_collected, s.done_at, s.done_by, s.signed, s.kept_json, o.order_id,
       o.order_no, o.status AS order_status, o.payment_terms, o.amount_due, o.total, o.cartons, o.weight_kg, o.ship_name, o.ship_address, o.ship_town, o.ship_pincode, o.ship_phone, c.name AS customer,
       r.return_no, (SELECT GROUP_CONCAT(CONCAT(x.qty, ' x ', x.sku_code, IFNULL(CONCAT(' batch ', b.batch_no), '')) ORDER BY x.line_id SEPARATOR ', ') FROM return_items x LEFT JOIN batches b ON b.batch_id = x.batch_id WHERE x.return_id = s.return_id) AS pickup_items
       FROM trip_stops s JOIN orders o ON o.order_id = s.order_id JOIN customers c ON c.customer_id = o.customer_id LEFT JOIN returns r ON r.return_id = s.return_id WHERE s.trip_id = ? ORDER BY s.seq`, [tripId]);
   const cs = await commerceSettings.read(db);
-  return { ...t, office: isOffice, otpOn: Boolean(cs.delivery_otp), failReasons: delivery.FAIL_REASONS,
-    stops: stops.map(({ otp, ...s }) => ({ ...s, has_photo: Number(s.has_photo) === 1, amount_due: Number(s.amount_due), total: Number(s.total), cash_collected: Number(s.cash_collected),
+  // phase 20 (v23): what is on board for each delivery stop (the packed lines, with the pack photo) for a short delivery
+  const ids = stops.filter((s) => s.kind === 'delivery').map((s) => s.order_id);
+  const [board] = ids.length ? await db.query(`SELECT i.order_id, i.sku_code, SUM(i.qty - i.back_qty) AS qty, ${docPdf.SKU_NAME} AS name, (SELECT pi.file_name FROM product_images pi WHERE pi.product_id = s.product_id ORDER BY pi.position LIMIT 1) AS image
+      FROM order_items i JOIN skus s ON s.sku_code = i.sku_code ${docPdf.SKU_JOIN} WHERE i.order_id IN (?) GROUP BY i.order_id, i.sku_code, t.name, pt.name, s.product_id HAVING qty > 0 ORDER BY i.sku_code`, [ids]) : [[]];
+  const kept = (s) => { if (!s.kept_json) return null; try { return typeof s.kept_json === 'string' ? JSON.parse(s.kept_json) : s.kept_json; } catch (e) { return null; } };
+  return { ...t, max_kg: t.max_kg === null ? null : Number(t.max_kg), max_boxes: t.max_boxes === null ? null : Number(t.max_boxes), office: isOffice, otpOn: Boolean(cs.delivery_otp), failReasons: delivery.FAIL_REASONS, refuseReasons: delivery.REFUSE_REASONS, cashWhy: delivery.CASH_WHY, me: by(req),
+    load: { kg: Math.round(stops.filter((s) => s.kind === 'delivery').reduce((a, s) => a + Number(s.weight_kg || 0), 0) * 100) / 100, boxes: stops.filter((s) => s.kind === 'delivery').reduce((a, s) => a + Number(s.cartons || 0), 0) },
+    stops: stops.map(({ otp, order_id: oid, kept_json: kj, ...s }) => ({ ...s, signed: Number(s.signed) === 1, has_photo: Number(s.has_photo) === 1, amount_due: Number(s.amount_due), total: Number(s.total), cash_collected: Number(s.cash_collected),
+      weight_kg: s.weight_kg === null ? null : Number(s.weight_kg), not_kept: s.status === 'refused' || s.status === 'delivered' ? kept({ kept_json: kj }) : null,
+      on_board: board.filter((x) => x.order_id === oid).map((x) => ({ sku_code: x.sku_code, name: x.name, image: x.image, qty: Number(x.qty) })),
       to_collect: s.kind === 'delivery' && s.payment_terms === 'cod' ? Math.max(Number(s.amount_due), 0) : 0, ...(isOffice && s.kind === 'delivery' ? { otp } : {}) })) };
 }
 route('get', '/commerce/trips/:id', 'delivery:view', async (req) => tripDetail(req, Number(req.params.id)));
+route('post', '/commerce/trips/:id/load', 'delivery:create', async (req) => { // phase 20: load one more order
+  try { return await tx((q) => delivery.addStop(q, Number(req.params.id), (req.body || {}).order_no, by(req), req.admin)); } catch (e) { throw asDelivery(e); }
+});
+route('delete', '/commerce/trips/:id', 'delivery:create', async (req) => { // phase 20: a planned trip that will not go
+  try { return await tx((q) => delivery.deleteTrip(q, Number(req.params.id), by(req))); } catch (e) { throw asDelivery(e); }
+});
 route('put', '/commerce/trips/:id/stops', 'delivery:create', async (req) => {
   try { return await tx((q) => delivery.setStops(q, Number(req.params.id), (req.body.stops || req.body.order_nos || []).map(String), by(req))); } catch (e) { throw asDelivery(e); }
 });
@@ -2264,6 +2293,9 @@ route('post', '/commerce/stops/:id/delivered', 'delivery:edit', async (req) => {
 route('post', '/commerce/stops/:id/picked-up', 'delivery:edit', async (req) => {
   try { return await tx((q) => delivery.stopPickedUp(q, Number(req.params.id), req.body || {}, req.file ? { buffer: req.file.buffer, mimetype: req.file.mimetype } : null, by(req), office(req))); } catch (e) { throw asDelivery(e); }
 }, { before: [upload(8)] });
+route('post', '/commerce/stops/:id/refused', 'delivery:edit', async (req) => {
+  try { return await tx((q) => delivery.stopRefused(q, Number(req.params.id), req.body || {}, by(req), office(req))); } catch (e) { throw asDelivery(e); }
+});
 route('post', '/commerce/stops/:id/failed', 'delivery:edit', async (req) => {
   try { return await tx((q) => delivery.stopFailed(q, Number(req.params.id), req.body || {}, by(req), office(req))); } catch (e) { throw asDelivery(e); }
 });
@@ -2301,6 +2333,9 @@ route('post', '/commerce/orders/:no/return-to-godown', 'delivery:edit', async (r
 route('post', '/commerce/orders/:no/courier', 'delivery:edit', async (req) => {
   officeOnly(req);
   try { return await tx((q) => delivery.handToCourier(q, req.params.no, req.body || {}, by(req))); } catch (e) { throw asDelivery(e); }
+});
+route('post', '/commerce/orders/:no/courier-back', 'delivery:edit', async (req) => { // phase 20 (v23): the courier brought it back
+  try { return await tx((q) => delivery.courierBack(q, req.params.no, req.body || {}, by(req))); } catch (e) { throw asDelivery(e); }
 });
 route('post', '/commerce/orders/:no/courier-delivered', 'delivery:edit', async (req) => {
   officeOnly(req);
@@ -3180,6 +3215,8 @@ require('./inventory-routes').register({ route, tx, db, by, InputError, canDo, c
 // phase 19: sections 6 and 7 Leads, customers, quotes and orders (sales.js rules, sales-routes.js screens). Back-orders
 // are held when stock comes onto Good; held stock of an unpacked order goes back after the switch's hours (every 5 min).
 require('./sales-routes').register({ route, tx, db, by, InputError, canDo, commerceGate });
+// phase 20: sections 8 and 9 Packing and delivery (fulfil.js rules, fulfil-routes.js screens and masters)
+require('./fulfil-routes').register({ route, tx, db, by, InputError, canDo, commerceGate });
 commerce.startBackOrders(db);
 setInterval(() => { tx((q) => commerce.sweepHolds(q)).catch((e) => console.error('[hold time]', e.message)); }, 5 * 60e3).unref();
 

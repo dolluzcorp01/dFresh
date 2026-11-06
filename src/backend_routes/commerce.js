@@ -65,7 +65,7 @@ const { isStateCode, stateName, placeOfSupply } = require('../shared/gstStates')
 
 const STATUS_LABEL = {
   draft: 'Draft', approval: 'Waiting for approval', new: 'Confirmed', packing: 'Packing', packed: 'Packed', out_for_delivery: 'Out for delivery', with_courier: 'Handed to courier',
-  failed: 'Delivery failed', delivered: 'Delivered', cancelled: 'Cancelled',
+  failed: 'Delivery failed', delivered: 'Delivered', refused: 'Refused at delivery', cancelled: 'Cancelled',
 };
 const GONE = ['out_for_delivery', 'with_courier', 'failed']; // the goods have left the godown
 const HELD = { approval: 'is waiting for approval', cancelled: 'is cancelled' };
@@ -75,7 +75,8 @@ const PAYMENT_STATUS = { unpaid: 'Unpaid', partly_paid: 'Part paid', paid: 'Paid
 // phase 15 (D7): an order line below the lowest allowed price or below cost plus the margin floor waits (price_floor,
 // margin_floor); price_below_list ("% below the list") is gone, its handler stays for any old request
 const HOLD_KINDS = ['price_below_list', 'price_floor', 'margin_floor', 'over_available', 'credit_order', 'discount', 'customer_hold'];
-const EDITABLE = { draft: 'free', approval: 'free', new: 'free', packing: 'reason', packed: 'reason' };
+// phase 20 (v23): once packing starts the order is locked (the packs leave Good at Packed); cancel it instead
+const EDITABLE = { draft: 'free', approval: 'free', new: 'free' };
 const OPEN = ['new', 'packing', 'packed']; // confirmed and not yet gone: what they hold and owe counts
 const round2 = (n) => Math.round(n * 100) / 100;
 // An invoice is overdue when its order still owes money after the due date (issue day + the credit days); a pay-on-
@@ -194,7 +195,7 @@ async function deliveryMethod(q, id) {
 
 /** the delivery area of an address (PIN code first, then town; or the one chosen) and its charge for this goods value */
 async function deliveryCharge(q, ship, goodsValue, areaId = null) {
-  const [areas] = await q.query('SELECT area_id, label, towns, charge, free_above FROM delivery_areas WHERE is_active = 1 ORDER BY sort_order, area_id');
+  const [areas] = await q.query('SELECT area_id, label, towns, charge, free_above, days FROM delivery_areas WHERE is_active = 1 ORDER BY sort_order, area_id');
   const words = (a) => String(a.towns || '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
   let area = null;
   if (areaId) area = areas.find((a) => a.area_id === areaId) || null;
@@ -202,7 +203,7 @@ async function deliveryCharge(q, ship, goodsValue, areaId = null) {
   if (!area && ship.town) area = areas.find((a) => words(a).includes(String(ship.town).trim().toLowerCase())) || null;
   if (!area) return { area: null, charge: 0 };
   const free = area.free_above !== null && goodsValue >= Number(area.free_above);
-  return { area: { area_id: area.area_id, label: area.label, charge: Number(area.charge), free_above: area.free_above === null ? null : Number(area.free_above), free }, charge: free ? 0 : Number(area.charge) };
+  return { area: { area_id: area.area_id, label: area.label, charge: Number(area.charge), free_above: area.free_above === null ? null : Number(area.free_above), free, days: String(area.days || '').split(',').filter(Boolean) }, charge: free ? 0 : Number(area.charge) };
 }
 
 /** an address from the admin (or the customer) -> { values, error } */
@@ -297,6 +298,14 @@ async function prepare(q, data, opts = {}) {
       if (keepQuote) kept = 'kept';
       else if (quoteGone) { kept = 'repriced'; entered = ql.list_price && Math.abs(ql.price - ql.list_price) > 0.004 ? { pct: ql.price / ql.list_price } : null; }
     }
+    // phase 20 (v23): a free line ticked by hand, with its reason; its list value counts in the discount check
+    if (it.is_free === true || it.is_free === 1 || it.is_free === '1') {
+      const fw = String(it.free_why || '').trim().slice(0, 80);
+      if (fw.length < 3) throw new CommerceError(`${sku}: say why it is free`);
+      if (merged.get(`${sku}#f`)) throw new CommerceError(`${sku} is already free on this order: change the quantity there`);
+      merged.set(`${sku}#f`, { sku_code: sku, kit_key: '', kit_qty: null, qty, entered: 0, kept: null, free_why: fw, free: true });
+      continue;
+    }
     const had = merged.get(sku);
     if (had) throw new CommerceError(`${sku} is already on this order: change the quantity there`);
     merged.set(sku, { sku_code: sku, kit_key: '', kit_qty: null, qty, entered, kept, free_why: null });
@@ -353,14 +362,18 @@ async function prepare(q, data, opts = {}) {
     let entered = i.entered;
     if (entered && entered.pct) entered = listPrice === null ? null : round2(listPrice * entered.pct); // a typed discount keeps its % off today's list
     if (i.kit_key) entered = rate === null ? 0 : pricing.fromEx(i.kitPrice, list.list.typed, rate);
+    if (i.free) entered = 0;
     if (entered === null) {
       if (listPrice === null && rate !== null) problems.push(`${i.sku_code} has no price on the ${list.label} or ${list.def.label} list: set it in Masters > Prices > Price lists`);
       entered = listPrice || 0;
     }
     const below = listPrice && entered < listPrice ? round2(((listPrice - entered) / listPrice) * 100) : 0;
-    return { sku_code: i.sku_code, kit_key: i.kit_key || '', kit_qty: i.kit_qty || null, qty: i.qty, entered, typed: i.kit_key ? i.typedKit : i.entered !== null, kept: i.kept || null, list_price: listPrice, below, gst_rate: rate || 0, hsn: s.hsn_code, category_key: s.category_key,
-      packs_per_carton: Number(s.packs_per_carton) || 1, is_free: 0, free_why: null, price: inclusive ? round2(entered / (1 + rate / 100)) : entered };
+    return { sku_code: i.sku_code, kit_key: i.kit_key || '', kit_qty: i.kit_qty || null, qty: i.qty, entered, typed: i.free ? false : i.kit_key ? i.typedKit : i.entered !== null, kept: i.kept || null, list_price: listPrice, below: i.free ? 0 : below, gst_rate: rate || 0, hsn: s.hsn_code, category_key: s.category_key,
+      packs_per_carton: Number(s.packs_per_carton) || 1, is_free: i.free ? 1 : 0, free_why: i.free_why || null, hand_free: Boolean(i.free), price: i.free ? 0 : inclusive ? round2(entered / (1 + rate / 100)) : entered };
   });
+  const handFree = lines.filter((l) => l.hand_free).map((l) => ({ ...l, offer_id: null, offer_label: null, offer_discount: 0 }));
+  const handFreeValue = round2(handFree.reduce((a, l) => a + (l.list_price ? (inclusive ? l.list_price / (1 + l.gst_rate / 100) : l.list_price) * l.qty : 0), 0));
+  lines.splice(0, lines.length, ...lines.filter((l) => !l.hand_free));
   // automatic offers: slab % on the line, buy X get Y = free lines (their stock counts like any line)
   const offers = opts.replacement ? { lines: lines.map((l) => ({ ...l, offer_id: null, offer_label: null, offer_discount: 0 })), free: [], applied: [] }
     : await promotions.applyOffers(q, cust.type_key, opts.priceDate || pricing.istToday(), lines); // offers follow the customer type, not its price list
@@ -376,7 +389,7 @@ async function prepare(q, data, opts = {}) {
         category_key: s.category_key, is_free: 1, price: 0, offer_id: f.offer_id, offer_label: f.offer_label, offer_discount: 0 });
     }
   }
-  const allLines = [...offers.lines, ...freeLines];
+  const allLines = [...offers.lines, ...handFree, ...freeLines];
   const allKeys = [...new Set(allLines.map((l) => l.sku_code))];
   const stockAll = allKeys.some((k) => !stock.has(k)) ? await availability(q, allKeys, editing ? editing.order_id : 0, { godown }) : stock;
   for (const k of allKeys) {
@@ -482,8 +495,8 @@ async function prepare(q, data, opts = {}) {
   }
   const t = walletDiscount ? taxTotals(allLines, gstType, settings.invoice_round_off, deliv, { ...disc, wallet: walletDiscount }) : pre;
   walletUsed = round2(Math.min(walletUsed, t.total + t.wallet_discount));
-  const discountTotal = round2(t.offer_discount + t.discount + t.manual_discount);
-  const discountPct = t.subtotal > 0 ? round2((discountTotal / t.subtotal) * 100) : 0;
+  const discountTotal = round2(t.offer_discount + t.discount + t.manual_discount + handFreeValue);
+  const discountPct = t.subtotal + handFreeValue > 0 ? round2((discountTotal / (t.subtotal + handFreeValue)) * 100) : 0;
 
   // what holds the order
   const holds = [];
@@ -492,7 +505,7 @@ async function prepare(q, data, opts = {}) {
   }
   if (!opts.replacement && discountTotal > 0 && await approvals.needed(q, 'discount', { pct: discountPct })) {
     holds.push({ kind: 'discount', amount: discountTotal, what: `discounts ${rs(discountTotal)} = ${discountPct}% of the goods (${[t.offer_discount ? `offers ${rs(t.offer_discount)}` : null,
-      t.discount ? `coupon ${coupon.code} ${rs(t.discount)}` : null, t.manual_discount ? `manual ${rs(t.manual_discount)}: ${manualReason}` : null].filter(Boolean).join(', ')}); limit ${Number(settings.approve_discount_pct_above)}%` });
+      t.discount ? `coupon ${coupon.code} ${rs(t.discount)}` : null, t.manual_discount ? `manual ${rs(t.manual_discount)}: ${manualReason}` : null, handFreeValue ? `free items ${rs(handFreeValue)}` : null].filter(Boolean).join(', ')}); limit ${Number(settings.approve_discount_pct_above)}%` });
   }
   if (!opts.replacement) {
     // a price typed on a line: above the MRP is refused (in the lines loop below); below the lowest allowed price or
@@ -602,7 +615,8 @@ const reservesNow = (status, settings) => (status === 'new' && settings.stock_re
 async function pickFor(q, orderId) {
   await q.query('DELETE FROM order_picks WHERE order_id = ?', [orderId]);
   const [[ord]] = await q.query('SELECT godown_id FROM orders WHERE order_id = ?', [orderId]);
-  const [sums] = await q.query('SELECT sku_code, SUM(qty) AS qty FROM order_items WHERE order_id = ? GROUP BY sku_code ORDER BY sku_code', [orderId]);
+  // phase 20: what is held is picked; what is owed as a back-order is not (it goes to the balance order at Packed)
+  const [sums] = await q.query('SELECT sku_code, SUM(qty - back_qty) AS qty FROM order_items WHERE order_id = ? GROUP BY sku_code HAVING qty > 0 ORDER BY sku_code', [orderId]);
   const items = sums.map((x) => ({ sku_code: x.sku_code, qty: Number(x.qty) }));
   const tr = await stock.tracked(q, items.map((i) => i.sku_code));
   const picks = [];
@@ -863,8 +877,8 @@ async function doCancel(q, orderId, reason, empId) {
   await q.query("UPDATE orders SET status = 'cancelled', cancelled_at = UTC_TIMESTAMP(), cancel_reason = ?, version = version + 1, updated_by = ?, updated_at = UTC_TIMESTAMP() WHERE order_id = ?",
     [String(reason).slice(0, 255), empId, orderId]);
   await release(q, orderId);
-  const [[gone]] = await q.query('SELECT dispatched_at FROM orders WHERE order_id = ?', [orderId]);
-  if (gone.dispatched_at) await stock.goodsBack(q, o.order_no, empId);
+  const [[gone]] = await q.query('SELECT dispatched_at, stock_out_at FROM orders WHERE order_id = ?', [orderId]);
+  if (gone.dispatched_at || gone.stock_out_at) await stock.goodsBack(q, o.order_no, empId, !gone.dispatched_at); // phase 20: packed = the packs left Good already
   const inv = await invoices.cancelForOrder(q, orderId, `Order ${o.order_no} cancelled: ${reason}`, empId);
   if (o.coupon_code) await promotions.redeem(q, orderId, o.customer_id, null, 0);
   if (Number(o.wallet_used) > 0) await wallet.giveBack(q, orderId, `Given back: ${o.order_no} cancelled`, empId);
@@ -900,10 +914,15 @@ async function cancelOrder(q, orderNo, reason, empId) {
  * reservations consumed, tax invoice issued, dispatched_at set. Only once per order. -> { invoice_no, batches }
  */
 async function leaveGodown(q, orderId, empId, { at = null } = {}) {
-  const [[o]] = await q.query('SELECT order_id, order_no, dispatched_at FROM orders WHERE order_id = ? FOR UPDATE', [orderId]);
+  const [[o]] = await q.query('SELECT order_id, order_no, dispatched_at, stock_out_at FROM orders WHERE order_id = ? FOR UPDATE', [orderId]);
   if (o.dispatched_at) return { invoice_no: null, batches: [], already: true };
   let batches;
-  try { batches = await stock.dispatchOut(q, o.order_id, o.order_no, empId); } catch (e) { if (e instanceof stock.StockError) throw new CommerceError(e.message, e.status); throw e; }
+  // phase 20 (D1): the packs left Good when the order was packed; dispatch moves no stock
+  if (o.stock_out_at) batches = await stock.batchesOfOrder(q, o.order_no);
+  else {
+    try { batches = await stock.dispatchOut(q, o.order_id, o.order_no, empId); } catch (e) { if (e instanceof stock.StockError) throw new CommerceError(e.message, e.status); throw e; }
+    await q.query('UPDATE orders SET stock_out_at = UTC_TIMESTAMP() WHERE order_id = ?', [o.order_id]);
+  }
   await q.query("UPDATE stock_reservations SET status = 'consumed', closed_at = UTC_TIMESTAMP() WHERE order_id = ? AND status = 'active'", [o.order_id]);
   const inv = await invoices.issue(q, o.order_id, empId, { at });
   await q.query('UPDATE orders SET dispatched_at = COALESCE(?, UTC_TIMESTAMP()) WHERE order_id = ?', [at, o.order_id]);

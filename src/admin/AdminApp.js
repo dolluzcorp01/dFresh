@@ -76,8 +76,9 @@ import StockLedger from './StockLedger';
 import SupplierBills from './SupplierBills';
 import Claims from './Claims';
 import SupplierPayments from './SupplierPayments';
-import CommercePacking from './CommercePacking';
-import CommerceDelivery, { MyTrips } from './CommerceDelivery';
+import { PackedWaiting, PackingPage, ToPick } from './Packing';
+import Trips, { CashOnDelivery, CourierPickup, FailedShort, MyTrips, ProofOfDelivery } from './CommerceDelivery';
+import { Couriers, DeliveryAreas, Vehicles } from './DeliveryMasters';
 import Settings from './Settings';
 import Users from './Users';
 import AuditLog from './AuditLog';
@@ -246,8 +247,19 @@ export default function AdminApp() {
             <Route path="write-offs" element={<Need section="inventory" commerce><InvWriteOffs /></Need>} />
             <Route path="reorder" element={<Need section="inventory" commerce><Reorder /></Need>} />
             <Route path="stock-ledger" element={<Need section="inventory" commerce><StockLedger /></Need>} />
-            <Route path="commerce/packing" element={<Need section="packing" commerce><CommercePacking /></Need>} />
-            <Route path="commerce/delivery" element={<Need section="delivery" action="create" commerce><CommerceDelivery /></Need>} />
+            <Route path="to-pick" element={<Need section="packing" commerce><ToPick /></Need>} />
+            <Route path="packing" element={<Need section="packing" commerce><PackingPage /></Need>} />
+            <Route path="packed-waiting" element={<Need section="packing" commerce><PackedWaiting /></Need>} />
+            <Route path="trips" element={<Need section="delivery" action="create" commerce><Trips /></Need>} />
+            <Route path="courier-and-pickup" element={<Need section="delivery" commerce><CourierPickup /></Need>} />
+            <Route path="proof-of-delivery" element={<Need section="delivery" commerce><ProofOfDelivery /></Need>} />
+            <Route path="failed-deliveries" element={<Need section="delivery" commerce><FailedShort /></Need>} />
+            <Route path="cash-on-delivery" element={<Need section="delivery" commerce><CashOnDelivery /></Need>} />
+            <Route path="vehicles" element={<Need section="delivery" commerce><Vehicles /></Need>} />
+            <Route path="couriers" element={<Need section="delivery" commerce><Couriers /></Need>} />
+            <Route path="delivery-areas" element={<Need section="delivery" commerce><DeliveryAreas /></Need>} />
+            <Route path="commerce/packing" element={<OldLink to={{ pick: 'to-pick', packing: 'packing', packed: 'packed-waiting' }} fallback="to-pick" />} />
+            <Route path="commerce/delivery" element={<OldLink to={{ ready: 'trips', trips: 'trips', other: 'courier-and-pickup', failed: 'failed-deliveries' }} fallback="trips" />} />
             <Route path="commerce/my-trips" element={<Need section="delivery" commerce><MyTrips /></Need>} />
             <Route path="settings" element={<Need section="settings"><Settings /></Need>} />
             <Route path="commerce-settings" element={<Need section="settings"><CommerceSettings /></Need>} />
@@ -279,4 +291,13 @@ export default function AdminApp() {
       </div>
     </AdminContext.Provider>
   );
+}
+
+/** phase 20: an old Fulfilment link (commerce/packing?tab=..., commerce/delivery?tab=...) opens the page that replaced it */
+function OldLink({ to, fallback }) {
+  const loc = useLocation();
+  const p = new URLSearchParams(loc.search);
+  const tab = p.get('tab'); p.delete('tab');
+  const rest = p.toString();
+  return <Navigate replace to={`/admin/${to[tab] || fallback}${rest ? `?${rest}` : ''}`} />;
 }

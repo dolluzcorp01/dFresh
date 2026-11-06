@@ -338,8 +338,28 @@ async function statementPdf(q, customerId, range = {}) {
   return { filename: `Statement-${c.customer_no}-${today}.pdf`, buffer: await d.finish() };
 }
 
+/** phase 20: a quotation as a PDF (Sales > Quotes, Mail to customer) */
+async function quotePdf(q, quoteId) {
+  const [[x]] = await q.query(`SELECT q.quote_no, q.rev, DATE_FORMAT(q.quote_date, '%Y-%m-%d') AS quote_date, DATE_FORMAT(q.valid_until, '%Y-%m-%d') AS valid_until, q.notes, q.gst_type, q.taxable, q.gst, q.round_off, q.total, q.delivery_charge,
+      COALESCE(c.name, l.business_name, l.full_name) AS who, c.customer_no, l.lead_ref, c.credit_days FROM quotes q LEFT JOIN customers c ON c.customer_id = q.customer_id LEFT JOIN leads l ON l.lead_id = q.lead_id WHERE q.quote_id = ?`, [quoteId]);
+  if (!x) return null;
+  const [lines] = await q.query(`SELECT ql.sku_code, ql.kit_key, ql.qty, ql.price, ql.gst_rate, ql.is_free, ${SKU_NAME} AS name, p.hsn_code FROM quote_lines ql JOIN skus s ON s.sku_code = ql.sku_code ${SKU_JOIN}
+      WHERE ql.quote_id = ? ORDER BY ql.sort_order, ql.line_id`, [quoteId]);
+  const co = await require('./company').facts(q); // eslint-disable-line global-require
+  const d = await new Doc(`Quotation ${x.quote_no}`, false).start();
+  d.columns([[co.name, true], [co.address || ''], [co.gstin ? `GSTIN: ${co.gstin}` : ''], [[co.phone, co.email].filter(Boolean).join(' - ')]],
+    [[`Quotation ${x.quote_no}${Number(x.rev) > 1 ? ` (Rev ${x.rev})` : ''}`, true], [`Date: ${day(x.quote_date)}`], [`Valid until: ${day(x.valid_until)}`], [`To: ${x.who} (${x.customer_no || x.lead_ref})`]]);
+  d.table([{ label: '#', w: 4 }, { label: 'Item', w: 42 }, { label: 'HSN', w: 12 }, { label: 'Packs', w: 10, align: 'right' }, { label: 'Rate', w: 12, align: 'right' }, { label: 'GST', w: 8, align: 'right' }, { label: 'Amount', w: 12, align: 'right' }],
+    lines.map((l, n) => [n + 1, `${l.name}\n${l.sku_code}${l.kit_key ? ` - kit ${l.kit_key}` : ''}`, l.hsn_code, l.qty, Number(l.is_free) ? 'Free' : money(l.price), `${Number(l.gst_rate)}%`, money(Number(l.is_free) ? 0 : Number(l.price) * l.qty)]));
+  d.totals([['Value without GST', `Rs ${money(Number(x.taxable) - Number(x.delivery_charge))}`], ...(Number(x.delivery_charge) ? [['Delivery charge', `Rs ${money(x.delivery_charge)}`]] : []), ['GST', `Rs ${money(x.gst)}`],
+    ...(Number(x.round_off) ? [['Round off', `Rs ${money(x.round_off)}`]] : []), ['Total', `Rs ${money(x.total)}`, true]]);
+  d.para(`${x.notes || ''} ${x.customer_no ? `Payment: ${x.credit_days ? `${x.credit_days} days from the invoice.` : 'cash on delivery.'}` : ''} Prices are kept until the date above. This is a quotation, not a tax invoice.`);
+  return { filename: `Quotation-${String(x.quote_no).replace(/\//g, '-')}.pdf`, buffer: await d.finish() };
+}
+
 /** an attachment spec from mail_outbox.attachments -> { filename, buffer } | null (the document is gone) */
 async function build(q, a) {
+  if (a.kind === 'quote') return quotePdf(q, a.id);
   if (a.kind === 'invoice') return invoicePdf(q, a.id);
   if (a.kind === 'credit_note') return creditNotePdf(q, a.id);
   if (a.kind === 'statement') return statementPdf(q, a.id, {});
@@ -347,4 +367,4 @@ async function build(q, a) {
   throw new Error(`unknown attachment kind ${a.kind}`);
 }
 
-module.exports = { SKU_NAME, SKU_JOIN, invoiceData, creditNoteData, statementData, invoicePdf, creditNotePdf, statementPdf, build, Doc, money, day };
+module.exports = { SKU_NAME, SKU_JOIN, invoiceData, creditNoteData, statementData, invoicePdf, creditNotePdf, statementPdf, quotePdf, build, Doc, money, day };

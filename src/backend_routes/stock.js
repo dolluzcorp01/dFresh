@@ -218,7 +218,7 @@ async function moveStock(q, { sku, godown, shelf = 'good', qty, batch = null, st
  */
 async function scannedLots(q, godown, sku, exceptOrderNo = null) {
   const [rows] = await q.query(`SELECT COALESCE(ps.batch_id, 0) AS b, SUM(ps.qty) AS n FROM pack_scans ps JOIN orders o ON o.order_id = ps.order_id
-      WHERE o.godown_id = ? AND ps.sku_code = ? AND ps.result = 'ok' AND o.status IN ('packing', 'packed') AND o.dispatched_at IS NULL AND o.order_no <> ? GROUP BY b`,
+      WHERE o.godown_id = ? AND ps.sku_code = ? AND ps.result = 'ok' AND o.status = 'packing' AND o.stock_out_at IS NULL AND o.order_no <> ? GROUP BY b`,
   [godown, sku, exceptOrderNo || '']);
   return new Map(rows.map((r) => [Number(r.b) || 0, Number(r.n)]));
 }
@@ -373,9 +373,9 @@ async function dispatchOut(q, orderId, orderNo, empId) {
 }
 
 /** an order cancelled after dispatch: its packs come back into good stock of the godown they left, each to its batch */
-async function goodsBack(q, orderNo, empId) {
+async function goodsBack(q, orderNo, empId, unpacked = false) {
   const [rows] = await q.query("SELECT location_id, sku_code, batch_id, -SUM(delta) AS qty FROM stock_movements WHERE ref_type = 'order' AND ref_id = ? AND move_type = 'out' GROUP BY location_id, sku_code, batch_id HAVING qty > 0", [orderNo]);
-  for (const r of rows) await moveStock(q, { sku: r.sku_code, godown: r.location_id, shelf: 'good', qty: Number(r.qty), batch: r.batch_id, what: 'return', doc: { type: 'order', id: orderNo }, note: `Cancelled after dispatch, goods back: ${orderNo}` }, empId);
+  for (const r of rows) await moveStock(q, { sku: r.sku_code, godown: r.location_id, shelf: 'good', qty: Number(r.qty), batch: r.batch_id, what: 'return', doc: { type: 'order', id: orderNo }, note: unpacked ? `Unpacked: order cancelled ${orderNo}` : `Cancelled after dispatch, goods back: ${orderNo}` }, empId); // phase 20: packed, not yet gone
   return rows.length;
 }
 

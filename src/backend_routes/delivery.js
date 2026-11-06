@@ -23,10 +23,13 @@ const notifications = require('./notifications');
 const { storable } = require('./photo-check');
 const crypto = require('crypto');
 const returns = require('./returns');
+const fulfil = require('./fulfil');
 const stock = require('./stock');
 const godowns = require('./godowns');
 const { inScope } = require('./scope-sql');
 
+const CASH_WHY = ['Customer paid part, rest on account', 'Customer will pay by UPI or bank', 'Price dispute', 'Change not available']; // phase 20 (v23)
+const REFUSE_REASONS = ['Damaged in transit', 'Wrong item', 'Not ordered', 'Price dispute', 'Other']; // phase 20 (v23)
 const FAIL_REASONS = ['Customer not available', 'Shop / office closed', 'Address not found', 'Refused the goods', 'No cash ready (pay on delivery)', 'Vehicle problem', 'Other'];
 const round2 = (n) => Math.round(n * 100) / 100;
 
@@ -34,7 +37,10 @@ class DeliveryError extends Error {
   constructor(message, status = 400) { super(message); this.status = status; }
 }
 const wrap = async (fn) => {
-  try { return await fn(); } catch (e) { if (e instanceof commerce.CommerceError || e instanceof stock.StockError || e instanceof returns.ReturnError) throw new DeliveryError(e.message, e.status); throw e; }
+  try { return await fn(); } catch (e) {
+    if (e instanceof fulfil.FulfilError) { const x = new DeliveryError(e.message, e.status); if (e.fields) { x.code = 'fields'; x.fields = e.fields; } throw x; }
+    if (e instanceof commerce.CommerceError || e instanceof stock.StockError || e instanceof returns.ReturnError) throw new DeliveryError(e.message, e.status); throw e;
+  }
 };
 
 const ORDER_SELECT = 'SELECT order_id, order_no, status, delivery_kind, delivery_method_id, dispatched_at, total, amount_due, payment_terms, courier_id FROM orders';
@@ -107,6 +113,8 @@ async function startPacking(q, orderNos, empId) {
     const o = await lockOrder(q, no, ['new']);
     const waiting = await commerce.pendingHolds(q, no);
     if (waiting.length) throw new DeliveryError(`${no} waits for approval`, 409);
+    const s0 = await commerceSettings.read(q);
+    if (s0.stock_reserve_at !== 'packing' && !(await fulfil.heldOf(q, o.order_id))) throw new DeliveryError(`${no} has nothing held: it waits as a back-order (Sales > Orders > Back-orders)`, 409); // phase 20
     await wrap(() => commerce.pickFor(q, o.order_id));
     const s = await commerceSettings.read(q);
     if (s.stock_reserve_at === 'packing') await commerce.reserve(q, o.order_id);
@@ -127,17 +135,35 @@ async function packState(q, orderId) {
        LEFT JOIN batches b ON b.batch_id = pk.batch_id
       WHERE pk.order_id = ? GROUP BY pk.sku_code, pk.batch_id, b.batch_no, b.expiry_date, s.bin_location, s.packs_per_carton, s.size_label, t.name, pt.name, s.product_id
       ORDER BY pk.sku_code, b.expiry_date`, [orderId]);
-  const [scans] = await q.query("SELECT sku_code, batch_id, SUM(qty) AS n FROM pack_scans WHERE order_id = ? AND result = 'ok' GROUP BY sku_code, batch_id", [orderId]);
-  const got = new Map(scans.map((x) => [`${x.sku_code}|${x.batch_id || ''}`, Number(x.n)]));
-  const lines = picks.map((p) => ({ ...p, need: Number(p.need), scanned: got.get(`${p.sku_code}|${p.batch_id || ''}`) || 0 }));
-  return { lines, complete: lines.length > 0 && lines.every((l) => l.scanned === l.need) };
+  const [scans] = await q.query(`SELECT ps.sku_code, ps.batch_id, b.batch_no, DATE_FORMAT(b.expiry_date, '%Y-%m-%d') AS expiry_date, MAX(ps.off_plan) AS off_plan, SUM(ps.qty) AS n
+      FROM pack_scans ps LEFT JOIN batches b ON b.batch_id = ps.batch_id WHERE ps.order_id = ? AND ps.result = 'ok' GROUP BY ps.sku_code, ps.batch_id, b.batch_no, b.expiry_date`, [orderId]);
+  const got = new Map(scans.map((x) => [`${x.sku_code}|${x.batch_id || ''}`, x]));
+  // phase 20 (v23): what was packed from the planned batch beyond its plan, or from another batch, is "not the oldest batch"
+  const lines = picks.map((p) => { const g = got.get(`${p.sku_code}|${p.batch_id || ''}`); return { ...p, need: Number(p.need), scanned: g ? Number(g.n) : 0, off: g ? Number(g.off_plan) === 1 : false }; });
+  for (const x of scans) {
+    if (lines.some((l) => l.sku_code === x.sku_code && Number(l.batch_id || 0) === Number(x.batch_id || 0))) continue;
+    const p = picks.find((y) => y.sku_code === x.sku_code) || {};
+    lines.push({ ...p, batch_id: x.batch_id, batch_no: x.batch_no, expiry_date: x.expiry_date, need: 0, scanned: Number(x.n), off: true });
+  }
+  const per = new Map();
+  lines.forEach((l) => { const v = per.get(l.sku_code) || { need: 0, scanned: 0 }; v.need += l.need; v.scanned += l.scanned; per.set(l.sku_code, v); });
+  return { lines, complete: lines.length > 0 && [...per.values()].every((v) => v.scanned === v.need), off: lines.some((l) => l.off) };
 }
 
-/** one scan at the packing table -> { result, message, state } (refused scans are kept too) */
-async function packScan(q, orderNo, raw, empId) {
-  const o = await lockOrder(q, orderNo, ['packing']);
+/**
+ * one scan at the packing table -> { result, message, state } (refused scans are kept too). opt (phase 20, v23):
+ * n = how many of that label (default 1), batch = the batch chosen in the item's row when the label has none.
+ */
+async function packScan(q, orderNo, raw, empId, opt = {}) {
+  const o0 = await lockOrder(q, orderNo, ['packing']);
+  const [[g0]] = await q.query('SELECT godown_id FROM orders WHERE order_id = ?', [o0.order_id]);
+  const o = { ...o0, godown_id: g0.godown_id };
   // phase 14: a supplier EAN or a stored carton code scans as its SKU (or SKU#C), like the SKU's own label
-  const code = await require('./catalogue').scanCode(q, raw);
+  let code = await require('./catalogue').scanCode(q, raw);
+  const times = opt.n === undefined || opt.n === null || opt.n === '' ? 1 : Number(opt.n);
+  if (!Number.isInteger(times) || times < 1 || times > 999) throw new DeliveryError('How many: a whole number from 1');
+  const rowBatch = String(opt.batch || '').trim().toUpperCase();
+  if (code && rowBatch && /^[A-Z0-9-]+(#C)?$/.test(code)) code = code.replace(/^([A-Z0-9-]+)(#C)?$/, `$1/${rowBatch}$2`);
   if (!code) throw new DeliveryError('Scan a pack or a carton');
   const m = /^([A-Z0-9-]+)(?:\/([A-Z0-9/-]+?))?(#C)?$/.exec(code);
   const state = await packState(q, o.order_id);
@@ -146,25 +172,44 @@ async function packScan(q, orderNo, raw, empId) {
   let sku = m ? m[1] : null;
   let batchId = null;
   let qty = 0;
+  let off = 0;
   const [[s]] = sku ? await q.query('SELECT s.sku_code, s.packs_per_carton, p.track_batches FROM skus s JOIN products p ON p.product_id = s.product_id WHERE s.sku_code = ?', [sku]) : [[null]];
   if (!m || !s) { result = 'unknown'; message = `${code}: not a dFresh pack or carton code`; sku = null; } else {
-    qty = m[3] ? Number(s.packs_per_carton) || 1 : 1;
+    const per = m[3] ? Number(s.packs_per_carton) || 1 : 1;
+    qty = per * times;
     const mine = state.lines.filter((l) => l.sku_code === sku);
-    if (!mine.length) { result = 'wrong_sku'; message = `${sku} is not in ${orderNo}: put it back`; qty = 0; } else if (Number(s.track_batches)) {
+    const need = mine.reduce((a, l) => a + l.need, 0); const done = mine.reduce((a, l) => a + l.scanned, 0); const left = need - done;
+    const tooMany = () => `${sku}: too many - only ${left} more needed${m[3] ? `; a carton is ${per} packs: open the carton and scan packs` : ''}`;
+    if (!mine.length || !need) { result = 'wrong_sku'; message = `${sku} is not in ${orderNo}: put it back`; qty = 0; } else if (qty > left) { result = 'too_many'; message = tooMany(); qty = 0; } else if (Number(s.track_batches)) {
       const want = mine.filter((l) => l.scanned < l.need).map((l) => l.batch_no);
-      const line = m[2] ? mine.find((l) => l.batch_no === m[2]) : null;
-      if (!m[2]) { result = 'wrong_batch'; message = `${sku} is packed by batch: scan the batch label (${sku}/${(want[0] || mine[0].batch_no)})`; qty = 0; } else if (!line) {
-        result = 'wrong_batch'; message = `${sku} batch ${m[2]}: wrong batch - ${orderNo} takes batch ${want.join(', ') || mine.map((l) => l.batch_no).join(', ')} (earliest expiry first)`; qty = 0;
-      } else if (line.scanned + qty > line.need) {
-        result = 'too_many'; message = `${sku} batch ${m[2]}: too many - ${line.scanned} of ${line.need} packed already${m[3] ? `, a carton is ${qty}` : ''}`; qty = 0;
-      } else { batchId = line.batch_id; message = `${sku} batch ${m[2]}: ${line.scanned + qty} of ${line.need}`; }
-    } else {
-      const line = mine[0];
-      if (line.scanned + qty > line.need) { result = 'too_many'; message = `${sku}: too many - ${line.scanned} of ${line.need} packed already${m[3] ? `, a carton is ${qty}` : ''}`; qty = 0; } else message = `${sku}: ${line.scanned + qty} of ${line.need}`;
-    }
+      if (!m[2]) { result = 'wrong_batch'; message = `${sku} is packed by batch: scan the batch label (${sku}/${(want[0] || mine[0].batch_no)}) or choose the batch in its row`; qty = 0; } else {
+        const line = mine.find((l) => l.batch_no === m[2] && l.need > 0);
+        if (line && line.scanned + qty <= line.need) { batchId = line.batch_id; message = `${sku} batch ${m[2]}: ${done + qty} of ${need}`; } else {
+          // phase 20 (v23): another batch (or more than planned from this one) is allowed when it is there and not expired; the supervisor finishes it
+          const lots = await stock.batchStock(q, sku, 'good', { godown: o.godown_id });
+          const lot = lots.find((l) => l.batch_no === m[2]);
+          const others = lot ? (await stock.scannedLots(q, o.godown_id, sku, orderNo)).get(Number(lot.batch_id)) || 0 : 0;
+          const [[mineOn]] = lot ? await q.query("SELECT COALESCE(SUM(qty), 0) AS n FROM pack_scans WHERE order_id = ? AND batch_id = ? AND result = 'ok'", [o.order_id, lot.batch_id]) : [[{ n: 0 }]];
+          const free = lot ? lot.qty - others - Number(mineOn.n) : 0;
+          if (lot && lot.expired) { result = 'expired'; message = `${sku} batch ${m[2]} expired on ${lot.expiry_date}: it is never packed. Scan another batch.`; qty = 0; } else if (free < qty) {
+            result = 'wrong_batch'; message = `${sku} batch ${m[2]}: not in that batch - ${Math.max(0, free)} left${others ? ` (${others} are scanned by another packer)` : ''}. ${orderNo} takes batch ${want.join(', ') || mine.map((l) => l.batch_no).join(', ')} (oldest first).`; qty = 0;
+          } else { batchId = lot.batch_id; off = 1; message = `${sku} batch ${m[2]}: ${done + qty} of ${need} - not the batch picked for it (oldest first), your supervisor finishes this packing`; }
+        }
+      }
+    } else message = `${sku}: ${done + qty} of ${need}`;
   }
-  await q.query('INSERT INTO pack_scans (order_id, code, sku_code, batch_id, qty, result, message, emp_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [o.order_id, code, sku, batchId, qty, result, message.slice(0, 255), empId]);
-  return { result, message, state: await packState(q, o.order_id) };
+  await q.query('INSERT INTO pack_scans (order_id, code, sku_code, batch_id, qty, result, message, emp_id, off_plan) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', [o.order_id, code, sku, batchId, qty, result.slice(0, 12), message.slice(0, 255), empId, off]);
+  return { result, message, off: Boolean(off), state: await packState(q, o.order_id) };
+}
+
+/** phase 20 (v23): take one scan off the order (the packer put that pack back) */
+async function undoScan(q, orderNo, scanId, empId) {
+  const o = await lockOrder(q, orderNo, ['packing']);
+  const [[s]] = await q.query("SELECT scan_id, sku_code, qty FROM pack_scans WHERE scan_id = ? AND order_id = ? AND result = 'ok' AND qty > 0", [Number(scanId), o.order_id]);
+  if (!s) throw new DeliveryError('That scan is not on this order', 404);
+  await q.query('DELETE FROM pack_scans WHERE scan_id = ?', [s.scan_id]);
+  await audit(q, { empId, action: 'pack_undo', entity: 'order', entityId: orderNo, before: { sku: s.sku_code, qty: s.qty } });
+  return { removed: { sku_code: s.sku_code, qty: Number(s.qty) }, state: await packState(q, o.order_id) };
 }
 
 async function resetScans(q, orderNo, empId) {
@@ -174,30 +219,16 @@ async function resetScans(q, orderNo, empId) {
   return { state: await packState(q, o.order_id) };
 }
 
-/** Packing -> Packed. b = { cartons, weight_kg, override_reason }; the override needs canOverride */
+/**
+ * Packing -> Packed. b = { cartons, weight_kg, short: { sku: why }, override_reason }; a short packing needs canOverride
+ * (Approve on Packing). Phase 20: the scanned packs leave Good now and what is not packed goes to a balance order (fulfil.js).
+ */
 async function markPacked(q, orderNo, b, empId, canOverride) {
   const o = await lockOrder(q, orderNo, ['packing']);
   const waiting = await commerce.pendingHolds(q, orderNo);
   if (waiting.length) throw new DeliveryError(`${orderNo} waits for approval: it cannot be packed yet`, 409);
-  const cartons = Number(b.cartons);
-  const weight = String(b.weight_kg ?? '').trim();
-  if (!Number.isInteger(cartons) || cartons < 1 || cartons > 999) throw new DeliveryError('Cartons: a whole number from 1');
-  if (!/^\d{1,4}(\.\d{1,2})?$/.test(weight) || Number(weight) <= 0) throw new DeliveryError('Weight in kg, e.g. 12.5');
-  const state = await packState(q, o.order_id);
-  const reason = String(b.override_reason || '').trim().slice(0, 255);
-  if (!state.complete) {
-    if (!reason) {
-      const open = state.lines.filter((l) => l.scanned !== l.need).map((l) => `${l.sku_code}${l.batch_no ? ` ${l.batch_no}` : ''} ${l.scanned} of ${l.need}`);
-      throw new DeliveryError(`Not everything is scanned: ${open.join(', ')}`, 409);
-    }
-    if (!canOverride) throw new DeliveryError('Packing without a full scan needs "approve" on Packing', 403);
-  }
-  await commerce.setStatus(q, o, 'packed', empId, state.complete ? `${cartons} carton(s), ${weight} kg` : `OVERRIDE: ${reason} (${cartons} carton(s), ${weight} kg)`,
-    { cartons, weight_kg: Number(weight), packed_by: empId, pack_override: state.complete ? null : reason });
-  if (!state.complete) await audit(q, { empId, action: 'pack_override', entity: 'order', entityId: orderNo, after: { reason, lines: state.lines.map((l) => `${l.sku_code} ${l.scanned}/${l.need}`) } });
-  return { order_no: orderNo, status: 'packed', override: !state.complete };
+  return wrap(() => fulfil.packDone(q, o, b, empId, canOverride));
 }
-
 // ---------------------------------------------------------------- trips
 async function tripRow(q, tripId, lock = false) {
   const [[t]] = await q.query(`SELECT t.trip_id, t.trip_date, t.status, t.driver_id, d.emp_id AS driver_emp FROM delivery_trips t JOIN drivers d ON d.driver_id = t.driver_id WHERE t.trip_id = ?${lock ? ' FOR UPDATE' : ''}`, [tripId]);
@@ -257,10 +288,62 @@ async function createTrip(q, b, empId) {
     await q.query('INSERT INTO trip_stops (trip_id, order_id, seq) VALUES (?, ?, ?)', [ins.insertId, o.order_id, seq]);
   }
   for (const no of pickups) { seq += 1; await addPickup(q, ins.insertId, no, seq, empId); }
+  await checkLoad(q, ins.insertId);
   await audit(q, { empId, action: 'create', entity: 'trip', entityId: `T-${ins.insertId}`, after: { godown: gs[0], trip_date: day, vehicle_id: v.vehicle_id, driver_id: d.driver_id, stops: nos, pickups } });
   return { trip_id: ins.insertId };
 }
 
+/** phase 20 (v23): what is loaded must fit the vehicle (weight and boxes) */
+async function checkLoad(q, tripId) {
+  const [[l]] = await q.query(`SELECT v.number, v.max_kg, v.max_boxes, COALESCE(SUM(o.weight_kg), 0) AS kg, COALESCE(SUM(o.cartons), 0) AS boxes
+      FROM delivery_trips t JOIN vehicles v ON v.vehicle_id = t.vehicle_id LEFT JOIN trip_stops s ON s.trip_id = t.trip_id AND s.kind = 'delivery' LEFT JOIN orders o ON o.order_id = s.order_id
+      WHERE t.trip_id = ? GROUP BY v.number, v.max_kg, v.max_boxes`, [tripId]);
+  if (!l) return;
+  const kg = Number(l.kg); const boxes = Number(l.boxes);
+  if ((l.max_kg !== null && kg > Number(l.max_kg) + 1e-9) || (l.max_boxes !== null && boxes > Number(l.max_boxes))) {
+    throw new DeliveryError(`Too heavy for ${l.number}: the load would be ${Math.round(kg * 100) / 100} kg and ${boxes} boxes; it carries ${Number(l.max_kg)} kg and ${l.max_boxes} boxes. Use another trip or a bigger vehicle.`, 409);
+  }
+}
+/** phase 20 (v23): a vehicle with lapsed insurance or fitness, or a driver with no (or a lapsed) licence, cannot go out -> '' | why */
+async function papersProblem(q, tripId) {
+  const [[t]] = await q.query(`SELECT v.number, v.is_active AS v_on, DATE_FORMAT(v.insurance_until, '%Y-%m-%d') AS ins, DATE_FORMAT(v.fitness_until, '%Y-%m-%d') AS fc, d.name AS driver,
+      d.licence_no, DATE_FORMAT(d.licence_until, '%Y-%m-%d') AS lic FROM delivery_trips t JOIN vehicles v ON v.vehicle_id = t.vehicle_id JOIN drivers d ON d.driver_id = t.driver_id WHERE t.trip_id = ?`, [tripId]);
+  const day = new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10);
+  const vp = [];
+  if (!Number(t.v_on)) vp.push('not in use');
+  if (t.ins && t.ins < day) vp.push(`insurance ended ${t.ins}`);
+  if (t.fc && t.fc < day) vp.push(`fitness certificate ended ${t.fc}`);
+  if (vp.length) return `${t.number} cannot go out: ${vp.join(', ')}. Renew it in Vehicles and drivers, or choose another vehicle.`;
+  if (t.licence_no && t.lic && t.lic < day) return `${t.driver} cannot drive: licence ended ${t.lic}.`;
+  return '';
+}
+/** phase 20 (v23): load one more packed order (our vehicle, same godown) on a planned trip, within the vehicle's limits */
+async function addStop(q, tripId, orderNo, empId, admin) {
+  const t = await tripRow(q, tripId, true);
+  if (t.status !== 'planned') throw new DeliveryError(`Trip T-${tripId} has started: nothing more is loaded`, 409);
+  const o = await lockOrder(q, String(orderNo || ''), ['packed']);
+  if (o.delivery_kind !== 'own') throw new DeliveryError(`${o.order_no} goes by ${o.delivery_kind === 'courier' ? 'courier' : 'customer pickup'}, not on a trip`);
+  const [[g]] = await q.query('SELECT (SELECT godown_id FROM orders WHERE order_id = ?) AS og, (SELECT godown_id FROM delivery_trips WHERE trip_id = ?) AS tg', [o.order_id, tripId]);
+  if (Number(g.og) !== Number(g.tg)) throw new DeliveryError('A trip leaves from one godown: that order ships from another', 409);
+  if (admin && !godowns.covers(admin, g.tg)) throw new DeliveryError('You do not work at that godown', 403);
+  const [[open]] = await q.query("SELECT t.trip_id FROM trip_stops s JOIN delivery_trips t ON t.trip_id = s.trip_id WHERE s.order_id = ? AND t.status IN ('planned', 'out') AND s.status = 'pending'", [o.order_id]);
+  if (open) throw new DeliveryError(`${o.order_no} is on trip T-${open.trip_id} already`, 409);
+  const [[m]] = await q.query('SELECT COALESCE(MAX(seq), 0) AS n FROM trip_stops WHERE trip_id = ?', [tripId]);
+  await q.query('INSERT INTO trip_stops (trip_id, order_id, seq) VALUES (?, ?, ?)', [tripId, o.order_id, Number(m.n) + 1]);
+  await checkLoad(q, tripId);
+  await audit(q, { empId, action: 'load', entity: 'trip', entityId: `T-${tripId}`, after: { order: o.order_no } });
+  return { trip_id: tripId, order_no: o.order_no };
+}
+/** phase 20 (v23): a planned trip that will not go is deleted; its orders wait in Packed, waiting again */
+async function deleteTrip(q, tripId, empId) {
+  const t = await tripRow(q, tripId, true);
+  if (t.status !== 'planned') throw new DeliveryError(`Trip T-${tripId} has started: it cannot be deleted`, 409);
+  const [stops] = await q.query(`SELECT ${STOP_KEY} AS stop_key FROM ${STOP_FROM} WHERE s.trip_id = ?`, [tripId]);
+  await q.query('DELETE FROM trip_stops WHERE trip_id = ?', [tripId]);
+  await q.query('DELETE FROM delivery_trips WHERE trip_id = ?', [tripId]);
+  await audit(q, { empId, action: 'delete', entity: 'trip', entityId: `T-${tripId}`, before: { stops: stops.map((x) => x.stop_key) } });
+  return { trip_id: tripId, deleted: true };
+}
 /** planned trips: new route order (order nos. and return nos. in the new order); removing a stop = leaving it out */
 async function setStops(q, tripId, orderNos, empId) {
   const t = await tripRow(q, tripId, true);
@@ -285,6 +368,8 @@ async function startTrip(q, tripId, empId) {
   const s = await commerceSettings.read(q);
   const [stops] = await q.query('SELECT s.stop_id, s.kind, o.order_no FROM trip_stops s JOIN orders o ON o.order_id = s.order_id WHERE s.trip_id = ? ORDER BY s.seq', [tripId]);
   if (!stops.length) throw new DeliveryError('The trip has no stop');
+  const papers = await papersProblem(q, tripId);
+  if (papers) throw new DeliveryError(papers, 409);
   let cash = 0;
   for (const st of stops) {
     if (st.kind === 'pickup') continue; // a return pickup: nothing leaves the godown
@@ -320,11 +405,41 @@ async function stopDelivered(q, stopId, b, photo, empId, office) {
   if (st.otp && String(b.otp || '').trim() !== st.otp) throw Object.assign(new DeliveryError('The OTP does not match: ask the customer for the 4-digit code'), { otpWrong: true });
   const pic = photo ? await storable(photo) : null; // checked by its bytes and made small (photo-check.js)
   if (photo && !pic) throw new DeliveryError('Photo: a JPEG, PNG or WebP picture');
-  await q.query("UPDATE trip_stops SET status = 'delivered', receiver_name = ?, photo = ?, photo_type = ?, done_by = ?, done_at = UTC_TIMESTAMP() WHERE stop_id = ?",
-    [name, pic ? pic.buffer : null, pic ? pic.mimetype : null, empId, stopId]);
+  // phase 20: delivered short: the customer keeps part (kept = { sku: packs }); the rest comes back with a credit note
+  let kept = b.kept;
+  if (typeof kept === 'string') { try { kept = JSON.parse(kept); } catch (e) { kept = null; } }
+  const k = kept ? await wrap(() => fulfil.keptToBack(q, st.order_id, kept)) : { short: false, back: {} };
+  const shortWhy = String(b.short_reason || '').trim().slice(0, 120);
+  if (k.short && !shortWhy) throw Object.assign(new DeliveryError('Why did they not keep everything?'), { code: 'fields', fields: { short_reason: 'Choose why.' } });
+  const signed = [true, 1, '1', 'true', 'on'].includes(b.signed) ? 1 : 0; // v23: signed the packing slip (proof of delivery)
+  if (!signed && !pic) throw Object.assign(new DeliveryError('A signed slip or a photo is the proof.'), { code: 'fields', fields: { proof: 'Tick signed, or add a photo.' } });
+  await q.query("UPDATE trip_stops SET status = 'delivered', receiver_name = ?, signed = ?, photo = ?, photo_type = ?, kept_json = ?, failed_reason = ?, done_by = ?, done_at = UTC_TIMESTAMP() WHERE stop_id = ?",
+    [name, signed, pic ? pic.buffer : null, pic ? pic.mimetype : null, k.short ? JSON.stringify(k.back) : null, k.short ? `Short: ${shortWhy}` : null, empId, stopId]);
   const o = await lockOrder(q, st.order_no, ['out_for_delivery']);
-  await commerce.setStatus(q, o, 'delivered', empId, `Received by ${name} (trip T-${t.trip_id})${photo ? ', photo' : ''}`, { received_by: name, delivery_attempts: (await attempts(q, o.order_id)) + 1 });
-  return { stop_id: stopId, status: 'delivered' };
+  await commerce.setStatus(q, o, 'delivered', empId, `Received by ${name} (trip T-${t.trip_id})${photo ? ', photo' : ''}${k.short ? `; delivered short: ${Object.entries(k.back).map(([s0, n]) => `${n} ${s0}`).join(', ')} not kept (${shortWhy})` : ''}`, { received_by: name, delivery_attempts: (await attempts(q, o.order_id)) + 1 });
+  const back = k.short ? await wrap(() => fulfil.notKept(q, o.order_id, k.back, shortWhy, empId)) : null;
+  if (back) await q.query('UPDATE trip_stops SET return_back_id = (SELECT return_id FROM returns WHERE return_no = ?) WHERE stop_id = ?', [back.return_no, stopId]);
+  const [[due]] = await q.query('SELECT amount_due FROM orders WHERE order_id = ?', [o.order_id]);
+  return { stop_id: stopId, status: k.short ? 'short' : 'delivered', back, cash_due: Math.max(0, Number(due.amount_due)) };
+}
+
+/** phase 20: refused at the door: nothing kept; every pack comes back to the Returned shelf with its credit note */
+async function stopRefused(q, stopId, b, empId, office) {
+  const st = await stopRow(q, stopId);
+  const t = await tripRow(q, st.trip_id);
+  if (!canDrive(t, empId, office)) throw new DeliveryError('Only the driver of this trip (or the office) can mark its stops', 403);
+  if (t.status !== 'out') throw new DeliveryError(`Trip T-${t.trip_id} is ${t.status}`, 409);
+  if (st.status !== 'pending') throw new DeliveryError(`This stop is ${st.status} already`, 409);
+  if (st.kind === 'pickup') throw new DeliveryError(`${st.return_no} is a return pickup`);
+  const why = String(b.reason || '').trim().slice(0, 120);
+  if (!why) throw Object.assign(new DeliveryError('Choose why it was refused.'), { code: 'fields', fields: { reason: 'Choose why.' } });
+  const all = await fulfil.carried(q, st.order_id);
+  await q.query("UPDATE trip_stops SET status = 'refused', failed_reason = ?, kept_json = ?, done_by = ?, done_at = UTC_TIMESTAMP() WHERE stop_id = ?", [`Refused: ${why}`, JSON.stringify(all), empId, stopId]);
+  const o = await lockOrder(q, st.order_no, ['out_for_delivery']);
+  await commerce.setStatus(q, o, 'refused', empId, `Refused at delivery: ${why} (trip T-${t.trip_id})`, { failed_reason: `Refused: ${why}`.slice(0, 255), delivery_attempts: (await attempts(q, o.order_id)) + 1 });
+  const back = await wrap(() => fulfil.notKept(q, o.order_id, all, `Refused at delivery: ${why}`, empId));
+  await q.query('UPDATE trip_stops SET return_back_id = (SELECT return_id FROM returns WHERE return_no = ?) WHERE stop_id = ?', [back.return_no, stopId]);
+  return { stop_id: stopId, status: 'refused', back };
 }
 /**
  * a wrong delivery OTP, counted outside the rolled-back transaction (security review L1): after 5 wrong codes the stop
@@ -385,7 +500,12 @@ async function stopCash(q, stopId, b, empId, office) {
   if (t.status !== 'out') throw new DeliveryError(`Trip T-${t.trip_id} is ${t.status}`, 409);
   if (st.kind !== 'delivery') throw new DeliveryError(`${st.return_no || 'This stop'} is a return pickup: no cash is collected there`);
   const amount = String(b.amount ?? '').trim();
-  const r = await wrap(() => commerce.recordPayment(q, st.order_no, { amount, mode: 'cash', note: `Collected on trip T-${t.trip_id}` }, empId)); // today: cash is counted when it is collected
+  // v23 (v21): less than due needs a reason; the supervisor sees it at trip close
+  const [[od]] = await q.query("SELECT amount_due, payment_terms FROM orders WHERE order_id = ?", [st.order_id]);
+  const why = String(b.why || '').trim().slice(0, 80);
+  const less = round2(Number(od.amount_due) - Number(amount));
+  if (od.payment_terms === 'cod' && /^\d{1,9}(\.\d{1,2})?$/.test(amount) && less > 0.005 && !why) throw Object.assign(new DeliveryError(`Cash is Rs ${less.toFixed(2)} less than due. Choose why.`), { code: 'fields', fields: { why: 'Choose why.' } });
+  const r = await wrap(() => commerce.recordPayment(q, st.order_no, { amount, mode: 'cash', note: `Collected on trip T-${t.trip_id}${less > 0.005 && why ? `; Rs ${less.toFixed(2)} less than due: ${why}` : ''}` }, empId)); // today: cash is counted when it is collected
   await q.query('UPDATE trip_stops SET cash_collected = cash_collected + ? WHERE stop_id = ?', [Number(amount), stopId]);
   return { stop_id: stopId, ...r };
 }
@@ -393,7 +513,8 @@ async function stopCash(q, stopId, b, empId, office) {
 /** End trip: no stop left pending; cash collected vs handed over */
 async function endTrip(q, tripId, b, empId, office) {
   const t = await tripRow(q, tripId, true);
-  if (!canDrive(t, empId, office)) throw new DeliveryError('Only the driver of this trip (or the office) can end it', 403);
+  if (!office) throw new DeliveryError('The supervisor closes the trip and counts the cash the driver hands in', 403); // v23: plans trips and counts cash = Create on Delivery
+  if (t.driver_emp && t.driver_emp === empId) throw new DeliveryError('Not your own trip: someone else counts the cash you hand in.', 403);
   if (t.status !== 'out') throw new DeliveryError(`Trip T-${tripId} is ${t.status}`, 409);
   const [[p]] = await q.query("SELECT SUM(status = 'pending') AS open, COALESCE(SUM(cash_collected), 0) AS cash FROM trip_stops WHERE trip_id = ?", [tripId]);
   if (Number(p.open)) throw new DeliveryError(`${p.open} stop(s) still open: mark them delivered or failed first`, 409);
@@ -450,9 +571,32 @@ async function pickedUp(q, orderNo, b, empId) {
   if (o.delivery_kind !== 'pickup') throw new DeliveryError(`${orderNo} is not a customer pickup`);
   const name = String(b.receiver_name || '').trim().slice(0, 120);
   if (!name) throw new DeliveryError('Who collected it? (name)');
+  // phase 20 (v23): their phone, signed slip and the cash paid at the godown (all optional for the API; the screen asks for the phone)
+  const phone = String(b.phone || '').trim();
+  if (phone && !/^\+?[\d\s-]{10,16}$/.test(phone)) throw Object.assign(new DeliveryError('Their phone: 10 digits'), { code: 'fields', fields: { phone: '10 digits.' } });
+  const cash = String(b.cash ?? '').trim();
+  if (cash && !/^\d{1,9}(\.\d{1,2})?$/.test(cash)) throw Object.assign(new DeliveryError('Cash received: an amount'), { code: 'fields', fields: { cash: 'An amount.' } });
+  let stranger = false;
+  if (phone) {
+    const pd = require('../shared/customerRules').phoneDigits(phone); // eslint-disable-line global-require
+    const [[known]] = await q.query(`SELECT COUNT(*) AS n FROM customers c WHERE c.customer_id = (SELECT customer_id FROM orders WHERE order_id = ?) AND (c.phone_digits = ?
+        OR EXISTS (SELECT 1 FROM customer_contacts k WHERE k.customer_id = c.customer_id AND k.is_active = 1 AND RIGHT(REGEXP_REPLACE(k.phone, '[^0-9]', ''), 10) = ?))`, [o.order_id, pd, pd]);
+    stranger = !Number(known.n);
+  }
   const out = await wrap(() => commerce.leaveGodown(q, o.order_id, empId));
-  await commerce.setStatus(q, o, 'delivered', empId, `Collected at the godown by ${name}${out.invoice_no ? `; invoice ${out.invoice_no}` : ''}`, { received_by: name, delivery_attempts: 1 });
-  return { order_no: orderNo, status: 'delivered', invoice_no: out.invoice_no };
+  await commerce.setStatus(q, o, 'delivered', empId, `Collected at the godown by ${name}${phone ? ` (${phone}${stranger ? ', not one of the customer contacts' : ''})` : ''}${[true, 1, '1', 'true'].includes(b.signed) ? ', signed the slip' : ''}${out.invoice_no ? `; invoice ${out.invoice_no}` : ''}`, { received_by: name, delivery_attempts: 1 });
+  if (cash && Number(cash) > 0) await wrap(() => commerce.recordPayment(q, orderNo, { amount: cash, mode: 'cash', note: 'Paid at the godown on pickup' }, empId));
+  return { order_no: orderNo, status: 'delivered', invoice_no: out.invoice_no, stranger_phone: stranger };
+}
+
+/** phase 20 (v23 9.11): the courier brought it back: every pack comes back to the Returned shelf with its credit note; the order is Refused */
+async function courierBack(q, orderNo, b, empId) {
+  const o = await lockOrder(q, orderNo, ['with_courier']);
+  const why = String(b.reason || '').trim().slice(0, 120) || 'Returned by the courier';
+  const all = await fulfil.carried(q, o.order_id);
+  await commerce.setStatus(q, o, 'refused', empId, `Came back from the courier: ${why}`, { failed_reason: `Refused: ${why}`.slice(0, 255), delivery_attempts: (await attempts(q, o.order_id)) + 1 });
+  const back = await wrap(() => fulfil.notKept(q, o.order_id, all, why, empId));
+  return { order_no: orderNo, status: 'refused', back };
 }
 
 /** the Operations counts */
@@ -472,7 +616,8 @@ async function opsCounts(q, scope = null) {
 }
 
 module.exports = {
+  undoScan, addStop, deleteTrip, courierBack, REFUSE_REASONS, CASH_WHY,
   otpFailed,
   FAIL_REASONS, DeliveryError, pickList, startPacking, packState, packScan, resetScans, markPacked, createTrip, setStops, startTrip,
-  stopDelivered, stopFailed, stopPickedUp, stopCash, endTrip, reattempt, returnToGodown, handToCourier, courierDelivered, pickedUp, opsCounts,
+  stopDelivered, stopRefused, stopFailed, stopPickedUp, stopCash, endTrip, reattempt, returnToGodown, handToCourier, courierDelivered, pickedUp, opsCounts,
 };

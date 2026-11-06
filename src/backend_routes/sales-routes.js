@@ -142,6 +142,53 @@ function register({ route, tx, db, by, InputError, canDo, commerceGate }) {
   route('post', '/sales/quotes', 'orders:create', saveQ(null), { ...G, status: 201 });
   route('put', '/sales/quotes/:no', 'orders:edit', (req, res) => saveQ(req.params.no)(req, res), G);
   route('post', '/sales/quotes/:no/lost', 'orders:edit', wrap(async (req) => tx(async (q) => { await seeDoc(req, await sales.quoteRow(q, req.params.no)); return sales.lostQuote(q, req.params.no, (req.body || {}).reason, by(req)); })), G);
+  // phase 20: Mail to customer: the quotation as a PDF, prepared in the Outbox (sent only where mail is on)
+  route('post', '/sales/quotes/:no/mail', 'orders:edit', wrap(async (req) => tx(async (q) => {
+    const r = await sales.quoteRow(q, req.params.no);
+    await seeDoc(req, r);
+    if (!['sent', 'won'].includes(sales.qState(r))) throw new InputError('Only a sent quote is mailed', 409);
+    const out = await require('./notifications').quoteSent(q, r.quote_id, by(req)); // eslint-disable-line global-require
+    await audit(q, { empId: by(req), action: 'mail', entity: 'quote', entityId: r.quote_no, after: out });
+    return out;
+  })), G);
+  // phase 20: Mail statement (Customer ledger): the statement as a PDF, prepared in the Outbox
+  route('post', '/sales/customers/:id/mail-statement', 'customers:view', wrap(async (req) => tx(async (q) => {
+    await seeCust(req, req.params.id);
+    return require('./notifications').statementMail(q, Number(req.params.id), by(req)); // eslint-disable-line global-require
+  })), G);
+  // phase 20: customers that look like this enquiry (same phone or e-mail), for "Link to CUS-..." (only those this user sees)
+  route('get', '/sales/leads/:id/matches', 'any', wrap(async (req) => {
+    await seeLead(req, req.params.id);
+    const [[l]] = await db.query('SELECT lead_id, phone, email, status FROM leads WHERE lead_id = ?', [Number(req.params.id)]);
+    if (!l) throw new InputError('Enquiry not found', 404);
+    const [[own]] = await db.query('SELECT customer_id, customer_no, name FROM customers WHERE lead_id = ? AND merged_into IS NULL LIMIT 1', [l.lead_id]);
+    const pd = l.phone ? require('../shared/customerRules').phoneDigits(l.phone) : null; // eslint-disable-line global-require
+    const found = await customers.duplicates(db, { phone_digits: pd || null, email: l.email ? String(l.email).trim().toLowerCase() : null });
+    const rows = [];
+    for (const c of found) { if (rows.some((x) => x.customer_id === c.customer_id)) { rows.find((x) => x.customer_id === c.customer_id).by.push(c.by); continue; } try { await seeCust(req, c.customer_id); rows.push({ ...c, by: [c.by] }); } catch (e) { /* not this user's customer */ } }
+    return { own: own || null, rows: rows.map((r) => ({ ...r, by: r.by.join(' and ') })), can: Boolean(custOf(req)) && ['new', 'contacted', 'qualified'].includes(l.status) && !own };
+  }), G);
+  // phase 20: an enquiry that is an existing customer is linked to it (no second record): Won, its calls and quotes move
+  route('post', '/sales/leads/:id/link', 'any', wrap(async (req) => {
+    if (!custOf(req)) throw new InputError('This needs edit on Leads and customers', 403);
+    await seeLead(req, req.params.id);
+    const cid = Number((req.body || {}).customer_id);
+    await seeCust(req, cid);
+    return tx(async (q) => {
+      const [[l]] = await q.query('SELECT lead_id, lead_ref, status FROM leads WHERE lead_id = ? FOR UPDATE', [Number(req.params.id)]);
+      const [[c]] = await q.query('SELECT customer_id, customer_no, name, lead_id, merged_into FROM customers WHERE customer_id = ? FOR UPDATE', [cid]);
+      if (!c || c.merged_into) throw new InputError('Choose the customer', 400);
+      if (!['new', 'contacted', 'qualified'].includes(l.status)) throw new InputError(`${l.lead_ref} is ${l.status}`, 409);
+      const [[own]] = await q.query('SELECT customer_no FROM customers WHERE lead_id = ? AND customer_id <> ? LIMIT 1', [l.lead_id, c.customer_id]);
+      if (own) throw new InputError(`${l.lead_ref} is already ${own.customer_no}: merge the two customers instead`, 409);
+      await customers.moveLeadRecords(q, l.lead_id, c.customer_id);
+      if (!c.lead_id) await q.query('UPDATE customers SET lead_id = ? WHERE customer_id = ?', [l.lead_id, c.customer_id]);
+      await q.query("UPDATE leads SET status = 'won', first_reply_at = COALESCE(first_reply_at, UTC_TIMESTAMP()), updated_at = UTC_TIMESTAMP() WHERE lead_id = ?", [l.lead_id]);
+      await q.query("UPDATE follow_ups SET status = 'done', done_at = UTC_TIMESTAMP(), done_by = ?, done_note = ? WHERE lead_id = ? AND status = 'open'", [by(req), `Linked to ${c.customer_no}`, l.lead_id]);
+      await audit(q, { empId: by(req), action: 'link', entity: 'lead', entityId: l.lead_ref, before: { status: l.status }, after: { status: 'won', customer: c.customer_no } });
+      return { lead_ref: l.lead_ref, customer_no: c.customer_no, name: c.name };
+    });
+  }), G);
   route('post', '/sales/quotes/:no/order', 'orders:create', wrap(async (req) => tx(async (q) => { await seeDoc(req, await sales.quoteRow(q, req.params.no)); return sales.quoteToOrder(q, req.params.no, by(req), req.admin); })), G);
 
   // ============================================================================================ standing orders

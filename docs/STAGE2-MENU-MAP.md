@@ -6,7 +6,7 @@ paths = the first one the user may open. "(live)" = also shown while Commerce is
 site's screens); every other entry shows only while Commerce is on. A placeholder shows the guide's texts and
 the phase that builds it (gap map build order; Website entries with no screen: phase 24, agreed 2 Nov 2026).
 
-148 menu lines = 13 groups + Online store + 23 sub-groups + 111 pages. Of the 112 entries that open something (pages and Online store), 86 open a screen and 26 the placeholder.
+148 menu lines = 13 groups + Online store + 23 sub-groups + 111 pages. Of the 112 entries that open something (pages and Online store), 88 open a screen and 24 the placeholder.
 
 | Menu page | Opens |
 |---|---|
@@ -26,14 +26,14 @@ the phase that builds it (gap map build order; Website entries with no screen: p
 | Sales / Orders / Back-orders | /admin/back-orders |
 | Sales / Returns / Return requests | /admin/commerce/returns |
 | Sales / Returns / Inspection | /admin/commerce/returns?status=received |
-| Fulfilment / Packing / To pick | /admin/commerce/packing?tab=pick |
-| Fulfilment / Packing / Packing | /admin/commerce/packing?tab=packing |
-| Fulfilment / Packing / Packed, waiting | /admin/commerce/packing?tab=packed |
-| Fulfilment / Delivery / Trips | /admin/commerce/delivery?tab=trips; /admin/commerce/my-trips (drivers) |
-| Fulfilment / Delivery / Courier and pickup | /admin/commerce/delivery?tab=other |
-| Fulfilment / Delivery / Proof of delivery | placeholder: Not built yet - phase 20 |
-| Fulfilment / Delivery / Failed / short / refused | /admin/commerce/delivery?tab=failed |
-| Fulfilment / Delivery / Cash on delivery | placeholder: Not built yet - phase 20 |
+| Fulfilment / Packing / To pick | /admin/to-pick |
+| Fulfilment / Packing / Packing | /admin/packing |
+| Fulfilment / Packing / Packed, waiting | /admin/packed-waiting |
+| Fulfilment / Delivery / Trips | /admin/trips; /admin/commerce/my-trips (drivers) |
+| Fulfilment / Delivery / Courier and pickup | /admin/courier-and-pickup |
+| Fulfilment / Delivery / Proof of delivery | /admin/proof-of-delivery |
+| Fulfilment / Delivery / Failed / short / refused | /admin/failed-deliveries |
+| Fulfilment / Delivery / Cash on delivery | /admin/cash-on-delivery |
 | Purchase / Indents | /admin/indents |
 | Purchase / Purchase orders | /admin/purchase-orders |
 | Purchase / Goods in | /admin/goods-in |
@@ -84,11 +84,11 @@ the phase that builds it (gap map build order; Website entries with no screen: p
 | Masters / Prices / Quantity slabs | /admin/quantity-slabs |
 | Masters / Prices / Special prices | /admin/special-prices |
 | Masters / Partners / Suppliers | /admin/suppliers |
-| Masters / Partners / Vehicles and drivers | /admin/commerce-settings#cs-l-vehicles |
-| Masters / Partners / Couriers | /admin/commerce-settings#cs-l-couriers |
+| Masters / Partners / Vehicles and drivers | /admin/vehicles |
+| Masters / Partners / Couriers | /admin/couriers |
 | Masters / Tax and units / Units of measure | /admin/units (live) |
 | Masters / Tax and units / HSN and GST rates | /admin/hsn-rates |
-| Masters / Tax and units / Delivery areas | /admin/commerce-settings#cs-l-delivery_areas |
+| Masters / Tax and units / Delivery areas | /admin/delivery-areas |
 | Website / Home page / Banners | /admin/banners (live) |
 | Website / Home page / Home doors | /admin/settings#cs-s-home-page (live) |
 | Website / Home page / Most loved | /admin/products#most-loved (live) |

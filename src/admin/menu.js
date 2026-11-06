@@ -281,11 +281,10 @@ export const MENU = [
       use: "print or follow the pick list so the right packs leave the shelf. │",
       to: [
        {
-        path: "commerce/packing",
+        path: "to-pick",
         section: "packing",
         action: "view",
-        commerce: true,
-        search: "tab=pick"
+        commerce: true
        }
       ]
      },
@@ -296,11 +295,10 @@ export const MENU = [
       use: "scan packs and cartons; when you press Packed, stock goes down. Expired or wrong batches are refused. │",
       to: [
        {
-        path: "commerce/packing",
+        path: "packing",
         section: "packing",
         action: "view",
-        commerce: true,
-        search: "tab=packing"
+        commerce: true
        }
       ]
      },
@@ -311,11 +309,10 @@ export const MENU = [
       use: "see what is ready to load on a vehicle or give to a courier.",
       to: [
        {
-        path: "commerce/packing",
+        path: "packed-waiting",
         section: "packing",
         action: "view",
-        commerce: true,
-        search: "tab=packed"
+        commerce: true
        }
       ]
      }
@@ -332,11 +329,10 @@ export const MENU = [
       use: "load orders on a trip, send it, and close it when the driver is back. │",
       to: [
        {
-        path: "commerce/delivery",
+        path: "trips",
         section: "delivery",
         action: "create",
-        commerce: true,
-        search: "tab=trips"
+        commerce: true
        },
        {
         path: "commerce/my-trips",
@@ -354,11 +350,10 @@ export const MENU = [
       use: "record the courier and tracking number, or who collected and their phone. │",
       to: [
        {
-        path: "commerce/delivery",
+        path: "courier-and-pickup",
         section: "delivery",
-        action: "create",
-        commerce: true,
-        search: "tab=other"
+        action: "view",
+        commerce: true
        }
       ]
      },
@@ -367,8 +362,14 @@ export const MENU = [
       label: "Proof of delivery",
       see: "the signature or photo for each delivered order.",
       use: "show the customer it was delivered, if they ask. │",
-      section: "delivery",
-      phase: 20
+      to: [
+       {
+        path: "proof-of-delivery",
+        section: "delivery",
+        action: "view",
+        commerce: true
+       }
+      ]
      },
      {
       id: "fulfilment/delivery/failed-short-refused",
@@ -377,11 +378,10 @@ export const MENU = [
       use: "bring the goods back to stock and make the credit note for what was not kept. │",
       to: [
        {
-        path: "commerce/delivery",
+        path: "failed-deliveries",
         section: "delivery",
-        action: "create",
-        commerce: true,
-        search: "tab=failed"
+        action: "view",
+        commerce: true
        }
       ]
      },
@@ -390,8 +390,14 @@ export const MENU = [
       label: "Cash on delivery",
       see: "cash each driver collected, handed in, and any difference.",
       use: "check driver cash against what was due and record it as receipts.",
-      section: "delivery",
-      phase: 20
+      to: [
+       {
+        path: "cash-on-delivery",
+        section: "delivery",
+        action: "view",
+        commerce: true
+       }
+      ]
      }
     ]
    }
@@ -1153,11 +1159,10 @@ export const MENU = [
       use: "keep the fleet up to date for trips. │",
       to: [
        {
-        path: "commerce-settings",
-        section: "settings",
+        path: "vehicles",
+        section: "delivery",
         action: "view",
-        commerce: true,
-        hash: "cs-l-vehicles"
+        commerce: true
        }
       ]
      },
@@ -1168,11 +1173,10 @@ export const MENU = [
       use: "choose a courier for an order.",
       to: [
        {
-        path: "commerce-settings",
-        section: "settings",
+        path: "couriers",
+        section: "delivery",
         action: "view",
-        commerce: true,
-        hash: "cs-l-couriers"
+        commerce: true
        }
       ]
      }
@@ -1217,11 +1221,10 @@ export const MENU = [
       use: "add areas; they can show on the website map (live).",
       to: [
        {
-        path: "commerce-settings",
-        section: "settings",
+        path: "delivery-areas",
+        section: "delivery",
         action: "view",
-        commerce: true,
-        hash: "cs-l-delivery_areas"
+        commerce: true
        }
       ]
      }

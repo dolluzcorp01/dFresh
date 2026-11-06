@@ -62,7 +62,8 @@ const PARTS = {
     'products', 'raw materials', 'units', 'kits', 'categories',
     'price lists', 'price list', 'quantity slabs', 'special prices', 'hsn rates', 'brand',
     'suppliers', 'purchase orders', 'goods in', 'quality check', 'supplier bills', 'supplier payments', 'recipes', 'production runs', 'wastage', 'stock status', 'batches and expiry', 'transfers', 'stock take', 'write-offs', 'reorder', 'stock ledger',
-    'enquiries', 'follow-ups', 'customer list', 'customer types', 'credit limits', 'customer ledger', 'quotes', 'orders', 'standing orders', 'back-orders'].map((k) => [`${k} page`, [['#page', '.a-main'], [
+    'enquiries', 'follow-ups', 'customer list', 'customer types', 'credit limits', 'customer ledger', 'quotes', 'orders', 'standing orders', 'back-orders',
+    'to pick', 'packing', 'packed waiting', 'trips', 'courier and pickup', 'proof of delivery', 'failed short refused', 'cash on delivery', 'vehicles', 'couriers', 'delivery areas'].map((k) => [`${k} page`, [['#page', '.a-main'], [
     ['page', '#page', '.a-main'], ['crumb', '.crumb', '.a-crumb'], ['title', '.ph h1', '.a-ph h1'], ['subtitle', '.ph p', '.a-ph p'],
     ['rule chips', '.rchips', '.a-rchips'], ['rule chip', '.rchips .pill', '.a-rchips .a-pill'], ['primary button', '.ph .acts .btn.primary', '.a-ph-acts .a-btn:not(.a-btn-ghost)'],
     ['card', '#page .card', k === 'roles' ? '.a-main .a-roleedit' : '.a-main .a-listcard, .a-main .a-card'], ['th', '#page table.t th', '.a-main .a-table th'], ['td', '#page table.t tbody td', '.a-main .a-table tbody td'],
@@ -145,7 +146,10 @@ const OUR_PATH = { 'list page': 'commerce/orders', 'godowns page': 'godowns', 's
   'reorder page': 'reorder', 'stock ledger page': 'stock-ledger', 'stock drawer': 'stock-status?open=DF044-M100', 'transfer drawer': 'transfers?open=1', // phase 18
   'enquiries page': 'leads', 'follow-ups page': 'commerce/follow-ups', 'customer list page': 'commerce/customers', 'customer types page': 'customer-types', 'credit limits page': 'credit-limits',
   'customer ledger page': 'customer-ledger', 'quotes page': 'quotes', 'orders page': 'commerce/orders', 'standing orders page': 'standing-orders', 'back-orders page': 'back-orders',
-  'quote drawer': 'quotes?open=DFQ%2F26-27%2F0003', 'order drawer': 'commerce/orders?open=DFO-260031' }; // phase 19
+  'quote drawer': 'quotes?open=DFQ%2F26-27%2F0003', 'order drawer': 'commerce/orders?open=DFO-260031', // phase 19
+  'to pick page': 'to-pick', 'packing page': 'packing', 'packed waiting page': 'packed-waiting', 'trips page': 'trips', 'courier and pickup page': 'courier-and-pickup',
+  'proof of delivery page': 'proof-of-delivery', 'failed short refused page': 'failed-deliveries', 'cash on delivery page': 'cash-on-delivery', 'vehicles page': 'vehicles',
+  'couriers page': 'couriers', 'delivery areas page': 'delivery-areas' }; // phase 20
 // v23's page per part (default: the Customer list)
 const V23_PAGE = { 'godowns page': 'admin/organisation/godowns', 'staff page': 'admin/users-and-security/staff', 'roles page': 'admin/users-and-security/roles',
   'approval rules page': 'admin/users-and-security/approval-rules', 'stand-ins page': 'admin/users-and-security/stand-ins',
@@ -167,7 +171,11 @@ const V23_PAGE = { 'godowns page': 'admin/organisation/godowns', 'staff page': '
   'write-offs page': 'inventory/write-offs', 'reorder page': 'inventory/reorder', 'stock ledger page': 'inventory/stock-ledger', 'stock drawer': 'inventory/stock-status', 'transfer drawer': 'inventory/transfers', // phase 18
   'enquiries page': 'sales/leads/enquiries', 'follow-ups page': 'sales/leads/follow-ups', 'customer list page': 'sales/customers/customer-list', 'customer types page': 'sales/customers/customer-types',
   'credit limits page': 'sales/customers/credit-limits', 'customer ledger page': 'sales/customers/customer-ledger', 'quotes page': 'sales/orders/quotes', 'orders page': 'sales/orders/orders',
-  'standing orders page': 'sales/orders/standing-orders', 'back-orders page': 'sales/orders/back-orders', 'quote drawer': 'sales/orders/quotes', 'order drawer': 'sales/orders/orders' }; // phase 19
+  'standing orders page': 'sales/orders/standing-orders', 'back-orders page': 'sales/orders/back-orders', 'quote drawer': 'sales/orders/quotes', 'order drawer': 'sales/orders/orders', // phase 19
+  'to pick page': 'fulfil/packing/to-pick', 'packing page': 'fulfil/packing/packing', 'packed waiting page': 'fulfil/packing/packed-waiting', 'trips page': 'fulfil/delivery/trips',
+  'courier and pickup page': 'fulfil/delivery/courier-and-pickup', 'proof of delivery page': 'fulfil/delivery/proof-of-delivery', 'failed short refused page': 'fulfil/delivery/failed-short-refused',
+  'cash on delivery page': 'fulfil/delivery/cash-on-delivery', 'vehicles page': 'masters/partners/vehicles-and-drivers', 'couriers page': 'masters/partners/couriers',
+  'delivery areas page': 'masters/tax-and-units/delivery-areas' }; // phase 20
 // ONLY=part,part limits the run (e.g. ONLY="godowns page,staff page")
 const ONLY = process.env.ONLY ? process.env.ONLY.split(',').map((x) => x.trim()) : null;
 async function ourPage(browser, w, h, part) {

@@ -152,13 +152,12 @@ function OrderDrawer({ no, canEdit, editFirst = false, onClose, onChanged }) {
           {canEdit && d.editable && <button type="button" className={`a-btn a-btn-sm${d.status === 'draft' ? '' : ' a-btn-ghost'}`} onClick={() => setPanel('edit')}>{d.status === 'draft' ? 'Open draft' : `Change${d.editable === 'reason' ? ' (with reason)' : ''}`}</button>}
           {canEdit && d.status === 'new' && d.hold_gone && <button type="button" className="a-btn a-btn-sm" disabled={act.busy} onClick={holdAgain}>Hold again</button>}
           {canPack && d.status === 'new' && <button type="button" className="a-btn a-btn-sm a-btn-ghost" disabled={act.busy} onClick={startPacking}>Start packing</button>}
-          {d.status === 'packing' && <Link className="a-btn a-btn-sm" to="/admin/commerce/packing">Scan in Packing</Link>}
+          {d.status === 'packing' && <Link className="a-btn a-btn-sm" to={`/admin/packing?open=${encodeURIComponent(d.order_no)}`}>Scan in Packing</Link>}
           {live && <button type="button" className="a-btn a-btn-sm a-btn-ghost" onClick={() => printInvoice(live.invoice_id)}>Invoice {live.invoice_no}</button>}
           {canReturn && d.status === 'delivered' && <button type="button" className="a-btn a-btn-sm a-btn-ghost" onClick={() => setPanel('return')}>New return</button>}
         </>
       ) : null}
-      footer={<><span className="a-p15-sp" />{d && canCancel && !['cancelled', 'delivered'].includes(d.status) && !pendingCancel && <button type="button" className="a-btn a-btn-ghost" onClick={() => setPanel('cancel')}>Cancel order</button>}
-        <button type="button" className="a-btn a-btn-ghost" onClick={onClose}>Close</button></>}>
+      footer={<><span className="a-p15-sp" /><button type="button" className="a-btn a-btn-ghost" onClick={onClose}>Close</button></>}>
       <Loading state={o}>
         {d && (
           <>
@@ -170,7 +169,6 @@ function OrderDrawer({ no, canEdit, editFirst = false, onClose, onChanged }) {
             {d.status === 'packed' && d.approvals.some((a) => a.status === 'pending' && a.kind !== 'cancel_after_dispatch') && <Notice kind="warn">An edit waits for approval: it cannot be dispatched until then.</Notice>}
             {pendingCancel && <Notice kind="warn">Cancelling waits for approval (request #{pendingCancel.approval_id}): {pendingCancel.summary}</Notice>}
             {d.status === 'cancelled' && <Notice kind="error">Cancelled: {d.cancel_reason}. Reserved stock released, coupon and wallet use given back{d.invoices.length ? ', invoice cancelled with a credit note' : ''}.</Notice>}
-            {panel === 'cancel' && <CancelPanel order={d} onDone={(r) => { setPanel(null); reload(); act.setMsg({ kind: r.pending ? 'info' : 'ok', text: r.pending ? `Cancelling ${no} after dispatch waits for approval (request #${r.approval_id}).` : `${no} cancelled.` }); }} onCancel={() => setPanel(null)} />}
             {d.status !== 'cancelled' && d.status !== 'approval' && (
               <ol className="a-steps">
                 {flow.map((s) => <li key={s} className={flow.indexOf(s) <= flow.indexOf(d.status === 'failed' ? 'packed' : d.status) ? 'done' : ''}>{LABEL[s]}<small>{fmtDate(d[STAMP[s]])}</small></li>)}
@@ -265,6 +263,7 @@ function OrderDrawer({ no, canEdit, editFirst = false, onClose, onChanged }) {
             <ul className="a-hist">{d.history.map((h, n) => (
               <li key={n}>{fmtDate(h.created_at)} · <b>{h.to_status === 'edited' ? 'Edited' : LABEL[h.to_status] || h.to_status}</b>{h.note ? ` - ${h.note}` : ''} <small className="a-muted">({h.emp_id})</small></li>
             ))}</ul>
+            {canCancel && !['cancelled', 'delivered', 'refused'].includes(d.status) && !pendingCancel && <CancelPanel order={d} onDone={(r) => { reload(); act.setMsg({ kind: r.pending ? 'info' : 'ok', text: r.pending ? `Cancelling ${no} after dispatch waits for approval (request #${r.approval_id}).` : `${no} cancelled.` }); }} />}
           </>
         )}
       </Loading>
@@ -272,21 +271,20 @@ function OrderDrawer({ no, canEdit, editFirst = false, onClose, onChanged }) {
   );
 }
 
-function CancelPanel({ order, onDone, onCancel }) {
+function CancelPanel({ order, onDone }) {
   const act = useAction();
   const [reason, setReason] = useState('');
   const after = GONE.includes(order.status);
   const go = () => act.run(async () => onDone(await api.send('POST', `/commerce/orders/${order.order_no}/cancel`, { reason })));
   return (
-    <div className="a-card">
-      <h3>Cancel {order.order_no}</h3>
+    <div className="a-p16-endbox">
+      <b>Cancel order</b>
       <p className="a-muted">{after ? (order.cancelNeedsApproval ? 'The goods have left the godown: cancelling waits for approval. When approved the goods come back to stock and the invoice is cancelled with a credit note.' : 'The goods have left: they come back to stock and the invoice is cancelled with a credit note.')
         : 'Reserved stock is released; coupon use and wallet credit are given back.'}{Number(order.amount_paid) > 0 ? ` ${rs(order.amount_paid)} was paid: record the refund on the order afterwards.` : ''}</p>
       {act.note}
-      <label className="a-field"><span>Why is it cancelled? (required)</span><textarea rows={2} maxLength={255} value={reason} autoFocus onChange={(e) => setReason(e.target.value)} /></label>
+      <label className="a-field"><span>Why is it cancelled? *</span><textarea rows={2} maxLength={255} value={reason} onChange={(e) => setReason(e.target.value)} /></label>
       <span className="a-row">
-        <button type="button" className="a-btn a-btn-danger" disabled={act.busy || !reason.trim()} onClick={go}>{after && order.cancelNeedsApproval ? 'Ask to cancel' : 'Cancel the order'}</button>
-        <button type="button" className="a-btn a-btn-ghost" disabled={act.busy} onClick={onCancel}>Keep it</button>
+        <button type="button" className="a-btn a-btn-ghost a-btn-sm a-p20-danger" disabled={act.busy || !reason.trim()} onClick={go}>{after && order.cancelNeedsApproval ? 'Ask to cancel' : 'Cancel the order'}</button>
       </span>
     </div>
   );
@@ -380,7 +378,7 @@ function qtyProblem(sku, packs) {
   return null;
 }
 const unitsOf = (sku) => (!sku ? ['pack'] : sku.sell_unit === 'carton' ? ['carton'] : sku.sell_unit === 'both' && Number(sku.packs_per_carton) > 1 ? ['pack', 'carton'] : ['pack']);
-const blankLine = () => ({ sku_code: '', qty: 1, unit: 'pack', price: '', auto: true });
+const blankLine = () => ({ sku_code: '', qty: 1, unit: 'pack', price: '', auto: true, is_free: false, free_why: '' });
 const fromOrder = (o, which) => (which === 'bill'
   ? { name: o.bill_name, gstin: o.bill_gstin || '', address: o.bill_address || '', town: o.bill_town || '', state_code: o.bill_state_code, pincode: o.bill_pincode || '', phone: o.bill_phone || '' }
   : { name: o.ship_name, address: o.ship_address || '', town: o.ship_town || '', state_code: o.ship_state_code, pincode: o.ship_pincode || '', phone: o.ship_phone || '' });
@@ -396,7 +394,7 @@ function OrderForm({ order = null, onClose, onSaved }) {
   const [customerId, setCustomerId] = useState(editing ? String(order.customer_id) : '');
   const [terms, setTerms] = useState(editing ? order.payment_terms : 'cod');
   // phase 19: a kit is one line (its parts are kept apart); a line made from a quote keeps the quoted price (kept)
-  const [lines, setLines] = useState(() => (editing ? order.items.filter((i) => !i.kit_key && !i.is_free).map((i) => ({ sku_code: i.sku_code, qty: i.qty, unit: 'pack', price: Number(i.list_price) === Number(i.price) ? '' : String(Number(i.price)), auto: Number(i.list_price) === Number(i.price),
+  const [lines, setLines] = useState(() => (editing ? order.items.filter((i) => !i.kit_key && (!i.is_free || (i.free_why && !i.offer_label))).map((i) => ({ sku_code: i.sku_code, qty: i.qty, unit: 'pack', is_free: Boolean(i.is_free), free_why: i.free_why || '', price: i.is_free || Number(i.list_price) === Number(i.price) ? '' : String(Number(i.price)), auto: Boolean(i.is_free) || Number(i.list_price) === Number(i.price),
     kept: Boolean(order.quote) ? { price: Number(i.price), qty: i.qty } : null })) : [blankLine()]));
   const [kits, setKits] = useState(() => (editing ? [...new Map(order.items.filter((i) => i.kit_key).map((i) => [i.kit_key, { kit_key: i.kit_key, qty: String(i.kit_qty || 1) }])).values()] : []));
   const [bill, setBill] = useState(editing ? fromOrder(order, 'bill') : null);
@@ -450,13 +448,14 @@ function OrderForm({ order = null, onClose, onSaved }) {
     const sku = skuMap.get(l.sku_code.trim().toUpperCase());
     const packs = (Number(l.qty) || 0) * (sku && l.unit === 'carton' ? Number(sku.packs_per_carton) || 1 : 1);
     const lp = listPrice(sku, listKey);
-    const price = l.price === '' ? lp : Number(l.price);
-    const below = lp && price !== null && price < lp ? Math.round(((lp - price) / lp) * 10000) / 100 : 0;
+    const price = l.is_free ? 0 : l.price === '' ? lp : Number(l.price);
+    const below = !l.is_free && lp && price !== null && price < lp ? Math.round(((lp - price) / lp) * 10000) / 100 : 0;
     const qtyBad = !sku ? null : !Number.isInteger(Number(l.qty)) || Number(l.qty) < 1 ? 'Quantity: a whole number from 1' : qtyProblem(sku, packs);
     const short = Boolean(sku && packs > sku.available);
     // phase 15 (D7): a typed price below the pack's lowest allowed price (without GST) waits for approval
     const ex = price === null || !sku ? null : inclusive ? price / (1 + sku.gst_rate / 100) : price;
-    return { l, sku, packs, lp, price, below, problem: qtyBad, short, needsApproval: Boolean(f && f.approval.floor && l.price !== '' && sku && sku.min_price != null && ex !== null && ex < sku.min_price - 0.004) };
+    const whyBad = l.is_free && String(l.free_why || '').trim().length < 3 ? 'Say why it is free' : null; // phase 20: a hand-ticked free line, as quotes have
+    return { l, sku, packs, lp, price, below, problem: qtyBad || whyBad, short, needsApproval: Boolean(f && f.approval.floor && !l.is_free && l.price !== '' && sku && sku.min_price != null && ex !== null && ex < sku.min_price - 0.004) };
   });
   const items = rows.filter((r) => r.sku).map((r) => ({ sku_code: r.sku.sku_code, qty: r.packs, gst_rate: r.sku.gst_rate,
     price: r.price === null ? 0 : inclusive ? round2(r.price / (1 + r.sku.gst_rate / 100)) : r.price }));
@@ -476,13 +475,13 @@ function OrderForm({ order = null, onClose, onSaved }) {
   const overdueHold = Boolean(customer && !editing && customer.overdue > 0);
   const held = P ? P.holds.length > 0 : rows.some((r) => r.needsApproval);
   const lineOf = (sku) => (P ? P.lines.find((x) => x.sku_code === sku && !x.is_free) : null);
-  const freeLines = P ? P.lines.filter((x) => x.is_free) : [];
+  const freeLines = P ? P.lines.filter((x) => x.is_free && !x.free_why) : []; // offer gifts (a hand-ticked free line is a row of its own)
   const dirty = Boolean(customerId || lines.some((l) => l.sku_code));
   // what the server makes of it (offers, coupon, wallet, totals, approvals), shortly after each change
   const body = () => ({
     payment_terms: terms, note, coupon_code: couponApplied.trim().toUpperCase() || null, wallet_use: Number(wallet) || 0,
     manual_discount: manual.amount, manual_discount_reason: manual.reason,
-    items: [...rows.filter((r) => r.l.sku_code && r.sku).map((r) => ({ sku_code: r.l.sku_code.trim().toUpperCase(), qty: r.packs, price: r.l.auto ? '' : r.l.price,
+    items: [...rows.filter((r) => r.l.sku_code && r.sku).map((r) => ({ sku_code: r.l.sku_code.trim().toUpperCase(), qty: r.packs, price: r.l.auto || r.l.is_free ? '' : r.l.price, ...(r.l.is_free ? { is_free: true, free_why: r.l.free_why } : {}),
       kept: Boolean(r.l.kept && !r.l.auto && Number(r.l.price) === r.l.kept.price && r.packs === r.l.kept.qty) })),
     ...kits.filter((k) => k.kit_key && Number(k.qty) > 0).map((k) => ({ kit_key: k.kit_key, qty: Number(k.qty), price: '' }))],
     bill, ship: ship || { ...bill }, bill_address_id: billId, ship_address_id: shipId, contact_id: contactId, override_stock: override, delivery_method_id: method ? method.method_id : '', delivery_area_id: areaId,
@@ -628,11 +627,13 @@ function OrderForm({ order = null, onClose, onSaved }) {
                         {problem && <small className="a-bad a-ordernote" role="alert">{problem}</small>}
                         {short && <small className="a-bad a-ordernote" role="alert">Only {Math.max(sku.available, 0)} available</small>}
                       </td>
-                      <td className="a-num"><input type="number" min="0" step="0.5" className="a-price" value={l.price} placeholder={lp == null ? '' : String(lp)} aria-label={`Price ${n + 1}`} onChange={(e) => setLine(n, { price: e.target.value })} />
+                      <td className="a-num"><input type="number" min="0" step="0.5" className="a-price" value={l.is_free ? '' : l.price} disabled={l.is_free} placeholder={lp == null ? '' : String(lp)} aria-label={`Price ${n + 1}`} onChange={(e) => setLine(n, { price: e.target.value })} />
+                        <label className="a-check a-p19-free"><input type="checkbox" checked={Boolean(l.is_free)} onChange={(e) => setLine(n, { is_free: e.target.checked })} /> Free</label>
+                        {l.is_free && <input className="a-p20-why2" value={l.free_why} maxLength={80} placeholder="Why free, e.g. Trial pack with the first order" aria-label={`Why free ${n + 1}`} onChange={(e) => setLine(n, { free_why: e.target.value })} />}
                         {sku && (lp == null ? <small className="a-bad a-ordernote" role="alert">No {list.label} or Default price: set it in Products and prices</small>
                           : <small className="a-muted a-ordernote">{list.label} list: {rs(lp)}{l.auto ? ' (used)' : ''}</small>)}
                         {below > 0 && <small className={`a-ordernote ${needsApproval ? 'a-bad' : 'a-muted'}`}>{below}% below the list{needsApproval ? ', below the lowest allowed price: needs approval' : ''}</small>}</td>
-                      <td className="a-num">{sku && price !== null ? rs(packs * price) : ''}
+                      <td className="a-num">{l.is_free ? <><span className="a-status a-ap-approved">Free</span>{lp ? <small className="a-muted a-ordernote">list value {rs(packs * lp)}, counts in the discount check</small> : null}</> : sku && price !== null ? rs(packs * price) : ''}
                         {lineOf(sku && sku.sku_code) && lineOf(sku.sku_code).offer_label && <small className="a-ok a-ordernote">{lineOf(sku.sku_code).offer_label}{lineOf(sku.sku_code).offer_discount > 0 ? `: - ${rs(lineOf(sku.sku_code).offer_discount)}` : ''}</small>}
                         {P && P.coupon && P.coupon.excluded.includes(sku && sku.sku_code) && <small className="a-muted a-ordernote">not in coupon {P.coupon.code}</small>}</td>
                       <td>{lines.length > 1 && <button type="button" className="a-btn a-btn-sm a-btn-ghost" onClick={() => setLines((ls) => ls.filter((_, i) => i !== n))} aria-label="Remove line">x</button>}</td>
@@ -694,7 +695,7 @@ function OrderForm({ order = null, onClose, onSaved }) {
                   )}
                 </div>
                 <p className="a-muted a-delivline">{method && method.kind === 'pickup' ? 'Customer pickup at the godown: no delivery charge.'
-                  : area ? `${area.label}: Rs ${area.charge}${area.free_above !== null ? `, free above Rs ${area.free_above}` : ''}${freeDelivery ? ' - free for this order' : area.charge > 0 ? ` + GST ${f.deliveryGstRate}%` : ''}` : 'No delivery area matches this address: no delivery charge.'}</p>
+                  : area ? `${area.label}: Rs ${area.charge}${area.free_above !== null ? `, free above Rs ${area.free_above}` : ''}${freeDelivery ? ' - free for this order' : area.charge > 0 ? ` + GST ${f.deliveryGstRate}%` : ''}${area.days && area.days.length ? `; we go ${area.days.length === 7 ? 'every day' : area.days.join(', ')}` : ''}` : 'No delivery area matches this address: no delivery charge.'}</p>
               </>
             )}
             <h3>Payment</h3>

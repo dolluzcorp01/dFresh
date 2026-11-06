@@ -4,7 +4,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { api } from './adminApi';
-import { Drawer, Loading, PageHead, fmtDate, useAction, useAdmin, useCan, useConfirm, useLoad } from './ui';
+import { Alert, Drawer, Loading, PageHead, fmtDate, useAction, useAdmin, useCan, useConfirm, useLoad } from './ui';
 import rules from '../shared/rules.json';
 import { CallDrawer } from './FollowUps';
 
@@ -231,6 +231,13 @@ function LeadDrawer({ id, convertFirst = false, onClose, onChanged }) {
   // phase 19 (v23 Enquiries): calls on the enquiry, Log a call, Mark lost with a reason, Spam (commerce on)
   const commerceOn = Boolean(meNow && meNow.commerce_enabled);
   const calls = useLoad(commerceOn ? `/sales/calls?lead=${id}` : null);
+  // phase 20 (v23): the enquiry is an existing customer: link it (no second record), it becomes Won
+  const matches = useLoad(commerceOn ? `/sales/leads/${id}/matches` : null);
+  const link = (c) => act.run(async () => {
+    const r = await api.send('POST', `/sales/leads/${id}/link`, { customer_id: c.customer_id });
+    lead.reload(); matches.reload(); onChanged();
+    act.setMsg({ kind: 'ok', text: `${r.lead_ref} linked to ${r.customer_no} ${r.name}: marked won, its calls, follow-ups and quotes moved to the customer.` });
+  });
   const close = (how) => act.run(async () => {
     await api.send('POST', `/sales/leads/${id}/close`, { how, reason: lostWhy });
     lead.reload(); onChanged();
@@ -274,6 +281,13 @@ function LeadDrawer({ id, convertFirst = false, onClose, onChanged }) {
         {l && form && (
           <>
             {act.note}
+            {matches.data && matches.data.own && <Alert tone="info" title={`This enquiry is ${matches.data.own.customer_no}.`}>{matches.data.own.name}: <Link to={`/admin/commerce/customers?open=${matches.data.own.customer_id}`}>open the customer</Link>.</Alert>}
+            {matches.data && !matches.data.own && matches.data.rows.length > 0 && (
+              <Alert tone="warn" title="Already a customer?">
+                {matches.data.rows.map((c) => <span key={c.customer_id} className="a-p20-match">{c.customer_no} {c.name} (same {c.by}){matches.data.can && <> <button type="button" className="a-btn a-btn-sm" disabled={act.busy} onClick={() => link(c)}>Link to {c.customer_no}</button></>}</span>)}
+                {matches.data.can && <small className="a-muted a-p15-sub">Linking marks this enquiry won and moves its calls, follow-ups and quotes to the customer; no second customer is made.</small>}
+              </Alert>
+            )}
             <dl className="a-dl">{rows.map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v === null || v === undefined ? '' : v}</dd></div>)}</dl>
             <h3>Handling</h3>
             <div className="a-grid2">

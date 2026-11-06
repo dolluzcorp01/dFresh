@@ -62,12 +62,12 @@ export default function CommerceOps() {
               {d.lowStock && <Card to="/admin/commerce/stock?tab=reorder" value={d.lowStock.length} label="below reorder level" bad={d.lowStock.length > 0} />}
               {d.followUps && <Card to="/admin/commerce/follow-ups" value={d.followUps.overdue} label="follow-ups overdue" sub={`${d.followUps.mine} of them yours`} bad={d.followUps.overdue > 0} />}
               {d.today && <Card to="/admin/commerce/orders" value={d.today.n} label="orders today" sub={rs(d.today.value)} />}
-              {d.packing && <Card to="/admin/commerce/packing" value={d.packing.toPick} label="to pick" bad={d.packing.toPick > 0} />}
-              {d.packing && <Card to="/admin/commerce/packing" value={d.packing.toPack} label="to pack (packing)" bad={d.packing.toPack > 0} />}
-              {d.delivery && <Card to="/admin/commerce/delivery" value={d.delivery.waitingTrip} label="packed, waiting for a trip" sub={d.delivery.waitingOther ? `+ ${d.delivery.waitingOther} for courier / pickup` : null} />}
+              {d.packing && <Card to="/admin/to-pick" value={d.packing.toPick} label="to pick" bad={d.packing.toPick > 0} />}
+              {d.packing && <Card to="/admin/packing" value={d.packing.toPack} label="to pack (packing)" bad={d.packing.toPack > 0} />}
+              {d.delivery && <Card to="/admin/packed-waiting" value={d.delivery.waitingTrip} label="packed, waiting for a trip" sub={d.delivery.waitingOther ? `+ ${d.delivery.waitingOther} for courier / pickup` : null} />}
               {d.delivery && <Card to="/admin/commerce/orders?status=out_for_delivery" value={d.delivery.outNow} label="out for delivery" sub={d.delivery.withCourier ? `+ ${d.delivery.withCourier} with couriers` : null} />}
-              {d.delivery && <Card to="/admin/commerce/delivery" value={d.delivery.failed} label="failed deliveries" bad={d.delivery.failed > 0} />}
-              {d.delivery && <Card to="/admin/commerce/delivery" value={rs(d.delivery.codDue)} label="COD cash to collect" sub={d.delivery.cashOnTrips ? `${rs(d.delivery.cashOnTrips)} collected on trips out now` : null} />}
+              {d.delivery && <Card to="/admin/failed-deliveries" value={d.delivery.failed} label="failed deliveries" bad={d.delivery.failed > 0} />}
+              {d.delivery && <Card to="/admin/cash-on-delivery" value={rs(d.delivery.codDue)} label="COD cash to collect" sub={d.delivery.cashOnTrips ? `${rs(d.delivery.cashOnTrips)} collected on trips out now` : null} />}
               {d.returns && d.returns.toCollect !== null && <Card to="/admin/commerce/returns?status=collecting" value={d.returns.toCollect} label="returns to collect" sub="customer, trip pickup or courier" />}
               {d.returns && <Card to="/admin/commerce/returns?status=received" value={d.returns.toInspect} label="returns to inspect" sub="at the godown or picked up" bad={d.returns.toInspect > 0} />}
               {d.returns && d.returns.toDecide !== null && <Card to="/admin/commerce/returns?status=inspected" value={d.returns.toDecide} label="returns to decide" sub="refund, replace or no refund" />}

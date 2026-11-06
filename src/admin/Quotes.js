@@ -72,13 +72,18 @@ function QuoteDrawer({ no, onClose, onEdit, onPrint, onChanged }) {
       throw e;
     }
   });
+  const mail = () => act.run(async () => { // phase 20: the quotation as a PDF, prepared in the Outbox
+    const r = await api.send('POST', `/sales/quotes/${encodeURIComponent(no)}/mail`);
+    if (r.queued) toast('good', 'Mail prepared', `${no} (PDF) to ${r.to}, in Admin > Communications > Outbox.`); else toast('warn', 'Not mailed', r.skip || 'No e-mail address.');
+  });
   const markLost = () => act.run(async () => { setErr({}); try { await api.send('POST', `/sales/quotes/${encodeURIComponent(no)}/lost`, { reason: lost }); toast('good', 'Marked lost', lost); one.reload(); onChanged(); } catch (e) { setErr(fieldsOf(e)); throw e; } });
   const pending = x.approvals.filter((a) => a.waiting);
   return (
     <Drawer title={`Quote ${x.quote_no}`} onClose={onClose} thumb={<LIcon name="file-text" />}
       status={<><Pill tone={TONE[x.state]}>{x.state_label}</Pill>{x.rev > 1 && <Pill>Rev {x.rev}</Pill>}<span className="a-p15-sp" />
         {x.can.edit && <button type="button" className={`a-btn a-btn-sm${x.state === 'draft' ? '' : ' a-btn-ghost'}`} onClick={onEdit}><LIcon name="pencil" size="sm" />{x.state === 'draft' ? 'Open draft' : 'Revise'}</button>}
-        {['sent', 'won', 'expired'].includes(x.state) && <button type="button" className="a-btn a-btn-ghost a-btn-sm" onClick={onPrint}><LIcon name="printer" size="sm" />Print or send</button>}
+        {['sent', 'won', 'expired'].includes(x.state) && <button type="button" className="a-btn a-btn-ghost a-btn-sm" onClick={onPrint}><LIcon name="printer" size="sm" />Print</button>}
+        {['sent', 'won'].includes(x.state) && <button type="button" className="a-btn a-btn-ghost a-btn-sm" disabled={act.busy} onClick={mail}><LIcon name="mail" size="sm" />Mail</button>}
         {x.can.order && <button type="button" className="a-btn a-btn-sm" disabled={act.busy} onClick={toOrder}><LIcon name="arrow-right" size="sm" />Make order</button>}</>}
       footer={<><span className="a-p15-sp" /><button type="button" className="a-btn a-btn-ghost" onClick={onClose}>Close</button></>}>
       {act.note}
