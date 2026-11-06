@@ -54,19 +54,28 @@ async function salesFacts(q, p) {
     LEFT JOIN delivery_areas a ON a.area_id = o.delivery_area_id`;
   const [inv] = await q.query(`SELECT i.invoice_id, i.invoice_no AS doc, ${istDate('i.issued_at')} AS day, 1 AS sign, ${base},
       it.sku_code, it.is_free, it.qty, it.taxable, it.cgst, it.sgst, it.igst, it.line_total AS total, it.gst_rate, it.hsn
-    FROM invoices i ${joins} JOIN order_items it ON it.order_id = o.order_id WHERE ${IN('i.issued_at')} AND ${G}`, S);
+    FROM invoices i ${joins} JOIN order_items it ON it.order_id = o.order_id WHERE ${IN('i.issued_at')} AND ${G} AND NOT (i.status = 'cancelled' AND i.cancel_kind = 'alone')`, S);
   const [invX] = await q.query(`SELECT i.invoice_id, i.invoice_no AS doc, ${istDate('i.issued_at')} AS day, 1 AS sign, ${base},
-      i.delivery_charge, i.delivery_gst, i.round_off, i.gst_type FROM invoices i ${joins} WHERE ${IN('i.issued_at')} AND ${G}`, S);
+      i.delivery_charge, i.delivery_gst, i.round_off, i.gst_type FROM invoices i ${joins} WHERE ${IN('i.issued_at')} AND ${G} AND NOT (i.status = 'cancelled' AND i.cancel_kind = 'alone')`, S);
   const [cnl] = await q.query(`SELECT i.invoice_id, cn.credit_note_no AS doc, ${istDate('cn.issued_at')} AS day, -1 AS sign, ${base},
       l.sku_code, 0 AS is_free, l.qty, l.taxable, l.cgst, l.sgst, l.igst, l.line_total AS total, l.gst_rate, l.hsn
     FROM credit_notes cn JOIN invoices i ON i.invoice_id = cn.invoice_id ${joins} JOIN credit_note_lines l ON l.credit_note_id = cn.credit_note_id
-    WHERE cn.return_id IS NOT NULL AND ${IN('cn.issued_at')} AND ${G}`, S);
+    WHERE cn.return_id IS NOT NULL AND cn.status = 'done' AND ${IN('cn.issued_at')} AND ${G}`, S);
   const [cnX] = await q.query(`SELECT i.invoice_id, cn.credit_note_no AS doc, ${istDate('cn.issued_at')} AS day, -1 AS sign, ${base}, cn.return_id,
-      cn.round_off, i.delivery_charge, i.delivery_gst, i.gst_type FROM credit_notes cn JOIN invoices i ON i.invoice_id = cn.invoice_id ${joins} WHERE ${IN('cn.issued_at')} AND ${G}`, S);
+      cn.round_off, cn.kind, i.delivery_charge, i.delivery_gst, i.gst_type FROM credit_notes cn JOIN invoices i ON i.invoice_id = cn.invoice_id ${joins} WHERE cn.status = 'done' AND cn.kind IN ('return', 'cancel') AND ${IN('cn.issued_at')} AND ${G}`, S);
   const [cancelLines] = await q.query(`SELECT i.invoice_id, cn.credit_note_no AS doc, ${istDate('cn.issued_at')} AS day, -1 AS sign, ${base},
       it.sku_code, it.is_free, it.qty, it.taxable, it.cgst, it.sgst, it.igst, it.line_total AS total, it.gst_rate, it.hsn
     FROM credit_notes cn JOIN invoices i ON i.invoice_id = cn.invoice_id ${joins} JOIN order_items it ON it.order_id = o.order_id
-    WHERE cn.return_id IS NULL AND ${IN('cn.issued_at')} AND ${G}`, S);
+    WHERE cn.kind = 'cancel' AND cn.status = 'done' AND ${IN('cn.issued_at')} AND ${G}`, S);
+  // phase 21: price corrections (credit notes with no goods) and sales debit notes, one line each at the invoice's main
+  // HSN and the note's own rate
+  const mainHsn = '(SELECT x.hsn FROM order_items x WHERE x.order_id = o.order_id AND x.is_free = 0 ORDER BY x.taxable DESC LIMIT 1)';
+  const [pcn] = await q.query(`SELECT i.invoice_id, cn.credit_note_no AS doc, ${istDate('cn.issued_at')} AS day, -1 AS sign, ${base},
+      '(price)' AS sku_code, 0 AS is_free, 0 AS qty, cn.taxable, cn.cgst, cn.sgst, cn.igst, cn.total - cn.round_off AS total, cn.gst_rate, ${mainHsn} AS hsn, cn.round_off AS ro
+    FROM credit_notes cn JOIN invoices i ON i.invoice_id = cn.invoice_id ${joins} WHERE cn.status = 'done' AND cn.kind IN ('price', 'other') AND ${IN('cn.issued_at')} AND ${G}`, S);
+  const [dns] = await q.query(`SELECT i.invoice_id, d.debit_note_no AS doc, ${istDate('d.issued_at')} AS day, 1 AS sign, ${base},
+      '(debit note)' AS sku_code, 0 AS is_free, 0 AS qty, d.taxable, d.cgst, d.sgst, d.igst, d.total - d.round_off AS total, d.gst_rate, ${mainHsn} AS hsn, d.round_off AS ro
+    FROM debit_notes d JOIN invoices i ON i.invoice_id = d.invoice_id ${joins} WHERE d.status = 'done' AND ${IN('d.issued_at')} AND ${G}`, S);
   const out = [];
   // the rate as a number: item lines bring "18.00" from MySQL, delivery lines 18; one rate must group as one
   const push = (r, extra) => {
@@ -76,13 +85,17 @@ async function salesFacts(q, p) {
   inv.forEach((r) => push(r, {}));
   cnl.forEach((r) => push(r, {}));
   cancelLines.forEach((r) => push(r, {}));
+  for (const r of [...pcn, ...dns]) {
+    push(r, {});
+    if (Number(r.ro)) push(r, { sku_code: '(round off)', qty: 0, taxable: 0, cgst: 0, sgst: 0, igst: 0, total: r.ro, gst_rate: null, hsn: null });
+  }
   const delRate = (r) => (Number(r.delivery_charge) ? Math.round((Number(r.delivery_gst) / Number(r.delivery_charge)) * 100) : 18);
   for (const r of invX) {
     if (Number(r.delivery_charge)) push(r, { sku_code: '(delivery)', qty: 0, taxable: r.delivery_charge, cgst: r.gst_type === 'intra' ? round2(r.delivery_gst / 2) : 0, sgst: r.gst_type === 'intra' ? round2(r.delivery_gst / 2) : 0, igst: r.gst_type === 'inter' ? r.delivery_gst : 0, total: round2(Number(r.delivery_charge) + Number(r.delivery_gst)), gst_rate: delRate(r), hsn: '9965' });
     if (Number(r.round_off)) push(r, { sku_code: '(round off)', qty: 0, taxable: 0, cgst: 0, sgst: 0, igst: 0, total: r.round_off, gst_rate: null, hsn: null });
   }
   for (const r of cnX) {
-    if (!r.return_id && Number(r.delivery_charge)) push(r, { sku_code: '(delivery)', qty: 0, taxable: r.delivery_charge, cgst: r.gst_type === 'intra' ? round2(r.delivery_gst / 2) : 0, sgst: r.gst_type === 'intra' ? round2(r.delivery_gst / 2) : 0, igst: r.gst_type === 'inter' ? r.delivery_gst : 0, total: round2(Number(r.delivery_charge) + Number(r.delivery_gst)), gst_rate: delRate(r), hsn: '9965' });
+    if (r.kind === 'cancel' && Number(r.delivery_charge)) push(r, { sku_code: '(delivery)', qty: 0, taxable: r.delivery_charge, cgst: r.gst_type === 'intra' ? round2(r.delivery_gst / 2) : 0, sgst: r.gst_type === 'intra' ? round2(r.delivery_gst / 2) : 0, igst: r.gst_type === 'inter' ? r.delivery_gst : 0, total: round2(Number(r.delivery_charge) + Number(r.delivery_gst)), gst_rate: delRate(r), hsn: '9965' });
     if (Number(r.round_off)) push(r, { sku_code: '(round off)', qty: 0, taxable: 0, cgst: 0, sgst: 0, igst: 0, total: r.round_off, gst_rate: null, hsn: null });
   }
   return out.map((r) => {
@@ -176,9 +189,11 @@ const posText = (c) => `${c}-${stateName(c)}`;
 async function gst(q, p) {
   const facts = (await salesFacts(q, p)).filter((r) => r.sku_code !== '(round off)');
   const [docs] = await q.query(`SELECT 'invoice' AS kind, i.invoice_id, i.invoice_no AS doc, ${istDate('i.issued_at')} AS day, i.total, i.place_of_supply, i.gst_type, i.buyer_json, i.status, NULL AS return_id
-      FROM invoices i WHERE ${IN('i.issued_at')} AND ${ordersIn('i.order_id', p.scope)}
+      FROM invoices i WHERE ${IN('i.issued_at')} AND ${ordersIn('i.order_id', p.scope)} AND NOT (i.status = 'cancelled' AND i.cancel_kind = 'alone')
     UNION ALL SELECT 'note', i.invoice_id, cn.credit_note_no, ${istDate('cn.issued_at')}, cn.total, i.place_of_supply, i.gst_type, i.buyer_json, i.status, cn.return_id
-      FROM credit_notes cn JOIN invoices i ON i.invoice_id = cn.invoice_id WHERE ${IN('cn.issued_at')} AND ${ordersIn('i.order_id', p.scope)}`, [...span(p), ...span(p)]);
+      FROM credit_notes cn JOIN invoices i ON i.invoice_id = cn.invoice_id WHERE cn.status = 'done' AND ${IN('cn.issued_at')} AND ${ordersIn('i.order_id', p.scope)}
+    UNION ALL SELECT 'debit', i.invoice_id, d.debit_note_no, ${istDate('d.issued_at')}, d.total, i.place_of_supply, i.gst_type, i.buyer_json, i.status, NULL
+      FROM debit_notes d JOIN invoices i ON i.invoice_id = d.invoice_id WHERE d.status = 'done' AND ${IN('d.issued_at')} AND ${ordersIn('i.order_id', p.scope)}`, [...span(p), ...span(p), ...span(p)]);
   const buyer = (d) => (typeof d.buyer_json === 'string' ? JSON.parse(d.buyer_json) : d.buyer_json).bill;
   const dayOf = (d) => (typeof d.day === 'string' ? d.day : d.day.toISOString().slice(0, 10));
   const rates = (doc, sign) => {
@@ -199,6 +214,12 @@ async function gst(q, p) {
       for (const r of rates(d.doc, 1)) {
         if (b.gstin) b2b.push({ gstin: b.gstin, name: b.name, doc: d.doc, date: gstDate(day), value: Number(d.total), pos: posText(d.place_of_supply), rc: 'N', app: '', type: 'Regular B2B', ecom: '', ...r, cess: 0 });
         else if (inter && Number(d.total) > 250000) b2cl.push({ doc: d.doc, date: gstDate(day), value: Number(d.total), pos: posText(d.place_of_supply), app: '', ...r, cess: 0, ecom: '' });
+        else { const k = `${d.place_of_supply}|${r.rate}`; const g = b2csMap.get(k) || { type: 'OE', pos: posText(d.place_of_supply), app: '', rate: r.rate, taxable: 0, cgst: 0, sgst: 0, igst: 0, cess: 0, ecom: '' }; ['taxable', 'cgst', 'sgst', 'igst'].forEach((x) => { g[x] = round2(g[x] + r[x]); }); b2csMap.set(k, g); }
+      }
+    } else if (d.kind === 'debit') {
+      for (const r of rates(d.doc, 1)) {
+        if (b.gstin) cdnr.push({ gstin: b.gstin, name: b.name, doc: d.doc, date: gstDate(day), note_type: 'D', pos: posText(d.place_of_supply), rc: 'N', supply: 'Regular B2B', value: Number(d.total), app: '', ...r, cess: 0 });
+        else if (inter && Number(d.total) > 250000) cdnur.push({ ur: 'B2CL', doc: d.doc, date: gstDate(day), note_type: 'D', pos: posText(d.place_of_supply), value: Number(d.total), app: '', ...r, cess: 0 });
         else { const k = `${d.place_of_supply}|${r.rate}`; const g = b2csMap.get(k) || { type: 'OE', pos: posText(d.place_of_supply), app: '', rate: r.rate, taxable: 0, cgst: 0, sgst: 0, igst: 0, cess: 0, ecom: '' }; ['taxable', 'cgst', 'sgst', 'igst'].forEach((x) => { g[x] = round2(g[x] + r[x]); }); b2csMap.set(k, g); }
       }
     } else {
@@ -223,9 +244,9 @@ async function gst(q, p) {
   const byRate = [...rateMap.values()].sort((a, b) => a.rate - b.rate).map((r) => ({ ...r, tax: round2(r.cgst + r.sgst + r.igst) }));
   const [descs] = await q.query("SELECT DISTINCT p.hsn_code, COALESCE(t.name, p.product_id) AS name FROM products p LEFT JOIN product_translations t ON t.product_id = p.product_id AND t.lang_code = 'en'");
   const hsn = [...hsnMap.values()].map((h) => ({ ...h, desc: h.desc || (descs.find((x) => x.hsn_code === h.hsn) || { name: '' }).name })).sort((a, b) => String(a.hsn).localeCompare(String(b.hsn)));
-  const [[inv]] = await q.query(`SELECT COALESCE(SUM(cgst + sgst + igst), 0) AS gst FROM invoices WHERE ${IN('issued_at')} AND ${ordersIn('order_id', p.scope)}`, span(p));
+  const [[inv]] = await q.query(`SELECT COALESCE(SUM(cgst + sgst + igst), 0) + (SELECT COALESCE(SUM(d.cgst + d.sgst + d.igst), 0) FROM debit_notes d JOIN invoices di ON di.invoice_id = d.invoice_id WHERE d.status = 'done' AND ${IN('d.issued_at')} AND ${ordersIn('di.order_id', p.scope)}) AS gst FROM invoices WHERE ${IN('issued_at')} AND ${ordersIn('order_id', p.scope)} AND NOT (status = 'cancelled' AND cancel_kind = 'alone')`, [...span(p), ...span(p)]);
   const [[cn]] = await q.query(`SELECT COALESCE(SUM(cn.cgst + cn.sgst + cn.igst), 0) AS gst FROM credit_notes cn JOIN invoices ci ON ci.invoice_id = cn.invoice_id
-      WHERE ${IN('cn.issued_at')} AND ${ordersIn('ci.order_id', p.scope)}`, span(p));
+      WHERE cn.status = 'done' AND ${IN('cn.issued_at')} AND ${ordersIn('ci.order_id', p.scope)}`, span(p));
   const regInv = round2(facts.filter((f) => f.sign > 0).reduce((a, f) => a + f.gst, 0));
   const regCn = round2(-facts.filter((f) => f.sign < 0).reduce((a, f) => a + f.gst, 0));
   const net = sumRows(byRate, ['taxable', 'cgst', 'sgst', 'igst', 'tax']);
@@ -242,7 +263,7 @@ async function gst(q, p) {
     ],
     chart: byRate.length ? { kind: 'hbar', x: byRate.map((r) => `${r.rate}% GST`), series: [{ name: 'Tax', values: byRate.map((r) => r.tax) }], title: 'Output tax by rate' } : null,
     checks: [
-      { label: 'Register GST on invoices = GST of the invoices issued', value: regInv, ok: Math.abs(regInv - round2(inv.gst)) < 0.02, detail: `invoices Rs ${round2(inv.gst)}` },
+      { label: 'Register GST on invoices and debit notes = GST of the invoices and debit notes issued', value: regInv, ok: Math.abs(regInv - round2(inv.gst)) < 0.02, detail: `invoices and debit notes Rs ${round2(inv.gst)}` },
       { label: 'Register GST on credit notes = GST of the credit notes issued', value: regCn, ok: Math.abs(regCn - round2(cn.gst)) < 0.02, detail: `credit notes Rs ${round2(cn.gst)}` },
       { label: 'Output tax (net) = invoices GST - credit notes GST', value: net.tax, ok: Math.abs(round2(inv.gst - cn.gst) - net.tax) < 0.02, detail: `Rs ${round2(inv.gst)} - Rs ${round2(cn.gst)}` },
     ],
@@ -394,7 +415,7 @@ async function receivables(q, p) {
   const overdue = open.filter((o) => Number(o.overdue)).map((o) => ({ customer: `${o.customer_no} ${o.name}`, invoice_no: o.invoice_no, order_no: o.order_no, day: typeof o.day === 'string' ? o.day : o.day.toISOString().slice(0, 10), due_on: o.due_on, late: Number(o.late), amount: Number(o.amount_due) }));
   const S = span(p);
   const [modes] = await q.query(`SELECT mode, SUM(CASE WHEN kind = 'payment' THEN amount ELSE 0 END) AS received, SUM(CASE WHEN kind = 'refund' THEN amount ELSE 0 END) AS refunded, COUNT(*) AS n
-      FROM payments WHERE received_on BETWEEN ? AND ? AND ${ordersIn('order_id', p.scope)} GROUP BY mode ORDER BY received DESC`, [p.from, p.to]);
+      FROM payments WHERE received_on BETWEEN ? AND ? AND reversed_at IS NULL AND kind IN ('payment', 'refund') AND ${ordersIn('order_id', p.scope)} GROUP BY mode ORDER BY received DESC`, [p.from, p.to]);
   const modeRows = modes.map((x) => ({ mode: commerce.MODES[x.mode] || x.mode, n: Number(x.n), received: Number(x.received), refunded: Number(x.refunded), net: round2(x.received - x.refunded) }));
   const [drivers] = await q.query(`SELECT d.name AS driver, COUNT(DISTINCT t.trip_id) AS trips, COALESCE(SUM(s.cash_collected), 0) AS collected,
         (SELECT COALESCE(SUM(t2.cash_handed), 0) FROM delivery_trips t2 WHERE t2.driver_id = d.driver_id AND t2.status = 'ended' AND ${IN('t2.started_at')} AND ${inScope('t2.godown_id', p.scope)}) AS handed
@@ -564,7 +585,7 @@ async function journal(q, p) {
     if (Number(r.wallet_paid) > 0.005) { const w = { ...v, type: 'Journal (wallet)', no: `${r.invoice_no}/W` }; add(w, 'Customer wallets (liability)', Number(r.wallet_paid), 0, `Paid from the wallet on ${r.order_no}`); add(w, `Sundry debtors - ${party(r)}`, 0, Number(r.wallet_paid)); }
   }
   const [cns] = await q.query(`SELECT cn.credit_note_no, ${istDate('cn.issued_at')} AS day, cn.taxable, cn.cgst, cn.sgst, cn.igst, cn.round_off, cn.total, cn.reason, i.invoice_no, i.buyer_json, c.customer_no, c.name AS customer
-      FROM credit_notes cn JOIN invoices i ON i.invoice_id = cn.invoice_id JOIN orders o ON o.order_id = i.order_id JOIN customers c ON c.customer_id = o.customer_id WHERE ${IN('cn.issued_at')} AND ${inScope('o.godown_id', p.scope)} ORDER BY cn.issued_at`, S);
+      FROM credit_notes cn JOIN invoices i ON i.invoice_id = cn.invoice_id JOIN orders o ON o.order_id = i.order_id JOIN customers c ON c.customer_id = o.customer_id WHERE cn.status = 'done' AND ${IN('cn.issued_at')} AND ${inScope('o.godown_id', p.scope)} ORDER BY cn.issued_at`, S);
   for (const r of cns) {
     const b = (typeof r.buyer_json === 'string' ? JSON.parse(r.buyer_json) : r.buyer_json).bill;
     const v = { date: d10(r.day), type: 'Credit note', no: r.credit_note_no, party: party(r), gstin: b.gstin || '' };
@@ -573,7 +594,45 @@ async function journal(q, p) {
     add(v, `Sundry debtors - ${party(r)}`, 0, Number(r.total));
   }
   const [pays] = await q.query(`SELECT p.payment_id, p.kind, p.mode, p.amount, DATE_FORMAT(p.received_on, '%Y-%m-%d') AS day, p.reference, o.order_no, c.customer_no, c.name AS customer
-      FROM payments p JOIN orders o ON o.order_id = p.order_id JOIN customers c ON c.customer_id = o.customer_id WHERE p.received_on BETWEEN ? AND ? AND ${inScope('o.godown_id', p.scope)} ORDER BY p.received_on, p.payment_id`, [p.from, p.to]);
+      FROM payments p JOIN orders o ON o.order_id = p.order_id JOIN customers c ON c.customer_id = o.customer_id WHERE p.kind = 'refund' AND p.received_on BETWEEN ? AND ? AND ${inScope('o.godown_id', p.scope)} ORDER BY p.received_on, p.payment_id`, [p.from, p.to]);
+  // phase 21 (D2): money in is a receipt of the customer (by the customer's godown), its cheque bounce reverses it
+  const CG = inScope('c.godown_id', p.scope);
+  const [rcs] = await q.query(`SELECT r.receipt_no, r.mode, r.amount, r.reference, DATE_FORMAT(r.received_on, '%Y-%m-%d') AS day, (SELECT x.order_no FROM orders x WHERE x.order_id = r.order_id) AS order_no, c.customer_no, c.name AS customer
+      FROM receipts r JOIN customers c ON c.customer_id = r.customer_id WHERE r.received_on BETWEEN ? AND ? AND ${CG} ORDER BY r.received_on, r.receipt_id`, [p.from, p.to]);
+  for (const r of rcs) {
+    const v = { date: r.day, type: 'Receipt', no: r.receipt_no, party: party(r), gstin: '' };
+    add(v, r.mode === 'cash' ? 'Cash' : `Bank (${commerce.MODES[r.mode] || r.mode})`, Number(r.amount), 0, `${r.order_no || 'On account'}${r.reference ? `, ${r.reference}` : ''}`); add(v, `Sundry debtors - ${party(r)}`, 0, Number(r.amount));
+  }
+  const [bnc] = await q.query(`SELECT r.receipt_no, ch.cheque_no, ch.bounce_why, r.amount, DATE_FORMAT(ch.done_on, '%Y-%m-%d') AS day, c.customer_no, c.name AS customer FROM cheques ch JOIN receipts r ON r.receipt_id = ch.receipt_id
+      JOIN customers c ON c.customer_id = ch.customer_id WHERE ch.status = 'bounced' AND ch.done_on BETWEEN ? AND ? AND ${CG}`, [p.from, p.to]);
+  for (const r of bnc) { const v = { date: r.day, type: 'Journal (cheque bounced)', no: `${r.receipt_no}/B`, party: party(r), gstin: '' }; add(v, `Sundry debtors - ${party(r)}`, Number(r.amount), 0, `Cheque ${r.cheque_no} bounced: ${r.bounce_why}`); add(v, 'Bank (cheques)', 0, Number(r.amount)); }
+  const [chg] = await q.query(`SELECT ch.charge_id, ch.text, ch.amount, ch.waived, ${istDate('ch.created_at')} AS day, ${istDate('ch.waived_at')} AS wday, c.customer_no, c.name AS customer FROM customer_charges ch JOIN customers c ON c.customer_id = ch.customer_id
+      WHERE ((${IN('ch.created_at')}) OR (ch.waived > 0 AND ${IN('ch.waived_at')})) AND ${CG}`, [...S, ...S]);
+  for (const r of chg) {
+    if (d10(r.day) >= p.from && d10(r.day) <= p.to) { const v = { date: d10(r.day), type: 'Journal (charge)', no: `CHG-${r.charge_id}`, party: party(r), gstin: '' }; add(v, `Sundry debtors - ${party(r)}`, Number(r.amount), 0, r.text); add(v, 'Bank charges recovered', 0, Number(r.amount)); }
+    if (Number(r.waived) > 0 && r.wday && d10(r.wday) >= p.from && d10(r.wday) <= p.to) { const v = { date: d10(r.wday), type: 'Journal (waiver)', no: `CHG-${r.charge_id}/W`, party: party(r), gstin: '' }; add(v, 'Bank charges recovered', Number(r.waived), 0, `Waived: ${r.text}`); add(v, `Sundry debtors - ${party(r)}`, 0, Number(r.waived)); }
+  }
+  const [bds] = await q.query(`SELECT b.bad_debt_id, b.amount, b.why, ${istDate('b.done_at')} AS day, c.customer_no, c.name AS customer FROM bad_debts b JOIN customers c ON c.customer_id = b.customer_id WHERE b.status = 'done' AND ${IN('b.done_at')} AND ${CG}`, S);
+  for (const r of bds) { const v = { date: d10(r.day), type: 'Journal (bad debt)', no: `BD-${r.bad_debt_id}`, party: party(r), gstin: '' }; add(v, 'Bad debts written off', Number(r.amount), 0, r.why); add(v, `Sundry debtors - ${party(r)}`, 0, Number(r.amount)); }
+  const [dnj] = await q.query(`SELECT d.debit_note_no, ${istDate('d.issued_at')} AS day, d.taxable, d.cgst, d.sgst, d.igst, d.round_off, d.total, d.reason, i.invoice_no, i.buyer_json, c.customer_no, c.name AS customer
+      FROM debit_notes d JOIN invoices i ON i.invoice_id = d.invoice_id JOIN orders o ON o.order_id = i.order_id JOIN customers c ON c.customer_id = d.customer_id WHERE d.status = 'done' AND ${IN('d.issued_at')} AND ${inScope('o.godown_id', p.scope)}`, S);
+  for (const r of dnj) {
+    const b = (typeof r.buyer_json === 'string' ? JSON.parse(r.buyer_json) : r.buyer_json).bill;
+    const v = { date: d10(r.day), type: 'Debit note', no: r.debit_note_no, party: party(r), gstin: b.gstin || '' };
+    add(v, `Sundry debtors - ${party(r)}`, Number(r.total), 0, `Against ${r.invoice_no}: ${r.reason}`); add(v, 'Sales', 0, Number(r.taxable)); add(v, 'Output CGST', 0, Number(r.cgst)); add(v, 'Output SGST', 0, Number(r.sgst)); add(v, 'Output IGST', 0, Number(r.igst));
+    if (Number(r.round_off) > 0) add(v, 'Round off', 0, Number(r.round_off)); else if (Number(r.round_off) < 0) add(v, 'Round off', -Number(r.round_off), 0);
+  }
+  const [alone] = await q.query(`SELECT i.invoice_no, ${istDate('i.cancelled_at')} AS day, i.taxable, i.cgst, i.sgst, i.igst, i.round_off, i.total, i.cancel_reason, c.customer_no, c.name AS customer FROM invoices i JOIN orders o ON o.order_id = i.order_id JOIN customers c ON c.customer_id = o.customer_id
+      WHERE i.status = 'cancelled' AND i.cancel_kind = 'alone' AND ${IN('i.cancelled_at')} AND ${inScope('o.godown_id', p.scope)}`, S);
+  for (const r of alone) {
+    const v = { date: d10(r.day), type: 'Sales (cancelled)', no: `${r.invoice_no}/X`, party: party(r), gstin: '' };
+    add(v, 'Sales', Number(r.taxable), 0, `Invoice ${r.invoice_no} cancelled: ${r.cancel_reason || ''}`); add(v, 'Output CGST', Number(r.cgst), 0); add(v, 'Output SGST', Number(r.sgst), 0); add(v, 'Output IGST', Number(r.igst), 0);
+    if (Number(r.round_off) > 0) add(v, 'Round off', Number(r.round_off), 0); else if (Number(r.round_off) < 0) add(v, 'Round off', 0, -Number(r.round_off));
+    add(v, `Sundry debtors - ${party(r)}`, 0, Number(r.total));
+  }
+  const [crf] = await q.query(`SELECT f.refund_no, f.mode, f.amount, f.reference, f.why, ${istDate('f.paid_at')} AS day, c.customer_no, c.name AS customer FROM refunds f JOIN customers c ON c.customer_id = f.customer_id
+      WHERE f.return_id IS NULL AND f.status = 'paid' AND ${IN('f.paid_at')} AND ${CG}`, S);
+  for (const r of crf) { const v = { date: d10(r.day), type: r.mode === 'wallet' ? 'Journal (wallet)' : 'Payment (refund)', no: r.refund_no, party: party(r), gstin: '' }; add(v, `Sundry debtors - ${party(r)}`, Number(r.amount), 0, r.why); add(v, r.mode === 'wallet' ? 'Customer wallets (liability)' : r.mode === 'cash' ? 'Cash' : `Bank (${commerce.MODES[r.mode] || r.mode})`, 0, Number(r.amount)); }
   for (const r of pays) {
     const cash = r.mode === 'cash' ? 'Cash' : `Bank (${commerce.MODES[r.mode] || r.mode})`;
     const v = { date: r.day, type: r.kind === 'refund' ? 'Payment (refund)' : 'Receipt', no: `RCPT-${r.payment_id}`, party: party(r), gstin: '' };

@@ -2048,7 +2048,7 @@ route('get', '/commerce/orders/:no', 'orders:view', async (req) => {
        FROM order_items i JOIN skus s ON s.sku_code = i.sku_code ${SKU_JOIN} LEFT JOIN offers f ON f.offer_id = i.offer_id WHERE i.order_id = ? ORDER BY i.sku_code, i.is_free`, [o.order_id]);
   const [walletRows] = await db.query("SELECT entry_id, source, amount, reason, created_at FROM wallet_entries WHERE order_id = ? ORDER BY entry_id", [o.order_id]);
   const [hist] = await db.query('SELECT from_status, to_status, note, emp_id, created_at FROM order_status_history WHERE order_id = ? ORDER BY id', [o.order_id]);
-  const [pays] = await db.query("SELECT payment_id, kind, mode, amount, DATE_FORMAT(received_on, '%Y-%m-%d') AS received_on, reference, note, emp_id, created_at FROM payments WHERE order_id = ? ORDER BY payment_id", [o.order_id]);
+  const [pays] = await db.query("SELECT payment_id, kind, mode, amount, DATE_FORMAT(received_on, '%Y-%m-%d') AS received_on, reference, note, emp_id, created_at, reversed_at, (SELECT r.receipt_no FROM receipts r WHERE r.receipt_id = payments.receipt_id) AS receipt_no FROM payments WHERE order_id = ? ORDER BY payment_id", [o.order_id]);
   const [invs] = await db.query(`SELECT i.invoice_id, i.invoice_no, i.status, i.issued_at, DATE_FORMAT(i.due_on, '%Y-%m-%d') AS due_on, i.total, i.is_demo, i.cancelled_at, i.cancel_reason
        FROM invoices i WHERE i.order_id = ? ORDER BY i.invoice_id`, [o.order_id]);
   const [cnotes] = await db.query(`SELECT cn.credit_note_id, cn.credit_note_no, cn.invoice_id, cn.total, cn.issued_at, cn.reason, r.return_no
@@ -3217,6 +3217,8 @@ require('./inventory-routes').register({ route, tx, db, by, InputError, canDo, c
 require('./sales-routes').register({ route, tx, db, by, InputError, canDo, commerceGate });
 // phase 20: sections 8 and 9 Packing and delivery (fulfil.js rules, fulfil-routes.js screens and masters)
 require('./fulfil-routes').register({ route, tx, db, by, InputError, canDo, commerceGate });
+// phase 21: sections 10 and 11 Invoicing, GST and payments (billing.js and money.js rules, money-routes.js screens)
+require('./money-routes').register({ route, tx, db, by, InputError, canDo, commerceGate });
 commerce.startBackOrders(db);
 setInterval(() => { tx((q) => commerce.sweepHolds(q)).catch((e) => console.error('[hold time]', e.message)); }, 5 * 60e3).unref();
 

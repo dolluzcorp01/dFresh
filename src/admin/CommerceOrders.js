@@ -190,7 +190,7 @@ function OrderDrawer({ no, canEdit, editFirst = false, onClose, onChanged }) {
             <p className="a-gst">GST: {d.gst_label}</p>
             <div className="a-card a-deliv">
               <h4>Delivery</h4>
-              <div>{d.delivery_method}{d.delivery_area ? ` · ${d.delivery_area}` : ''}{Number(d.delivery_charge) > 0 ? ` · charge ${rs(d.delivery_charge)} + GST ${rs(d.delivery_gst)}` : ' · no delivery charge'}</div>
+              <div>{d.delivery_method}{d.delivery_area ? ` · ${d.delivery_area}` : ''}{Number(d.delivery_charge) > 0 ? ` · charge ${rs(d.delivery_charge)} + GST ${rs(d.delivery_gst)}` : ' · no delivery charge'}{Number(d.delivery_charge_typed) === 1 && d.delivery_charge_why ? ` (typed: ${d.delivery_charge_why})` : ''}</div>
               {d.cartons && <div>{d.cartons} carton(s), {Number(d.weight_kg)} kg{d.pack_override ? ` · packed with override: ${d.pack_override}` : ''}</div>}
               {d.awb_no && <div>{d.courier} AWB <b>{d.awb_no}</b>{d.tracking_link && <> · <a href={d.tracking_link} target="_blank" rel="noreferrer">Track the parcel</a></>}{d.eway_bill_no ? ` · e-way bill ${d.eway_bill_no}` : ''}</div>}
               {d.trips.map((t) => <div key={t.stop_id}>Trip T-{t.trip_id}{t.kind === 'pickup' ? ' (return pickup)' : ''} ({t.vehicle}, {t.driver}): {t.status.replace('_', ' ')}{t.receiver_name ? `, received by ${t.receiver_name}` : ''}{t.failed_reason ? ` - ${t.failed_reason}` : ''}{t.cash_collected > 0 ? `, cash ${rs(t.cash_collected)}` : ''}{t.done_at ? ` · ${fmtDate(t.done_at)}` : ''}</div>)}
@@ -228,7 +228,7 @@ function OrderDrawer({ no, canEdit, editFirst = false, onClose, onChanged }) {
                 <h3>Invoices</h3>
                 <table className="a-table"><tbody>{d.invoices.map((i) => (
                   <tr key={i.invoice_id}>
-                    <td><b>{i.invoice_no}</b>{i.is_demo && <small className="a-muted"> (DEMO)</small>}<small className="a-muted a-person-sub">issued {fmtDate(i.issued_at)} · due {day(i.due_on)}</small></td>
+                    <td><a href={`/admin/invoices?open=${encodeURIComponent(i.invoice_no)}`}><b>{i.invoice_no}</b></a>{i.is_demo && <small className="a-muted"> (DEMO)</small>}<small className="a-muted a-person-sub">issued {fmtDate(i.issued_at)} · due {day(i.due_on)}</small></td>
                     <td>{i.status === 'cancelled' ? <span className="a-status a-status-off">Cancelled</span> : <span className="a-status a-ap-approved">Issued</span>}{i.status === 'issued' && d.overdue && <span className="a-overdue">Overdue</span>}
                       {i.cancel_reason && <small className="a-muted a-person-sub">{i.cancel_reason}</small>}</td>
                     <td className="a-num">{rs(i.total)}</td>
@@ -412,6 +412,10 @@ function OrderForm({ order = null, onClose, onSaved }) {
   const [override, setOverride] = useState(false);
   const [methodId, setMethodId] = useState(editing && order.delivery_method_id ? String(order.delivery_method_id) : '');
   const [areaId, setAreaId] = useState(editing && order.delivery_area_id ? String(order.delivery_area_id) : ''); // '' = from the address
+  // phase 21 (9.2): a delivery charge typed by hand stays; '' = the area's charge
+  const [dc, setDc] = useState(editing && Number(order.delivery_charge_typed) === 1 ? String(Number(order.delivery_charge) + Number(order.delivery_waived || 0)) : '');
+  const [dcWhy, setDcWhy] = useState(editing ? order.delivery_charge_why || '' : '');
+  const [advance, setAdvance] = useState({ amount: '', mode: 'cash', reference: '' });
   const [addingCustomer, setAddingCustomer] = useState(false);
   const f = form.data;
   const pickCustomer = (id) => { setAddingCustomer(false); form.reload(); setCustomerId(String(id)); setWallet(''); };
@@ -485,6 +489,8 @@ function OrderForm({ order = null, onClose, onSaved }) {
       kept: Boolean(r.l.kept && !r.l.auto && Number(r.l.price) === r.l.kept.price && r.packs === r.l.kept.qty) })),
     ...kits.filter((k) => k.kit_key && Number(k.qty) > 0).map((k) => ({ kit_key: k.kit_key, qty: Number(k.qty), price: '' }))],
     bill, ship: ship || { ...bill }, bill_address_id: billId, ship_address_id: shipId, contact_id: contactId, override_stock: override, delivery_method_id: method ? method.method_id : '', delivery_area_id: areaId,
+    delivery_charge: dc, delivery_charge_why: dcWhy,
+    ...(editing ? {} : { advance: advance.amount, advance_mode: advance.mode, advance_ref: advance.reference }),
   });
   const ready = Boolean(customerId && bill && bill.name && rows.some((r) => r.sku) && !rows.some((r) => r.problem));
   const key = ready ? JSON.stringify({ ...body(), customer_id: customerId }) : '';
@@ -696,6 +702,16 @@ function OrderForm({ order = null, onClose, onSaved }) {
                 </div>
                 <p className="a-muted a-delivline">{method && method.kind === 'pickup' ? 'Customer pickup at the godown: no delivery charge.'
                   : area ? `${area.label}: Rs ${area.charge}${area.free_above !== null ? `, free above Rs ${area.free_above}` : ''}${freeDelivery ? ' - free for this order' : area.charge > 0 ? ` + GST ${f.deliveryGstRate}%` : ''}${area.days && area.days.length ? `; we go ${area.days.length === 7 ? 'every day' : area.days.join(', ')}` : ''}` : 'No delivery area matches this address: no delivery charge.'}</p>
+                {method && method.kind !== 'pickup' && (
+                  <div className="a-grid2">
+                    <label className="a-field"><span>Delivery charge (Rs, no GST)</span>
+                      <input type="number" min="0" step="1" value={dc} aria-label="Delivery charge" placeholder={P ? String(P.area_charge ?? '') : ''} onChange={(e) => setDc(e.target.value)} />
+                      <small className="a-hint">From the delivery area; change it if needed. A typed charge stays when the order changes.</small></label>
+                    {dc !== '' && P && Math.abs(Number(dc) - Number(P.area_charge || 0)) > 0.004 && (
+                      <label className="a-field"><span>Why this charge? (required)</span><input value={dcWhy} maxLength={255} aria-label="Why the delivery charge is changed" placeholder="e.g. Two drops agreed with the customer" onChange={(e) => setDcWhy(e.target.value)} /></label>
+                    )}
+                  </div>
+                )}
               </>
             )}
             <h3>Payment</h3>
@@ -704,6 +720,14 @@ function OrderForm({ order = null, onClose, onSaved }) {
                 <select value={terms} aria-label="Payment terms" onChange={(e) => setTerms(e.target.value)}>{Object.entries(f.terms).map(([k, v]) => <option key={k} value={k}>{v}{k === 'credit' && customer ? ` (${customer.credit_days} days)` : ''}</option>)}</select>
               </label>
             </div>
+            {!editing && (
+              <div className="a-grid2">
+                <label className="a-field"><span>Advance received (Rs)</span><input type="number" min="0" step="1" value={advance.amount} aria-label="Advance received" onChange={(e) => setAdvance((x) => ({ ...x, amount: e.target.value }))} />
+                  <small className="a-hint">Recorded as a receipt in Payments; it stays on account until this order's invoice.</small></label>
+                {Number(advance.amount) > 0 && <label className="a-field"><span>Advance: how</span><select value={advance.mode} aria-label="Advance paid how" onChange={(e) => setAdvance((x) => ({ ...x, mode: e.target.value }))}><option value="cash">Cash</option><option value="upi">UPI</option><option value="bank">Bank transfer</option></select></label>}
+                {Number(advance.amount) > 0 && advance.mode !== 'cash' && <label className="a-field"><span>Advance: reference (UTR)</span><input value={advance.reference} maxLength={30} aria-label="Advance reference" onChange={(e) => setAdvance((x) => ({ ...x, reference: e.target.value }))} /></label>}
+              </div>
+            )}
             {creditOver && <Notice kind="warn">Over the credit limit: {rs(customer.outstanding)} open + this order {rs(thisDue)} &gt; {rs(customer.credit_limit)}. It waits for approval.</Notice>}
             <label className="a-field"><span>Note</span><input value={note} maxLength={255} onChange={(e) => setNote(e.target.value)} placeholder="e.g. WhatsApp order, deliver before 10 am" /></label>
             {editing && <label className="a-field"><span>Why is it changed?{order.editable === 'reason' ? ' (required)' : ' (optional)'}</span><input value={reason} maxLength={255} aria-label="Reason for the change" onChange={(e) => setReason(e.target.value)} /></label>}

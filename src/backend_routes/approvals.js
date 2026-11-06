@@ -64,6 +64,10 @@ const KINDS = {
   customer_merge: { label: 'Merge customers', section: 'customers' },
   customer_hold: { label: 'Order for a customer on hold', section: 'customers' },
   after_export: { label: 'Change after export to the CA', section: 'settings' },
+  credit_no_return: { label: 'Credit note not tied to a return', section: 'invoicing' }, // phase 21
+  cancel_invoice: { label: 'Cancel an invoice', section: 'invoicing' },
+  bad_debt: { label: 'Write off a bad debt', section: 'money' },
+  waive_bounce: { label: 'Waive a cheque bounce charge', section: 'money' },
 };
 const handlers = {};
 const closers = {};

@@ -76,6 +76,9 @@ import StockLedger from './StockLedger';
 import SupplierBills from './SupplierBills';
 import Claims from './Claims';
 import SupplierPayments from './SupplierPayments';
+import { Challans, CreditNotes, DebitNotes, Invoices } from './Billing';
+import { Cheques, Receipts, Refunds } from './MoneyIn';
+import { EInvoice, EwayBill, GstMonth } from './Gst';
 import { PackedWaiting, PackingPage, ToPick } from './Packing';
 import Trips, { CashOnDelivery, CourierPickup, FailedShort, MyTrips, ProofOfDelivery } from './CommerceDelivery';
 import { Couriers, DeliveryAreas, Vehicles } from './DeliveryMasters';
@@ -235,6 +238,17 @@ export default function AdminApp() {
             <Route path="supplier-bills" element={<Need section="buying" commerce><SupplierBills /></Need>} />
             <Route path="claims" element={<Need section="buying" commerce><Claims /></Need>} />
             <Route path="supplier-payments" element={<Need section="money" commerce><SupplierPayments /></Need>} />
+            {/* phase 21: sections 10 and 11 Invoicing, GST and payments */}
+            <Route path="invoices" element={<Need section="invoicing" commerce><Invoices /></Need>} />
+            <Route path="credit-notes" element={<Need section="invoicing" commerce><CreditNotes /></Need>} />
+            <Route path="debit-notes" element={<Need section="invoicing" commerce><DebitNotes /></Need>} />
+            <Route path="delivery-challans" element={<Need section="invoicing" commerce><Challans /></Need>} />
+            <Route path="gst-data" element={<Need section="invoicing" commerce><GstMonth /></Need>} />
+            <Route path="e-invoice" element={<Need section="invoicing" commerce><EInvoice /></Need>} />
+            <Route path="e-way-bill" element={<Need section="invoicing" commerce><EwayBill /></Need>} />
+            <Route path="receipts" element={<Need section="money" commerce><Receipts /></Need>} />
+            <Route path="refunds" element={<Need section="money" commerce><Refunds /></Need>} />
+            <Route path="cheque-register" element={<Need section="money" commerce><Cheques /></Need>} />
             {/* phase 17: section 4 Production */}
             <Route path="recipes" element={<Need section="production" commerce><Recipes /></Need>} />
             <Route path="production-runs" element={<Need section="production" commerce><ProductionRuns /></Need>} />

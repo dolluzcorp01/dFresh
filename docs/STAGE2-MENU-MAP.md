@@ -6,7 +6,7 @@ paths = the first one the user may open. "(live)" = also shown while Commerce is
 site's screens); every other entry shows only while Commerce is on. A placeholder shows the guide's texts and
 the phase that builds it (gap map build order; Website entries with no screen: phase 24, agreed 2 Nov 2026).
 
-148 menu lines = 13 groups + Online store + 23 sub-groups + 111 pages. Of the 112 entries that open something (pages and Online store), 88 open a screen and 24 the placeholder.
+148 menu lines = 13 groups + Online store + 23 sub-groups + 111 pages. Of the 112 entries that open something (pages and Online store), 97 open a screen and 15 the placeholder.
 
 | Menu page | Opens |
 |---|---|
@@ -51,21 +51,21 @@ the phase that builds it (gap map build order; Website entries with no screen: p
 | Inventory / Write-offs | /admin/write-offs |
 | Inventory / Reorder | /admin/reorder |
 | Inventory / Stock ledger | /admin/stock-ledger |
-| Money / Billing / Invoices | placeholder: Not built yet - phase 21 |
-| Money / Billing / Credit notes | placeholder: Not built yet - phase 21 |
-| Money / Billing / Debit notes | placeholder: Not built yet - phase 21 |
-| Money / Billing / Delivery challans | placeholder: Not built yet - phase 21 |
-| Money / Payments / Receipts | placeholder: Not built yet - phase 21 |
+| Money / Billing / Invoices | /admin/invoices |
+| Money / Billing / Credit notes | /admin/credit-notes |
+| Money / Billing / Debit notes | /admin/debit-notes |
+| Money / Billing / Delivery challans | /admin/delivery-challans |
+| Money / Payments / Receipts | /admin/receipts |
 | Money / Payments / Supplier payments | /admin/supplier-payments |
-| Money / Payments / Refunds | placeholder: Not built yet - phase 21 |
-| Money / Payments / Cheque register | placeholder: Later |
+| Money / Payments / Refunds | /admin/refunds |
+| Money / Payments / Cheque register | /admin/cheque-register |
 | Money / Expenses / Expenses | placeholder: Not built yet - phase 23 |
 | Money / Expenses / Petty cash | placeholder: Not built yet - phase 23 |
 | Money / Accounting export / Export to accountant | /admin/commerce/reports?tab=accounting |
 | Money / Accounting export / Export history | placeholder: Not built yet - phase 23 |
-| GST / GSTR-1 / GSTR-3B data | /admin/commerce/reports?tab=gst |
-| GST / E-invoice | placeholder: Not built yet - phase 21 |
-| GST / E-way bill | placeholder: Not built yet - phase 21 |
+| GST / GSTR-1 / GSTR-3B data | /admin/gst-data |
+| GST / E-invoice | /admin/e-invoice |
+| GST / E-way bill | /admin/e-way-bill |
 | GST / Other GST returns | placeholder: Later |
 | Marketing / Offers | /admin/commerce/promotions?tab=offers |
 | Marketing / Coupons | /admin/commerce/promotions?tab=coupons |

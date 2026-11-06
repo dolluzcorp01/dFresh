@@ -71,7 +71,8 @@ const GONE = ['out_for_delivery', 'with_courier', 'failed']; // the goods have l
 const HELD = { approval: 'is waiting for approval', cancelled: 'is cancelled' };
 const TERMS = { cod: 'Pay on delivery', advance: 'Paid in advance', credit: 'On credit' };
 const MODES = { cash: 'Cash', upi: 'UPI', bank: 'Bank transfer', cheque: 'Cheque', razorpay: 'Razorpay (manual)' };
-const PAYMENT_STATUS = { unpaid: 'Unpaid', partly_paid: 'Part paid', paid: 'Paid', part_refunded: 'Part refunded', refunded: 'Refunded' };
+const PAYMENT_STATUS = {
+  written_off: 'Written off', unpaid: 'Unpaid', partly_paid: 'Part paid', paid: 'Paid', part_refunded: 'Part refunded', refunded: 'Refunded' };
 // phase 15 (D7): an order line below the lowest allowed price or below cost plus the margin floor waits (price_floor,
 // margin_floor); price_below_list ("% below the list") is gone, its handler stays for any old request
 const HOLD_KINDS = ['price_below_list', 'price_floor', 'margin_floor', 'over_available', 'credit_order', 'discount', 'customer_hold'];
@@ -451,6 +452,25 @@ async function prepare(q, data, opts = {}) {
   const goodsAfterOffers = round2(offers.lines.reduce((a, l) => a + l.qty * l.price - l.offer_discount, 0));
   const delivery = method.kind === 'pickup' ? { area: null, charge: 0 } : await deliveryCharge(q, ship.values, goodsAfterOffers, areaWanted === '' || areaWanted === null ? null : Number(areaWanted));
   if (opts.replacement) delivery.charge = 0;
+  // phase 21 (carry-over 9.2): a charge typed on the order stays (also when the order is changed later), at most the
+  // Commerce setting delivery_charge_max, with a reason when it differs from the area's; empty = the area's again
+  const areaCharge = delivery.charge;
+  let dTyped = 0; let dWhy = null;
+  const typedRaw = data.delivery_charge === undefined || data.delivery_charge === null ? undefined : String(data.delivery_charge).trim();
+  if (method.kind !== 'pickup' && !opts.replacement) {
+    if (typedRaw !== undefined && typedRaw !== '') {
+      if (!/^\d{1,6}(\.\d{1,2})?$/.test(typedRaw)) throw new CommerceError('Delivery charge: an amount like 250, 0 or more');
+      const most = Number(settings.delivery_charge_max) || 5000;
+      if (Number(typedRaw) > most) throw new CommerceError(`Delivery charge: at most Rs ${most} (Commerce settings)`);
+      if (Math.abs(Number(typedRaw) - areaCharge) > 0.004) {
+        dWhy = String(data.delivery_charge_why || '').trim().slice(0, 255);
+        if (!dWhy) throw new CommerceError(`Say why the delivery charge is Rs ${Number(typedRaw)} and not the area's Rs ${areaCharge}`);
+        delivery.charge = Number(typedRaw); dTyped = 1;
+      }
+    } else if (typedRaw === undefined && editing && Number(editing.delivery_charge_typed) === 1) {
+      delivery.charge = round2(Number(editing.delivery_charge) + Number(editing.delivery_waived || 0)); dTyped = 1; dWhy = editing.delivery_charge_why || null;
+    }
+  }
 
   // coupon (one per order)
   const couponCode = data.coupon_code ? String(data.coupon_code).trim().toUpperCase() : null;
@@ -554,7 +574,7 @@ async function prepare(q, data, opts = {}) {
     }
   }
   return { cust, godown, list, terms, creditDays: Number(cust.credit_days) || 0, lines: t.lines, contactId, totals: t, coupon: coupon ? coupon.code : null, couponInfo: coupon, offers: offers.applied,
-    manualReason, walletUsed, walletGst: walletUsed > 0 ? walletGst : null, walletCap, walletPlan, discountTotal, discountPct, deliveryWaived: waived,
+    manualReason, walletUsed, walletGst: walletUsed > 0 ? walletGst : null, walletCap, walletPlan, discountTotal, discountPct, deliveryWaived: waived, deliveryTyped: dTyped, deliveryWhy: dWhy, areaCharge,
     billAddressId: chose('bill') || !editing ? (billAddr ? billAddr.address_id : null) : editing.bill_address_id, shipAddressId: chose('ship') || !editing ? (shipAddr ? shipAddr.address_id : null) : editing.ship_address_id,
     bill: bill.values, ship: ship.values, pos, posReason: posInfo.reason, gstType, holds, settings, method, area: delivery.area,
     backs, kits: kits.map((k) => ({ kit_key: k.kit_key, kit_code: k.kit_code, name: k.name, qty: k.qty, list: k.list, price: k.unit })), quote: fromQuote, quoteGone, sw };
@@ -645,18 +665,23 @@ async function pickFor(q, orderId) {
 // due = total - returns credited - wallet paid part + wallet refunds - (payments - refund payments).
 async function refreshPayment(q, orderId) {
   const [[o]] = await q.query('SELECT status, total, wallet_used - wallet_discount AS wallet_paid FROM orders WHERE order_id = ?', [orderId]);
-  const [[p]] = await q.query("SELECT COALESCE(SUM(CASE WHEN kind = 'payment' THEN amount END), 0) AS paid, COALESCE(SUM(CASE WHEN kind = 'refund' THEN amount END), 0) AS refunded FROM payments WHERE order_id = ?", [orderId]);
+  // phase 21: a bounced cheque's share is reversed (reversed_at); a bad debt written off lowers what is due; the credit
+  // notes that count are the ones made (status done) and not the cancel of the whole invoice (kind cancel): exactly the
+  // return credit notes before phase 21, plus the price corrections
+  const [[p]] = await q.query("SELECT COALESCE(SUM(CASE WHEN kind = 'payment' THEN amount END), 0) AS paid, COALESCE(SUM(CASE WHEN kind = 'refund' THEN amount END), 0) AS refunded, COALESCE(SUM(CASE WHEN kind = 'writeoff' THEN amount END), 0) AS written FROM payments WHERE order_id = ? AND reversed_at IS NULL", [orderId]);
   const [[cr]] = await q.query(`SELECT COALESCE(SUM(cn.total), 0) AS credited FROM credit_notes cn JOIN invoices i ON i.invoice_id = cn.invoice_id
-      WHERE i.order_id = ? AND cn.return_id IS NOT NULL`, [orderId]).catch(() => [[{ credited: 0 }]]);
+      WHERE i.order_id = ? AND cn.status = 'done' AND cn.kind <> 'cancel'`, [orderId]).catch(() => [[{ credited: 0 }]]);
   const [[wr]] = await q.query("SELECT COALESCE(SUM(amount), 0) AS back FROM refunds WHERE order_id = ? AND method = 'wallet' AND status = 'paid'", [orderId]).catch(() => [[{ back: 0 }]]);
   const credited = Number(cr.credited);
   const paid = round2(Number(p.paid) - Number(p.refunded));
   const cancelled = o.status === 'cancelled';
   const owed = cancelled ? 0 : round2(Number(o.total) - credited - Number(o.wallet_paid) + Number(wr.back));
-  const due = round2(owed - paid);
+  const written = round2(p.written);
+  const due = round2(owed - paid - written);
   let status = 'unpaid';
   if (credited > 0.005 && due <= 0.005) status = credited >= Number(o.total) - 0.005 ? 'refunded' : 'part_refunded';
   else if (Number(p.refunded) > 0 && paid <= 0.005) status = 'refunded';
+  else if (!cancelled && due <= 0.005 && written > 0.005) status = 'written_off';
   else if (!cancelled && due <= 0.005 && (paid > 0 || Number(o.wallet_paid) > 0 || owed <= 0.005)) status = 'paid';
   else if (paid > 0.005) status = cancelled ? 'paid' : 'partly_paid';
   await q.query('UPDATE orders SET amount_paid = ?, amount_due = ?, payment_status = ? WHERE order_id = ?', [paid, due, status, orderId]);
@@ -736,20 +761,28 @@ async function createOrder(q, data, empId, opts = {}) {
       p.walletUsed, t.wallet_discount, p.walletGst, round2(t.total - (p.walletUsed - t.wallet_discount)), data.note ? String(data.note).slice(0, 255) : null, empId]
   );
   const orderId = ins.insertId;
-  await q.query('UPDATE orders SET quote_id = ?, standing_id = ? WHERE order_id = ?', [p.quote ? p.quote.quote_id : null, data.standing_id ? Number(data.standing_id) : null, orderId]);
+  await q.query('UPDATE orders SET quote_id = ?, standing_id = ?, delivery_charge_typed = ?, delivery_charge_why = ? WHERE order_id = ?', [p.quote ? p.quote.quote_id : null, data.standing_id ? Number(data.standing_id) : null, p.deliveryTyped, p.deliveryWhy, orderId]);
   await insertLines(q, orderId, p.lines);
   if (p.coupon) await promotions.redeem(q, orderId, p.cust.customer_id, p.coupon, p.couponInfo.discount || p.couponInfo.delivery_waived);
   if (p.walletUsed > 0) await wallet.use(q, p.cust.customer_id, p.walletUsed, orderId, orderNo, empId);
   await history(q, orderId, null, status, status === 'approval' ? `Waits for: ${p.holds.map((h) => h.label || approvals.KINDS[h.kind].label).join(', ')}` : status === 'draft' ? 'Saved as a draft' : null, empId);
   const ids = status === 'approval' ? await requestHolds(q, orderNo, p.cust.name, p.holds, empId, p.godown, p.cust.customer_id) : [];
   const h = status === 'new' ? await confirmed(q, orderId, empId, p.settings) : { held: 0, back: 0 };
+  let advance = null;
+  if (String(data.advance ?? '').trim() !== '' && Number(data.advance) > 0) {
+    const money = require('./money'); // eslint-disable-line global-require
+    try {
+      advance = await money.recordReceipt(q, { customer_id: p.cust.customer_id, amount: String(data.advance).trim(), mode: data.advance_mode || 'cash', reference: data.advance_ref, note: `Advance for ${orderNo}` },
+        empId, { source: 'advance', orderId, hold: true });
+    } catch (e) { if (e instanceof money.MoneyError) throw new CommerceError(`Advance: ${e.message}`, e.status); throw e; }
+  }
   await refreshPayment(q, orderId);
   await audit(q, { empId, action: 'create', entity: 'order', entityId: orderNo,
     after: { customer: p.cust.name, status, total: t.total, price_list: p.list.key, gst_type: p.gstType, terms: p.terms, delivery: p.method.label, delivery_charge: t.delivery_charge,
       lines: p.lines.map((i) => `${i.qty} x ${i.sku_code} @ ${i.price}${i.is_free ? ' (free)' : ''}`), offers: p.offers.map((x) => x.name), coupon: p.coupon, manual_discount: t.manual_discount,
       wallet_used: p.walletUsed, wallet_discount: t.wallet_discount, holds: p.holds.map((h) => h.kind) } });
   return { order_id: orderId, order_no: orderNo, status, status_label: STATUS_LABEL[status], held: status === 'approval', approvals: ids, waits: p.holds.map((x) => x.label || approvals.KINDS[x.kind].label),
-    packs_held: h.held, back: h.back, price_list: p.list.label, gst_type: p.gstType, ...t, walletUsed: p.walletUsed };
+    packs_held: h.held, back: h.back, price_list: p.list.label, gst_type: p.gstType, ...t, walletUsed: p.walletUsed, advance: advance ? { receipt_no: advance.receipt_no, amount: Number(data.advance) } : null };
 }
 
 /** what an order would be (the New / Edit order form, as you type): totals, lines with offers and free lines, coupon, wallet, holds */
@@ -791,11 +824,12 @@ async function previewOrder(q, data, empId, opts = {}) {
     wallet: { used: p.walletUsed, cap: p.walletCap, max_pct: Number(p.settings.wallet_max_use_pct), gst: p.settings.cashback_gst_treatment === 'payment' ? 'payment' : 'discount', by_source: p.walletPlan ? p.walletPlan.bySource : {},
       usable: (await wallet.plan(q, p.cust.customer_id, 1e9, order ? order.order_id : 0)).total },
     discount: { total: p.discountTotal, pct: p.discountPct, limit: p.settings.approve_discount_on ? Number(p.settings.approve_discount_pct_above) : null },
-    holds: holds.map((h) => ({ kind: h.kind, label: h.label || approvals.KINDS[h.kind].label, what: h.what })), delivery_area: p.area, coupon_error: couponError, wallet_error: walletError,
+    holds: holds.map((h) => ({ kind: h.kind, label: h.label || approvals.KINDS[h.kind].label, what: h.what })), delivery_area: p.area, delivery_typed: Boolean(p.deliveryTyped), area_charge: p.areaCharge, coupon_error: couponError, wallet_error: walletError,
   };
 }
 
 const ORDER_COLS = `order_id, order_no, customer_id, godown_id, status, payment_terms, credit_days, delivery_method_id, delivery_area_id, coupon_code, wallet_used, version, rev, quote_id, confirmed_at, hold_gone, total,
+  delivery_charge, delivery_waived, delivery_charge_typed, delivery_charge_why,
   bill_name, bill_gstin, bill_address, bill_town, bill_state_code, bill_pincode, bill_phone, bill_address_id,
   ship_name, ship_address, ship_town, ship_state_code, ship_pincode, ship_phone, ship_address_id, contact_id`;
 
@@ -850,6 +884,7 @@ async function updateOrder(q, orderNo, data, empId, opts = {}) {
       t.delivery_charge, t.delivery_gst, p.deliveryWaived, t.taxable, t.cgst, t.sgst, t.igst, t.gst, t.round_off, t.total, p.walletUsed, t.wallet_discount, p.walletGst,
       String(data.note || '').trim().slice(0, 255) || null, rev, empId, o.order_id]
   );
+  await q.query('UPDATE orders SET delivery_charge_typed = ?, delivery_charge_why = ? WHERE order_id = ?', [p.deliveryTyped, p.deliveryWhy, o.order_id]);
   if (status === 'approval') await requestHolds(q, orderNo, p.cust.name, p.holds, empId, p.godown, p.cust.customer_id);
   let h = { held: 0, back: 0 };
   if (status === 'approval' || status === 'draft') { await release(q, o.order_id); await q.query('UPDATE order_items SET back_qty = 0 WHERE order_id = ?', [o.order_id]); }
@@ -897,6 +932,10 @@ async function cancelOrder(q, orderNo, reason, empId) {
   if (!o) throw new CommerceError(`No order ${orderNo}`, 404);
   if (o.status === 'cancelled') throw new CommerceError(`${orderNo} is already cancelled`, 409);
   if (o.status === 'delivered') throw new CommerceError(`${orderNo} is delivered: use Returns`, 409);
+  if (!GONE.includes(o.status)) {
+    const [[liveInv]] = await q.query("SELECT invoice_no FROM invoices WHERE order_id = ? AND status = 'issued'", [o.order_id]);
+    if (liveInv) throw new CommerceError(`${orderNo} has invoice ${liveInv.invoice_no}. Cancel the invoice first (Money > Billing > Invoices), then the order.`, 409);
+  }
   if (GONE.includes(o.status) && await approvals.needed(q, 'cancel_after_dispatch')) {
     const [[had]] = await q.query("SELECT approval_id FROM approvals WHERE kind = 'cancel_after_dispatch' AND ref_type = 'order' AND ref_id = ? AND status = 'pending'", [orderNo]);
     if (had) throw new CommerceError(`Cancelling ${orderNo} already waits for approval (request #${had.approval_id})`, 409);
@@ -925,6 +964,8 @@ async function leaveGodown(q, orderId, empId, { at = null } = {}) {
   }
   await q.query("UPDATE stock_reservations SET status = 'consumed', closed_at = UTC_TIMESTAMP() WHERE order_id = ? AND status = 'active'", [o.order_id]);
   const inv = await invoices.issue(q, o.order_id, empId, { at });
+  const miss = await require('./billing').leaveCheck(q, o.order_id); // eslint-disable-line global-require
+  if (miss) throw new CommerceError(`Not ready to leave. ${miss}`, 409);
   await q.query('UPDATE orders SET dispatched_at = COALESCE(?, UTC_TIMESTAMP()) WHERE order_id = ?', [at, o.order_id]);
   return { invoice_no: inv.invoice_no, batches: batches.filter((x) => x.batch_no) };
 }
@@ -975,10 +1016,24 @@ async function recordPayment(q, orderNo, b, empId, opts = {}) {
   else if (amount > Math.max(-Number(o.amount_due), 0) + 0.005 && !opts.canApprove && !opts.internal) {
     throw new CommerceError(`Only the overpaid ${rs(Math.max(-Number(o.amount_due), 0))} can be refunded here; a larger refund goes through Returns (or a role with "approve" on Orders)`, 403);
   }
+  if (kind === 'payment') { // phase 21 (D2): a receipt of the customer, set against this order only
+    const money = require('./money'); // eslint-disable-line global-require
+    const [[cu]] = await q.query('SELECT customer_id FROM orders WHERE order_id = ?', [o.order_id]);
+    const note = String(b.note || '').trim().slice(0, 255);
+    const source = opts.source || (/trip/i.test(note) ? 'trip' : /pickup/i.test(note) ? 'pickup' : 'order');
+    let rc;
+    try {
+      rc = await money.recordReceipt(q, { customer_id: cu.customer_id, amount: s, received_on: day, mode: b.mode, reference, cheque_no: b.cheque_no, cheque_bank: b.cheque_bank, cheque_date: b.cheque_date, note: note || null },
+        empId, { source, orderId: o.order_id, only: o.order_id, legacyCheque: !b.cheque_bank });
+    } catch (e) { if (e instanceof money.MoneyError) throw new CommerceError(e.message, e.status); throw e; }
+    const [[pr]] = await q.query('SELECT MAX(payment_id) AS id FROM payments WHERE receipt_id = ?', [rc.receipt_id]);
+    const st0 = await refreshPayment(q, o.order_id);
+    await audit(q, { empId, action: 'record', entity: 'payment', entityId: `${orderNo}/${pr.id}`, after: { amount, mode: b.mode, received_on: day, reference, receipt: rc.receipt_no, payment_status: st0.status, due: st0.due } });
+    return { payment_id: pr.id, receipt_no: rc.receipt_no, ...st0 };
+  }
   const [ins] = await q.query('INSERT INTO payments (order_id, kind, mode, amount, received_on, reference, note, emp_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
     [o.order_id, kind, b.mode, amount, day, reference, String(b.note || '').trim().slice(0, 255) || null, empId]);
   const st = await refreshPayment(q, o.order_id);
-  if (kind === 'payment') await notifications.paymentReceived(q, ins.insertId);
   await audit(q, { empId, action: kind === 'refund' ? 'refund' : 'record', entity: 'payment', entityId: `${orderNo}/${ins.insertId}`, after: { amount, mode: b.mode, received_on: day, reference, payment_status: st.status, due: st.due } });
   return { payment_id: ins.insertId, ...st };
 }

@@ -681,32 +681,56 @@ export const MENU = [
       label: "Invoices",
       see: "every GST invoice - customer, amount, paid or unpaid, e-way bill and e-invoice details.",
       use: "make the invoice from a packed order, print it, or ask to cancel it. │",
-      section: "orders",
-      phase: 21
+      to: [
+       {
+        path: "invoices",
+        section: "invoicing",
+        action: "view",
+        commerce: true
+       }
+      ]
      },
      {
       id: "money/billing/credit-notes",
       label: "Credit notes",
       see: "money given back to customers - returns and price corrections.",
       use: "make a credit note against an invoice (needs approval). │",
-      section: "orders",
-      phase: 21
+      to: [
+       {
+        path: "credit-notes",
+        section: "invoicing",
+        action: "view",
+        commerce: true
+       }
+      ]
      },
      {
       id: "money/billing/debit-notes",
       label: "Debit notes",
       see: "extra charges added after the invoice.",
       use: "charge the customer more, against the original invoice. │",
-      section: "orders",
-      phase: 21
+      to: [
+       {
+        path: "debit-notes",
+        section: "invoicing",
+        action: "view",
+        commerce: true
+       }
+      ]
      },
      {
       id: "money/billing/delivery-challans",
       label: "Delivery challans",
       see: "goods sent without a sale - samples, transfers, repairs.",
       use: "make the challan that travels with the goods.",
-      section: "orders",
-      phase: 21
+      to: [
+       {
+        path: "delivery-challans",
+        section: "invoicing",
+        action: "view",
+        commerce: true
+       }
+      ]
      }
     ]
    },
@@ -719,8 +743,14 @@ export const MENU = [
       label: "Receipts",
       see: "money received from customers by cash, UPI, bank or cheque.",
       use: "record a payment; it clears the oldest dues, or the invoice the customer names (an exact amount matches its invoice). │",
-      section: "orders",
-      phase: 21
+      to: [
+       {
+        path: "receipts",
+        section: "money",
+        action: "view",
+        commerce: true
+       }
+      ]
      },
      {
       id: "money/payments/supplier-payments",
@@ -741,17 +771,28 @@ export const MENU = [
       label: "Refunds",
       see: "money paid back to customers.",
       use: "record a refund (needs approval). │",
-      section: "returns",
-      phase: 21
+      to: [
+       {
+        path: "refunds",
+        section: "money",
+        action: "view",
+        commerce: true
+       }
+      ]
      },
      {
       id: "money/payments/cheque-register",
       label: "Cheque register",
       see: "cheques received and given, and their status.",
       use: "deposit cheques on time and record bounces.",
-      tag: "later",
-      section: "orders",
-      phase: "later"
+      to: [
+       {
+        path: "cheque-register",
+        section: "money",
+        action: "view",
+        commerce: true
+       }
+      ]
      }
     ]
    },
@@ -821,11 +862,10 @@ export const MENU = [
     use: "give the CA the figures to file the monthly returns.",
     to: [
      {
-      path: "commerce/reports",
-      section: "reports",
+      path: "gst-data",
+      section: "invoicing",
       action: "view",
-      commerce: true,
-      search: "tab=gst"
+      commerce: true
      }
     ]
    },
@@ -834,16 +874,28 @@ export const MENU = [
     label: "E-invoice",
     see: "invoices that need a government IRN number, and their status.",
     use: "add the IRN so the invoice is valid.",
-    section: "reports",
-    phase: 21
+    to: [
+     {
+      path: "e-invoice",
+      section: "invoicing",
+      action: "view",
+      commerce: true
+     }
+    ]
    },
    {
     id: "gst/e-way-bill",
     label: "E-way bill",
     see: "loads above the limit that need an e-way bill, and their numbers.",
     use: "add the e-way bill number before the goods leave.",
-    section: "reports",
-    phase: 21
+    to: [
+     {
+      path: "e-way-bill",
+      section: "invoicing",
+      action: "view",
+      commerce: true
+     }
+    ]
    },
    {
     id: "gst/other-gst-returns",
@@ -851,7 +903,7 @@ export const MENU = [
     see: "other returns, done by the CA in Tally.",
     use: "nothing here yet.",
     tag: "later",
-    section: "reports",
+    section: "invoicing",
     phase: "later"
    }
   ]

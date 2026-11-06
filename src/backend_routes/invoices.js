@@ -89,7 +89,9 @@ async function issue(q, orderId, empId, { at = null } = {}) {
   );
   await audit(q, { empId, action: 'issue', entity: 'invoice', entityId: invoiceNo, after: { order: o.order_no, total: Number(o.total), gst_type: o.gst_type, due_in_days: dueDays } });
   await notifications.invoiceIssued(q, ins.insertId); // the invoice PDF to the invoice contacts
-  return { invoice_id: ins.insertId, invoice_no: invoiceNo };
+  // phase 21 (D2): what the customer has on account (an advance first) is used on the new invoice
+  const used = await require('./money').applyOnAccount(q, o.order_id, empId); // eslint-disable-line global-require
+  return { invoice_id: ins.insertId, invoice_no: invoiceNo, on_account_used: used };
 }
 
 /** the godown of an invoice (its order's): credit notes are numbered per godown like invoices */
@@ -107,7 +109,7 @@ async function cancelForOrder(q, orderId, reason, empId) {
   await books.guardRecord(q, { date: d.day, key: `inv:${inv.invoice_id}`, label: `Cancel invoice ${inv.invoice_no}`, godownId: await godownOfInvoice(q, inv.invoice_id) }, empId);
   await books.assertOpen(q, pricing.istToday()); // its credit note is dated today
   const why = String(reason || '').trim().slice(0, 255) || 'Order cancelled';
-  await q.query("UPDATE invoices SET status = 'cancelled', live_order_id = NULL, cancelled_at = UTC_TIMESTAMP(), cancel_reason = ?, cancelled_by = ? WHERE invoice_id = ?",
+  await q.query("UPDATE invoices SET status = 'cancelled', cancel_kind = 'order', live_order_id = NULL, cancelled_at = UTC_TIMESTAMP(), cancel_reason = ?, cancelled_by = ? WHERE invoice_id = ?",
     [why, empId, inv.invoice_id]);
   const cs = await commerceSettings.read(q);
   const fy = numbering.fyOf(new Date());
@@ -115,8 +117,8 @@ async function cancelForOrder(q, orderId, reason, empId) {
   const seq = await numbering.next(q, `${cs.credit_note_prefix}-${g.key}${fy.fy}`, 1);
   const cnNo = `${cs.credit_note_prefix}/${g.seg}${fy.short}/${numbering.pad(seq)}`;
   await q.query(
-    `INSERT INTO credit_notes (credit_note_no, fy, seq, invoice_id, reason, taxable, cgst, sgst, igst, round_off, total, issued_at, emp_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(), ?)`,
+    `INSERT INTO credit_notes (credit_note_no, fy, seq, invoice_id, reason, kind, taxable, cgst, sgst, igst, round_off, total, issued_at, emp_id)
+     VALUES (?, ?, ?, ?, ?, 'cancel', ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(), ?)`,
     [cnNo, fy.fy, seq, inv.invoice_id, why, inv.taxable, inv.cgst, inv.sgst, inv.igst, inv.round_off, inv.total, empId]
   );
   await audit(q, { empId, action: 'cancel', entity: 'invoice', entityId: inv.invoice_no, before: { status: 'issued' }, after: { status: 'cancelled', reason: why, credit_note: cnNo } });
@@ -153,6 +155,9 @@ async function creditNoteForReturn(q, orderId, lines, reason, returnId, empId) {
   const cs = await commerceSettings.read(q);
   const ro = cs.invoice_round_off ? r2(Math.round(before) - before) : 0;
   const total = r2(before + ro);
+  // phase 21 (v23): all credit notes on one invoice together never pass its value; other returns still open hold their room
+  const room = await require('./billing').noteRoom(q, inv.invoice_id, { exceptReturn: returnId || 0 }); // eslint-disable-line global-require
+  if (total > room.room + 0.004) throw new InvoiceError(`Too much for ${inv.invoice_no}: credit notes on it together cannot pass the invoice value. Room left: Rs ${Math.max(0, room.room).toFixed(2)}${room.held ? ` (Rs ${room.held.toFixed(2)} is held for other returns still open on it)` : ''}.`, 409);
   const fy = numbering.fyOf(new Date());
   const g = await numbering.godownSegment(q, await godownOfInvoice(q, inv.invoice_id));
   const seq = await numbering.next(q, `${cs.credit_note_prefix}-${g.key}${fy.fy}`, 1);

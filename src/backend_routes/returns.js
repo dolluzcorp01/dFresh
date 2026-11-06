@@ -434,12 +434,12 @@ approvals.onClosed('return_window', async (q, p, status, empId) => {
   if (['requested', 'collecting'].includes(r.status)) await setStatus(q, r, 'rejected', empId, `Outside the return window: approval ${status}`, { closed_at: new Date() });
 });
 approvals.onApproved('refund', async (q, p, empId) => {
-  if (!p || !p.refund_id) return; // older demo requests carry no refund
+  if (!p || !p.refund_id || p.credit) return; // older demo requests carry no refund; phase 21: a credit-balance refund is money.js's
   await payRefund(q, p.refund_id, empId);
   await finalize(q, p.return_no, empId);
 });
 approvals.onClosed('refund', async (q, p, status, empId) => {
-  if (!p || !p.refund_id) return;
+  if (!p || !p.refund_id || p.credit) return;
   await q.query("UPDATE refunds SET status = 'rejected' WHERE refund_id = ? AND status = 'approval'", [p.refund_id]);
   await undo(q, p.return_no, p.lines, 'refund_qty', `Refund approval ${status}: decide those packs again`, empId);
 });

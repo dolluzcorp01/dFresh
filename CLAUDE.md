@@ -32,6 +32,15 @@ The approved look, copy, animations and interactions come from that preview. Mat
   with the "after" values. Screenshots go to `/visual-output/<phase>/parity-*.png`.
   Tool: `scripts/visual-parity/` (add the phase's sections to `measure.js`; usage in its header).
   A difference that is data, not layout (e.g. fewer active banners), is listed with its reason, not "fixed".
+- **Light test rule (from phase 21; it replaces the full regression and the 1920 / 1440 / 390 parity above for the
+  admin phases).** Each phase runs:
+  - its own section tests;
+  - the engine tests, `test:api`, and the menu and nav checks;
+  - only the earlier scenario scripts that touch files the phase changed;
+  - the public site check only if a public file changed;
+  - the layout (parity) check at 1440 only, on the new pages;
+  - a fresh install only if there is a new migration.
+  The full regression of every script runs once, after phase 23.
 - If something in a phase conflicts with these rules or the docs, STOP and ask. Do not guess.
 - **Process hygiene.** Before finishing ANY turn, stop every process you started (API, web dev server, preview /
   build servers, browsers you launched) and end the turn with a line `Stopped: ...` naming each one and its port

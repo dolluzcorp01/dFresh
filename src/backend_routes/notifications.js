@@ -445,6 +445,19 @@ async function jobOverdue(q) {
   return `${rows.length} customer(s) with overdue invoices: ${sent} reminder(s), ${skipped} not sent`;
 }
 
+/** phase 21: Receipts > Remind: the overdue reminder (statement PDF) to one customer now -> { sent, amount, to, message } */
+async function overdueNow(q, customerId) {
+  const [[r]] = await q.query(`SELECT COUNT(*) AS n, COALESCE(SUM(o.amount_due), 0) AS amount, GROUP_CONCAT(CONCAT(i.invoice_no, ' (due ', DATE_FORMAT(i.due_on, '%d %b %Y'), ', Rs ', FORMAT(o.amount_due, 2, 'en_IN'), ')') ORDER BY i.due_on SEPARATOR '; ') AS list
+      FROM invoices i JOIN orders o ON o.order_id = i.order_id WHERE o.customer_id = ? AND ${OVERDUE}`, [customerId]);
+  if (!Number(r.n)) return { sent: 0, amount: 0, to: [], message: 'Nothing is overdue.' };
+  const st = await require('./money').statement(q, customerId); // eslint-disable-line global-require
+  const before = (await q.query('SELECT COALESCE(MAX(log_id), 0) AS m FROM notification_log'))[0][0].m;
+  const n = await toCustomer(q, 'overdue', { customerId, vars: { overdue_amount: money(r.amount), overdue_count: Number(r.n), invoices: r.list, outstanding: money(st.balance) }, attach: { kind: 'statement', id: customerId }, ref: `${r.n} overdue (reminded)` });
+  const [log] = await q.query("SELECT recipient, status, skip_reason FROM notification_log WHERE log_id > ? AND event_key = 'overdue' ORDER BY log_id", [before]);
+  return { sent: n || 0, amount: Number(r.amount), to: log.map((x) => x.recipient),
+    message: log.length ? `${money(r.amount)} is overdue. Statement attached. ${log.map((x) => `${x.status === 'skipped' ? 'Not sent' : 'Mail'} to ${x.recipient || 'no address'}${x.skip_reason ? ` (${x.skip_reason})` : ''}`).join('; ')}, through the Outbox.` : 'No contact with an e-mail: add one to the customer first.' };
+}
+
 /** wallet credit expiring in N days: once per credit, not to an opted-out customer */
 async function jobWalletExpiring(q) {
   const cs = await commerceSettings.read(q);
@@ -495,7 +508,7 @@ async function jobDailySummary(q) {
   const [[s]] = await q.query(`SELECT
       (SELECT COUNT(*) FROM orders WHERE ${on('created_at')}) AS orders, (SELECT COALESCE(SUM(total), 0) FROM orders WHERE ${on('created_at')} AND status <> 'cancelled') AS order_value,
       (SELECT COUNT(*) FROM invoices WHERE ${on('issued_at')}) AS invoices, (SELECT COALESCE(SUM(total), 0) FROM invoices WHERE ${on('issued_at')}) AS invoiced,
-      (SELECT COALESCE(SUM(amount), 0) FROM payments WHERE kind = 'payment' AND ${on('created_at')}) AS paid,
+      (SELECT COALESCE(SUM(amount), 0) FROM payments WHERE kind = 'payment' AND reversed_at IS NULL AND ${on('created_at')}) AS paid,
       (SELECT COUNT(*) FROM orders WHERE ${on('delivered_at')}) AS delivered, (SELECT COUNT(*) FROM orders WHERE ${on('failed_at')}) AS failed,
       (SELECT COUNT(*) FROM returns WHERE ${on('created_at')}) AS returns_new,
       (SELECT COUNT(*) FROM approvals WHERE status = 'pending') AS approvals,
@@ -685,6 +698,6 @@ async function sendTest(q, event, lang, draft, me) {
 
 module.exports = {
   EVENTS, DAILY, settingKey, setMuted, isOn, template, unknownVars, compose, customerRecipients, staffUsers, staffWith, record,
-  orderConfirmed, holdEnded, quoteSent, statementMail, orderStatus, invoiceIssued, paymentReceived, returnAccepted, returnPicked, returnRefunded, walletCredited, approvalWaiting, cashDifference, adminAlert,
+  orderConfirmed, holdEnded, quoteSent, statementMail, orderStatus, invoiceIssued, paymentReceived, overdueNow, returnAccepted, returnPicked, returnRefunded, walletCredited, approvalWaiting, cashDifference, adminAlert,
   runDaily, startJobs, stopJobs, preview, sendTest, JOBS,
 };

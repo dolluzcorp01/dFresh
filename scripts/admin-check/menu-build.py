@@ -77,6 +77,15 @@ MAP = {
     'purchase/supplier-bills': [T('supplier-bills', 'buying')],
     'purchase/claims-and-purchase-returns': [T('claims', 'buying')],
     'money/payments/supplier-payments': [T('supplier-payments', 'money')],
+    'money/billing/invoices': [T('invoices', 'invoicing')],  # phase 21: sections 10 and 11 Invoicing, GST and payments
+    'money/billing/credit-notes': [T('credit-notes', 'invoicing')],
+    'money/billing/debit-notes': [T('debit-notes', 'invoicing')],
+    'money/billing/delivery-challans': [T('delivery-challans', 'invoicing')],
+    'money/payments/receipts': [T('receipts', 'money')],
+    'money/payments/refunds': [T('refunds', 'money')],
+    'money/payments/cheque-register': [T('cheque-register', 'money')],
+    'gst/e-invoice': [T('e-invoice', 'invoicing')],
+    'gst/e-way-bill': [T('e-way-bill', 'invoicing')],
     'production/recipes': [T('recipes', 'production')],  # phase 17: section 4 Production
     'production/production-runs': [T('production-runs', 'production')],
     'production/wastage': [T('wastage', 'production')],
@@ -88,7 +97,7 @@ MAP = {
     'inventory/reorder': [T('reorder', 'inventory')],
     'inventory/stock-ledger': [T('stock-ledger', 'inventory')],
     'money/accounting-export/export-to-accountant': [T('commerce/reports', 'reports', search='tab=accounting')],
-    'gst/gstr-1-gstr-3b-data': [T('commerce/reports', 'reports', search='tab=gst')],
+    'gst/gstr-1-gstr-3b-data': [T('gst-data', 'invoicing')],  # phase 21: GSTR-1 and 3B for the CA (the GST report tab stays in Reports)
     'marketing/offers': [T('commerce/promotions', 'promotions', search='tab=offers')],
     'marketing/coupons': [T('commerce/promotions', 'promotions', search='tab=coupons')],
     'marketing/cashback-rules': [T('commerce/promotions', 'promotions', search='tab=cashback')],
@@ -142,8 +151,8 @@ MAP = {
 PLACE_SECTION = [
     ('home/', None), ('sales/leads/', 'leads'), ('sales/customers/', 'customers'), ('sales/orders/', 'orders'), ('sales/returns/', 'returns'),
     ('fulfilment/', 'delivery'), ('purchase/', 'buying'), ('production/', 'production'), ('inventory/', 'inventory'),
-    ('money/payments/refunds', 'returns'), ('money/payments/supplier-payments', 'money'), ('money/billing/', 'orders'), ('money/payments/', 'orders'),
-    ('money/', 'reports'), ('gst/', 'reports'), ('marketing/', 'promotions'), ('reports/', 'reports'),
+    ('money/payments/', 'money'), ('money/billing/', 'invoicing'),
+    ('money/', 'reports'), ('gst/', 'invoicing'), ('marketing/', 'promotions'), ('reports/', 'reports'),
     ('masters/catalogue/raw-materials', 'inventory'), ('masters/prices/', 'prices'), ('masters/tax-and-units/hsn', 'prices'), ('masters/', 'products'), ('website/', 'content'),
     ('admin/users-and-security/', 'users'), ('admin/', 'settings'), ('online-store', 'settings'),
 ]

@@ -250,7 +250,7 @@ dFresh Back Office
 │   │   │       What you see : money paid back to customers.
 │   │   │       Use it to    : record a refund (needs approval).
 │   │   │
-│   │   └── Cheque register (later)
+│   │   └── Cheque register
 │   │           What you see : cheques received and given, and their status.
 │   │           Use it to    : deposit cheques on time and record bounces.
 │   │

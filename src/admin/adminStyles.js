@@ -1444,6 +1444,33 @@ td.a-pending { background: #fff8e1; box-shadow: inset 3px 0 0 #e3b44f; }
   .a-p20-scan { flex-wrap: wrap; } .a-p20-scan .a-p20-grow { flex: 1 1 100%; }
   .a-p20-fi { flex: 1 1 100%; }
 }
+/* phase 21: sections 10 and 11 (v23 totals box, .endbox, the money summary row, print views) */
+.a-p21-tot { max-width: 360px; margin: 12px 0 0 auto; display: flex; flex-direction: column; gap: 6px; }
+.a-p21-tot > div { display: flex; justify-content: space-between; gap: 16px; } .a-p21-tot dt { color: var(--muted); } .a-p21-tot dd { margin: 0; font-variant-numeric: tabular-nums; text-align: right; }
+.a-p21-tot .a-p21-tb { border-top: 1px solid var(--line); padding-top: 6px; font-size: 15px; }
+.a-p21-acts { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.a-p21-end { margin-top: 16px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface-2); display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.a-p21-end .a-field, .a-p21-end .a-grid2, .a-p21-end .a-alert { width: 100%; } .a-p21-end.a-p21-dash { border-style: dashed; }
+.a-p21-h3 { font-size: 15px; margin: 16px 0 6px; } .a-p21-mini { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: 14px; }
+.a-p21-brk { overflow-wrap: anywhere; word-break: break-all; } .a-p21-sm { font-size: 12px; }
+.a-p21-demo { background: var(--bad-bg, #fdf1f1); color: var(--bad); padding: 6px 10px; font-weight: 700; margin-bottom: 12px; border-radius: var(--r-sm); }
+.a-p21-qr { display: flex; gap: 12px; align-items: center; margin: 8px 0; } .a-p21-qr p { margin: 0; } .a-p21-qr svg { width: 110px; height: 110px; }
+.a-p21-print .a-table { margin-top: 10px; } .a-p21-print .a-kv { margin-top: 8px; }
+.a-p21-sum { margin-bottom: var(--gap); } /* v23: the "Customers owe" row is a one-row table in a card */
+.a-p21-fcard { padding: 0; overflow: hidden; } .a-p21-fcard .a-p18-filters { border-bottom: 0; } /* v23 .card > .filters */
+.a-p21-nowrap { white-space: nowrap; } .a-p21-pad { padding: 0 16px 12px; margin: 0; }
+.a-p21-line { display: grid; grid-template-columns: minmax(0, 1fr) 120px; gap: 12px; align-items: start; margin: 8px 0; }
+.a-p21-card { padding: 0; overflow: hidden; margin-top: var(--gap); } .a-p21-card .a-table { margin: 0; }
+.a-p21-ch { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--line); } .a-p21-ch h2 { font-size: 16px; margin: 0; }
+@media (max-width: 720px) {
+  .a-p21-line { grid-template-columns: minmax(0, 1fr) 96px; }
+  .a-p21-card { overflow-x: auto; }
+}
+@media print {
+  body:has(#printArea) * { visibility: hidden; }
+  body:has(#printArea) #printArea, body:has(#printArea) #printArea * { visibility: visible; }
+  body:has(#printArea) #printArea { position: absolute; left: 0; top: 0; width: 100%; box-shadow: none; border: 0; }
+}
 @media print {
   body.a-printing-card * { visibility: hidden; }
   body.a-printing-card .a-printonly-area, body.a-printing-card .a-printonly-area * { visibility: visible; }

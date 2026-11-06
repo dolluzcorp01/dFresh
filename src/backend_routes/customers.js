@@ -536,43 +536,7 @@ async function timeline(q, id) {
  * (credit), refunds to the wallet (debit: the money went to the wallet), running balance; ageing of what is open by the
  * invoice date: 0-30 / 31-60 / 61-90 / 90+ days.
  */
-async function statement(q, id, { from = null, to = null } = {}) {
-  const day = (col) => `DATE_FORMAT(CONVERT_TZ(${col}, '+00:00', '+05:30'), '%Y-%m-%d')`;
-  const [rows] = await q.query(
-    `SELECT ${day('i.issued_at')} AS day, i.issued_at AS at, 'invoice' AS kind, CONCAT('Invoice ', i.invoice_no, ' (', o.order_no, ')', IF(i.status = 'cancelled', ' - cancelled', '')) AS text, i.total AS debit, 0 AS credit
-       FROM invoices i JOIN orders o ON o.order_id = i.order_id WHERE o.customer_id = ?
-     UNION ALL SELECT ${day('cn.issued_at')}, cn.issued_at, 'credit_note', CONCAT('Credit note ', cn.credit_note_no, ' against ', i.invoice_no, IF(r.return_no IS NULL, '', CONCAT(' (return ', r.return_no, ')'))), 0, cn.total
-       FROM credit_notes cn JOIN invoices i ON i.invoice_id = cn.invoice_id JOIN orders o ON o.order_id = i.order_id LEFT JOIN returns r ON r.return_id = cn.return_id WHERE o.customer_id = ?
-     UNION ALL SELECT DATE_FORMAT(p.received_on, '%Y-%m-%d'), p.created_at, p.kind, CONCAT(IF(p.kind = 'refund', 'Refund paid ', 'Payment '), p.mode, IF(p.reference IS NULL, '', CONCAT(' ', p.reference)), ' (', o.order_no, ')'),
-       IF(p.kind = 'refund', p.amount, 0), IF(p.kind = 'refund', 0, p.amount) FROM payments p JOIN orders o ON o.order_id = p.order_id WHERE o.customer_id = ?
-     UNION ALL SELECT ${day('i.issued_at')}, i.issued_at, 'wallet', CONCAT('Paid from the wallet (', o.order_no, ')'), 0, o.wallet_used - o.wallet_discount
-       FROM orders o JOIN invoices i ON i.order_id = o.order_id AND i.status = 'issued' WHERE o.customer_id = ? AND o.wallet_used - o.wallet_discount > 0.005
-     UNION ALL SELECT ${day('f.paid_at')}, f.paid_at, 'refund_wallet', CONCAT('Refund to the wallet (', r.return_no, ')'), f.amount, 0
-       FROM refunds f JOIN returns r ON r.return_id = f.return_id JOIN orders o ON o.order_id = f.order_id WHERE o.customer_id = ? AND f.method = 'wallet' AND f.status = 'paid'
-     ORDER BY day, at`, [id, id, id, id, id]);
-  let bal = 0;
-  let opening = 0;
-  const lines = [];
-  for (const r of rows) {
-    const d = Number(r.debit) || 0; const c = Number(r.credit) || 0;
-    if (from && r.day < from) { opening = round2(opening + d - c); bal = opening; continue; }
-    if (to && r.day > to) continue;
-    bal = round2(bal + d - c);
-    lines.push({ day: r.day, kind: r.kind, text: r.text, debit: round2(d), credit: round2(c), balance: bal });
-  }
-  const [open] = await q.query(
-    `SELECT i.invoice_no, o.order_no, ${day('i.issued_at')} AS day, DATE_FORMAT(i.due_on, '%Y-%m-%d') AS due_on, o.amount_due,
-            DATEDIFF(${IST_TODAY}, DATE(CONVERT_TZ(i.issued_at, '+00:00', '+05:30'))) AS age
-       FROM invoices i JOIN orders o ON o.order_id = i.order_id WHERE o.customer_id = ? AND i.status = 'issued' AND o.status <> 'cancelled' AND o.amount_due > 0.005 ORDER BY i.issued_at`, [id]);
-  const ageing = { d0_30: 0, d31_60: 0, d61_90: 0, d90: 0 };
-  const openRows = open.map((o) => {
-    const a = Number(o.age); const due = Number(o.amount_due);
-    const b = a <= 30 ? 'd0_30' : a <= 60 ? 'd31_60' : a <= 90 ? 'd61_90' : 'd90';
-    ageing[b] = round2(ageing[b] + due);
-    return { ...o, amount_due: due, age: a, bucket: b, overdue: o.due_on < istToday() };
-  });
-  return { opening, lines, closing: bal, open: openRows, ageing, outstanding: round2(openRows.reduce((x, o) => x + o.amount_due, 0)) };
-}
+async function statement(q, id, opts = {}) { return require('./money').statement(q, id, opts); } // eslint-disable-line global-require
 
 // ---------------------------------------------------------------- leads
 /** a lead becomes a customer (once): name, phone, e-mail, town, the contact person; type from the form */
