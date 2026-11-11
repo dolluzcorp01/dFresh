@@ -473,4 +473,4 @@ async function reorderRows(q, godowns) {
 }
 
 module.exports = { InvError, TR_ST, MOVE_SHELVES, items, valOf, unitOf, qtyText, stockRows, itemDetail, ledger, shelfMove, postMove, moveRecheck, moveClosed, transferOf, ewayRule,
-  sendTransfer, receiveTransfer, disputedOf, settling, settleTransfer, takeView, reorderRows };
+  sendTransfer, receiveTransfer, disputedOf, settling, settleTransfer, takeView, reorderRows, nameOf };

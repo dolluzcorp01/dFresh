@@ -52,6 +52,8 @@ import CustomerTypes from './CustomerTypes';
 import CustomerLedger from './CustomerLedger';
 import CommerceCustomers from './CommerceCustomers';
 import CommercePromotions from './CommercePromotions';
+import { CashbackRules, Coupons, CustomerWallets, Offers } from './Marketing';
+import { Inspection, ReturnRequests } from './ReturnsPages';
 import CommerceOps from './CommerceOps';
 import Prices from './Prices';
 import QuantitySlabs from './QuantitySlabs';
@@ -238,6 +240,13 @@ export default function AdminApp() {
             <Route path="supplier-bills" element={<Need section="buying" commerce><SupplierBills /></Need>} />
             <Route path="claims" element={<Need section="buying" commerce><Claims /></Need>} />
             <Route path="supplier-payments" element={<Need section="money" commerce><SupplierPayments /></Need>} />
+            {/* phase 22: sections 12 to 14 Returns, promotions and wallet */}
+            <Route path="return-requests" element={<Need section="returns" commerce><ReturnRequests /></Need>} />
+            <Route path="inspection" element={<Need section="returns" commerce><Inspection /></Need>} />
+            <Route path="offers" element={<Need section="promotions" commerce><Offers /></Need>} />
+            <Route path="coupons" element={<Need section="promotions" commerce><Coupons /></Need>} />
+            <Route path="cashback-rules" element={<Need section="promotions" commerce><CashbackRules /></Need>} />
+            <Route path="customer-wallets" element={<Need section="promotions" commerce><CustomerWallets /></Need>} />
             {/* phase 21: sections 10 and 11 Invoicing, GST and payments */}
             <Route path="invoices" element={<Need section="invoicing" commerce><Invoices /></Need>} />
             <Route path="credit-notes" element={<Need section="invoicing" commerce><CreditNotes /></Need>} />

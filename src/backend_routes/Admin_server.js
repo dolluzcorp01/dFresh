@@ -2456,12 +2456,12 @@ route('get', '/commerce/returns/:no', 'returns:view', async (req) => {
     ...r, status_label: returns.STATUS_LABEL[r.status], collection_label: returns.COLLECTION[r.collection], outside_window: Number(r.outside_window) === 1,
     amount_paid: amt(r.amount_paid), amount_due: amt(r.amount_due), order_total: amt(r.order_total),
     tracking_link: r.tracking_url && r.awb_no ? r.tracking_url.replace('{awb}', encodeURIComponent(r.awb_no)) : null,
-    lines: lines.map((l) => ({ ...l, left: returns.leftOf(l) })), history: hist, photos, scans, couriers, trips: stops,
+    lines: lines.map((l) => ({ ...l, left: returns.leftOf(l), resell_state: l.resell_approval_id ? ((appr.find((a) => a.approval_id === l.resell_approval_id) || {}).status || null) : null })), history: hist, photos, scans, couriers, trips: stops,
     refunds: refunds.map((f) => ({ ...f, amount: Number(f.amount) })), credit_notes: cns.map((c) => ({ ...c, total: Number(c.total), taxable: Number(c.taxable), cgst: Number(c.cgst), sgst: Number(c.sgst), igst: Number(c.igst), round_off: Number(c.round_off) })),
     approvals: appr.map((a) => ({ ...a, kind_label: (approvals.KINDS[a.kind] || {}).label || a.kind })),
     waiting: appr.filter((a) => a.status === 'pending').map((a) => a.kind),
     methods: returns.METHODS, modes: commerce.modesOffered(cs), modeLabels: commerce.MODES,
-    refundRule: { on: Boolean(cs.approve_refund_on), above: Number(cs.approve_refund_above) }, noRefundApproval: cs.approve_no_refund !== false,
+    refundRule: { on: Boolean(cs.approve_refund_on), above: Number(cs.approve_refund_above) }, noRefundApproval: cs.approve_no_refund !== false, resell_on: Boolean(cs.returned_resell),
     can: { receive: canDo(req, 'inventory', 'edit'), decide: canDo(req, 'returns', 'edit'), photo: canDo(req, 'returns', 'create') || canDo(req, 'inventory', 'edit') },
   };
 });
@@ -2486,6 +2486,10 @@ route('post', '/commerce/returns/:no/scan', 'inventory:edit', async (req) => {
 });
 route('post', '/commerce/returns/:no/inspect', 'inventory:edit', async (req) => {
   try { return await tx((q) => returns.inspect(q, req.params.no, req.body || {}, by(req))); } catch (e) { throw asReturn(e); }
+});
+// phase 22 (v23 12.8): the resell packs whose "back to Good" was rejected are inspected again
+route('post', '/commerce/returns/:no/reinspect', 'inventory:edit', async (req) => {
+  try { return await tx((q) => returns.reinspect(q, req.params.no, req.body || {}, by(req))); } catch (e) { throw asReturn(e); }
 });
 route('post', '/commerce/returns/:no/decide', 'returns:edit', async (req) => {
   try { return await tx((q) => returns.decide(q, req.params.no, req.body || {}, by(req))); } catch (e) { throw asReturn(e); }
@@ -2974,28 +2978,37 @@ const fixedDates = (from, to) => { if (from && to && to < from) throw new InputE
 
 route('get', '/commerce/promotions', 'promotions:view', async (req) => {
   const [coupons] = await db.query(`SELECT c.code, c.description, c.kind, c.value, c.min_order, c.max_discount, DATE_FORMAT(c.valid_from, '%Y-%m-%d') AS valid_from,
-      DATE_FORMAT(c.valid_to, '%Y-%m-%d') AS valid_to, c.total_limit, c.per_customer_limit, c.is_active, c.created_by, c.updated_by,
+      DATE_FORMAT(c.valid_to, '%Y-%m-%d') AS valid_to, c.total_limit, c.per_customer_limit, c.is_active, c.status, c.rej_note, c.stopped_at, c.created_by, c.updated_by,
       (SELECT COUNT(*) FROM coupon_redemptions r WHERE r.code = c.code AND r.status = 'active') AS uses,
       (SELECT COALESCE(SUM(r.amount), 0) FROM coupon_redemptions r WHERE r.code = c.code AND r.status = 'active') AS given
       FROM coupons c ORDER BY c.is_active DESC, c.code`);
   const [scope] = await db.query('SELECT code, scope, type_key, customer_id, sku_code, category_key FROM coupon_scope ORDER BY id');
   const [offers] = await db.query(`SELECT offer_id, name, kind, sku_code, category_key, min_qty, min_unit, pct, buy_qty, get_qty, get_sku_code, DATE_FORMAT(valid_from, '%Y-%m-%d') AS valid_from,
-      DATE_FORMAT(valid_to, '%Y-%m-%d') AS valid_to, is_active, created_by, updated_by,
-      (SELECT COUNT(DISTINCT i.order_id) FROM order_items i JOIN orders o ON o.order_id = i.order_id WHERE i.offer_id = offers.offer_id AND o.status <> 'cancelled') AS orders
+      DATE_FORMAT(valid_to, '%Y-%m-%d') AS valid_to, is_active, status, with_coupon, budget, rej_note, stopped_at, created_by, updated_by,
+      (SELECT COUNT(DISTINCT i.order_id) FROM order_items i JOIN orders o ON o.order_id = i.order_id WHERE i.offer_id = offers.offer_id AND o.status <> 'cancelled') AS orders,
+      (SELECT COALESCE(SUM(IF(i.is_free = 1, i.qty, 0)), 0) FROM order_items i JOIN orders x ON x.order_id = i.order_id WHERE i.offer_id = offers.offer_id AND x.status NOT IN ('cancelled', 'draft')) AS free_packs,
+      ${promotions.GIVEN_SQL.split('o.offer_id').join('offers.offer_id')} AS given
       FROM offers ORDER BY is_active DESC, offer_id`);
+  const [ocusts] = await db.query('SELECT u.offer_id, u.customer_id, c.name FROM offer_customers u JOIN customers c ON c.customer_id = u.customer_id');
+  const [waits] = await db.query("SELECT approval_id, kind, ref_type, ref_id, summary FROM approvals WHERE status = 'pending' AND kind IN ('promo_new', 'promo_below_cost', 'cashback_rule')");
+  const waitOf = (t, k) => waits.filter((w) => w.ref_type === t && w.ref_id === String(k)).map((w) => ({ approval_id: w.approval_id, label: approvals.KINDS[w.kind].label, summary: req.admin.seesCost ? w.summary : w.summary.replace(/ against cost Rs [0-9.,]+/g, ' against cost (hidden)') }));
   const [otypes] = await db.query('SELECT offer_id, type_key FROM offer_customer_types');
   const [rules] = await db.query(`SELECT rule_id, name, type_key, pct, min_order, max_per_order, DATE_FORMAT(valid_from, '%Y-%m-%d') AS valid_from, DATE_FORMAT(valid_to, '%Y-%m-%d') AS valid_to,
-      is_active, created_by, updated_by FROM cashback_rules ORDER BY is_active DESC, rule_id`);
+      is_active, status, rej_note, stopped_at, created_by, updated_by FROM cashback_rules ORDER BY is_active DESC, rule_id`);
   const cs = await commerceSettings.read(db);
   const num = (x) => (x === null ? null : Number(x));
   return {
     coupons: coupons.map((c) => ({ ...c, value: Number(c.value), min_order: Number(c.min_order), max_discount: num(c.max_discount), uses: Number(c.uses), given: Number(c.given), is_active: Number(c.is_active) === 1,
+      shown: promotions.shownStatus(c), waiting: waitOf('coupon', c.code),
       types: scope.filter((x) => x.code === c.code && x.scope === 'type').map((x) => x.type_key), customers: scope.filter((x) => x.code === c.code && x.scope === 'customer').map((x) => x.customer_id),
       include: scope.filter((x) => x.code === c.code && x.scope === 'include').map((x) => x.sku_code || `cat:${x.category_key}`),
       exclude: scope.filter((x) => x.code === c.code && x.scope === 'exclude').map((x) => x.sku_code || `cat:${x.category_key}`) })),
     offers: offers.map((o) => ({ ...o, pct: Number(o.pct), orders: Number(o.orders), is_active: Number(o.is_active) === 1, types: otypes.filter((t) => t.offer_id === o.offer_id).map((t) => t.type_key),
+      customers: ocusts.filter((u) => u.offer_id === o.offer_id).map((u) => ({ customer_id: u.customer_id, name: u.name })), shown: promotions.shownStatus(o), waiting: waitOf('offer', o.offer_id),
+      budget: num(o.budget), given: Number(o.given), free_packs: Number(o.free_packs), with_coupon: o.with_coupon === null ? null : Number(o.with_coupon) === 1,
       text: o.kind === 'slab' ? promotions.slabText(o) : promotions.bxgyText(o) })),
-    rules: rules.map((r) => ({ ...r, pct: Number(r.pct), min_order: Number(r.min_order), max_per_order: num(r.max_per_order), is_active: Number(r.is_active) === 1 })),
+    rules: rules.map((r) => ({ ...r, pct: Number(r.pct), min_order: Number(r.min_order), max_per_order: num(r.max_per_order), is_active: Number(r.is_active) === 1, shown: promotions.shownStatus(r), waiting: waitOf('rule', r.rule_id) })),
+    statusLabels: promotions.STATUS_LABEL, can: { create: canDo(req, 'promotions', 'create'), edit: canDo(req, 'promotions', 'edit') },
     kinds: promotions.KINDS, offerKinds: promotions.OFFER_KINDS, ...(await promoLists(db, req)),
     settings: { offers_with_coupon: Boolean(cs.offers_with_coupon), cashback_credit_at: cs.cashback_credit_at, return_window_days: Number(cs.return_window_days), wallet_max_use_pct: Number(cs.wallet_max_use_pct),
       expiry: { cashback: Number(cs.wallet_expiry_cashback_days), manual: Number(cs.wallet_expiry_manual_days), refund: Number(cs.wallet_expiry_refund_days) }, gst: cs.cashback_gst_treatment,
@@ -3040,20 +3053,28 @@ route('post', '/commerce/coupons', 'promotions:create', async (req) => tx(async 
   const { values: v, scope } = await couponValues(q, req.body, code);
   const [[had]] = await q.query('SELECT code FROM coupons WHERE code = ?', [code]);
   if (had) throw new InputError(`Coupon ${code} exists already`, 409);
-  await q.query(`INSERT INTO coupons (code, ${COUPON_COLS.join(', ')}, created_by) VALUES (?, ${COUPON_COLS.map(() => '?').join(', ')}, ?)`, [code, ...COUPON_COLS.map((k) => v[k]), by(req)]);
+  await q.query(`INSERT INTO coupons (code, ${COUPON_COLS.join(', ')}, status, created_by) VALUES (?, ${COUPON_COLS.map(() => '?').join(', ')}, 'draft', ?)`, [code, ...COUPON_COLS.map((k) => v[k]), by(req)]);
   await saveScope(q, code, scope);
   await audit(q, { empId: by(req), action: 'create', entity: 'coupon', entityId: code, after: { ...v, scope } });
-  return { code };
+  // phase 22: sent at once unless kept as a draft; a coupon goes live only once signed (rule "New offer or coupon goes live")
+  const sent = req.body.draft ? { status: 'draft', message: 'Saved as a draft.' } : await promotions.sendLive(q, 'coupon', code, by(req), godowns.picked(req) || 1);
+  return { code, ...sent };
 }), { status: 201 });
 route('put', '/commerce/coupons/:code', 'promotions:edit', async (req) => tx(async (q) => {
   const code = String(req.params.code).toUpperCase();
-  const [[before]] = await q.query(`SELECT ${COUPON_COLS.join(', ')} FROM coupons WHERE code = ? FOR UPDATE`, [code]);
+  const [[before]] = await q.query(`SELECT ${COUPON_COLS.join(', ')}, status FROM coupons WHERE code = ? FOR UPDATE`, [code]);
   if (!before) throw new InputError('No such coupon', 404);
+  if (before.status === 'waiting') throw new InputError(`${code} waits for approval: decide it first, or stop it`, 409);
   const { values: v, scope } = await couponValues(q, req.body, code);
+  const [oldScope] = await q.query('SELECT scope, type_key, customer_id FROM coupon_scope WHERE code = ? AND scope IN (?, ?)', [code, 'type', 'customer']);
+  const widerWho = oldScope.length > 0 && scope.filter((x) => x.scope === 'type' || x.scope === 'customer').some((x) => !oldScope.some((y) => y.scope === x.scope && (y.type_key || null) === (x.type_key || null) && Number(y.customer_id || 0) === Number(x.customer_id || 0)));
   await q.query(`UPDATE coupons SET ${COUPON_COLS.map((k) => `${k} = ?`).join(', ')}, updated_by = ?, updated_at = UTC_TIMESTAMP() WHERE code = ?`, [...COUPON_COLS.map((k) => v[k]), by(req), code]);
   await saveScope(q, code, scope);
   await audit(q, { empId: by(req), action: 'update', entity: 'coupon', entityId: code, before, after: { ...v, scope } });
-  return { code };
+  // phase 22: a live coupon changed to give more is signed again; a draft is sent when asked
+  if (before.status === 'live' && promotions.givesMore('coupon', before, { ...v, wider_who: widerWho })) return { code, ...(await promotions.sendLive(q, 'coupon', code, by(req), godowns.picked(req) || 1)) };
+  if (['draft', 'rejected'].includes(before.status) && req.body.send) return { code, ...(await promotions.sendLive(q, 'coupon', code, by(req), godowns.picked(req) || 1)) };
+  return { code, status: before.status, message: 'Saved.' };
 }));
 route('get', '/commerce/coupons/:code/usage', 'promotions:view', async (req) => {
   const [rows] = await db.query(`SELECT r.id, r.amount, r.status, r.created_at, r.released_at, o.order_no, o.status AS order_status, o.total, c.name AS customer, ct.label AS ctype
@@ -3062,7 +3083,7 @@ route('get', '/commerce/coupons/:code/usage', 'promotions:view', async (req) => 
   return rows.map((r) => ({ ...r, amount: Number(r.amount), total: Number(r.total) }));
 });
 
-const OFFER_COLS = ['name', 'kind', 'sku_code', 'category_key', 'min_qty', 'min_unit', 'pct', 'buy_qty', 'get_qty', 'get_sku_code', 'valid_from', 'valid_to', 'is_active'];
+const OFFER_COLS = ['name', 'kind', 'sku_code', 'category_key', 'min_qty', 'min_unit', 'pct', 'buy_qty', 'get_qty', 'get_sku_code', 'valid_from', 'valid_to', 'is_active', 'with_coupon', 'budget'];
 async function offerValues(q, b) {
   const lists = await promoLists(q);
   const name = String(b.name || '').trim().slice(0, 120);
@@ -3073,7 +3094,9 @@ async function offerValues(q, b) {
   if (target.startsWith('cat:')) { cat = target.slice(4); if (!lists.categories.includes(cat)) throw new InputError('Choose the SKU or category'); }
   else { sku = target.toUpperCase(); if (!lists.skus.some((k) => k.sku_code === sku)) throw new InputError('Choose the SKU or category'); }
   const v = { name, kind: b.kind, sku_code: sku, category_key: cat, min_qty: 1, min_unit: b.min_unit === 'carton' ? 'carton' : 'pack', pct: 0, buy_qty: 0, get_qty: 0, get_sku_code: null,
-    valid_from: dateOrNull(b.valid_from, 'Valid from'), valid_to: dateOrNull(b.valid_to, 'Valid to'), is_active: b.is_active === false || b.is_active === 0 ? 0 : 1 };
+    valid_from: dateOrNull(b.valid_from, 'Valid from'), valid_to: dateOrNull(b.valid_to, 'Valid to'), is_active: b.is_active === false || b.is_active === 0 ? 0 : 1,
+    with_coupon: b.with_coupon === true || b.with_coupon === 1 || b.with_coupon === '1' ? 1 : b.with_coupon === false || b.with_coupon === 0 || b.with_coupon === '0' ? 0 : null,
+    budget: moneyOf(b.budget, 'Budget', { allowNull: true, min: 1 }) };
   fixedDates(v.valid_from, v.valid_to);
   if (v.kind === 'slab') {
     v.min_qty = intOrNull(b.min_qty, 'From (quantity)') || 0;
@@ -3088,28 +3111,41 @@ async function offerValues(q, b) {
     if (!g && cat) throw new InputError('On a category, name the free SKU');
   }
   const types = (Array.isArray(b.types) ? b.types : []).filter((t) => lists.types.some((x) => x.type_key === t));
-  return { values: v, types };
+  const customers = [...new Set((Array.isArray(b.customers) ? b.customers : []).map(Number).filter((c) => lists.customers.some((x) => x.customer_id === c)))]; // phase 22: named customers too
+  return { values: v, types, customers };
 }
-async function saveOfferTypes(q, id, types) {
+async function saveOfferTypes(q, id, types, customers = []) {
   await q.query('DELETE FROM offer_customer_types WHERE offer_id = ?', [id]);
   for (const t of types) await q.query('INSERT INTO offer_customer_types (offer_id, type_key) VALUES (?, ?)', [id, t]);
+  await q.query('DELETE FROM offer_customers WHERE offer_id = ?', [id]);
+  for (const c of customers) await q.query('INSERT INTO offer_customers (offer_id, customer_id) VALUES (?, ?)', [id, c]);
 }
 route('post', '/commerce/offers', 'promotions:create', async (req) => tx(async (q) => {
-  const { values: v, types } = await offerValues(q, req.body);
-  const [ins] = await q.query(`INSERT INTO offers (${OFFER_COLS.join(', ')}, created_by) VALUES (${OFFER_COLS.map(() => '?').join(', ')}, ?)`, [...OFFER_COLS.map((k) => v[k]), by(req)]);
-  await saveOfferTypes(q, ins.insertId, types);
-  await audit(q, { empId: by(req), action: 'create', entity: 'offer', entityId: String(ins.insertId), after: { ...v, types } });
-  return { offer_id: ins.insertId };
+  const { values: v, types, customers } = await offerValues(q, req.body);
+  const [ins] = await q.query(`INSERT INTO offers (${OFFER_COLS.join(', ')}, status, created_by) VALUES (${OFFER_COLS.map(() => '?').join(', ')}, 'draft', ?)`, [...OFFER_COLS.map((k) => v[k]), by(req)]);
+  await saveOfferTypes(q, ins.insertId, types, customers);
+  await audit(q, { empId: by(req), action: 'create', entity: 'offer', entityId: String(ins.insertId), after: { ...v, types, customers } });
+  // phase 22: sent at once unless kept as a draft; it goes live only once signed (and signed again when it sells below cost)
+  const sent = req.body.draft ? { status: 'draft', message: 'Saved as a draft.' } : await promotions.sendLive(q, 'offer', ins.insertId, by(req), godowns.picked(req) || 1);
+  return { offer_id: ins.insertId, ...sent };
 }), { status: 201 });
 route('put', '/commerce/offers/:id', 'promotions:edit', async (req) => tx(async (q) => {
   const id = Number(req.params.id);
-  const [[before]] = await q.query(`SELECT ${OFFER_COLS.join(', ')} FROM offers WHERE offer_id = ? FOR UPDATE`, [id]);
+  const [[before]] = await q.query(`SELECT ${OFFER_COLS.join(', ')}, status FROM offers WHERE offer_id = ? FOR UPDATE`, [id]);
   if (!before) throw new InputError('No such offer', 404);
-  const { values: v, types } = await offerValues(q, req.body);
+  if (before.status === 'waiting') throw new InputError(`Offer ${id} waits for approval: decide it first, or stop it`, 409);
+  const { values: v, types, customers } = await offerValues(q, req.body);
+  const [oldT] = await q.query('SELECT type_key FROM offer_customer_types WHERE offer_id = ?', [id]);
+  const [oldC] = await q.query('SELECT customer_id FROM offer_customers WHERE offer_id = ?', [id]);
+  const wasAll = !oldT.length && !oldC.length;
+  const widerWho = !wasAll && ((!types.length && !customers.length) || types.some((t) => !oldT.some((x) => x.type_key === t)) || customers.some((c) => !oldC.some((x) => x.customer_id === c)));
   await q.query(`UPDATE offers SET ${OFFER_COLS.map((k) => `${k} = ?`).join(', ')}, updated_by = ?, updated_at = UTC_TIMESTAMP() WHERE offer_id = ?`, [...OFFER_COLS.map((k) => v[k]), by(req), id]);
-  await saveOfferTypes(q, id, types);
-  await audit(q, { empId: by(req), action: 'update', entity: 'offer', entityId: String(id), before, after: { ...v, types } });
-  return { offer_id: id };
+  await saveOfferTypes(q, id, types, customers);
+  await audit(q, { empId: by(req), action: 'update', entity: 'offer', entityId: String(id), before, after: { ...v, types, customers } });
+  // phase 22: a live offer changed to give more is signed again (it stops applying until then); a draft is sent when asked
+  if (before.status === 'live' && promotions.givesMore('offer', before, { ...v, wider_who: widerWho })) return { offer_id: id, ...(await promotions.sendLive(q, 'offer', id, by(req), godowns.picked(req) || 1)) };
+  if (['draft', 'rejected'].includes(before.status) && req.body.send) return { offer_id: id, ...(await promotions.sendLive(q, 'offer', id, by(req), godowns.picked(req) || 1)) };
+  return { offer_id: id, status: before.status, message: 'Saved.' };
 }));
 
 const RULE_COLS = ['name', 'type_key', 'pct', 'min_order', 'max_per_order', 'valid_from', 'valid_to', 'is_active'];
@@ -3127,19 +3163,30 @@ async function ruleValues(q, b) {
 }
 route('post', '/commerce/cashback-rules', 'promotions:create', async (req) => tx(async (q) => {
   const v = await ruleValues(q, req.body);
-  const [ins] = await q.query(`INSERT INTO cashback_rules (${RULE_COLS.join(', ')}, created_by) VALUES (${RULE_COLS.map(() => '?').join(', ')}, ?)`, [...RULE_COLS.map((k) => v[k]), by(req)]);
+  const [ins] = await q.query(`INSERT INTO cashback_rules (${RULE_COLS.join(', ')}, status, created_by) VALUES (${RULE_COLS.map(() => '?').join(', ')}, 'draft', ?)`, [...RULE_COLS.map((k) => v[k]), by(req)]);
   await audit(q, { empId: by(req), action: 'create', entity: 'cashback_rule', entityId: String(ins.insertId), after: v });
-  return { rule_id: ins.insertId };
+  // phase 22: a new rule goes live only once signed (rule "New cashback rule goes live")
+  const sent = req.body.draft ? { status: 'draft', message: 'Saved as a draft.' } : await promotions.sendLive(q, 'rule', ins.insertId, by(req), godowns.picked(req) || 1);
+  return { rule_id: ins.insertId, ...sent };
 }), { status: 201 });
 route('put', '/commerce/cashback-rules/:id', 'promotions:edit', async (req) => tx(async (q) => {
   const id = Number(req.params.id);
-  const [[before]] = await q.query(`SELECT ${RULE_COLS.join(', ')} FROM cashback_rules WHERE rule_id = ? FOR UPDATE`, [id]);
+  const [[before]] = await q.query(`SELECT ${RULE_COLS.join(', ')}, status FROM cashback_rules WHERE rule_id = ? FOR UPDATE`, [id]);
   if (!before) throw new InputError('No such rule', 404);
+  if (before.status === 'waiting') throw new InputError(`Rule ${id} waits for approval: decide it first, or stop it`, 409);
   const v = await ruleValues(q, req.body);
   await q.query(`UPDATE cashback_rules SET ${RULE_COLS.map((k) => `${k} = ?`).join(', ')}, updated_by = ?, updated_at = UTC_TIMESTAMP() WHERE rule_id = ?`, [...RULE_COLS.map((k) => v[k]), by(req), id]);
   await audit(q, { empId: by(req), action: 'update', entity: 'cashback_rule', entityId: String(id), before, after: v });
-  return { rule_id: id };
+  // phase 22: a loosened live rule (more %, lower minimum, higher cap, longer, wider) is signed again
+  if (before.status === 'live' && promotions.givesMore('rule', before, v)) return { rule_id: id, ...(await promotions.sendLive(q, 'rule', id, by(req), godowns.picked(req) || 1)) };
+  if (['draft', 'rejected'].includes(before.status) && req.body.send) return { rule_id: id, ...(await promotions.sendLive(q, 'rule', id, by(req), godowns.picked(req) || 1)) };
+  return { rule_id: id, status: before.status, message: 'Saved.' };
 }));
+// phase 22: send a draft for approval, or stop one (orders already made keep it)
+for (const [path, ent, key] of [['/commerce/offers/:id', 'offer', (r) => Number(r.params.id)], ['/commerce/coupons/:id', 'coupon', (r) => String(r.params.id).toUpperCase()], ['/commerce/cashback-rules/:id', 'rule', (r) => Number(r.params.id)]]) {
+  route('post', `${path}/send`, 'promotions:create', async (req) => tx((q) => promotions.sendLive(q, ent, key(req), by(req), godowns.picked(req) || 1).catch((e) => { if (e instanceof promotions.PromoError) throw new InputError(e.message, e.status); throw e; })));
+  route('post', `${path}/stop`, 'promotions:edit', async (req) => tx((q) => promotions.stop(q, ent, key(req), by(req)).catch((e) => { if (e instanceof promotions.PromoError) throw new InputError(e.message, e.status); throw e; })));
+}
 // the hourly job now: wallet expiry and cashback whose return window has passed
 route('post', '/commerce/promotions/run-jobs', 'promotions:edit', async (req) => {
   const r = await tx((q) => promotions.runJobs(q, by(req)));
@@ -3219,6 +3266,8 @@ require('./sales-routes').register({ route, tx, db, by, InputError, canDo, comme
 require('./fulfil-routes').register({ route, tx, db, by, InputError, canDo, commerceGate });
 // phase 21: sections 10 and 11 Invoicing, GST and payments (billing.js and money.js rules, money-routes.js screens)
 require('./money-routes').register({ route, tx, db, by, InputError, canDo, commerceGate });
+// phase 22: sections 12 to 14 Returns, promotions and wallet (the lists of the v23 pages; returns.js, promotions.js rules)
+require('./returns-routes').register({ route, tx, db, by, InputError, canDo, commerceGate });
 commerce.startBackOrders(db);
 setInterval(() => { tx((q) => commerce.sweepHolds(q)).catch((e) => console.error('[hold time]', e.message)); }, 5 * 60e3).unref();
 

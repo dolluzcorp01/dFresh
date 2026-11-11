@@ -7,8 +7,9 @@
 // - Collection: the customer brings it; a pickup on a trip (Delivery > Ready; the driver marks it Picked up with a
 //   photo); a courier reverse pickup (courier and AWB).
 // - Receive at the godown: scan each pack (SKU, SKU/BATCH for batch-tracked products, SKU#C = one carton), the pack
-//   check rules. Inspect: per line OK (to Returned (R) stock), Damaged, Expired (blocked), Not received; inspector,
-//   time and notes kept. Needs "edit" on Inventory (Warehouse), not on Returns.
+//   check rules. Inspect (phase 22): per line resell (Returned shelf, then back to Good once signed), repack, damaged,
+//   scrap (a stock write-off under its rule), expired (blocked), not received; inspector, time and notes kept. Needs
+//   "edit" on Inventory (Warehouse), not on Returns.
 // - Decide (Returns edit): per line refund, replacement or no refund. A refund issues the credit note first (the
 //   invoice's own CGST + SGST or IGST), then: to the wallet, to the original payment (mode and reference typed), or
 //   less to pay on an unpaid order. Above the threshold a refund waits for approval; "No refund" waits for approval.
@@ -18,6 +19,7 @@ import { useLocation } from 'react-router-dom';
 import { api } from './adminApi';
 import { Drawer, InfoCard, Loading, Notice, PageHead, Pill, Table, Tabs, fmtDate, useAction, useCan, useConfirm, useLoad, useUpload, UploadButton } from './ui';
 import { printCreditNote, signed } from './invoicePrint';
+import { ItemCell } from './buyShared';
 
 // status chips in the order a return moves; refunded and replaced are both "done" (one chip); rejected only when there is one
 const RETURN_CHIPS = [['requested', 'Requested', ['requested']], ['collecting', 'Collecting', ['collecting']], ['received', 'Received', ['received']],
@@ -130,7 +132,7 @@ export function NewReturn({ orderNo, onDone, onCancel }) {
                 <thead><tr><th>SKU</th><th>Batch</th><th className="a-num">Delivered</th><th className="a-num">Can return</th><th className="a-num">Return</th></tr></thead>
                 <tbody>{d.lines.map((l) => (
                   <tr key={keyOf(l)}>
-                    <td><code>{l.sku_code}</code><small className="a-muted a-person-sub">{l.name} - {l.size_label}</small></td>
+                    <td><ItemCell name={l.name} code={l.sku_code} image={l.image} sub={l.size_label} /></td>
                     <td>{l.batch_no ? <>{l.batch_no}<small className="a-muted a-person-sub">exp. {day(l.expiry_date)}</small></> : '-'}</td>
                     <td className="a-num">{l.delivered}</td><td className="a-num">{l.qty}</td>
                     <td className="a-num"><input type="number" min="0" max={l.qty} step="1" className="a-qty" disabled={!l.qty} aria-label={`Return ${l.sku_code}${l.batch_no ? ` ${l.batch_no}` : ''}`}
@@ -205,6 +207,7 @@ export function ReturnDrawer({ no, onClose }) {
             <Lines d={d} />
             {!waitingWindow && <Collection d={d} onChanged={r.reload} />}
             {!waitingWindow && d.can.receive && ['requested', 'collecting', 'received'].includes(d.status) && <Receive d={d} onChanged={r.reload} onDone={done} />}
+            {d.can.receive && d.lines.some((l) => SENT_BACK.includes(l.resell_state) && Number(l.qty_ok) > 0) && <Reinspect d={d} onDone={done} />}
             {d.can.decide && d.status === 'inspected' && d.lines.some((l) => l.left > 0) && <Decide d={d} onDone={done} />}
             {(d.refunds.length > 0 || d.credit_notes.length > 0) && (
               <>
@@ -246,19 +249,20 @@ export function ReturnDrawer({ no, onClose }) {
 
 function Lines({ d }) {
   const inspected = d.lines.some((l) => l.qty_ok !== null);
+  const repack = d.lines.some((l) => Number(l.qty_repack) > 0 || Number(l.qty_scrap) > 0);
   const decided = d.lines.some((l) => l.refund_qty !== null || l.replace_qty !== null || l.none_qty !== null);
   return (
     <div className="a-scroll">
       <table className="a-table">
         <thead><tr><th>SKU</th><th>Batch</th><th className="a-num">Packs</th><th className="a-num">Received</th>
-          {inspected && <><th className="a-num">OK (R)</th><th className="a-num">Damaged</th><th className="a-num">Expired</th><th className="a-num">Not recd.</th></>}
+          {inspected && <><th className="a-num">Resell</th>{repack && <th className="a-num">Repack</th>}<th className="a-num">Damaged</th>{repack && <th className="a-num">Scrap</th>}<th className="a-num">Expired</th><th className="a-num">Not recd.</th></>}
           {decided && <><th className="a-num">Refund</th><th className="a-num">Replace</th><th className="a-num">No refund</th></>}</tr></thead>
         <tbody>{d.lines.map((l) => (
           <tr key={l.line_id}>
-            <td><code>{l.sku_code}</code><small className="a-muted a-person-sub">{l.name} - {l.size_label}</small></td>
+            <td><ItemCell name={l.name} code={l.sku_code} image={l.image} sub={l.size_label} /></td>
             <td>{l.batch_no ? <>{l.batch_no}<small className={`a-person-sub${l.batch_expired ? ' a-bad' : ' a-muted'}`}>exp. {day(l.expiry_date)}{l.batch_expired ? ' (expired)' : ''}</small></> : '-'}</td>
             <td className="a-num">{l.qty}</td><td className="a-num">{l.qty_received}</td>
-            {inspected && <><td className="a-num">{l.qty_ok ?? ''}</td><td className="a-num">{l.qty_damaged ?? ''}</td><td className="a-num">{l.qty_expired ?? ''}</td><td className="a-num">{l.qty_missing ?? ''}</td></>}
+            {inspected && <><td className="a-num">{l.qty_ok ?? ''}{l.resell_approval_id ? <small className="a-muted a-person-sub">#{l.resell_approval_id}</small> : null}</td>{repack && <td className="a-num">{l.qty_repack ?? ''}</td>}<td className="a-num">{l.qty_damaged ?? ''}</td>{repack && <td className="a-num">{l.qty_scrap ?? ''}{l.scrap_write_off_id ? <small className="a-muted a-person-sub">write-off {l.scrap_write_off_id}</small> : null}</td>}<td className="a-num">{l.qty_expired ?? ''}</td><td className="a-num">{l.qty_missing ?? ''}</td></>}
             {decided && <><td className="a-num">{l.refund_qty ?? ''}</td><td className="a-num">{l.replace_qty ?? ''}</td><td className="a-num">{l.none_qty ?? ''}</td></>}
           </tr>
         ))}</tbody>
@@ -301,7 +305,7 @@ function Receive({ d, onChanged, onDone }) {
   const [code, setCode] = useState('');
   const [last, setLast] = useState(null);
   const [lines, setLines] = useState(d.lines);
-  const [insp, setInsp] = useState(null); // { [line_id]: { ok, damaged, expired, missing } }
+  const [insp, setInsp] = useState(null); // { [line_id]: { resell, repack, damaged, scrap, expired, missing } }
   const [note, setNote] = useState('');
   useEffect(() => { setLines(d.lines); }, [d]);
   useEffect(() => { if (inputRef.current && !insp) inputRef.current.focus(); }, [insp]);
@@ -314,14 +318,17 @@ function Receive({ d, onChanged, onDone }) {
   };
   const got = lines.reduce((a, l) => a + l.qty_received, 0);
   const need = lines.reduce((a, l) => a + l.qty, 0);
-  const startInspect = () => setInsp(Object.fromEntries(lines.map((l) => [l.line_id, { ok: String(l.qty_received), damaged: '0', expired: '0', missing: String(l.qty - l.qty_received) }])));
+  // the first guess: what came back resells when the setting allows it, else it goes to repack (v23 retInsp)
+  const sells = (l) => d.resell_on && !l.batch_expired;
+  const startInspect = () => setInsp(Object.fromEntries(lines.map((l) => [l.line_id, { resell: String(sells(l) ? l.qty_received : 0), repack: String(sells(l) ? 0 : l.qty_received), damaged: '0', scrap: '0', expired: '0', missing: String(l.qty - l.qty_received) }])));
   const setI = (id, k, v) => setInsp((x) => ({ ...x, [id]: { ...x[id], [k]: v } }));
-  const sumOf = (v) => ['ok', 'damaged', 'expired', 'missing'].reduce((a, k) => a + (Number(v[k]) || 0), 0);
+  const KEYS = ['resell', 'repack', 'damaged', 'scrap', 'expired', 'missing'];
+  const sumOf = (v) => KEYS.reduce((a, k) => a + (Number(v[k]) || 0), 0);
   const bad = insp && lines.some((l) => sumOf(insp[l.line_id]) !== l.qty);
   const save = async () => {
-    const what = lines.map((l) => { const v = insp[l.line_id]; return `${l.sku_code}${l.batch_no ? `/${l.batch_no}` : ''}: ${v.ok} OK, ${v.damaged} damaged, ${v.expired} expired, ${v.missing} not received`; }).join('; ');
-    if (!(await confirm({ title: `Inspection of ${d.return_no}?`, message: `${what}. OK packs go to Returned (R) stock, damaged to Damaged, expired to Expired (blocked).`, action: 'Save inspection' }))) return;
-    act.run(async () => { await api.send('POST', `/commerce/returns/${d.return_no}/inspect`, { lines: lines.map((l) => ({ line_id: l.line_id, ...insp[l.line_id] })), note }); onDone({ kind: 'ok', text: `${d.return_no} inspected: ${what}.` }); });
+    const what = lines.map((l) => { const v = insp[l.line_id]; return `${l.sku_code}${l.batch_no ? `/${l.batch_no}` : ''}: ${v.resell} resell, ${v.repack} repack, ${v.damaged} damaged, ${v.scrap} scrap, ${v.expired} expired, ${v.missing} not received`; }).join('; ');
+    if (!(await confirm({ title: `Inspection of ${d.return_no}?`, message: `${what}. Resell waits on the Returned shelf until "back to Good" is signed; repack and damaged go to Damaged; scrap is written off under the write-off rule.`, action: 'Save inspection' }))) return;
+    act.run(async () => { const res = await api.send('POST', `/commerce/returns/${d.return_no}/inspect`, { lines: lines.map((l) => ({ line_id: l.line_id, ...insp[l.line_id] })), note }); onDone({ kind: res.waiting && res.waiting.length ? 'info' : 'ok', text: `${d.return_no}: ${res.message || 'Inspected.'}` }); });
   };
   return (
     <div className="a-card">
@@ -342,13 +349,13 @@ function Receive({ d, onChanged, onDone }) {
         <>
           <div className="a-scroll">
             <table className="a-table a-insp">
-              <thead><tr><th>SKU / batch</th><th className="a-num">Packs</th><th className="a-num">OK</th><th className="a-num">Damaged</th><th className="a-num">Expired</th><th className="a-num">Not recd.</th></tr></thead>
+              <thead><tr><th>Item / batch</th><th className="a-num">Packs</th><th className="a-num">Resell</th><th className="a-num">Repack</th><th className="a-num">Damaged</th><th className="a-num">Scrap</th><th className="a-num">Expired</th><th className="a-num">Not recd.</th></tr></thead>
               <tbody>{lines.map((l) => (
                 <tr key={l.line_id} className={sumOf(insp[l.line_id]) !== l.qty ? 'a-lowrow' : undefined}>
-                  <td><code>{l.sku_code}</code>{l.batch_no && <small className="a-muted a-person-sub">batch {l.batch_no}{l.batch_expired ? ' (expired)' : ''}</small>}</td>
+                  <td><ItemCell name={l.name} code={l.sku_code} image={l.image} sub={l.batch_no ? `batch ${l.batch_no}${l.batch_expired ? ' (expired)' : ''}` : null} /></td>
                   <td className="a-num">{l.qty}<small className="a-muted a-person-sub">{l.qty_received} recd.</small></td>
-                  {['ok', 'damaged', 'expired', 'missing'].map((k) => (
-                    <td key={k} className="a-num"><input type="number" min="0" step="1" inputMode="numeric" value={insp[l.line_id][k]} disabled={k === 'expired' && !l.batch_id}
+                  {KEYS.map((k) => (
+                    <td key={k} className="a-num"><input type="number" min="0" step="1" inputMode="numeric" value={insp[l.line_id][k]} disabled={(k === 'expired' && !l.batch_id) || (k === 'resell' && !sells(l))}
                       aria-label={`${k} ${l.sku_code}`} onChange={(e) => setI(l.line_id, k, e.target.value)} /></td>
                   ))}
                 </tr>
@@ -356,6 +363,7 @@ function Receive({ d, onChanged, onDone }) {
             </table>
           </div>
           {bad && <p className="a-bad">Each line must add up to its packs.</p>}
+          {!d.resell_on && <p className="a-muted">Returned stock is not sold again (Commerce settings &gt; Returns): choose repack, damaged or scrap.</p>}
           <label className="a-field"><span>Inspection notes (optional)</span><input value={note} maxLength={255} aria-label="Inspection notes" onChange={(e) => setNote(e.target.value)} /></label>
           <span className="a-row">
             <button type="button" className="a-btn" disabled={act.busy || bad} onClick={save}>Save inspection</button>
@@ -363,6 +371,38 @@ function Receive({ d, onChanged, onDone }) {
           </span>
         </>
       )}
+    </div>
+  );
+}
+
+/** phase 22 (v23 12.8): the resell packs whose "back to Good" was not signed are inspected again (Inventory edit) */
+const SENT_BACK = ['rejected', 'withdrawn', 'expired'];
+function Reinspect({ d, onDone }) {
+  const act = useAction();
+  const open = d.lines.filter((l) => SENT_BACK.includes(l.resell_state) && Number(l.qty_ok) > 0);
+  const [v, setV] = useState(() => Object.fromEntries(open.map((l) => [l.line_id, { resell: '0', repack: '0', damaged: '0', scrap: String(l.qty_ok) }])));
+  const KEYS = ['resell', 'repack', 'damaged', 'scrap'];
+  const bad = open.some((l) => KEYS.reduce((a, k) => a + (Number(v[l.line_id][k]) || 0), 0) !== Number(l.qty_ok));
+  const save = () => act.run(async () => { const res = await api.send('POST', `/commerce/returns/${d.return_no}/reinspect`, { lines: open.map((l) => ({ line_id: l.line_id, ...v[l.line_id] })) }); onDone({ kind: res.waiting.length ? 'info' : 'ok', text: `${d.return_no}: ${res.message}` }); });
+  return (
+    <div className="a-card">
+      <h3>Inspect again</h3>
+      <Notice kind="warn">Sent back: "Returned stock back to Good" was not approved. These packs stay on the Returned shelf until they are inspected again.</Notice>
+      {act.note}
+      <div className="a-scroll">
+        <table className="a-table a-insp">
+          <thead><tr><th>Item</th><th className="a-num">Packs</th>{KEYS.map((k) => <th key={k} className="a-num">{k[0].toUpperCase() + k.slice(1)}</th>)}</tr></thead>
+          <tbody>{open.map((l) => (
+            <tr key={l.line_id}>
+              <td><ItemCell name={l.name} code={l.sku_code} image={l.image} sub={l.batch_no ? `batch ${l.batch_no}` : null} /></td>
+              <td className="a-num">{l.qty_ok}</td>
+              {KEYS.map((k) => <td key={k} className="a-num"><input type="number" min="0" step="1" inputMode="numeric" value={v[l.line_id][k]} disabled={k === 'resell' && !d.resell_on} aria-label={`again ${k} ${l.sku_code}`} onChange={(e) => setV({ ...v, [l.line_id]: { ...v[l.line_id], [k]: e.target.value } })} /></td>)}
+            </tr>
+          ))}</tbody>
+        </table>
+      </div>
+      {bad && <p className="a-bad">Each line must add up to its packs.</p>}
+      <button type="button" className="a-btn" disabled={act.busy || bad} onClick={save}>Save</button>
     </div>
   );
 }
@@ -396,7 +436,7 @@ function Decide({ d, onDone }) {
           <thead><tr><th>SKU / batch</th><th className="a-num">To decide</th><th className="a-num">Refund</th><th className="a-num">Replace</th><th className="a-num">No refund</th></tr></thead>
           <tbody>{open.map((l) => (
             <tr key={l.line_id}>
-              <td><code>{l.sku_code}</code><small className="a-muted a-person-sub">{l.batch_no ? `batch ${l.batch_no} · ` : ''}{l.qty_ok || 0} OK, {l.qty_damaged || 0} damaged, {l.qty_expired || 0} expired</small></td>
+              <td><code>{l.sku_code}</code><small className="a-muted a-person-sub">{l.batch_no ? `batch ${l.batch_no} · ` : ''}{l.qty_ok || 0} resell, {l.qty_repack || 0} repack, {l.qty_damaged || 0} damaged, {l.qty_scrap || 0} scrap, {l.qty_expired || 0} expired</small></td>
               <td className="a-num">{l.left}</td>
               {['refund', 'replace', 'none'].map((k) => <td key={k} className="a-num"><input type="number" min="0" step="1" inputMode="numeric" value={v[l.line_id][k]} aria-label={`${k} ${l.sku_code}`} onChange={(e) => setV({ ...v, [l.line_id]: { ...v[l.line_id], [k]: e.target.value } })} /></td>)}
             </tr>

@@ -399,16 +399,17 @@ async function receivables(q, p) {
       AND NOT EXISTS (SELECT 1 FROM invoices i WHERE i.live_order_id = o.order_id) GROUP BY customer_id`);
   const m = new Map();
   for (const o of open) {
-    const g = m.get(o.customer_id) || { customer: `${o.customer_no} ${o.name}`, d0_30: 0, d31_60: 0, d61_90: 0, d90: 0, invoiced: 0, not_invoiced: 0, credit_limit: Number(o.credit_limit), overdue: 0 };
-    const a = Number(o.age); const due = Number(o.amount_due);
-    g[a <= 30 ? 'd0_30' : a <= 60 ? 'd31_60' : a <= 90 ? 'd61_90' : 'd90'] = round2(g[a <= 30 ? 'd0_30' : a <= 60 ? 'd31_60' : a <= 90 ? 'd61_90' : 'd90'] + due);
+    const g = m.get(o.customer_id) || { customer: `${o.customer_no} ${o.name}`, not_due: 0, d1_30: 0, d31_60: 0, d61_90: 0, d90: 0, invoiced: 0, not_invoiced: 0, credit_limit: Number(o.credit_limit), overdue: 0 };
+    const a = Number(o.late); const due = Number(o.amount_due); // phase 22 (v23): by days overdue, from the due date
+    const bk = a <= 0 ? 'not_due' : a <= 30 ? 'd1_30' : a <= 60 ? 'd31_60' : a <= 90 ? 'd61_90' : 'd90';
+    g[bk] = round2(g[bk] + due);
     g.invoiced = round2(g.invoiced + due); if (Number(o.overdue)) g.overdue = round2(g.overdue + due);
     m.set(o.customer_id, g);
   }
   const [lim] = await q.query('SELECT customer_id, customer_no, name, credit_limit FROM customers WHERE merged_into IS NULL');
   for (const u of uninv) {
     const c = lim.find((x) => x.customer_id === u.customer_id);
-    const g = m.get(u.customer_id) || { customer: `${c.customer_no} ${c.name}`, d0_30: 0, d31_60: 0, d61_90: 0, d90: 0, invoiced: 0, not_invoiced: 0, credit_limit: Number(c.credit_limit), overdue: 0 };
+    const g = m.get(u.customer_id) || { customer: `${c.customer_no} ${c.name}`, not_due: 0, d1_30: 0, d31_60: 0, d61_90: 0, d90: 0, invoiced: 0, not_invoiced: 0, credit_limit: Number(c.credit_limit), overdue: 0 };
     g.not_invoiced = round2(Number(u.due)); m.set(u.customer_id, g);
   }
   const byCust = [...m.values()].map((g) => ({ ...g, total: round2(g.invoiced + g.not_invoiced), use: g.credit_limit ? round2(((g.invoiced + g.not_invoiced) / g.credit_limit) * 100) : null })).sort((a, b) => b.total - a.total);
@@ -422,16 +423,16 @@ async function receivables(q, p) {
       FROM delivery_trips t JOIN drivers d ON d.driver_id = t.driver_id LEFT JOIN trip_stops s ON s.trip_id = t.trip_id WHERE ${IN('t.started_at')} AND ${inScope('t.godown_id', p.scope)}
       GROUP BY d.driver_id, d.name ORDER BY collected DESC`, [...S, ...S]);
   const drvRows = drivers.map((x) => ({ driver: x.driver, trips: Number(x.trips), collected: Number(x.collected), handed: Number(x.handed), difference: round2(Number(x.handed) - Number(x.collected)) }));
-  const aT = sumRows(byCust, ['d0_30', 'd31_60', 'd61_90', 'd90', 'invoiced', 'not_invoiced', 'total', 'overdue']);
+  const aT = sumRows(byCust, ['not_due', 'd1_30', 'd31_60', 'd61_90', 'd90', 'invoiced', 'not_invoiced', 'total', 'overdue']);
   const [[due]] = await q.query(`SELECT COALESCE(SUM(amount_due), 0) AS n FROM orders WHERE status <> 'cancelled' AND amount_due > 0.005 AND ${inScope('godown_id', p.scope)}`);
   return {
     tables: [
-      { key: 'ageing', title: 'Outstanding by customer with ageing (by invoice date, now)', columns: [col('customer', 'Customer'), col('d0_30', '0-30 days', 'money'), col('d31_60', '31-60', 'money'), col('d61_90', '61-90', 'money'), col('d90', '90+', 'money'), col('invoiced', 'Invoiced, open', 'money'), col('not_invoiced', 'Not invoiced yet', 'money'), col('total', 'Total owed', 'money'), col('overdue', 'Of it overdue', 'money'), col('credit_limit', 'Credit limit', 'money'), col('use', 'Limit used', 'pct')], rows: byCust, totals: aT },
+      { key: 'ageing', title: 'Outstanding by customer with ageing (by days overdue, now)', columns: [col('customer', 'Customer'), col('not_due', 'Not due', 'money'), col('d1_30', '1-30 days', 'money'), col('d31_60', '31-60', 'money'), col('d61_90', '61-90', 'money'), col('d90', '90+', 'money'), col('invoiced', 'Invoiced, open', 'money'), col('not_invoiced', 'Not invoiced yet', 'money'), col('total', 'Total owed', 'money'), col('overdue', 'Of it overdue', 'money'), col('credit_limit', 'Credit limit', 'money'), col('use', 'Limit used', 'pct')], rows: byCust, totals: aT },
       { key: 'overdue', title: 'Overdue invoices (now)', columns: [col('customer', 'Customer'), col('invoice_no', 'Invoice'), col('order_no', 'Order'), col('day', 'Invoice date', 'date'), col('due_on', 'Due on', 'date'), col('late', 'Days late', 'num'), col('amount', 'Owed', 'money')], rows: overdue, totals: sumRows(overdue, ['amount']) },
       { key: 'modes', title: 'Collections by mode (in the period)', columns: [col('mode', 'Mode'), col('n', 'Entries', 'num'), col('received', 'Received', 'money'), col('refunded', 'Refunded', 'money'), col('net', 'Net', 'money')], rows: modeRows, totals: sumRows(modeRows, ['n', 'received', 'refunded', 'net']) },
       { key: 'drivers', title: 'Pay on delivery: cash by driver (trips started in the period)', columns: [col('driver', 'Driver'), col('trips', 'Trips', 'num'), col('collected', 'Cash collected', 'money'), col('handed', 'Handed over', 'money'), col('difference', 'Difference', 'money')], rows: drvRows, totals: sumRows(drvRows, ['trips', 'collected', 'handed', 'difference']) },
     ],
-    chart: { kind: 'bar', x: ['0-30 days', '31-60', '61-90', '90+'], series: [{ name: 'Open invoices', values: [aT.d0_30, aT.d31_60, aT.d61_90, aT.d90] }], title: 'Ageing of open invoices' },
+    chart: { kind: 'bar', x: ['Not due', '1-30 days', '31-60', '61-90', '90+'], series: [{ name: 'Open invoices', values: [aT.not_due, aT.d1_30, aT.d31_60, aT.d61_90, aT.d90] }], title: 'Ageing of open invoices (days overdue)' },
     checks: [{ label: 'Total owed = what the orders still owe', value: aT.total, ok: Math.abs(aT.total - round2(due.n)) < 0.01, detail: `orders amount due Rs ${round2(due.n)}` }],
     notes: ['Ageing and overdue are as of today; collections and cash by driver are for the period chosen.'],
   };

@@ -68,6 +68,9 @@ const KINDS = {
   cancel_invoice: { label: 'Cancel an invoice', section: 'invoicing' },
   bad_debt: { label: 'Write off a bad debt', section: 'money' },
   waive_bounce: { label: 'Waive a cheque bounce charge', section: 'money' },
+  promo_new: { label: 'New offer or coupon goes live', section: 'promotions' }, // phase 22
+  promo_below_cost: { label: 'Promotion that sells below cost', section: 'promotions' },
+  cashback_rule: { label: 'New cashback rule goes live', section: 'promotions' },
 };
 const handlers = {};
 const closers = {};

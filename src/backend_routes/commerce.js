@@ -376,8 +376,10 @@ async function prepare(q, data, opts = {}) {
   const handFreeValue = round2(handFree.reduce((a, l) => a + (l.list_price ? (inclusive ? l.list_price / (1 + l.gst_rate / 100) : l.list_price) * l.qty : 0), 0));
   lines.splice(0, lines.length, ...lines.filter((l) => !l.hand_free));
   // automatic offers: slab % on the line, buy X get Y = free lines (their stock counts like any line)
-  const offers = opts.replacement ? { lines: lines.map((l) => ({ ...l, offer_id: null, offer_label: null, offer_discount: 0 })), free: [], applied: [] }
-    : await promotions.applyOffers(q, cust.type_key, opts.priceDate || pricing.istToday(), lines); // offers follow the customer type, not its price list
+  // phase 22: "No offers on this order" (kept with the order); offers follow the customer type or the customer named on them, not its price list
+  const noOffers = data.no_offers !== undefined ? data.no_offers === true || data.no_offers === 1 || data.no_offers === '1' : Boolean(editing && Number(editing.no_offers) === 1);
+  const offers = opts.replacement || noOffers ? { lines: lines.map((l) => ({ ...l, offer_id: null, offer_label: null, offer_discount: 0 })), free: [], applied: [] }
+    : await promotions.applyOffers(q, cust.type_key, opts.priceDate || pricing.istToday(), lines, customerId, editing ? editing.order_id : 0);
   const freeLines = [];
   if (offers.free.length) {
     const [fi] = await q.query(`SELECT s.sku_code, p.gst_rate, p.hsn_code, p.category_key FROM skus s JOIN products p ON p.product_id = s.product_id WHERE s.sku_code IN (?)`, [offers.free.map((f) => f.sku_code)]);
@@ -478,7 +480,8 @@ async function prepare(q, data, opts = {}) {
   if (couponCode && !opts.replacement) {
     try {
       coupon = await promotions.evalCoupon(q, couponCode, { customerId, typeKey: cust.type_key, lines: offers.lines.map((l) => ({ sku_code: l.sku_code, category_key: l.category_key, net: round2(l.qty * l.price - l.offer_discount) })),
-        goods: goodsAfterOffers, deliveryCharge: delivery.charge, orderId: editing ? editing.order_id : 0, hasOffers: offers.applied.length > 0, settings, lock: !opts.preview });
+        goods: goodsAfterOffers, deliveryCharge: delivery.charge, orderId: editing ? editing.order_id : 0, hasOffers: offers.applied.length > 0,
+        stack: offers.applied.every((a) => (a.with_coupon === null || a.with_coupon === undefined ? Boolean(settings.offers_with_coupon) : a.with_coupon)), settings, lock: !opts.preview });
     } catch (e) { if (e instanceof promotions.PromoError) throw new CommerceError(e.message, e.status); throw e; }
   }
   const waived = coupon ? coupon.delivery_waived : 0;
@@ -505,11 +508,14 @@ async function prepare(q, data, opts = {}) {
   let walletDiscount = 0;
   let walletPlan = null;
   const walletGst = settings.cashback_gst_treatment === 'payment' ? 'payment' : 'discount';
-  const walletCap = round2((pre.total * (Number(settings.wallet_max_use_pct ?? 100) || 0)) / 100);
+  // phase 22 (v23 14.9): the wallet pays only for lines with no offer: the cap is the setting % of those lines
+  const walletBase = round2(pre.lines.filter((l) => !l.is_free && !(Number(l.offer_discount) > 0)).reduce((a, l) => a + l.line_total, 0));
+  const walletCap = round2((walletBase * (Number(settings.wallet_max_use_pct ?? 100) || 0)) / 100);
+  if (wantWallet > 0 && !opts.replacement && walletBase <= 0.004) throw new CommerceError('Wallet not used. Every line has an offer: the wallet cannot pay for those');
   if (wantWallet > 0 && !opts.replacement) {
     walletPlan = await wallet.plan(q, customerId, wantWallet, editing ? editing.order_id : 0);
     if (walletPlan.total + 0.005 < wantWallet) throw new CommerceError(`The wallet has only ${rs(walletPlan.total)} that can be used`);
-    if (wantWallet > walletCap + 0.005) throw new CommerceError(`At most ${Number(settings.wallet_max_use_pct)}% of the order can be paid from the wallet: ${rs(walletCap)} on this order (Commerce settings > Promotions)`);
+    if (wantWallet > walletCap + 0.005) throw new CommerceError(`At most ${Number(settings.wallet_max_use_pct)}% of the lines with no offer can be paid from the wallet: ${rs(walletCap)} on this order (Commerce settings > Promotions)`);
     walletUsed = wantWallet;
     if (walletGst === 'discount') walletDiscount = round2((walletPlan.bySource.cashback || 0) + (walletPlan.bySource.manual || 0));
   }
@@ -574,7 +580,7 @@ async function prepare(q, data, opts = {}) {
     }
   }
   return { cust, godown, list, terms, creditDays: Number(cust.credit_days) || 0, lines: t.lines, contactId, totals: t, coupon: coupon ? coupon.code : null, couponInfo: coupon, offers: offers.applied,
-    manualReason, walletUsed, walletGst: walletUsed > 0 ? walletGst : null, walletCap, walletPlan, discountTotal, discountPct, deliveryWaived: waived, deliveryTyped: dTyped, deliveryWhy: dWhy, areaCharge,
+    manualReason, walletUsed, walletGst: walletUsed > 0 ? walletGst : null, walletCap, walletPlan, discountTotal, discountPct, deliveryWaived: waived, deliveryTyped: dTyped, deliveryWhy: dWhy, areaCharge, noOffers,
     billAddressId: chose('bill') || !editing ? (billAddr ? billAddr.address_id : null) : editing.bill_address_id, shipAddressId: chose('ship') || !editing ? (shipAddr ? shipAddr.address_id : null) : editing.ship_address_id,
     bill: bill.values, ship: ship.values, pos, posReason: posInfo.reason, gstType, holds, settings, method, area: delivery.area,
     backs, kits: kits.map((k) => ({ kit_key: k.kit_key, kit_code: k.kit_code, name: k.name, qty: k.qty, list: k.list, price: k.unit })), quote: fromQuote, quoteGone, sw };
@@ -761,7 +767,7 @@ async function createOrder(q, data, empId, opts = {}) {
       p.walletUsed, t.wallet_discount, p.walletGst, round2(t.total - (p.walletUsed - t.wallet_discount)), data.note ? String(data.note).slice(0, 255) : null, empId]
   );
   const orderId = ins.insertId;
-  await q.query('UPDATE orders SET quote_id = ?, standing_id = ?, delivery_charge_typed = ?, delivery_charge_why = ? WHERE order_id = ?', [p.quote ? p.quote.quote_id : null, data.standing_id ? Number(data.standing_id) : null, p.deliveryTyped, p.deliveryWhy, orderId]);
+  await q.query('UPDATE orders SET quote_id = ?, standing_id = ?, delivery_charge_typed = ?, delivery_charge_why = ?, no_offers = ? WHERE order_id = ?', [p.quote ? p.quote.quote_id : null, data.standing_id ? Number(data.standing_id) : null, p.deliveryTyped, p.deliveryWhy, p.noOffers ? 1 : 0, orderId]);
   await insertLines(q, orderId, p.lines);
   if (p.coupon) await promotions.redeem(q, orderId, p.cust.customer_id, p.coupon, p.couponInfo.discount || p.couponInfo.delivery_waived);
   if (p.walletUsed > 0) await wallet.use(q, p.cust.customer_id, p.walletUsed, orderId, orderNo, empId);
@@ -824,12 +830,12 @@ async function previewOrder(q, data, empId, opts = {}) {
     wallet: { used: p.walletUsed, cap: p.walletCap, max_pct: Number(p.settings.wallet_max_use_pct), gst: p.settings.cashback_gst_treatment === 'payment' ? 'payment' : 'discount', by_source: p.walletPlan ? p.walletPlan.bySource : {},
       usable: (await wallet.plan(q, p.cust.customer_id, 1e9, order ? order.order_id : 0)).total },
     discount: { total: p.discountTotal, pct: p.discountPct, limit: p.settings.approve_discount_on ? Number(p.settings.approve_discount_pct_above) : null },
-    holds: holds.map((h) => ({ kind: h.kind, label: h.label || approvals.KINDS[h.kind].label, what: h.what })), delivery_area: p.area, delivery_typed: Boolean(p.deliveryTyped), area_charge: p.areaCharge, coupon_error: couponError, wallet_error: walletError,
+    holds: holds.map((h) => ({ kind: h.kind, label: h.label || approvals.KINDS[h.kind].label, what: h.what })), delivery_area: p.area, delivery_typed: Boolean(p.deliveryTyped), area_charge: p.areaCharge, no_offers: Boolean(p.noOffers), coupon_error: couponError, wallet_error: walletError,
   };
 }
 
 const ORDER_COLS = `order_id, order_no, customer_id, godown_id, status, payment_terms, credit_days, delivery_method_id, delivery_area_id, coupon_code, wallet_used, version, rev, quote_id, confirmed_at, hold_gone, total,
-  delivery_charge, delivery_waived, delivery_charge_typed, delivery_charge_why,
+  delivery_charge, delivery_waived, delivery_charge_typed, delivery_charge_why, no_offers,
   bill_name, bill_gstin, bill_address, bill_town, bill_state_code, bill_pincode, bill_phone, bill_address_id,
   ship_name, ship_address, ship_town, ship_state_code, ship_pincode, ship_phone, ship_address_id, contact_id`;
 
@@ -884,7 +890,7 @@ async function updateOrder(q, orderNo, data, empId, opts = {}) {
       t.delivery_charge, t.delivery_gst, p.deliveryWaived, t.taxable, t.cgst, t.sgst, t.igst, t.gst, t.round_off, t.total, p.walletUsed, t.wallet_discount, p.walletGst,
       String(data.note || '').trim().slice(0, 255) || null, rev, empId, o.order_id]
   );
-  await q.query('UPDATE orders SET delivery_charge_typed = ?, delivery_charge_why = ? WHERE order_id = ?', [p.deliveryTyped, p.deliveryWhy, o.order_id]);
+  await q.query('UPDATE orders SET delivery_charge_typed = ?, delivery_charge_why = ?, no_offers = ? WHERE order_id = ?', [p.deliveryTyped, p.deliveryWhy, p.noOffers ? 1 : 0, o.order_id]);
   if (status === 'approval') await requestHolds(q, orderNo, p.cust.name, p.holds, empId, p.godown, p.cust.customer_id);
   let h = { held: 0, back: 0 };
   if (status === 'approval' || status === 'draft') { await release(q, o.order_id); await q.query('UPDATE order_items SET back_qty = 0 WHERE order_id = ?', [o.order_id]); }

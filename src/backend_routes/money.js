@@ -472,7 +472,8 @@ approvals.onRecheck('refund', async (q, p) => {
 // ---------------------------------------------------------------- the customer ledger
 /**
  * the statement of a customer: every money line in date order with the running balance, the opening balance before
- * `from`, the open items with their age (ageing 0-30, 31-60, 61-90, 90+ days from the document date), overdue, on account
+ * `from`, the open items with their age and the ageing by days overdue (phase 22, v23: not due, 1-30, 31-60, 61-90, 90+ days
+ * after the due date), overdue, on account
  */
 async function statement(q, id, { from = null, to = null } = {}) {
   const [rows] = await q.query(
@@ -516,12 +517,13 @@ async function statement(q, id, { from = null, to = null } = {}) {
   const items = await openItems(q, id);
   const today = pricing.istToday();
   const ageDays = (d) => Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${d}T00:00:00Z`)) / 864e5);
-  const ageing = { d0_30: 0, d31_60: 0, d61_90: 0, d90: 0 };
+  const ageing = { not_due: 0, d1_30: 0, d31_60: 0, d61_90: 0, d90: 0 };
   const open = items.map((x) => {
     const a = ageDays(x.day);
-    const bk = a <= 30 ? 'd0_30' : a <= 60 ? 'd31_60' : a <= 90 ? 'd61_90' : 'd90';
+    const late = ageDays(x.due_on || x.day); // days overdue: 0 or less = not due yet
+    const bk = late <= 0 ? 'not_due' : late <= 30 ? 'd1_30' : late <= 60 ? 'd31_60' : late <= 90 ? 'd61_90' : 'd90';
     ageing[bk] = r2(ageing[bk] + x.left);
-    return { kind: x.kind, invoice_no: x.no, order_no: x.order_no, day: x.day, due_on: x.due_on, amount_due: x.left, age: a, bucket: bk, overdue: Boolean(x.due_on && x.due_on < today) };
+    return { kind: x.kind, invoice_no: x.no, order_no: x.order_no, day: x.day, due_on: x.due_on, amount_due: x.left, age: a, late: Math.max(0, late), bucket: bk, overdue: Boolean(x.due_on && x.due_on < today) };
   });
   const onAcc = r2((await unapplied(q, id)).reduce((a, x) => a + x.left, 0));
   const [[ov]] = await q.query(`SELECT COALESCE(SUM(o.amount_due), 0) AS n FROM invoices i JOIN orders o ON o.order_id = i.order_id WHERE o.customer_id = ? AND ${commerce().OVERDUE_SQL}`, [id]);

@@ -40,8 +40,8 @@ export default function CustomerLedger() {
             <div className="a-scroll"><table className="a-table"><thead><tr><th>Invoice</th><th>Order</th><th>Due</th><th className="a-num">Owes</th></tr></thead>
               <tbody>{s.open.map((o) => <tr key={o.invoice_no}><td className="a-mono">{o.invoice_no}</td><td className="a-mono">{o.order_no}</td><td>{o.due_on} {o.overdue && <Pill tone="bad">Overdue</Pill>}</td><td className="a-num">{money(o.amount_due)}</td></tr>)}
                 {!s.open.length && <tr><td colSpan={4} className="a-muted">Nothing open.</td></tr>}</tbody></table></div>
-            <div className="a-scroll"><table className="a-table"><thead><tr><th className="a-num">Owes</th><th className="a-num">0-30 days</th><th className="a-num">31-60</th><th className="a-num">61-90</th><th className="a-num">90+</th></tr></thead>
-              <tbody><tr><td className="a-num"><b>{money(s.outstanding)}</b></td><td className="a-num">{money(s.ageing.d0_30)}</td><td className="a-num">{money(s.ageing.d31_60)}</td><td className="a-num">{money(s.ageing.d61_90)}</td><td className="a-num">{money(s.ageing.d90)}</td></tr></tbody></table></div>
+            <div className="a-scroll"><table className="a-table"><thead><tr><th className="a-num">Owes</th><th className="a-num">Not due</th><th className="a-num">1-30 days late</th><th className="a-num">31-60</th><th className="a-num">61-90</th><th className="a-num">90+</th></tr></thead>
+              <tbody><tr><td className="a-num"><b>{money(s.outstanding)}</b></td><td className="a-num">{money(s.ageing.not_due)}</td><td className="a-num">{money(s.ageing.d1_30)}</td><td className="a-num">{money(s.ageing.d31_60)}</td><td className="a-num">{money(s.ageing.d61_90)}</td><td className="a-num">{money(s.ageing.d90)}</td></tr></tbody></table></div>
           </>}</Loading>
         </div>
       </Loading>

@@ -315,10 +315,12 @@ async function creditPrice(q, b, empId) {
   return { done: true, credit_note_no: no, total: t.total, message: `${rs(t.total)} off ${v.customer}'s balance.` };
 }
 async function postCredit(q, cnId, empId) {
-  const [[c]] = await q.query("SELECT cn.credit_note_id, cn.credit_note_no, cn.invoice_id, cn.total, cn.reason, i.order_id, i.invoice_no FROM credit_notes cn JOIN invoices i ON i.invoice_id = cn.invoice_id WHERE cn.credit_note_id = ? AND cn.status = 'waiting' FOR UPDATE", [cnId]);
+  const [[c]] = await q.query("SELECT cn.credit_note_id, cn.credit_note_no, cn.invoice_id, cn.total, cn.taxable, cn.reason, i.order_id, i.invoice_no FROM credit_notes cn JOIN invoices i ON i.invoice_id = cn.invoice_id WHERE cn.credit_note_id = ? AND cn.status = 'waiting' FOR UPDATE", [cnId]);
   if (!c) return;
   await q.query("UPDATE credit_notes SET status = 'done', decided_by = ? WHERE credit_note_id = ?", [empId, cnId]);
   await commerce().refreshPayment(q, c.order_id);
+  // phase 22 (v23 14.5): the cashback on the order gives back its share of a price correction (all of it under the rule's minimum, W2)
+  await require('./promotions').reverseCashback(q, c.order_id, Number(c.taxable), null, c.credit_note_no, empId); // eslint-disable-line global-require
   await audit(q, { empId, action: 'issue', entity: 'credit_note', entityId: c.credit_note_no, after: { invoice: c.invoice_no, total: Number(c.total), reason: c.reason } });
 }
 approvals.onApproved('credit_no_return', async (q, p, empId) => { if (p && p.credit_note_id) await postCredit(q, p.credit_note_id, empId); });

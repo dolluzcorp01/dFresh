@@ -303,7 +303,7 @@ export function FollowUpList({ rows, people, onChanged, onOpen }) {
 }
 
 // ---------------------------------------------------------------- statement of account
-const BUCKETS = [['d0_30', '0-30 days'], ['d31_60', '31-60 days'], ['d61_90', '61-90 days'], ['d90', '90+ days']];
+const BUCKETS = [['not_due', 'Not due'], ['d1_30', '1-30 days late'], ['d31_60', '31-60 days'], ['d61_90', '61-90 days'], ['d90', '90+ days']]; // phase 22: by days overdue
 function printStatement(s) {
   const c = s.customer; const b = s.bill || {};
   const rows = s.lines.map((l) => `<tr><td>${esc(day(l.day))}</td><td>${esc(l.text)}</td><td class="n">${l.debit ? esc(rs(l.debit)) : ''}</td><td class="n">${l.credit ? esc(rs(l.credit)) : ''}</td><td class="n">${esc(rs(l.balance))}</td></tr>`).join('');
@@ -315,7 +315,7 @@ function printStatement(s) {
       <table><thead><tr><th>Date</th><th>Details</th><th class="n">Debit</th><th class="n">Credit</th><th class="n">Balance</th></tr></thead><tbody>
       ${s.from ? `<tr><td></td><td>Opening balance</td><td></td><td></td><td class="n">${esc(rs(s.opening))}</td></tr>` : ''}${rows}
       <tr><td></td><td><b>Closing balance</b></td><td></td><td></td><td class="n"><b>${esc(rs(s.closing))}</b></td></tr></tbody></table>
-      <h2>Ageing of what is open (by invoice date)</h2>
+      <h2>Ageing of what is open (by days overdue)</h2>
       <table><thead><tr>${BUCKETS.map(([, l]) => `<th class="n">${l}</th>`).join('')}<th class="n">Total open</th></tr></thead><tbody><tr>${BUCKETS.map(([k]) => `<td class="n">${esc(rs(s.ageing[k]))}</td>`).join('')}<td class="n"><b>${esc(rs(s.outstanding))}</b></td></tr></tbody></table>
       ${s.open.length ? `<p>${s.open.map((o) => `${esc(o.invoice_no)} (${esc(day(o.day))}, ${o.age} days${o.overdue ? ', OVERDUE' : ''}): ${esc(rs(o.amount_due))}`).join('<br>')}</p>` : ''}`,
   });

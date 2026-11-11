@@ -24,8 +24,8 @@ the phase that builds it (gap map build order; Website entries with no screen: p
 | Sales / Orders / Orders | /admin/commerce/orders |
 | Sales / Orders / Standing orders | /admin/standing-orders |
 | Sales / Orders / Back-orders | /admin/back-orders |
-| Sales / Returns / Return requests | /admin/commerce/returns |
-| Sales / Returns / Inspection | /admin/commerce/returns?status=received |
+| Sales / Returns / Return requests | /admin/return-requests |
+| Sales / Returns / Inspection | /admin/inspection |
 | Fulfilment / Packing / To pick | /admin/to-pick |
 | Fulfilment / Packing / Packing | /admin/packing |
 | Fulfilment / Packing / Packed, waiting | /admin/packed-waiting |
@@ -67,10 +67,10 @@ the phase that builds it (gap map build order; Website entries with no screen: p
 | GST / E-invoice | /admin/e-invoice |
 | GST / E-way bill | /admin/e-way-bill |
 | GST / Other GST returns | placeholder: Later |
-| Marketing / Offers | /admin/commerce/promotions?tab=offers |
-| Marketing / Coupons | /admin/commerce/promotions?tab=coupons |
-| Marketing / Cashback rules | /admin/commerce/promotions?tab=cashback |
-| Marketing / Customer wallets | /admin/commerce/promotions?tab=wallets |
+| Marketing / Offers | /admin/offers |
+| Marketing / Coupons | /admin/coupons |
+| Marketing / Cashback rules | /admin/cashback-rules |
+| Marketing / Customer wallets | /admin/customer-wallets |
 | Reports / Sales and purchases | /admin/commerce/reports?tab=sales |
 | Reports / Stock | /admin/commerce/reports?tab=stock |
 | Reports / Money owed | /admin/commerce/reports?tab=receivables |

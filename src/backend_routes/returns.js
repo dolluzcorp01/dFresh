@@ -13,6 +13,10 @@
 //    the refund threshold it waits for approval; a "No refund" waits for approval (setting). A replacement is a Rs 0
 //    order through the normal pick-pack-deliver flow. A rejected approval makes those packs undecided again.
 // 5. Recheck: Returned (R) packs back to good stock, only when the setting allows resale, always through approval.
+// Phase 22 (v23 section 12): inspection decides each pack: resell (it goes on the Returned shelf and the rule "Returned
+// stock back to Good" moves it to Good once signed), repack or damaged (Damaged shelf), scrap (a write-off from the
+// Returned shelf under the write-off rule), expired, not received. A return whose order had "buy X get Y" free packs
+// credits less the free packs no longer due (invoices.offerKept), so the credit note and the refund agree.
 const { audit } = require('./audit');
 const approvals = require('./approvals');
 const commerce = require('./commerce');
@@ -71,7 +75,7 @@ async function returnable(q, orderId) {
   const [back] = await q.query(`SELECT ri.sku_code, ri.batch_id, SUM(ri.qty - COALESCE(ri.qty_missing, 0)) AS qty FROM return_items ri JOIN returns r ON r.return_id = ri.return_id
       WHERE r.order_id = ? AND r.status <> 'rejected' GROUP BY ri.sku_code, ri.batch_id`, [orderId]);
   const used = new Map(back.map((x) => [`${x.sku_code}|${x.batch_id || ''}`, Number(x.qty)]));
-  const [names] = out.length ? await q.query(`SELECT s.sku_code, s.size_label, COALESCE(t.name, pt.name, s.product_id) AS name FROM skus s JOIN products p ON p.product_id = s.product_id
+  const [names] = out.length ? await q.query(`SELECT s.sku_code, s.size_label, COALESCE(t.name, pt.name, s.product_id) AS name, (SELECT pi.file_name FROM product_images pi WHERE pi.product_id = s.product_id ORDER BY pi.position LIMIT 1) AS image FROM skus s JOIN products p ON p.product_id = s.product_id
       LEFT JOIN product_translations t ON t.product_id = s.product_id AND t.lang_code = 'en' LEFT JOIN product_translations pt ON pt.product_id = p.variant_of AND pt.lang_code = 'en'
       WHERE s.sku_code IN (?)`, [out.map((x) => x.sku_code)]) : [[]];
   const nm = new Map(names.map((x) => [x.sku_code, x]));
@@ -99,7 +103,10 @@ async function createReturn(q, orderNo, data, empId) {
     const batchId = l.batch_id ? Number(l.batch_id) : null;
     const c = can.find((x) => x.sku_code === sku && (x.batch_id || null) === batchId);
     if (!c) throw new ReturnError(`${sku}${batchId ? ' in that batch' : ''} was not delivered on ${orderNo}`);
-    if (!Number.isInteger(qty) || qty < 0 || qty > c.qty) throw new ReturnError(`${sku}${c.batch_no ? ` batch ${c.batch_no}` : ''}: at most ${c.qty} pack(s) can still be returned`);
+    // phase 22: the same pack and batch twice counts together against what can still come back
+    const same = lines.find((x) => x.sku_code === sku && x.batch_id === batchId);
+    if (!Number.isInteger(qty) || qty < 0 || qty + (same ? same.qty : 0) > c.qty) throw new ReturnError(`${sku}${c.batch_no ? ` batch ${c.batch_no}` : ''}: at most ${c.qty} pack(s) can still be returned`);
+    if (same) { same.qty += qty; continue; }
     lines.push({ sku_code: sku, batch_id: batchId, qty });
   }
   if (!lines.length) throw new ReturnError('Choose at least one pack to return');
@@ -192,8 +199,8 @@ async function opsCounts(q, scope = null) {
 async function receiveState(q, returnId) {
   const [lines] = await q.query(
     `SELECT ri.line_id, ri.sku_code, ri.batch_id, b.batch_no, DATE_FORMAT(b.expiry_date, '%Y-%m-%d') AS expiry_date, (b.expiry_date < ${IST_TODAY}) AS batch_expired,
-            ri.qty, ri.qty_received, ri.qty_ok, ri.qty_damaged, ri.qty_expired, ri.qty_missing, ri.refund_qty, ri.replace_qty, ri.none_qty,
-            s.size_label, s.packs_per_carton, COALESCE(t.name, pt.name, s.product_id) AS name, p.track_batches
+            ri.qty, ri.qty_received, ri.qty_ok, ri.qty_damaged, ri.qty_expired, ri.qty_missing, ri.qty_repack, ri.qty_scrap, ri.resell_approval_id, ri.scrap_write_off_id, ri.refund_qty, ri.replace_qty, ri.none_qty,
+            s.size_label, s.packs_per_carton, COALESCE(t.name, pt.name, s.product_id) AS name, p.track_batches, (SELECT pi.file_name FROM product_images pi WHERE pi.product_id = s.product_id ORDER BY pi.position LIMIT 1) AS image
        FROM return_items ri JOIN skus s ON s.sku_code = ri.sku_code JOIN products p ON p.product_id = s.product_id
        LEFT JOIN product_translations t ON t.product_id = s.product_id AND t.lang_code = 'en' LEFT JOIN product_translations pt ON pt.product_id = p.variant_of AND pt.lang_code = 'en'
        LEFT JOIN batches b ON b.batch_id = ri.batch_id WHERE ri.return_id = ? ORDER BY ri.line_id`, [returnId]);
@@ -236,7 +243,7 @@ async function receiveScan(q, returnNo, raw, empId) {
   return { result, message, lines: await receiveState(q, r.return_id) };
 }
 
-/** inspection: per line ok / damaged / expired / missing (they add up to the line's packs); stock movements */
+/** inspection: per line resell / repack / damaged / scrap / expired / missing (they add up to the line's packs); stock movements */
 async function inspect(q, returnNo, b, empId) {
   const r = await lockReturn(q, returnNo, ['received']); // inspected = what was scanned in at the godown (security review L5)
   if ((await pendingOf(q, returnNo)).some((p) => p.kind === 'return_window')) throw new ReturnError(`${returnNo} waits for approval (outside the return window)`, 409);
@@ -245,30 +252,51 @@ async function inspect(q, returnNo, b, empId) {
   const plan = [];
   for (const l of lines) {
     const g = given.get(l.line_id) || {};
-    const v = ['ok', 'damaged', 'expired', 'missing'].map((k) => Number(g[k] || 0));
+    // "ok" (before phase 22) is resell
+    const v = [g.resell !== undefined ? g.resell : g.ok, g.damaged, g.expired, g.missing, g.repack, g.scrap].map((k) => Number(k || 0));
     if (v.some((x) => !Number.isInteger(x) || x < 0)) throw new ReturnError(`${l.sku_code}: whole numbers, 0 or more`);
-    if (v.reduce((a, x) => a + x, 0) !== l.qty) throw new ReturnError(`${l.sku_code}${l.batch_no ? ` batch ${l.batch_no}` : ''}: OK + damaged + expired + not received must be ${l.qty}`);
-    if (v[0] + v[1] + v[2] > Number(l.qty_received)) throw new ReturnError(`${l.sku_code}${l.batch_no ? ` batch ${l.batch_no}` : ''}: only ${l.qty_received} scanned in at the godown; the rest is "not received"`);
+    const tag = `${l.sku_code}${l.batch_no ? ` batch ${l.batch_no}` : ''}`;
+    if (v.reduce((a, x) => a + x, 0) !== l.qty) throw new ReturnError(`${tag}: resell + repack + damaged + scrap + expired + not received must be ${l.qty} (adds up to ${v.reduce((a, x) => a + x, 0)})`);
+    if (v[0] + v[1] + v[2] + v[4] + v[5] > Number(l.qty_received)) throw new ReturnError(`${tag}: only ${l.qty_received} scanned in at the godown; the rest is "not received"`);
     if (v[2] && !l.batch_id) throw new ReturnError(`${l.sku_code}: "Expired" is only for products tracked by batch`);
-    plan.push({ l, ok: v[0], damaged: v[1], expired: v[2], missing: v[3] });
+    if (v[0] && l.batch_expired) throw new ReturnError(`${tag} has expired: it cannot be sold again (choose Expired or Scrap)`);
+    plan.push({ l, ok: v[0], damaged: v[1], expired: v[2], missing: v[3], repack: v[4], scrap: v[5] });
   }
+  const sset = await commerceSettings.read(q);
+  if (plan.some((x) => x.ok) && !sset.returned_resell) throw new ReturnError('Returned stock cannot be sold again (Commerce settings > Returns): choose repack, damaged or scrap', 409);
   const note = String(b.note || '').trim().slice(0, 255) || null;
+  const waits = [];
   for (const x of plan) {
-    await q.query('UPDATE return_items SET qty_ok = ?, qty_damaged = ?, qty_expired = ?, qty_missing = ? WHERE line_id = ?', [x.ok, x.damaged, x.expired, x.missing, x.l.line_id]);
-    // shelves (phase 12a): OK -> Returned (ret), damaged -> Damaged (dmg), expired -> Returned too (its batch has
-    // expired, so it stays blocked there until written off)
-    for (const [shelf, n, label] of [['ret', x.ok, 'OK -> Returned (R)'], ['dmg', x.damaged, 'damaged'], ['ret', x.expired, 'expired (blocked)']]) {
+    await q.query('UPDATE return_items SET qty_ok = ?, qty_damaged = ?, qty_expired = ?, qty_missing = ?, qty_repack = ?, qty_scrap = ? WHERE line_id = ?', [x.ok, x.damaged, x.expired, x.missing, x.repack, x.scrap, x.l.line_id]);
+    // shelves (phase 12a): resell -> Returned (ret) until "Returned stock back to Good" is signed, repack and damaged ->
+    // Damaged (dmg), expired -> Returned (its batch has expired: blocked there until written off), scrap -> Returned, then
+    // written off under the write-off rule
+    for (const [shelf, n, label] of [['ret', x.ok, 'resell (Returned until it is signed back to Good)'], ['dmg', x.repack, 'to repack'], ['dmg', x.damaged, 'damaged'], ['ret', x.expired, 'expired (blocked)'], ['ret', x.scrap, 'scrap']]) {
       if (!n) continue;
       await stock.moveStock(q, { sku: x.l.sku_code, godown: r.godown_id, shelf, qty: n, batch: x.l.batch_id, what: 'return', doc: { type: 'return', id: returnNo }, note: `${returnNo} inspected: ${label}` }, empId);
     }
+    if (x.ok) {
+      const payload = { sku_code: x.l.sku_code, godown_id: r.godown_id, batch_id: x.l.batch_id, qty: x.ok, note: `Return ${returnNo} inspected: resell${note ? ` - ${note}` : ''}`, return_no: returnNo };
+      if (await approvals.needed(q, 'restock', {})) {
+        const id = await approvals.request(q, { kind: 'restock', godownId: r.godown_id, refType: 'return', refId: returnNo, summary: `${returnNo}: ${x.ok} packs of ${x.l.sku_code}${x.l.batch_no ? ` batch ${x.l.batch_no}` : ''} from Returned (R) back to Good (resell)`, payload }, empId);
+        await q.query('UPDATE return_items SET resell_approval_id = ? WHERE line_id = ?', [id, x.l.line_id]);
+        waits.push(`Returned stock back to Good (${x.ok} ${x.l.sku_code})`);
+      } else await stock.moveShelf(q, { sku: x.l.sku_code, godown: r.godown_id, from: 'ret', to: 'good', qty: x.ok, batch: x.l.batch_id, what: 'recheck', doc: { type: 'return', id: returnNo }, note: payload.note }, empId);
+    }
+    if (x.scrap) {
+      const w = await stock.requestWriteOff(q, { godown_id: r.godown_id, sku_code: x.l.sku_code, stock_kind: 'ret', batch_id: x.l.batch_id, qty: x.scrap, reason_type: 'custret', reason: `Return ${returnNo} inspected: scrap${note ? ` - ${note}` : ''}` }, empId)
+        .catch((e) => { if (e instanceof stock.StockError) throw new ReturnError(e.message, e.status); throw e; });
+      await q.query('UPDATE return_items SET scrap_write_off_id = ? WHERE line_id = ?', [w.write_off_id, x.l.line_id]);
+      if (w.status !== 'posted') waits.push(`Stock write-off (${x.scrap} ${x.l.sku_code})`);
+    }
   }
-  await setStatus(q, r, 'inspected', empId, `${plan.map((x) => `${x.l.sku_code}${x.l.batch_no ? `/${x.l.batch_no}` : ''}: ${x.ok} OK, ${x.damaged} damaged, ${x.expired} expired, ${x.missing} not received`).join('; ')}${note ? ` - ${note}` : ''}`,
+  await setStatus(q, r, 'inspected', empId, `${plan.map((x) => `${x.l.sku_code}${x.l.batch_no ? `/${x.l.batch_no}` : ''}: ${x.ok} resell, ${x.repack} repack, ${x.damaged} damaged, ${x.scrap} scrap, ${x.expired} expired, ${x.missing} not received`).join('; ')}${note ? ` - ${note}` : ''}`,
     { inspected_at: new Date(), inspected_by: empId, inspect_note: note, ...(r.received_at ? {} : { received_at: new Date(), received_by: empId }) });
-  return { return_no: returnNo, status: 'inspected' };
+  return { return_no: returnNo, status: 'inspected', waiting: waits, message: waits.length ? `Inspected. Waiting for approval: ${waits.join(', ')}. The stock stays on the Returned shelf until then.` : 'Inspected.' };
 }
 
 // ---------------------------------------------------------------- decide: refund / replacement / no refund
-const leftOf = (l) => (Number(l.qty_ok || 0) + Number(l.qty_damaged || 0) + Number(l.qty_expired || 0)) - Number(l.refund_qty || 0) - Number(l.replace_qty || 0) - Number(l.none_qty || 0);
+const leftOf = (l) => (Number(l.qty_ok || 0) + Number(l.qty_damaged || 0) + Number(l.qty_expired || 0) + Number(l.qty_repack || 0) + Number(l.qty_scrap || 0)) - Number(l.refund_qty || 0) - Number(l.replace_qty || 0) - Number(l.none_qty || 0);
 
 /**
  * b = { lines: [{ line_id, refund, replace, none }] (for the packs still undecided), method: wallet | original | balance,
@@ -357,14 +385,10 @@ async function decide(q, returnNo, b, empId) {
 
 /** the credit note total (incl. GST, rounded as the invoice) for these packs: what the customer gets back */
 async function creditTotal(q, orderId, lines) {
-  const [items] = await q.query(`SELECT sku_code, SUM(qty) AS qty, SUM(taxable) AS taxable, SUM(cgst) AS cgst, SUM(sgst) AS sgst, SUM(igst) AS igst
-      FROM order_items WHERE order_id = ? GROUP BY sku_code`, [orderId]); // as invoices.creditNoteForReturn: per SKU
+  // phase 22: exactly what invoices.creditNoteForReturn will credit (paid packs at their price, free ones at 0, free packs no longer due off)
   let t = 0;
-  for (const l of lines) {
-    const it = items.find((i) => i.sku_code === l.sku_code);
-    const p = l.qty / Number(it.qty);
-    t += round2(Number(it.taxable) * p) + round2(Number(it.cgst) * p) + round2(Number(it.sgst) * p) + round2(Number(it.igst) * p);
-  }
+  for (const k of await invoices.creditParts(q, orderId, lines)) t += k.taxable + k.cgst + k.sgst + k.igst;
+  t = round2(t);
   const s = await commerceSettings.read(q);
   return s.invoice_round_off ? Math.round(t) : round2(t);
 }
@@ -490,6 +514,60 @@ approvals.onApproved('restock', async (q, p, empId) => {
   await audit(q, { empId, action: 'recheck', entity: 'stock', entityId: p.sku_code, after: { godown, qty: p.qty, batch_id: p.batch_id } });
 });
 approvals.onClosed('restock', async (q, p, status, empId) => { if (p && p.move_id) await inv().moveClosed(q, p.move_id, status, empId); });
+// phase 22 (v23 12.8): a resell that is not signed sends those packs back to be inspected again; they stay on the
+// Returned shelf until then (reinspect below). The money side does not change: the packs are still counted as back.
+approvals.onClosed('restock', async (q, p, status, empId) => {
+  if (!p || !p.return_no) return;
+  const [[r]] = await q.query('SELECT return_id FROM returns WHERE return_no = ?', [p.return_no]);
+  if (!r) return;
+  await history(q, r.return_id, 'sent_back', `Sent back. Returned stock back to Good: ${status} by ${await inv().nameOf(q, empId)}. ${p.qty} packs of ${p.sku_code} stay on the Returned shelf: inspect them again.`, empId);
+});
+
+/**
+ * phase 22 (v23 12.8): inspect again the resell packs whose "back to Good" was not signed.
+ * b = { lines: [{ line_id, resell, repack, damaged, scrap }] } (each adds up to the line's resell packs) -> { waiting, message }
+ */
+async function reinspect(q, returnNo, b, empId) {
+  const r = await lockReturn(q, returnNo, ['inspected', 'refunded', 'replaced', 'closed']);
+  const lines = await receiveState(q, r.return_id);
+  const given = new Map((Array.isArray(b.lines) ? b.lines : []).map((l) => [Number(l.line_id), l]));
+  const sset = await commerceSettings.read(q);
+  const waits = []; let done = 0;
+  for (const l of lines) {
+    const g = given.get(l.line_id);
+    if (!g || !l.resell_approval_id) continue;
+    const [[a]] = await q.query('SELECT status FROM approvals WHERE approval_id = ?', [l.resell_approval_id]);
+    if (!a || a.status === 'pending' || a.status === 'approved') throw new ReturnError(`${l.sku_code}: its resell is ${a ? a.status : 'gone'}, nothing to inspect again`, 409);
+    const v = ['resell', 'repack', 'damaged', 'scrap'].map((k) => Number(g[k] || 0));
+    if (v.some((x) => !Number.isInteger(x) || x < 0)) throw new ReturnError(`${l.sku_code}: whole numbers, 0 or more`);
+    const n = Number(l.qty_ok);
+    if (v.reduce((x, y) => x + y, 0) !== n) throw new ReturnError(`${l.sku_code}: resell + repack + damaged + scrap must be ${n}`);
+    if (v[0] && !sset.returned_resell) throw new ReturnError('Returned stock cannot be sold again (Commerce settings > Returns): choose repack, damaged or scrap', 409);
+    const note = `${returnNo} inspected again`;
+    if (v[1] + v[2]) await stock.moveShelf(q, { sku: l.sku_code, godown: r.godown_id, from: 'ret', to: 'dmg', qty: v[1] + v[2], batch: l.batch_id, what: 'recheck', doc: { type: 'return', id: returnNo }, note: `${note}: ${v[1]} repack, ${v[2]} damaged` }, empId);
+    let woId = l.scrap_write_off_id;
+    if (v[3]) {
+      const w = await stock.requestWriteOff(q, { godown_id: r.godown_id, sku_code: l.sku_code, stock_kind: 'ret', batch_id: l.batch_id, qty: v[3], reason_type: 'custret', reason: `${note}: scrap` }, empId)
+        .catch((e) => { if (e instanceof stock.StockError) throw new ReturnError(e.message, e.status); throw e; });
+      woId = w.write_off_id;
+      if (w.status !== 'posted') waits.push(`Stock write-off (${v[3]} ${l.sku_code})`);
+    }
+    let resellId = null;
+    if (v[0]) {
+      const payload = { sku_code: l.sku_code, godown_id: r.godown_id, batch_id: l.batch_id, qty: v[0], note: `${note}: resell`, return_no: returnNo };
+      if (await approvals.needed(q, 'restock', {})) {
+        resellId = await approvals.request(q, { kind: 'restock', godownId: r.godown_id, refType: 'return', refId: returnNo, summary: `${returnNo}: ${v[0]} packs of ${l.sku_code} from Returned (R) back to Good (resell, inspected again)`, payload }, empId);
+        waits.push(`Returned stock back to Good (${v[0]} ${l.sku_code})`);
+      } else await stock.moveShelf(q, { sku: l.sku_code, godown: r.godown_id, from: 'ret', to: 'good', qty: v[0], batch: l.batch_id, what: 'recheck', doc: { type: 'return', id: returnNo }, note: payload.note }, empId);
+    }
+    await q.query('UPDATE return_items SET qty_ok = ?, qty_repack = COALESCE(qty_repack, 0) + ?, qty_damaged = COALESCE(qty_damaged, 0) + ?, qty_scrap = COALESCE(qty_scrap, 0) + ?, resell_approval_id = ?, scrap_write_off_id = ? WHERE line_id = ?',
+      [v[0], v[1], v[2], v[3], resellId, woId, l.line_id]);
+    await history(q, r.return_id, 'inspected', `${l.sku_code} inspected again: ${v[0]} resell, ${v[1]} repack, ${v[2]} damaged, ${v[3]} scrap`, empId);
+    done += 1;
+  }
+  if (!done) throw new ReturnError('Nothing to inspect again');
+  return { return_no: returnNo, waiting: waits, message: waits.length ? `Inspected again. Waiting for approval: ${waits.join(', ')}.` : 'Inspected again.' };
+}
 approvals.onAgain('restock', async (q, p) => {
   if (!p.move_id) return '';
   const [[w]] = await q.query('SELECT status FROM write_offs WHERE write_off_id = ? FOR UPDATE', [p.move_id]);
@@ -498,4 +576,4 @@ approvals.onAgain('restock', async (q, p) => {
   return inv().moveRecheck(q, p.move_id);
 });
 
-module.exports = { STATUS_LABEL, COLLECTION, METHODS, ReturnError, returnable, createReturn, addPhoto, setCourier, onTrip, pickedUp, pickupFailed, opsCounts, receiveState, receiveScan, inspect, decide, leftOf, recheckRequest, finalize };
+module.exports = { STATUS_LABEL, COLLECTION, METHODS, ReturnError, returnable, createReturn, addPhoto, setCourier, onTrip, pickedUp, pickupFailed, opsCounts, receiveState, receiveScan, inspect, reinspect, decide, leftOf, recheckRequest, finalize };

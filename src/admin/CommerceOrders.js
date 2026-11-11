@@ -406,6 +406,7 @@ function OrderForm({ order = null, onClose, onSaved }) {
   const [couponApplied, setCouponApplied] = useState(editing ? order.coupon_code || '' : '');
   const [manual, setManual] = useState(editing && Number(order.manual_discount) ? { amount: String(Number(order.manual_discount)), reason: order.manual_discount_reason || '' } : { amount: '', reason: '' });
   const [wallet, setWallet] = useState(editing && Number(order.wallet_used) ? String(Number(order.wallet_used)) : '');
+  const [noOffers, setNoOffers] = useState(Boolean(editing && Number(order.no_offers) === 1)); // phase 22: the customer does not want the offers
   const [pv, setPv] = useState(null); // the server's preview: { totals, lines, offers, coupon, wallet, holds, ... } or { error }
   const [note, setNote] = useState(editing ? order.note || '' : '');
   const [reason, setReason] = useState('');
@@ -483,7 +484,7 @@ function OrderForm({ order = null, onClose, onSaved }) {
   const dirty = Boolean(customerId || lines.some((l) => l.sku_code));
   // what the server makes of it (offers, coupon, wallet, totals, approvals), shortly after each change
   const body = () => ({
-    payment_terms: terms, note, coupon_code: couponApplied.trim().toUpperCase() || null, wallet_use: Number(wallet) || 0,
+    payment_terms: terms, note, coupon_code: couponApplied.trim().toUpperCase() || null, wallet_use: Number(wallet) || 0, no_offers: noOffers,
     manual_discount: manual.amount, manual_discount_reason: manual.reason,
     items: [...rows.filter((r) => r.l.sku_code && r.sku).map((r) => ({ sku_code: r.l.sku_code.trim().toUpperCase(), qty: r.packs, price: r.l.auto || r.l.is_free ? '' : r.l.price, ...(r.l.is_free ? { is_free: true, free_why: r.l.free_why } : {}),
       kept: Boolean(r.l.kept && !r.l.auto && Number(r.l.price) === r.l.kept.price && r.packs === r.l.kept.qty) })),
@@ -659,6 +660,7 @@ function OrderForm({ order = null, onClose, onSaved }) {
               <label className="a-inline a-override"><input type="checkbox" checked={override} onChange={(e) => setOverride(e.target.checked)} /> Order more than available anyway{f.approval.stock ? ' (waits for approval by someone else)' : ''}</label>
             ) : <Notice kind="error">More than the available stock: lower the quantity (only a role with &quot;approve&quot; on Orders can ask for an override).</Notice>)}
             <h3>Discounts and wallet</h3>
+            <label className="a-inline"><input type="checkbox" checked={noOffers} onChange={(e) => setNoOffers(e.target.checked)} /> No offers on this order{noOffers ? ' (the lines stay at their price; a coupon can still be used)' : ''}</label>
             <div className="a-grid2">
               <label className="a-field"><span>Coupon (one per order)</span>
                 <span className="a-row">

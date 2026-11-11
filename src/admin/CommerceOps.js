@@ -68,9 +68,9 @@ export default function CommerceOps() {
               {d.delivery && <Card to="/admin/commerce/orders?status=out_for_delivery" value={d.delivery.outNow} label="out for delivery" sub={d.delivery.withCourier ? `+ ${d.delivery.withCourier} with couriers` : null} />}
               {d.delivery && <Card to="/admin/failed-deliveries" value={d.delivery.failed} label="failed deliveries" bad={d.delivery.failed > 0} />}
               {d.delivery && <Card to="/admin/cash-on-delivery" value={rs(d.delivery.codDue)} label="COD cash to collect" sub={d.delivery.cashOnTrips ? `${rs(d.delivery.cashOnTrips)} collected on trips out now` : null} />}
-              {d.returns && d.returns.toCollect !== null && <Card to="/admin/commerce/returns?status=collecting" value={d.returns.toCollect} label="returns to collect" sub="customer, trip pickup or courier" />}
-              {d.returns && <Card to="/admin/commerce/returns?status=received" value={d.returns.toInspect} label="returns to inspect" sub="at the godown or picked up" bad={d.returns.toInspect > 0} />}
-              {d.returns && d.returns.toDecide !== null && <Card to="/admin/commerce/returns?status=inspected" value={d.returns.toDecide} label="returns to decide" sub="refund, replace or no refund" />}
+              {d.returns && d.returns.toCollect !== null && <Card to="/admin/return-requests?tab=to_collect" value={d.returns.toCollect} label="returns to collect" sub="customer, trip pickup or courier" />}
+              {d.returns && <Card to="/admin/inspection" value={d.returns.toInspect} label="returns to inspect" sub="at the godown or picked up" bad={d.returns.toInspect > 0} />}
+              {d.returns && d.returns.toDecide !== null && <Card to="/admin/return-requests?tab=deciding" value={d.returns.toDecide} label="returns to decide" sub="refund, replace or no refund" />}
               {d.walletGiven && <Card to="/admin/commerce/customers" value={rs(d.walletGiven.total)} label="wallet balance owed to customers" sub={`from cashback ${rs(d.walletGiven.cashback)}, refunds ${rs(d.walletGiven.refunds)}`} />}
             </div>
             <div className="a-grid2">

@@ -48,7 +48,7 @@ async function signBlock(q) {
 /** an invoice with its lines and credit notes -> the object GET /commerce/invoices/:id returns (null when none) */
 async function invoiceData(q, id) {
   const [[inv]] = await q.query(
-    `SELECT i.invoice_id, i.invoice_no, i.fy, i.status, i.issued_at, DATE_FORMAT(i.due_on, '%Y-%m-%d') AS due_on, i.place_of_supply, i.gst_type, i.taxable, i.delivery_charge, i.delivery_gst, i.cgst, i.sgst, i.igst,
+    `SELECT i.invoice_id, i.invoice_no, i.fy, i.status, i.issued_at, i.ewb_no, DATE_FORMAT(i.ewb_valid, '%Y-%m-%d') AS ewb_valid, i.irn, i.ack_no, o.eway_bill_no AS order_ewb, DATE_FORMAT(i.due_on, '%Y-%m-%d') AS due_on, i.place_of_supply, i.gst_type, i.taxable, i.delivery_charge, i.delivery_gst, i.cgst, i.sgst, i.igst,
             i.round_off, i.total, i.seller_name, i.seller_gstin, i.seller_address, i.seller_state_code, i.seller_bank, i.seller_upi, i.buyer_json, i.is_demo, i.cancelled_at, i.cancel_reason,
             o.order_no, o.order_id, o.subtotal, o.discount, o.offer_discount, o.manual_discount, o.manual_discount_reason, o.delivery_waived, o.coupon_code, o.wallet_used, o.wallet_discount,
             o.wallet_gst, o.payment_terms
@@ -230,6 +230,9 @@ async function invoicePdf(q, id) {
     [[`Invoice ${inv.invoice_no}`, true], [`Date: ${istDay(inv.issued_at)}`], [`Order: ${inv.order_no}`], [`Due on: ${day(inv.due_on)}`], [`Place of supply: ${inv.pos_state} (${inv.place_of_supply})`], [inv.pos_reason || ''],
       [intra ? 'CGST + SGST (same state as the seller)' : 'IGST (inter-state)']],
   );
+  // phase 22 (carry-over): the e-way bill and the e-invoice IRN, as the print view shows them
+  if (inv.ewb_no || inv.order_ewb) d.para(`E-way bill ${inv.ewb_no || inv.order_ewb}${inv.ewb_valid ? ` valid until ${day(inv.ewb_valid)}` : ''}`, { size: 9 });
+  if (inv.irn) d.para(`IRN ${inv.irn} - Ack ${inv.ack_no}`, { size: 8 });
   if (inv.status === 'cancelled') d.para(`CANCELLED${inv.cancel_reason ? ` - ${inv.cancel_reason}` : ''}`, { size: 11, bold: true, color: '#b3261e' });
   d.columns([['Bill to', true], ...addrLines(inv.buyer.bill, `${inv.bill_state} (${inv.buyer.bill.state_code})`).map((x) => [x])],
     [['Ship to', true], ...addrLines(inv.buyer.ship, `${inv.ship_state} (${inv.buyer.ship.state_code})`).map((x) => [x])]);
@@ -313,7 +316,7 @@ async function creditNotePdf(q, id) {
   return { filename: `${cn.credit_note_no.replace(/\//g, '-')}.pdf`, buffer: await d.finish() };
 }
 
-const BUCKETS = [['d0_30', '0-30 days'], ['d31_60', '31-60 days'], ['d61_90', '61-90 days'], ['d90', 'Over 90 days']];
+const BUCKETS = [['not_due', 'Not due'], ['d1_30', '1-30 days late'], ['d31_60', '31-60 days'], ['d61_90', '61-90 days'], ['d90', 'Over 90 days']]; // phase 22: by days overdue
 async function statementPdf(q, customerId, range = {}) {
   const st = await statementData(q, customerId, range);
   if (!st) return null;

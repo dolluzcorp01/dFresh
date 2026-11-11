@@ -135,20 +135,8 @@ async function creditNoteForReturn(q, orderId, lines, reason, returnId, empId) {
   const [[inv]] = await q.query('SELECT invoice_id, invoice_no, gst_type FROM invoices WHERE live_order_id = ? FOR UPDATE', [orderId]);
   if (!inv) throw new InvoiceError('The order has no live tax invoice to credit', 409);
   await books.assertOpen(q, pricing.istToday()); // phase 12b month lock: the credit note is dated today
-  // per SKU over its paid and free lines (buy X get Y): a returned pack is worth its share of what was invoiced
-  const [items] = await q.query(`SELECT sku_code, SUM(qty) AS qty, MAX(hsn) AS hsn, MAX(gst_rate) AS gst_rate, SUM(taxable) AS taxable, SUM(cgst) AS cgst, SUM(sgst) AS sgst, SUM(igst) AS igst
-      FROM order_items WHERE order_id = ? GROUP BY sku_code`, [orderId]);
-  items.forEach((i) => { i.qty = Number(i.qty); });
-  const out = [];
-  for (const l of lines.filter((x) => x.qty > 0)) {
-    const it = items.find((i) => i.sku_code === l.sku_code);
-    if (!it || l.qty > it.qty) throw new InvoiceError(`${l.sku_code}: ${l.qty} packs is more than invoiced`, 409);
-    const p = l.qty / it.qty;
-    const row = { sku_code: l.sku_code, hsn: it.hsn, gst_rate: Number(it.gst_rate), qty: l.qty, taxable: r2(Number(it.taxable) * p), cgst: r2(Number(it.cgst) * p), sgst: r2(Number(it.sgst) * p), igst: r2(Number(it.igst) * p) };
-    row.line_total = r2(row.taxable + row.cgst + row.sgst + row.igst);
-    out.push(row);
-  }
-  if (!out.length) throw new InvoiceError('Nothing to credit');
+  const out = await creditParts(q, orderId, lines); // phase 22: paid packs at their price, free ones at 0, then free packs no longer due
+  if (!out.some((x) => x.qty > 0)) throw new InvoiceError('Nothing to credit');
   const sum = (k) => r2(out.reduce((a, x) => a + x[k], 0));
   const [taxable, cgst, sgst, igst] = [sum('taxable'), sum('cgst'), sum('sgst'), sum('igst')];
   const before = r2(taxable + cgst + sgst + igst);
@@ -169,11 +157,76 @@ async function creditNoteForReturn(q, orderId, lines, reason, returnId, empId) {
     [cnNo, fy.fy, seq, inv.invoice_id, returnId, why, taxable, cgst, sgst, igst, ro, total, empId]
   );
   for (const x of out) {
-    await q.query('INSERT INTO credit_note_lines (credit_note_id, sku_code, hsn, gst_rate, qty, taxable, cgst, sgst, igst, line_total) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [ins.insertId, x.sku_code, x.hsn, x.gst_rate, x.qty, x.taxable, x.cgst, x.sgst, x.igst, x.line_total]);
+    await q.query('INSERT INTO credit_note_lines (credit_note_id, sku_code, hsn, gst_rate, qty, taxable, cgst, sgst, igst, line_total, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [ins.insertId, x.sku_code, x.hsn, x.gst_rate, x.qty, x.taxable, x.cgst, x.sgst, x.igst, x.line_total, x.note || null]);
   }
   await audit(q, { empId, action: 'issue', entity: 'credit_note', entityId: cnNo, after: { invoice: inv.invoice_no, gst_type: inv.gst_type, total, taxable, cgst, sgst, igst, lines: out.map((x) => `${x.qty} x ${x.sku_code}`), reason: why } });
   return { credit_note_id: ins.insertId, credit_note_no: cnNo, invoice_no: inv.invoice_no, gst_type: inv.gst_type, total, taxable, cgst, sgst, igst, round_off: ro };
 }
 
-module.exports = { InvoiceError, issue, cancelForOrder, creditNoteForReturn };
+/**
+ * phase 22 (v23 retNote): what returned packs are credited, per SKU. A returned pack is credited at what its PAID
+ * packs were invoiced at (their taxable and tax per pack), the paid ones first; packs returned beyond the paid ones of
+ * the order (free packs coming back) are credited at 0. Then offerKept. Before phase 22 a pack was its share of the
+ * paid and free lines together; the credit notes made then stay as they were.
+ * lines = [{ sku_code, qty }] -> rows [{ sku_code, hsn, gst_rate, qty, taxable, cgst, sgst, igst, line_total, note }]
+ */
+async function creditParts(q, orderId, lines) {
+  const [items] = await q.query(`SELECT sku_code, SUM(qty) AS qty, SUM(IF(is_free = 0, qty, 0)) AS paid_qty, MAX(hsn) AS hsn, MAX(gst_rate) AS gst_rate, SUM(taxable) AS taxable, SUM(cgst) AS cgst, SUM(sgst) AS sgst, SUM(igst) AS igst
+      FROM order_items WHERE order_id = ? GROUP BY sku_code`, [orderId]);
+  const out = [];
+  for (const l of lines.filter((x) => Number(x.qty) > 0)) {
+    const it = items.find((i) => i.sku_code === l.sku_code);
+    if (!it || Number(l.qty) > Number(it.qty)) throw new InvoiceError(`${l.sku_code}: ${l.qty} packs is more than invoiced`, 409);
+    const paid = Number(it.paid_qty) || Number(it.qty);
+    const [[before]] = await q.query(`SELECT COALESCE(SUM(cl.qty), 0) AS n FROM credit_note_lines cl JOIN credit_notes cn ON cn.credit_note_id = cl.credit_note_id JOIN invoices i ON i.invoice_id = cn.invoice_id
+        WHERE i.order_id = ? AND cn.return_id IS NOT NULL AND cn.status = 'done' AND cl.sku_code = ? AND cl.qty > 0`, [orderId, l.sku_code]);
+    const paidLeft = Math.max(0, paid - Number(before.n));
+    const p = Math.min(Number(l.qty), paidLeft) / paid;
+    const row = { sku_code: l.sku_code, hsn: it.hsn, gst_rate: Number(it.gst_rate), qty: Number(l.qty), taxable: r2(Number(it.taxable) * p), cgst: r2(Number(it.cgst) * p), sgst: r2(Number(it.sgst) * p), igst: r2(Number(it.igst) * p) };
+    if (Number(l.qty) > paidLeft) row.note = `${Number(l.qty) - paidLeft} free pack${Number(l.qty) - paidLeft === 1 ? '' : 's'} back: no money`;
+    row.line_total = r2(row.taxable + row.cgst + row.sgst + row.igst);
+    out.push(row);
+  }
+  out.push(...(await offerKept(q, orderId, lines)));
+  return out;
+}
+
+/**
+ * phase 22 (v23 offerKept): a return that takes a "buy X get Y" order below X: the free packs no longer due come off the
+ * credit, as negative lines at the free line's list price (no GST) and the line's own GST rate. Only paid packs of the
+ * same SKU as the offer count; packs already taken off by earlier credit notes are not taken twice.
+ * lines = what this return credits now [{ sku_code, qty }] -> [{ sku_code, hsn, gst_rate, qty (negative), taxable, cgst, sgst, igst, line_total, note }]
+ */
+async function offerKept(q, orderId, lines) {
+  const [free] = await q.query(`SELECT i.sku_code, SUM(i.qty) AS qty, MAX(i.list_price) AS list_price, MAX(i.gst_rate) AS gst_rate, MAX(i.hsn) AS hsn, f.offer_id, f.name, f.buy_qty, f.get_qty, f.sku_code AS buy_sku
+      FROM order_items i JOIN offers f ON f.offer_id = i.offer_id WHERE i.order_id = ? AND i.is_free = 1 AND f.kind = 'bxgy' AND f.sku_code IS NOT NULL GROUP BY i.sku_code, f.offer_id`, [orderId]);
+  if (!free.length) return [];
+  const [[o]] = await q.query('SELECT gst_type, price_list FROM orders WHERE order_id = ?', [orderId]);
+  const list = (await pricing.lists(q)).find((x) => x.key === o.price_list);
+  const inclusive = Boolean(list && list.typed === 'inc'); // a list price typed with GST
+  const out = [];
+  for (const f of free) {
+    const [[paid]] = await q.query('SELECT COALESCE(SUM(qty), 0) AS n FROM order_items WHERE order_id = ? AND sku_code = ? AND is_free = 0', [orderId, f.buy_sku]);
+    const [[back]] = await q.query(`SELECT COALESCE(SUM(l.qty), 0) AS n FROM credit_note_lines l JOIN credit_notes cn ON cn.credit_note_id = l.credit_note_id JOIN invoices i ON i.invoice_id = cn.invoice_id
+        WHERE i.order_id = ? AND cn.return_id IS NOT NULL AND cn.status = 'done' AND l.sku_code = ? AND l.qty > 0`, [orderId, f.buy_sku]);
+    const [[took]] = await q.query(`SELECT COALESCE(-SUM(l.qty), 0) AS n FROM credit_note_lines l JOIN credit_notes cn ON cn.credit_note_id = l.credit_note_id JOIN invoices i ON i.invoice_id = cn.invoice_id
+        WHERE i.order_id = ? AND cn.status = 'done' AND l.sku_code = ? AND l.qty < 0`, [orderId, f.sku_code]);
+    const now = lines.filter((l) => l.sku_code === f.buy_sku).reduce((a, l) => a + Number(l.qty), 0);
+    const backAll = Number(back.n) + now; // paid packs come back first; beyond them the free packs of the same SKU come back
+    const paidBack = Math.min(backAll, Number(paid.n));
+    const freeBack = f.sku_code === f.buy_sku ? backAll - paidBack : 0;
+    const due = Math.floor(Math.max(0, Number(paid.n) - paidBack) / f.buy_qty) * f.get_qty;
+    const n = Number(f.qty) - freeBack - Number(took.n) - due;
+    if (n <= 0 || !(Number(f.list_price) > 0)) continue;
+    const rate = Number(f.gst_rate);
+    const unit = inclusive ? r2(Number(f.list_price) / (1 + rate / 100)) : Number(f.list_price);
+    const taxable = r2(-unit * n);
+    const tax = r2((taxable * rate) / 100);
+    const cg = o.gst_type === 'intra' ? r2(tax / 2) : 0; const sg = o.gst_type === 'intra' ? r2(tax - cg) : 0; const ig = o.gst_type === 'intra' ? 0 : tax;
+    out.push({ sku_code: f.sku_code, hsn: f.hsn, gst_rate: rate, qty: -n, taxable, cgst: cg, sgst: sg, igst: ig, line_total: r2(taxable + cg + sg + ig), note: `Free under ${f.name}, no longer due` });
+  }
+  return out;
+}
+
+module.exports = { InvoiceError, issue, cancelForOrder, creditNoteForReturn, offerKept, creditParts };

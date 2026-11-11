@@ -12,6 +12,14 @@
 //   (setting); a refund after it takes the matching share back (wallet debit, shown on the return).
 // - Manual wallet credit / debit: reason required; through approval when the setting says so.
 // - Jobs (hourly, and the Run now button on Promotions): wallet expiry, cashback whose window has passed.
+// - Phase 22 (v23 sections 13, 14): offers, coupons and cashback rules have a status (draft, waiting, live, rejected,
+//   ended); only a live one applies. Sending one (or changing a live one so that it gives more) asks the rule "New offer
+//   or coupon goes live" (cashback: "New cashback rule goes live"), and an offer or coupon that would sell a pack below
+//   its cost also asks "Promotion that sells below cost"; every signature in, it goes live; one rejection sends it back
+//   to a draft with the reason. Stop ends it (orders already made keep it). An offer can be for named customers as well
+//   as customer types, may say whether a coupon stacks on it (empty: the Commerce setting) and has a budget (stops
+//   applying once the value given reaches it). W2: a return or credit note that takes the invoice under the cashback
+//   rule's minimum takes all of that order's cashback back.
 const { audit } = require('./audit');
 const approvals = require('./approvals');
 const commerceSettings = require('./commerce-settings');
@@ -30,13 +38,20 @@ class PromoError extends Error {
 
 // ---------------------------------------------------------------- offers
 /** the offers on for this customer type on `day` */
-async function offersOn(q, typeKey, day) {
+/** what an offer has given on orders not cancelled: the % taken off plus the free packs at their list price (no GST) */
+const GIVEN_SQL = `(SELECT COALESCE(SUM(IF(i.is_free = 1, i.qty * i.list_price, i.offer_discount)), 0) FROM order_items i JOIN orders x ON x.order_id = i.order_id
+    WHERE i.offer_id = o.offer_id AND x.status NOT IN ('cancelled', 'draft'))`;
+async function offersOn(q, typeKey, day, customerId = null, exceptOrderId = 0) {
   const [rows] = await q.query(
-    `SELECT o.offer_id, o.name, o.kind, o.sku_code, o.category_key, o.min_qty, o.min_unit, o.pct, o.buy_qty, o.get_qty, o.get_sku_code
-       FROM offers o WHERE o.is_active = 1 AND (o.valid_from IS NULL OR o.valid_from <= ?) AND (o.valid_to IS NULL OR o.valid_to >= ?)
-        AND (NOT EXISTS (SELECT 1 FROM offer_customer_types t WHERE t.offer_id = o.offer_id) OR EXISTS (SELECT 1 FROM offer_customer_types t WHERE t.offer_id = o.offer_id AND t.type_key = ?))
-      ORDER BY o.offer_id`, [day, day, typeKey]);
-  return rows.map((r) => ({ ...r, pct: Number(r.pct) }));
+    `SELECT o.offer_id, o.name, o.kind, o.sku_code, o.category_key, o.min_qty, o.min_unit, o.pct, o.buy_qty, o.get_qty, o.get_sku_code, o.with_coupon, o.budget,
+            ${GIVEN_SQL.replace("x.status NOT IN ('cancelled', 'draft')", "x.status NOT IN ('cancelled', 'draft') AND x.order_id <> ?")} AS given
+       FROM offers o WHERE o.is_active = 1 AND o.status = 'live' AND (o.valid_from IS NULL OR o.valid_from <= ?) AND (o.valid_to IS NULL OR o.valid_to >= ?)
+        AND ((NOT EXISTS (SELECT 1 FROM offer_customer_types t WHERE t.offer_id = o.offer_id) AND NOT EXISTS (SELECT 1 FROM offer_customers u WHERE u.offer_id = o.offer_id))
+          OR EXISTS (SELECT 1 FROM offer_customer_types t WHERE t.offer_id = o.offer_id AND t.type_key = ?)
+          OR EXISTS (SELECT 1 FROM offer_customers u WHERE u.offer_id = o.offer_id AND u.customer_id = ?))
+      ORDER BY o.offer_id`, [Number(exceptOrderId) || 0, day, day, typeKey, Number(customerId) || 0]);
+  // a budget used up: the offer stops applying (v23)
+  return rows.filter((r) => r.budget === null || Number(r.given) < Number(r.budget) - 0.004).map((r) => ({ ...r, pct: Number(r.pct), with_coupon: r.with_coupon === null ? null : Number(r.with_coupon) === 1 }));
 }
 const offerHits = (o, l) => (o.sku_code ? o.sku_code === l.sku_code : o.category_key === l.category_key);
 const slabText = (o) => `${Number(o.pct)}% off from ${o.min_qty} ${o.min_unit === 'carton' ? 'carton' : 'pack'}${o.min_qty === 1 ? '' : 's'}`;
@@ -46,11 +61,11 @@ const bxgyText = (o) => `buy ${o.buy_qty} get ${o.get_qty}${o.get_sku_code ? ` $
  * lines: paid lines [{ sku_code, category_key, qty (packs), price, packs_per_carton }] -> the same lines with offer_id,
  * offer_label, offer_discount; free: [{ sku_code, qty, offer_id, offer_label }]; applied: [{ offer_id, name, kind, amount, free_qty }]
  */
-async function applyOffers(q, typeKey, day, lines) {
-  const offers = await offersOn(q, typeKey, day);
+async function applyOffers(q, typeKey, day, lines, customerId = null, exceptOrderId = 0) {
+  const offers = await offersOn(q, typeKey, day, customerId, exceptOrderId);
   const applied = new Map();
   const note = (o, amount, freeQty) => {
-    const a = applied.get(o.offer_id) || { offer_id: o.offer_id, name: o.name, kind: o.kind, amount: 0, free_qty: 0 };
+    const a = applied.get(o.offer_id) || { offer_id: o.offer_id, name: o.name, kind: o.kind, amount: 0, free_qty: 0, with_coupon: o.with_coupon };
     a.amount = round2(a.amount + amount); a.free_qty += freeQty; applied.set(o.offer_id, a);
   };
   const out = lines.map((l) => {
@@ -80,7 +95,7 @@ async function applyOffers(q, typeKey, day, lines) {
 // ---------------------------------------------------------------- coupons
 async function couponRow(q, code, lock) {
   const [[c]] = await q.query(`SELECT code, description, kind, value, min_order, max_discount, DATE_FORMAT(valid_from, '%Y-%m-%d') AS valid_from, DATE_FORMAT(valid_to, '%Y-%m-%d') AS valid_to,
-      total_limit, per_customer_limit, is_active FROM coupons WHERE code = ?${lock ? ' FOR UPDATE' : ''}`, [code]);
+      total_limit, per_customer_limit, is_active, status FROM coupons WHERE code = ?${lock ? ' FOR UPDATE' : ''}`, [code]);
   if (!c) return null;
   const [scope] = await q.query('SELECT scope, type_key, customer_id, sku_code, category_key FROM coupon_scope WHERE code = ? ORDER BY id', [code]);
   return { ...c, value: Number(c.value), min_order: Number(c.min_order), max_discount: c.max_discount === null ? null : Number(c.max_discount), scope };
@@ -98,10 +113,12 @@ async function evalCoupon(q, rawCode, ctx) {
   const [[own]] = ctx.orderId ? await q.query("SELECT COUNT(*) AS n FROM coupon_redemptions WHERE code = ? AND order_id = ? AND status = 'active'", [code, ctx.orderId]) : [[{ n: 0 }]];
   const mine = Number(own.n) > 0; // already on this order: dates and limits were checked when it was used
   if (!Number(c.is_active) && !mine) throw new PromoError(`Coupon ${code} is switched off`);
+  if (c.status !== 'live' && !mine) throw new PromoError(`Coupon ${code} is ${STATUS_LABEL[c.status] ? STATUS_LABEL[c.status].toLowerCase() : c.status}: not usable yet`);
   const today = istToday();
   if (!mine && c.valid_from && today < c.valid_from) throw new PromoError(`Coupon ${code} starts on ${c.valid_from}`);
   if (!mine && c.valid_to && today > c.valid_to) throw new PromoError(`Coupon ${code} ended on ${c.valid_to}`);
-  if (ctx.hasOffers && !ctx.settings.offers_with_coupon) throw new PromoError(`Coupon ${code}: this order already has an automatic offer, and offers and coupons do not combine (Commerce settings > Promotions)`);
+  // phase 22: each offer may say whether a coupon stacks on it (empty: the Commerce setting)
+  if (ctx.hasOffers && (ctx.stack === undefined ? !ctx.settings.offers_with_coupon : !ctx.stack)) throw new PromoError(`Coupon ${code}: this order already has an automatic offer that does not combine with a coupon`);
   const types = c.scope.filter((s) => s.scope === 'type').map((s) => s.type_key);
   const custs = c.scope.filter((s) => s.scope === 'customer').map((s) => Number(s.customer_id));
   if ((types.length || custs.length) && !types.includes(ctx.typeKey) && !custs.includes(Number(ctx.customerId))) {
@@ -144,7 +161,7 @@ async function redeem(q, orderId, customerId, code, amount) {
 async function cashbackRule(q, typeKey, day) {
   const [rows] = await q.query(
     `SELECT rule_id, name, type_key, pct, min_order, max_per_order FROM cashback_rules
-      WHERE is_active = 1 AND (type_key IS NULL OR type_key = ?) AND (valid_from IS NULL OR valid_from <= ?) AND (valid_to IS NULL OR valid_to >= ?)
+      WHERE is_active = 1 AND status = 'live' AND (type_key IS NULL OR type_key = ?) AND (valid_from IS NULL OR valid_from <= ?) AND (valid_to IS NULL OR valid_to >= ?)
       ORDER BY type_key IS NULL, pct DESC LIMIT 1`, [typeKey, day, day]);
   return rows[0] || null;
 }
@@ -152,8 +169,9 @@ async function cashbackRule(q, typeKey, day) {
 /** goods value before GST after discounts, less what return credit notes took back */
 async function goodsValue(q, orderId) {
   const [[g]] = await q.query('SELECT COALESCE(SUM(taxable), 0) AS v FROM order_items WHERE order_id = ? AND is_free = 0', [orderId]);
-  const [[r]] = await q.query(`SELECT COALESCE(SUM(l.taxable), 0) AS v FROM credit_note_lines l JOIN credit_notes cn ON cn.credit_note_id = l.credit_note_id
-      JOIN invoices i ON i.invoice_id = cn.invoice_id WHERE i.order_id = ? AND cn.return_id IS NOT NULL`, [orderId]);
+  // phase 22: every credit note made on it that is not the cancel of the whole invoice (returns and price corrections)
+  const [[r]] = await q.query(`SELECT COALESCE(SUM(cn.taxable), 0) AS v FROM credit_notes cn JOIN invoices i ON i.invoice_id = cn.invoice_id
+      WHERE i.order_id = ? AND cn.status = 'done' AND cn.kind <> 'cancel'`, [orderId]);
   return round2(Number(g.v) - Number(r.v));
 }
 
@@ -169,7 +187,7 @@ async function creditCashback(q, orderId, empId) {
     amount = round2(base * (Number(rule.pct) / 100));
     if (rule.max_per_order !== null) amount = Math.min(amount, Number(rule.max_per_order));
   }
-  await q.query('UPDATE orders SET cashback_base = ?, cashback_amount = ?, cashback_at = UTC_TIMESTAMP() WHERE order_id = ?', [base, amount, orderId]);
+  await q.query('UPDATE orders SET cashback_base = ?, cashback_amount = ?, cashback_min = ?, cashback_at = UTC_TIMESTAMP() WHERE order_id = ?', [base, amount, rule ? Number(rule.min_order) : null, orderId]);
   if (amount > 0) {
     await wallet.credit(q, { customerId: o.customer_id, source: 'cashback', amount, reason: `Cashback ${Number(rule.pct)}% on ${o.order_no} (${rule.name})`, orderId }, empId);
   }
@@ -190,15 +208,130 @@ async function cashbackDue(q, empId) {
 
 /** a return refunded after the cashback was credited: the matching share is taken back -> amount */
 async function reverseCashback(q, orderId, taxableBack, returnId, returnNo, empId) {
-  const [[o]] = await q.query('SELECT order_no, customer_id, cashback_base, cashback_amount FROM orders WHERE order_id = ? FOR UPDATE', [orderId]);
+  const [[o]] = await q.query('SELECT order_no, customer_id, cashback_base, cashback_amount, cashback_min FROM orders WHERE order_id = ? FOR UPDATE', [orderId]);
   if (!o || !(Number(o.cashback_amount) > 0) || !(Number(o.cashback_base) > 0)) return 0;
   const [[done]] = await q.query("SELECT COALESCE(-SUM(amount), 0) AS n FROM wallet_entries WHERE order_id = ? AND source = 'reversed' FOR SHARE", [orderId]);
-  const amt = round2(Math.min(Number(o.cashback_amount) * (taxableBack / Number(o.cashback_base)), Number(o.cashback_amount) - Number(done.n)));
+  const left = round2(Number(o.cashback_amount) - Number(done.n));
+  let amt = round2(Math.min(Number(o.cashback_amount) * (taxableBack / Number(o.cashback_base)), left));
+  // W2 (v23 Low4 d): under the rule's minimum after this credit, none of the cashback was earned
+  let under = false;
+  if (o.cashback_min !== null && Number(o.cashback_min) > 0 && (await goodsValue(q, orderId)) < Number(o.cashback_min) - 0.004) { amt = left; under = true; }
   if (amt <= 0.005) return 0;
-  await wallet.debit(q, { customerId: o.customer_id, source: 'reversed', amount: amt, reason: `Cashback on ${o.order_no} taken back: return ${returnNo}`, orderId, returnId }, empId);
-  await q.query('UPDATE returns SET cashback_reversed = cashback_reversed + ? WHERE return_id = ?', [amt, returnId]);
+  await wallet.debit(q, { customerId: o.customer_id, source: 'reversed', amount: amt, reason: `Cashback on ${o.order_no} taken back: ${returnId ? `return ${returnNo}` : `credit note ${returnNo}`}${under ? ` (now under the rule's minimum Rs ${Number(o.cashback_min).toFixed(2)}: all of it)` : ''}`, orderId, returnId }, empId);
+  if (returnId) await q.query('UPDATE returns SET cashback_reversed = cashback_reversed + ? WHERE return_id = ?', [amt, returnId]);
   return amt;
 }
+
+// ---------------------------------------------------------------- going live (phase 22, v23 promoSend / promoDecided)
+const STATUS_LABEL = { draft: 'Draft', waiting: 'Waiting for approval', live: 'Live', scheduled: 'Starts later', rejected: 'Sent back', ended: 'Ended' };
+const ENT = {
+  offer: { table: 'offers', key: 'offer_id', kind: 'promo_new', label: (r) => `Offer ${r.offer_id} ${r.name}: ${r.kind === 'slab' ? slabText(r) : bxgyText(r)}` },
+  coupon: { table: 'coupons', key: 'code', kind: 'promo_new', label: (r) => `Coupon ${r.code}: ${r.kind === 'percent' ? `${Number(r.value)}% off${r.max_discount !== null ? ` (up to ${rs(r.max_discount)})` : ''}` : r.kind === 'fixed' ? `${rs(r.value)} off` : 'free delivery'}${Number(r.min_order) ? ` above ${rs(r.min_order)}` : ''}` },
+  rule: { table: 'cashback_rules', key: 'rule_id', kind: 'cashback_rule', label: (r) => `Cashback rule ${r.rule_id} ${r.name}: ${Number(r.pct)}% back${Number(r.min_order) ? ` above ${rs(r.min_order)}` : ''}` },
+};
+/** the status a list shows: live before its start = starts later; past its end = ended */
+function shownStatus(r, today = istToday()) {
+  if (r.status !== 'live') return r.status;
+  if (!Number(r.is_active)) return 'ended';
+  const from = r.valid_from ? String(r.valid_from).slice(0, 10) : null; const to = r.valid_to ? String(r.valid_to).slice(0, 10) : null;
+  if (from && from > today) return 'scheduled';
+  if (to && to < today) return 'ended';
+  return 'live';
+}
+/** the packs an offer (or a % coupon) would sell below their cost -> ['DF044-M100 at Rs 52.50 against cost Rs 57.20'] */
+async function belowCost(q, ent, r) {
+  const pricing = require('./pricing'); // eslint-disable-line global-require
+  const out = [];
+  const costOf = async (sku) => { const [[s]] = await q.query('SELECT COALESCE(avg_cost, std_cost) AS c FROM skus WHERE sku_code = ?', [sku]); return s && s.c !== null ? Number(s.c) : null; };
+  const listOf = async (sku) => { try { const x = await pricing.quote(q, { sku, qty: 1 }); return x && x.ex !== undefined ? Number(x.ex) : null; } catch (e) { return null; } };
+  const check = async (sku, price) => { const c = await costOf(sku); if (c !== null && price !== null && price < c - 0.004) out.push(`${sku} at ${rs(price)} against cost ${rs(c)}`); };
+  const skusOf = async (sku, cat) => (sku ? [sku] : (await q.query("SELECT s.sku_code FROM skus s JOIN products p ON p.product_id = s.product_id WHERE p.category_key = ? AND s.is_active = 1 AND s.sku_type <> 'raw'", [cat]))[0].map((x) => x.sku_code));
+  if (ent === 'offer' && r.kind === 'slab') for (const s of await skusOf(r.sku_code, r.category_key)) { const l = await listOf(s); if (l !== null) await check(s, round2(l * (1 - Number(r.pct) / 100))); }
+  if (ent === 'offer' && r.kind === 'bxgy') {
+    for (const s of await skusOf(r.sku_code, r.category_key)) {
+      const l = await listOf(s); const cg = await costOf(r.get_sku_code || s);
+      if (l !== null && cg !== null) await check(s, round2((l * r.buy_qty - cg * r.get_qty) / r.buy_qty));
+    }
+  }
+  if (ent === 'coupon' && r.kind === 'percent') {
+    const [skus] = await q.query("SELECT s.sku_code FROM skus s JOIN products p ON p.product_id = s.product_id WHERE s.is_active = 1 AND s.sku_type <> 'raw' AND s.status = 'active'");
+    for (const s of skus) { const l = await listOf(s.sku_code); if (l !== null) await check(s.sku_code, round2(l * (1 - Number(r.value) / 100))); }
+  }
+  return out;
+}
+async function rowOf(q, ent, key, lock = false) {
+  const e = ENT[ent];
+  const [[r]] = await q.query(`SELECT * FROM ${e.table} WHERE ${e.key} = ?${lock ? ' FOR UPDATE' : ''}`, [key]);
+  return r || null;
+}
+/** send an offer, coupon or rule for approval (or live at once when no rule asks) -> { status, approvals, message } */
+async function sendLive(q, ent, key, empId, godownId = 1) {
+  const e = ENT[ent];
+  const r = await rowOf(q, ent, key, true);
+  if (!r) throw new PromoError('Not found', 404);
+  if (['waiting'].includes(r.status)) throw new PromoError(`${e.label(r)} already waits for approval`, 409);
+  const name = e.label(r);
+  const asks = [];
+  if (await approvals.needed(q, e.kind, {})) asks.push([e.kind, `${name}, ${r.valid_from ? String(r.valid_from).slice(0, 10) : 'now'} to ${r.valid_to ? String(r.valid_to).slice(0, 10) : 'open'}`]);
+  if (ent !== 'rule') {
+    const bc = await belowCost(q, ent, r);
+    if (bc.length && await approvals.needed(q, 'promo_below_cost', {})) asks.push(['promo_below_cost', `${name}. Below cost: ${bc.slice(0, 6).join(', ')}${bc.length > 6 ? ' ...' : ''}`]);
+  }
+  const ids = [];
+  for (const [kind, summary] of asks) {
+    ids.push(await approvals.request(q, { kind, godownId, refType: ent, refId: String(key), summary, payload: { ent, key: String(key) } }, empId));
+  }
+  await q.query(`UPDATE ${e.table} SET status = ?, is_active = 1, rej_note = NULL, stopped_at = NULL, stopped_by = NULL WHERE ${e.key} = ?`, [ids.length ? 'waiting' : 'live', key]);
+  await audit(q, { empId, action: 'send', entity: ent === 'rule' ? 'cashback_rule' : ent, entityId: String(key), after: { status: ids.length ? 'waiting' : 'live', approvals: ids } });
+  return { status: ids.length ? 'waiting' : 'live', approvals: ids, message: ids.length ? `Waiting for approval: ${asks.map(([k]) => approvals.KINDS[k] ? approvals.KINDS[k].label : k).join(', ')}.` : 'Live.' };
+}
+/** stop (end) a live or waiting one: orders already made keep it */
+async function stop(q, ent, key, empId) {
+  const e = ENT[ent];
+  const r = await rowOf(q, ent, key, true);
+  if (!r) throw new PromoError('Not found', 404);
+  if (r.status === 'waiting') {
+    const [ps] = await q.query("SELECT approval_id FROM approvals WHERE ref_type = ? AND ref_id = ? AND status = 'pending'", [ent, String(key)]);
+    for (const p of ps) await q.query("UPDATE approvals SET status = 'withdrawn', decided_by = ?, decided_at = UTC_TIMESTAMP(), note = 'Stopped' WHERE approval_id = ?", [empId, p.approval_id]);
+  }
+  await q.query(`UPDATE ${e.table} SET status = 'ended', is_active = 0, stopped_at = UTC_TIMESTAMP(), stopped_by = ? WHERE ${e.key} = ?`, [empId, key]);
+  await audit(q, { empId, action: 'stop', entity: ent === 'rule' ? 'cashback_rule' : ent, entityId: String(key), before: { status: r.status }, after: { status: 'ended' } });
+  return { status: 'ended', message: 'Ended. Orders already made keep it.' };
+}
+/** does a change of a live one give more (so it must be signed again)? */
+function givesMore(ent, before, after) {
+  const n = (v) => (v === null || v === undefined || v === '' ? null : Number(v));
+  const later = (a, b) => (b === null ? a !== null : a !== null && String(a).slice(0, 10) < String(b).slice(0, 10)); // the new end is later (or open)
+  const earlier = (a, b) => (b === null ? false : a === null || String(b).slice(0, 10) < String(a).slice(0, 10));
+  const wider = later(before.valid_to, after.valid_to) || earlier(before.valid_from, after.valid_from);
+  if (ent === 'offer') return wider || after.kind !== before.kind || after.sku_code !== before.sku_code || after.category_key !== before.category_key || n(after.pct) > n(before.pct) || n(after.min_qty) < n(before.min_qty)
+    || n(after.get_qty) > n(before.get_qty) || n(after.buy_qty) < n(before.buy_qty) || (n(before.budget) !== null && (n(after.budget) === null || n(after.budget) > n(before.budget))) || Boolean(after.wider_who);
+  if (ent === 'coupon') return wider || after.kind !== before.kind || n(after.value) > n(before.value) || n(after.min_order) < n(before.min_order)
+    || (n(before.max_discount) !== null && (n(after.max_discount) === null || n(after.max_discount) > n(before.max_discount)))
+    || (n(before.total_limit) !== null && (n(after.total_limit) === null || n(after.total_limit) > n(before.total_limit)))
+    || (n(before.per_customer_limit) !== null && (n(after.per_customer_limit) === null || n(after.per_customer_limit) > n(before.per_customer_limit))) || Boolean(after.wider_who);
+  return wider || n(after.pct) > n(before.pct) || n(after.min_order) < n(before.min_order) || (n(before.max_per_order) !== null && (n(after.max_per_order) === null || n(after.max_per_order) > n(before.max_per_order)))
+    || (before.type_key !== null && after.type_key !== before.type_key);
+}
+async function decidedLive(q, p, empId) {
+  if (!p || !p.ent) return;
+  const e = ENT[p.ent];
+  const [pend] = await q.query("SELECT COUNT(*) AS n FROM approvals WHERE ref_type = ? AND ref_id = ? AND status = 'pending'", [p.ent, p.key]);
+  if (Number(pend[0].n)) return; // the other signature still waits
+  await q.query(`UPDATE ${e.table} SET status = 'live', rej_note = NULL WHERE ${e.key} = ? AND status = 'waiting'`, [p.key]);
+  await audit(q, { empId, action: 'live', entity: p.ent === 'rule' ? 'cashback_rule' : p.ent, entityId: String(p.key), after: { status: 'live' } });
+}
+async function closedLive(q, p, status, empId) {
+  if (!p || !p.ent) return;
+  const e = ENT[p.ent];
+  const [others] = await q.query("SELECT approval_id FROM approvals WHERE ref_type = ? AND ref_id = ? AND status = 'pending'", [p.ent, p.key]);
+  for (const o of others) await q.query("UPDATE approvals SET status = ?, decided_by = ?, decided_at = UTC_TIMESTAMP(), note = 'Closed with the other check' WHERE approval_id = ?", [status === 'rejected' ? 'rejected' : 'withdrawn', empId, o.approval_id]);
+  const [[a]] = await q.query("SELECT kind, decided_by FROM approvals WHERE ref_type = ? AND ref_id = ? AND status = ? ORDER BY approval_id DESC LIMIT 1", [p.ent, p.key, status]);
+  const who = await require('./inventory').nameOf(q, a && a.decided_by ? a.decided_by : empId); // eslint-disable-line global-require
+  const note = `${a && approvals.KINDS[a.kind] ? approvals.KINDS[a.kind].label : 'Approval'}: ${status} by ${who}`;
+  await q.query(`UPDATE ${e.table} SET status = ?, rej_note = ? WHERE ${e.key} = ? AND status = 'waiting'`, [status === 'rejected' ? 'rejected' : 'draft', note.slice(0, 255), p.key]);
+}
+for (const k of ['promo_new', 'promo_below_cost', 'cashback_rule']) { approvals.onApproved(k, decidedLive); approvals.onClosed(k, closedLive); }
 
 // ---------------------------------------------------------------- manual wallet credit / debit
 /** b = { direction: credit | debit, amount, reason } -> { posted, approval_id } */
@@ -262,4 +395,4 @@ function startJobs() {
 }
 
 module.exports = { KINDS, OFFER_KINDS, PromoError, applyOffers, offersOn, slabText, bxgyText, couponRow, evalCoupon, redeem, cashbackRule, goodsValue, creditCashback,
-  cashbackDue, reverseCashback, manualWallet, runJobs, startJobs };
+  cashbackDue, reverseCashback, manualWallet, runJobs, startJobs, STATUS_LABEL, ENT, shownStatus, belowCost, sendLive, stop, givesMore, GIVEN_SQL };

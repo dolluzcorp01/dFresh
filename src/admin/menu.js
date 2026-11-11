@@ -238,7 +238,7 @@ export const MENU = [
       use: "record the request, get approval if needed, and arrange pickup. │",
       to: [
        {
-        path: "commerce/returns",
+        path: "return-requests",
         section: "returns",
         action: "view",
         commerce: true
@@ -252,11 +252,10 @@ export const MENU = [
       use: "decide for each pack - back to stock, repack or scrap - and the credit note is made from it.",
       to: [
        {
-        path: "commerce/returns",
+        path: "inspection",
         section: "returns",
         action: "view",
-        commerce: true,
-        search: "status=received"
+        commerce: true
        }
       ]
      }
@@ -921,11 +920,10 @@ export const MENU = [
     use: "make an offer, choose who gets it and for how long.",
     to: [
      {
-      path: "commerce/promotions",
+      path: "offers",
       section: "promotions",
       action: "view",
-      commerce: true,
-      search: "tab=offers"
+      commerce: true
      }
     ]
    },
@@ -936,11 +934,10 @@ export const MENU = [
     use: "make codes a customer gives to get a discount.",
     to: [
      {
-      path: "commerce/promotions",
+      path: "coupons",
       section: "promotions",
       action: "view",
-      commerce: true,
-      search: "tab=coupons"
+      commerce: true
      }
     ]
    },
@@ -951,11 +948,10 @@ export const MENU = [
     use: "set a rule (needs approval before it goes live).",
     to: [
      {
-      path: "commerce/promotions",
+      path: "cashback-rules",
       section: "promotions",
       action: "view",
-      commerce: true,
-      search: "tab=cashback"
+      commerce: true
      }
     ]
    },
@@ -966,11 +962,10 @@ export const MENU = [
     use: "see or adjust a customer's credit (a manual credit needs approval).",
     to: [
      {
-      path: "commerce/promotions",
+      path: "customer-wallets",
       section: "promotions",
       action: "view",
-      commerce: true,
-      search: "tab=wallets"
+      commerce: true
      }
     ]
    }

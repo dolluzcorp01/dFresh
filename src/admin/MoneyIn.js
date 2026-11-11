@@ -49,7 +49,7 @@ export function Receipts() {
     { key: 'name', label: 'Customer', render: (c) => <>{custCell(c)}{STATUS[c.status] && <small className="a-p15-sub"><Pill tone={STATUS[c.status][1]}>{STATUS[c.status][0]}</Pill></small>}</> },
     { key: 'owes', label: 'Owes', num: true, render: (c) => <b>{money(c.owes)}</b> },
     { key: 'overdue', label: 'Overdue', num: true, render: (c) => (c.overdue > 0.004 ? <b className="a-bad">{money(c.overdue)}</b> : '-') },
-    { key: 'a1', label: '0-30', num: true, hideSm: true, render: (c) => (c.ageing.d0_30 ? money(c.ageing.d0_30) : '-') },
+    { key: 'a1', label: '1-30', num: true, hideSm: true, render: (c) => (c.ageing.d1_30 ? money(c.ageing.d1_30) : '-') }, // days overdue (v23)
     { key: 'a2', label: '31-60', num: true, hideSm: true, render: (c) => (c.ageing.d31_60 ? money(c.ageing.d31_60) : '-') },
     { key: 'a3', label: '61+', num: true, hideSm: true, render: (c) => (c.ageing.d61_90 + c.ageing.d90 ? money(c.ageing.d61_90 + c.ageing.d90) : '-') },
     { key: 'rem', label: 'Reminded', hideSm: true, render: (c) => (c.reminded ? <>{c.reminded.day}<small className="a-muted a-p15-sub">{c.reminded.how}</small></> : <span className="a-muted">-</span>) },
