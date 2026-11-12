@@ -80,7 +80,10 @@ export default function ReportChart({ chart, money = true }) {
     const step = (W - L - R) / Math.max(n, 1);
     const labelEvery = Math.ceil(n / 12);
     const grid = tk.map((v) => <g key={v}><line x1={L} x2={W - R} y1={sy(v)} y2={sy(v)} stroke={v === 0 ? C.axis : C.grid} strokeWidth="1" /><text x={L - 8} y={sy(v) + 4} fontSize="11" fill={C.axis} textAnchor="end">{compact(v)}</text></g>);
-    const xl = chart.x.map((x, i) => (i % labelEvery === 0 ? <text key={x} x={L + step * i + step / 2} y={H - 18} fontSize="11" fill={C.axis} textAnchor="middle">{String(x).length === 10 ? String(x).slice(8) : x}</text> : null));
+    // a column label is cut to the room under its column (v23 bars16); the tooltip and the table carry the full text
+    const room = Math.max(4, Math.floor((step * labelEvery) / 6.4));
+    const cut = (x) => { const s = String(x).length === 10 && /^\d{4}-/.test(String(x)) ? String(x).slice(8) : String(x); return s.length > room ? `${s.slice(0, room - 1)}.` : s; };
+    const xl = chart.x.map((x, i) => (i % labelEvery === 0 ? <text key={x} x={L + step * i + step / 2} y={H - 18} fontSize="11" fill={C.axis} textAnchor="middle"><title>{x}</title>{cut(x)}</text> : null));
     if (kind === 'bar') {
       const bw = Math.min(18, step - 4);
       body = (<>{grid}{xl}{chart.x.map((x, i) => {

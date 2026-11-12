@@ -49,6 +49,7 @@ def T(path, section, action='view', commerce=True, search='', hash='', driver=Fa
 LIVE = dict(commerce=False)
 MAP = {
     'home/dashboard': [T('commerce/ops', None), T('', None, **LIVE)],
+    'home/alerts': [T('alerts', None)],  # phase 23: section 15 (every signed-in person; each sees their own)
     'home/approvals': [T('approvals', None)],
     'sales/leads/enquiries': [T('leads', 'leads', **LIVE)],
     'sales/leads/follow-ups': [T('commerce/follow-ups', 'customers')],
@@ -96,16 +97,19 @@ MAP = {
     'inventory/write-offs': [T('write-offs', 'inventory')],
     'inventory/reorder': [T('reorder', 'inventory')],
     'inventory/stock-ledger': [T('stock-ledger', 'inventory')],
-    'money/accounting-export/export-to-accountant': [T('commerce/reports', 'reports', search='tab=accounting')],
+    'money/accounting-export/export-to-accountant': [T('export-to-accountant', 'expenses')],  # phase 23: section 17 Expenses and accounting export
+    'money/accounting-export/export-history': [T('export-history', 'expenses')],
+    'money/expenses/expenses': [T('expenses', 'expenses')],
+    'money/expenses/petty-cash': [T('petty-cash', 'expenses')],
     'gst/gstr-1-gstr-3b-data': [T('gst-data', 'invoicing')],  # phase 21: GSTR-1 and 3B for the CA (the GST report tab stays in Reports)
     'marketing/offers': [T('offers', 'promotions')],
     'marketing/coupons': [T('coupons', 'promotions')],
     'marketing/cashback-rules': [T('cashback-rules', 'promotions')],
     'marketing/customer-wallets': [T('customer-wallets', 'promotions')],
-    'reports/sales-and-purchases': [T('commerce/reports', 'orders', search='tab=sales')],
-    'reports/stock': [T('commerce/reports', 'inventory', search='tab=stock')],
-    'reports/money-owed': [T('commerce/reports', 'customers', search='tab=receivables')],
-    'reports/gst-and-delivery': [T('commerce/reports', 'delivery', search='tab=delivery')],
+    'reports/sales-and-purchases': [T('sales-and-purchases', 'reports')],  # phase 23: section 16, the v23 report pages
+    'reports/stock': [T('stock-report', 'reports')],
+    'reports/money-owed': [T('money-owed', 'reports')],
+    'reports/gst-and-delivery': [T('gst-and-delivery', 'reports')],
     'masters/catalogue/products-and-skus': [T('products', 'products', **LIVE)],
     'masters/catalogue/categories': [T('categories', 'products', **LIVE)],
     'masters/catalogue/kits': [T('kits', 'products', **LIVE)],
@@ -151,7 +155,7 @@ MAP = {
 PLACE_SECTION = [
     ('home/', None), ('sales/leads/', 'leads'), ('sales/customers/', 'customers'), ('sales/orders/', 'orders'), ('sales/returns/', 'returns'),
     ('fulfilment/', 'delivery'), ('purchase/', 'buying'), ('production/', 'production'), ('inventory/', 'inventory'),
-    ('money/payments/', 'money'), ('money/billing/', 'invoicing'),
+    ('money/payments/', 'money'), ('money/billing/', 'invoicing'), ('money/expenses/', 'expenses'), ('money/accounting-export/', 'expenses'),
     ('money/', 'reports'), ('gst/', 'invoicing'), ('marketing/', 'promotions'), ('reports/', 'reports'),
     ('masters/catalogue/raw-materials', 'inventory'), ('masters/prices/', 'prices'), ('masters/tax-and-units/hsn', 'prices'), ('masters/', 'products'), ('website/', 'content'),
     ('admin/users-and-security/', 'users'), ('admin/', 'settings'), ('online-store', 'settings'),

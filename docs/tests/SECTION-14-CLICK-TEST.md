@@ -6,40 +6,92 @@ happened, and stop there.
 
 ## Before you start
 
-- Use the stage2 admin with Commerce switched on. Sign in as **Pavithran** (Admin).
-- Other people, in a second browser: **Anitha R** (Sub-admin), a **Supervisor**, a **Sales** and a **Warehouse** person.
-- Have a customer with wallet money, and a customer type with a live cashback rule.
+- Use the stage2 admin with Commerce switched on. Sign in as **Pavithran** (Admin); **Shoban** (Super admin) as the
+  second Admin.
+- Other people, in a second browser: **Anitha R** (Sub-admin), **Kumar M** (Supervisor), **Divya N** (Sales: view
+  only), **Murugan S** (Warehouse: no Promotions).
+- Have a customer with wallet money (demo: Demo Cafe Thendral, Rs 428.25), a hotel customer (rule "DEMO Hotels 3 %")
+  and a distributor (rule "DEMO Distributors 2 %", from Rs 5,000).
 
-## Part A - The pages
+## Part A - The wallet switch
 
-1. **Marketing > Cashback rules**: rule chips, Run now, New rule, the box "A return can take it back", tabs Live,
-   Waiting for approval, Drafts and later, Ended. Each rule: % back, cap, minimum, for whom, status.
-2. **Marketing > Customer wallets**: "Rs ... usable in all customers' wallets", what runs out in 30 days and what is
-   pending. Each customer: usable (and what is kept for open orders), pending, running out in 30 days. Only customers
-   of your godowns show; an amount is never shown as Rs 0 when it is hidden.
-3. A row opens the wallet: usable, pending, running out, the statement, Print statement, and the manual credit or
-   debit for people who may make one.
+1. **Admin > Settings > Switches > Money**: "Customer wallet and cashback on".
+   On (the demo data had wallets before; a new install starts Off).
+2. Turn it **Off**.
+   Off at once (switching a control off is not a loosening).
+3. **Marketing > Customer wallets** and **Marketing > Cashback rules**.
+   Both show the yellow box "The wallet is off. ... While it is off, orders take no wallet and no cashback is earned;
+   the balances below stay saved." The balances are still listed.
+4. **New order** for Demo Cafe Thendral.
+   No "Use wallet" field (an order being edited that already used the wallet keeps its line).
+5. Turn it back **On** as Pavithran.
+   It waits for a second Admin ("Switch ... waits"). As Shoban, approve it in Home > Approvals. It is On.
 
-## Part B - Using the wallet
+## Part B - Customer wallets
 
-4. New order for the customer with wallet money: use more than they have: "The wallet has only Rs ...". Use 100:
-   "Wallet Rs 100" on the order; the wallets page shows Rs 100 "kept for open orders".
-5. An order whose every line has an offer, with wallet: "Wallet not used. Every line has an offer".
-6. Cancel the order that used the wallet: the Rs 100 is back.
-7. An order with wallet money where a back-order is dropped: the wallet share of the dropped packs is given back.
+6. **Marketing > Customer wallets.**
+   Chips "Usable: can go on an order now", "Pending: waits for the return window", "Wallet money is a discount, never
+   cash". A blue box: Rs ... usable in all wallets, Rs ... runs out in 30 days, Rs ... pending; the most a wallet pays.
+7. The table: Customer, Usable (with "kept for open orders"), Pending, Runs out in 30 days. Sort each column.
+8. **Export** (a role with Export on Promotions).
+   dfresh-wallets-DATE.csv: customer number, name, usable, pending, runs out, first expiry, kept.
+9. Click a customer.
+   The drawer: usable, pending, runs out in 30 days; the statement with every entry (source, details, amount,
+   balance); Print statement.
 
-## Part C - Earning and taking back
+## Part C - Using the wallet
 
-8. Deliver an order for a customer with a cashback rule: the wallet shows it **pending**. Paying the invoice does not
-   make it usable; after the return window (Run now) it is usable.
-9. A price-correction credit note on that invoice: its share of the cashback is taken back from the wallet.
-10. A return that takes the order's goods under the rule's minimum: all of that cashback is taken back
-    ("Cashback ... taken back" on the return).
+10. New order for Demo Cafe Thendral, 40 packs of DF001-M100. Use wallet more than they have.
+    "The wallet has only Rs ... that can be used".
+11. Use 100.
+    Wallet Rs 100 on the order; "At most 50% of the lines with no offer". Save: Customer wallets shows Rs 100 "kept for
+    open orders".
+12. An order whose every line has an offer (3 cartons of DF001-M100), Use wallet 50.
+    "Wallet not used. Every line has an offer: the wallet cannot pay for those."
+13. Cancel the order that used Rs 100.
+    The Rs 100 is back in usable.
+14. An order with wallet money where a back-order is dropped (Sales > Orders > Back-orders > Drop).
+    The wallet share of the dropped packs is given back; the order keeps the rest.
 
-## Part D - Approvals and rights
+## Part D - Earning and taking back
 
-11. Manual credit with nothing filled: refused. Rs 150 "Late delivery": it waits; usable does not change until Anitha
-    approves; then +150.
-12. As the **Supervisor**: New rule, Save with nothing: "Name the rule"; fill it in and send: it waits; Anitha approves:
-    Live.
-13. As **Sales**: the wallets show, no manual credit and no New rule. As **Warehouse**: not there.
+15. Deliver an order for the hotel customer.
+    Customer wallets: Pending shows its cashback (3% of the goods). Paying the invoice does not make it usable.
+16. After the return window (7 days; Marketing > Cashback rules > **Run now**).
+    Run now: "DFO-... Rs ..."; the cashback moves from Pending to Usable.
+17. A price-correction credit note on that invoice (Money > Billing > Credit notes).
+    Its share of the cashback is taken back from the wallet.
+18. A distributor order above Rs 5,000 with cashback, then a return that brings the goods under Rs 5,000.
+    All of that cashback is taken back (W2): the return shows "Cashback Rs ... taken back".
+
+## Part E - Cashback rules
+
+19. **Marketing > Cashback rules.**
+    Chips "Earned on the goods, without GST", when it is credited, "Goes live once approved"; a blue box "A return can
+    take it back."; tabs Live, Waiting for approval, Drafts and later, Ended; Run now and New rule.
+20. As **Kumar**: New rule, Save and send with nothing filled.
+    "Name the rule".
+21. `Distributors 1% back`, Distributor, 1%. Save and send.
+    "Waiting for approval: New cashback rule goes live." After Anitha approves: Live.
+22. A live rule changed to give more (2%): signed again; until then it stops.
+23. Stop a rule: Ended.
+
+## Part F - Manual credit or debit
+
+24. A customer's wallet drawer: Manual credit with nothing filled.
+    The button stays off until an amount and a reason are there.
+25. Credit Rs 150, "Late delivery on 20 Oct".
+    "Sent for approval (request #...)": usable does not change. After Anitha approves: +Rs 150.
+26. A manual debit: same, through "Manual wallet debit".
+
+## Part G - Who does what
+
+27. As **Divya**: Customer wallets shows (her godowns); no Manual credit, no Export, no New rule.
+28. As **Kumar**: New rule is there; the wallets show for his godown only, with real amounts.
+29. As **Murugan**: "This needs view on Promotions".
+30. A person who works only at another godown sees only that godown's customers' wallets.
+
+## Part H - Layout and phone
+
+31. Customer wallets at 390 px: "Runs out in 30 days" hides; the drawer opens full width; nothing scrolls sideways.
+32. Put the wallet switch back as it was.

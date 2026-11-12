@@ -156,7 +156,7 @@ function register({ route, tx, db, by, InputError, canDo, commerceGate }) {
     const [gw, gp] = scope(req, 't.godown_id');
     const [trips] = await db.query(`SELECT t.trip_id, DATE_FORMAT(t.trip_date, '%Y-%m-%d') AS trip_date, t.status, t.cash_expected, t.cash_collected, t.cash_handed, t.end_note, d.name AS driver, v.number AS vehicle, g.name AS godown
         FROM delivery_trips t JOIN drivers d ON d.driver_id = t.driver_id JOIN vehicles v ON v.vehicle_id = t.vehicle_id JOIN locations g ON g.location_id = t.godown_id
-        WHERE t.status IN ('out', 'ended') AND ${gw} ORDER BY t.trip_id DESC LIMIT 100`, gp);
+        WHERE t.status IN ('out', 'cashwait', 'ended') AND ${gw} ORDER BY t.trip_id DESC LIMIT 100`, gp);
     const [ow, op] = scope(req, 'o.godown_id');
     const [pickups] = await db.query(`SELECT o.order_no, c.name AS customer, o.delivered_at, o.total,
         (SELECT COALESCE(SUM(p.amount), 0) FROM payments p WHERE p.order_id = o.order_id AND p.kind = 'payment' AND p.mode = 'cash') AS cash

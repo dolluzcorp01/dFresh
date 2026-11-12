@@ -17,6 +17,7 @@
 // godown for it at Start trip; the driver marks it Picked up with a photo (or Failed: the return waits for another trip).
 // A stop is keyed by its order no. (delivery) or its return no. (pickup).
 const { audit } = require('./audit');
+const approvals = require('./approvals');
 const commerce = require('./commerce');
 const commerceSettings = require('./commerce-settings');
 const notifications = require('./notifications');
@@ -506,7 +507,9 @@ async function stopCash(q, stopId, b, empId, office) {
   const less = round2(Number(od.amount_due) - Number(amount));
   if (od.payment_terms === 'cod' && /^\d{1,9}(\.\d{1,2})?$/.test(amount) && less > 0.005 && !why) throw Object.assign(new DeliveryError(`Cash is Rs ${less.toFixed(2)} less than due. Choose why.`), { code: 'fields', fields: { why: 'Choose why.' } });
   const r = await wrap(() => commerce.recordPayment(q, st.order_no, { amount, mode: 'cash', note: `Collected on trip T-${t.trip_id}${less > 0.005 && why ? `; Rs ${less.toFixed(2)} less than due: ${why}` : ''}` }, empId)); // today: cash is counted when it is collected
-  await q.query('UPDATE trip_stops SET cash_collected = cash_collected + ? WHERE stop_id = ?', [Number(amount), stopId]);
+  // phase 23 (v23 9.7): what was due when the cash was taken (first time) and why it was less, for the trip close
+  await q.query('UPDATE trip_stops SET cash_collected = cash_collected + ?, cash_due = COALESCE(cash_due, ?), cash_less_why = COALESCE(?, cash_less_why) WHERE stop_id = ?',
+    [Number(amount), od.payment_terms === 'cod' ? Number(od.amount_due) : null, less > 0.005 && why ? why : null, stopId]);
   return { stop_id: stopId, ...r };
 }
 
@@ -516,18 +519,52 @@ async function endTrip(q, tripId, b, empId, office) {
   if (!office) throw new DeliveryError('The supervisor closes the trip and counts the cash the driver hands in', 403); // v23: plans trips and counts cash = Create on Delivery
   if (t.driver_emp && t.driver_emp === empId) throw new DeliveryError('Not your own trip: someone else counts the cash you hand in.', 403);
   if (t.status !== 'out') throw new DeliveryError(`Trip T-${tripId} is ${t.status}`, 409);
-  const [[p]] = await q.query("SELECT SUM(status = 'pending') AS open, COALESCE(SUM(cash_collected), 0) AS cash FROM trip_stops WHERE trip_id = ?", [tripId]);
+  const [[p]] = await q.query(`SELECT SUM(status = 'pending') AS open, COALESCE(SUM(cash_collected), 0) AS cash,
+      COALESCE(SUM(IF(cash_due IS NOT NULL AND cash_collected < cash_due, cash_due - cash_collected, 0)), 0) AS less FROM trip_stops WHERE trip_id = ?`, [tripId]);
   if (Number(p.open)) throw new DeliveryError(`${p.open} stop(s) still open: mark them delivered or failed first`, 409);
   const handed = String(b.cash_handed ?? '').trim();
   if (!/^\d{1,9}(\.\d{1,2})?$/.test(handed)) throw new DeliveryError('Cash handed over: the amount, 0 if none');
   const note = String(b.note || '').trim().slice(0, 255) || null;
   const diff = round2(Number(handed) - Number(p.cash));
   if (Math.abs(diff) > 0.005 && !note) throw new DeliveryError(`The cash handed over differs from the cash collected (Rs ${Number(p.cash).toFixed(2)}) by Rs ${diff.toFixed(2)}: add a note`);
+  // phase 23 (v23 9.7, rule "Cash short at trip close"): cash handed in below the cash recorded, plus stops that
+  // collected less than due, go to a second person; the trip waits in "Cash short, waiting" until approved
+  const short = round2(Math.max(0, Number(p.cash) - Number(handed)));
+  const lessV = round2(Number(p.less));
+  const sumShort = round2(short + lessV);
+  if (sumShort > 0.005 && await approvals.needed(q, 'cash_short', { amount: sumShort })) {
+    const [less] = await q.query(`SELECT o.order_no, s.cash_collected, s.cash_due, s.cash_less_why FROM trip_stops s JOIN orders o ON o.order_id = s.order_id
+        WHERE s.trip_id = ? AND s.cash_due IS NOT NULL AND s.cash_collected < s.cash_due ORDER BY s.seq`, [tripId]);
+    const lessTxt = less.map((x) => `${x.order_no} paid Rs ${Number(x.cash_collected).toFixed(2)} of Rs ${Number(x.cash_due).toFixed(2)}${x.cash_less_why ? ` (${x.cash_less_why})` : ''}`).join(', ');
+    const [[g]] = await q.query('SELECT godown_id FROM delivery_trips WHERE trip_id = ?', [tripId]);
+    await q.query("UPDATE delivery_trips SET status = 'cashwait', cash_collected = ?, cash_handed = ?, end_note = ? WHERE trip_id = ?", [Number(p.cash), Number(handed), note, tripId]);
+    const approvalId = await approvals.request(q, { kind: 'cash_short', godownId: g.godown_id, refType: 'trip', refId: `T-${tripId}`, amount: sumShort,
+      summary: `Trip T-${tripId}: ${short > 0.005 ? `recorded Rs ${Number(p.cash).toFixed(2)}, handed in Rs ${Number(handed).toFixed(2)}` : 'cash handed in matches'}${lessV > 0.005 ? `. Collected less than due: ${lessTxt}` : ''}${note ? `. Note: ${note}` : ''}`,
+      payload: { trip_id: tripId } }, empId);
+    await audit(q, { empId, action: 'cash_short', entity: 'trip', entityId: `T-${tripId}`, after: { cash_collected: Number(p.cash), cash_handed: Number(handed), short, less: lessV, approval_id: approvalId, note } });
+    const message = `${short > 0.005 ? `Cash short by Rs ${short.toFixed(2)}.` : `Collected less than due by Rs ${lessV.toFixed(2)}.`}${short > 0.005 && lessV > 0.005 ? ` Plus Rs ${lessV.toFixed(2)} collected less than due.` : ''} Needs a second person: the trip waits in "Cash short, waiting".`;
+    return { trip_id: tripId, status: 'cashwait', cash_collected: Number(p.cash), cash_handed: Number(handed), difference: diff, short, less: lessV, approval_id: approvalId, message };
+  }
   await q.query("UPDATE delivery_trips SET status = 'ended', ended_by = ?, ended_at = UTC_TIMESTAMP(), cash_collected = ?, cash_handed = ?, end_note = ? WHERE trip_id = ?", [empId, Number(p.cash), Number(handed), note, tripId]);
   await audit(q, { empId, action: 'end', entity: 'trip', entityId: `T-${tripId}`, after: { cash_collected: Number(p.cash), cash_handed: Number(handed), difference: diff, note } });
   if (Math.abs(diff) > 0.005) await notifications.cashDifference(q, tripId);
   return { trip_id: tripId, status: 'ended', cash_collected: Number(p.cash), cash_handed: Number(handed), difference: diff };
 }
+
+// phase 23 (v23 delDecided): a cash shortfall approved closes the trip; rejected, it goes back on the road to count again
+approvals.onApproved('cash_short', async (q, p, empId) => {
+  const [[t]] = await q.query("SELECT trip_id, status, cash_collected, cash_handed FROM delivery_trips WHERE trip_id = ? FOR UPDATE", [Number(p.trip_id)]);
+  if (!t || t.status !== 'cashwait') return;
+  await q.query("UPDATE delivery_trips SET status = 'ended', ended_by = ?, ended_at = UTC_TIMESTAMP() WHERE trip_id = ?", [empId, t.trip_id]);
+  await audit(q, { empId, action: 'end', entity: 'trip', entityId: `T-${t.trip_id}`, after: { cash_collected: Number(t.cash_collected), cash_handed: Number(t.cash_handed), short_approved: true } });
+  if (Math.abs(Number(t.cash_handed) - Number(t.cash_collected)) > 0.005) await notifications.cashDifference(q, t.trip_id);
+});
+approvals.onClosed('cash_short', async (q, p, status, empId) => {
+  const [[t]] = await q.query("SELECT trip_id, status FROM delivery_trips WHERE trip_id = ? FOR UPDATE", [Number(p.trip_id)]);
+  if (!t || t.status !== 'cashwait') return;
+  await q.query("UPDATE delivery_trips SET status = 'out', cash_handed = NULL, end_note = NULL WHERE trip_id = ?", [t.trip_id]);
+  await audit(q, { empId, action: 'cash_short_back', entity: 'trip', entityId: `T-${t.trip_id}`, after: { status: 'out', why: `cash short ${status}: count the cash again` } });
+});
 
 // ---------------------------------------------------------------- after a failed delivery, courier, pickup
 async function reattempt(q, orderNo, empId) {

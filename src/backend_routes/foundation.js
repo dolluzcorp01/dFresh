@@ -35,7 +35,7 @@ function missingRights(grid, me) {
   if (me.is_admin) return [];
   const miss = [];
   for (const s of permissions.SECTION_KEYS) {
-    for (const a of permissions.ACTIONS) if (grid[s] && grid[s][a] && !permissions.can(me.perms, s, a)) miss.push(`${a[0].toUpperCase()}${a.slice(1)} on ${SECTION_LABEL[s] || s}`);
+    for (const a of permissions.actionsOf(s)) if (grid[s] && grid[s][a] && !permissions.can(me.perms, s, a)) miss.push(`${a[0].toUpperCase()}${a.slice(1)} on ${SECTION_LABEL[s] || s}`);
   }
   return miss;
 }
@@ -58,7 +58,7 @@ async function roleInfo(q, roleId) {
   const [[r]] = await q.query('SELECT role_id, name, limit_kind, limit_amount, see_cost, own_customers_only, is_builtin FROM roles WHERE role_id = ?', [Number(roleId)]);
   if (!r) return null;
   const builtin = permissions.isAdminRole(r.role_id);
-  const [rows] = builtin ? [[]] : await q.query('SELECT section, can_view, can_create, can_edit, can_approve, can_cancel, can_export, can_delete FROM role_permissions WHERE role_id = ?', [r.role_id]);
+  const [rows] = builtin ? [[]] : await q.query(`SELECT ${permissions.PERM_COLS} FROM role_permissions WHERE role_id = ?`, [r.role_id]);
   const isAdmin = permissions.isAdminRole(r.role_id);
   return { ...r, perms: permissions.permsFor(r.role_id, rows), is_admin: isAdmin, limit: isAdmin ? { kind: 'any', amount: null } : limitFrom(r.limit_kind, r.limit_amount), see_cost: builtin || Number(r.see_cost) === 1 };
 }

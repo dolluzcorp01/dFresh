@@ -54,6 +54,9 @@ import CommerceCustomers from './CommerceCustomers';
 import CommercePromotions from './CommercePromotions';
 import { CashbackRules, Coupons, CustomerWallets, Offers } from './Marketing';
 import { Inspection, ReturnRequests } from './ReturnsPages';
+import { ExportHistory, ExportToAccountant, Expenses, PettyCash } from './Expenses';
+import Alerts from './Alerts';
+import { GstAndDelivery, MoneyOwed, SalesAndPurchases, StockReport } from './Reports23';
 import CommerceOps from './CommerceOps';
 import Prices from './Prices';
 import QuantitySlabs from './QuantitySlabs';
@@ -109,7 +112,8 @@ export default function AdminApp() {
   const [newLeads, setNewLeads] = useState(0);
   const [approvalCount, setApprovalCount] = useState(0);
   // the approvals badge after deciding a request (the counts otherwise refresh on every page change)
-  const refreshCounts = useCallback(() => { api.get('/nav-counts').then((d) => { setNewLeads(d.newLeads || 0); setApprovalCount(d.approvals || 0); }, () => {}); }, []);
+  const [alertCount, setAlertCount] = useState(0); // phase 23: unread alerts (the bell)
+  const refreshCounts = useCallback(() => { api.get('/nav-counts').then((d) => { setNewLeads(d.newLeads || 0); setApprovalCount(d.approvals || 0); setAlertCount(d.alerts || 0); }, () => {}); }, []);
   const burgerRef = useRef(null);
   const styleRef = useRef(null); // the admin <style> tag
   const narrow = useNarrow();
@@ -155,7 +159,7 @@ export default function AdminApp() {
   // Leads badge: New leads, refreshed on every page change (cheap: one COUNT).
   useEffect(() => {
     if (!me) return;
-    api.get('/nav-counts').then((d) => { setNewLeads(d.newLeads || 0); setApprovalCount(d.approvals || 0); }, () => {});
+    api.get('/nav-counts').then((d) => { setNewLeads(d.newLeads || 0); setApprovalCount(d.approvals || 0); setAlertCount(d.alerts || 0); }, () => {});
   }, [me, pathname]);
 
   // Live: new leads every 15 s (badge, toast, quiet refresh of the Leads list and the Dashboard via leadsVersion)
@@ -188,7 +192,7 @@ export default function AdminApp() {
         <Sidebar me={me} drawerOpen={menuOpen} onCloseDrawer={closeDrawer} collapsed={collapsed}
           onToggleCollapsed={toggleCollapsed} newLeads={newLeads} approvals={approvalCount} />
         <div className="a-mainwrap">
-        <HeaderBar me={me} newLeads={newLeads} approvals={approvalCount} onLogout={logout}>
+        <HeaderBar me={me} newLeads={newLeads} approvals={approvalCount} alertCount={alertCount} onCounts={refreshCounts} onLogout={logout}>
           <MenuToggle className="a-iconbtn" buttonRef={burgerRef} narrow={narrow} collapsed={collapsed} drawerOpen={menuOpen}
             onToggleCollapsed={toggleCollapsed} onOpenDrawer={() => setMenuOpen(true)} onCloseDrawer={() => setMenuOpen(false)} />
         </HeaderBar>
@@ -240,6 +244,17 @@ export default function AdminApp() {
             <Route path="supplier-bills" element={<Need section="buying" commerce><SupplierBills /></Need>} />
             <Route path="claims" element={<Need section="buying" commerce><Claims /></Need>} />
             <Route path="supplier-payments" element={<Need section="money" commerce><SupplierPayments /></Need>} />
+            <Route path="alerts" element={<Alerts />} />
+            {/* phase 23: section 16 the v23 report pages */}
+            <Route path="sales-and-purchases" element={<Need section="reports" commerce><SalesAndPurchases /></Need>} />
+            <Route path="stock-report" element={<Need section="reports" commerce><StockReport /></Need>} />
+            <Route path="money-owed" element={<Need section="reports" commerce><MoneyOwed /></Need>} />
+            <Route path="gst-and-delivery" element={<Need section="reports" commerce><GstAndDelivery /></Need>} />
+            {/* phase 23: section 17 Expenses and accounting export */}
+            <Route path="expenses" element={<Need section="expenses" commerce><Expenses /></Need>} />
+            <Route path="petty-cash" element={<Need section="expenses" commerce><PettyCash /></Need>} />
+            <Route path="export-to-accountant" element={<Need section="expenses" commerce><ExportToAccountant /></Need>} />
+            <Route path="export-history" element={<Need section="expenses" commerce><ExportHistory /></Need>} />
             {/* phase 22: sections 12 to 14 Returns, promotions and wallet */}
             <Route path="return-requests" element={<Need section="returns" commerce><ReturnRequests /></Need>} />
             <Route path="inspection" element={<Need section="returns" commerce><Inspection /></Need>} />

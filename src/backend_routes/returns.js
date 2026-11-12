@@ -13,6 +13,9 @@
 //    the refund threshold it waits for approval; a "No refund" waits for approval (setting). A replacement is a Rs 0
 //    order through the normal pick-pack-deliver flow. A rejected approval makes those packs undecided again.
 // 5. Recheck: Returned (R) packs back to good stock, only when the setting allows resale, always through approval.
+// Phase 23 (v23 retFromCancel): an order cancelled after dispatch opens a return "Collecting" with the packs that left
+// (fromCancel); Receive and Inspect put them on the Returned / Damaged shelf, then it closes with no refund (the
+// invoice was cancelled with a credit note already).
 // Phase 22 (v23 section 12): inspection decides each pack: resell (it goes on the Returned shelf and the rule "Returned
 // stock back to Good" moves it to Good once signed), repack or damaged (Damaged shelf), scrap (a write-off from the
 // Returned shelf under the write-off rule), expired, not received. A return whose order had "buy X get Y" free packs
@@ -64,6 +67,32 @@ async function pendingOf(q, returnNo) {
   const [rows] = await q.query("SELECT approval_id, kind FROM approvals WHERE ref_type = 'return' AND ref_id = ? AND status = 'pending'", [returnNo]);
   return rows;
 }
+
+const CANCEL_REASON = 'Order cancelled after dispatch';
+/**
+ * an order cancelled after dispatch (commerce.doCancel): the packs that left the godown for it (SKU and batch, net of
+ * any already back) come back as a return to collect -> { return_no, packs } or null when nothing left
+ */
+async function fromCancel(q, orderId, why, empId) {
+  const [[o]] = await q.query('SELECT order_id, order_no, godown_id FROM orders WHERE order_id = ?', [orderId]);
+  const [rows] = await q.query(`SELECT sku_code, batch_id, -SUM(delta) AS qty FROM stock_movements WHERE ref_type = 'order' AND ref_id = ? AND move_type = 'out'
+      GROUP BY sku_code, batch_id HAVING qty > 0 ORDER BY sku_code, batch_id`, [o.order_no]);
+  if (!rows.length) return null;
+  const [[reason]] = await q.query('SELECT reason_id FROM return_reasons WHERE label = ?', [CANCEL_REASON]);
+  if (!reason) throw new ReturnError(`The return reason "${CANCEL_REASON}" is missing (migration 23_05)`, 500);
+  const s = await commerceSettings.read(q);
+  const yy = String(commerce.istYear()).padStart(2, '0');
+  const returnNo = `${s.return_prefix}-${yy}${numbering.pad(await numbering.next(q, `${s.return_prefix}-${yy}`, 1))}`;
+  const [ins] = await q.query(`INSERT INTO returns (return_no, order_id, godown_id, status, reason_id, reason_note, delivered_on, window_days, outside_window, collection, requested_by)
+      VALUES (?, ?, ?, 'collecting', ?, ?, ${IST_TODAY}, 0, 0, 'bring', ?)`,
+  [returnNo, o.order_id, o.godown_id, reason.reason_id, `${CANCEL_REASON}: ${why}`.slice(0, 255), empId]);
+  for (const r of rows) await q.query('INSERT INTO return_items (return_id, sku_code, batch_id, qty) VALUES (?, ?, ?, ?)', [ins.insertId, r.sku_code, r.batch_id, Number(r.qty)]);
+  const packs = rows.reduce((a, r) => a + Number(r.qty), 0);
+  await history(q, ins.insertId, 'collecting', `${o.order_no} cancelled after dispatch: ${packs} packs come back with the vehicle or courier. Receive and inspect them; the invoice was cancelled with a credit note, so no refund here.`, empId);
+  await audit(q, { empId, action: 'create', entity: 'return', entityId: returnNo, after: { order: o.order_no, reason: CANCEL_REASON, why, collection: 'bring', lines: rows.map((r) => `${Number(r.qty)} x ${r.sku_code}`) } });
+  return { return_no: returnNo, packs };
+}
+const fromCancelled = async (q, r) => { const [[x]] = await q.query('SELECT label FROM return_reasons WHERE reason_id = ?', [r.reason_id]); return Boolean(x && x.label === CANCEL_REASON); };
 
 /** what can still be returned from an order: per SKU and batch, delivered packs minus earlier returns */
 async function returnable(q, orderId) {
@@ -292,6 +321,12 @@ async function inspect(q, returnNo, b, empId) {
   }
   await setStatus(q, r, 'inspected', empId, `${plan.map((x) => `${x.l.sku_code}${x.l.batch_no ? `/${x.l.batch_no}` : ''}: ${x.ok} resell, ${x.repack} repack, ${x.damaged} damaged, ${x.scrap} scrap, ${x.expired} expired, ${x.missing} not received`).join('; ')}${note ? ` - ${note}` : ''}`,
     { inspected_at: new Date(), inspected_by: empId, inspect_note: note, ...(r.received_at ? {} : { received_at: new Date(), received_by: empId }) });
+  if (await fromCancelled(q, r)) {
+    // phase 23: the order was cancelled after dispatch and its invoice cancelled with a credit note: nothing to refund
+    for (const x of plan) await q.query('UPDATE return_items SET none_qty = ? WHERE line_id = ?', [x.ok + x.damaged + x.expired + x.repack + x.scrap, x.l.line_id]);
+    await setStatus(q, { ...r, status: 'inspected' }, 'closed', empId, 'Order cancelled after dispatch: its invoice was cancelled with a credit note, so there is no refund to decide.', { closed_at: new Date() });
+    return { return_no: returnNo, status: 'closed', waiting: waits, message: `Inspected and closed (the order was cancelled; no refund).${waits.length ? ` Waiting for approval: ${waits.join(', ')}.` : ''}` };
+  }
   return { return_no: returnNo, status: 'inspected', waiting: waits, message: waits.length ? `Inspected. Waiting for approval: ${waits.join(', ')}. The stock stays on the Returned shelf until then.` : 'Inspected.' };
 }
 
@@ -576,4 +611,4 @@ approvals.onAgain('restock', async (q, p) => {
   return inv().moveRecheck(q, p.move_id);
 });
 
-module.exports = { STATUS_LABEL, COLLECTION, METHODS, ReturnError, returnable, createReturn, addPhoto, setCourier, onTrip, pickedUp, pickupFailed, opsCounts, receiveState, receiveScan, inspect, reinspect, decide, leftOf, recheckRequest, finalize };
+module.exports = { STATUS_LABEL, COLLECTION, METHODS, ReturnError, returnable, createReturn, fromCancel, CANCEL_REASON, addPhoto, setCourier, onTrip, pickedUp, pickupFailed, opsCounts, receiveState, receiveScan, inspect, reinspect, decide, leftOf, recheckRequest, finalize };

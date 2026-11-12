@@ -435,9 +435,24 @@ async function gstr3b(q, month, scope = null) {
     if (Number(b.inter_state)) inp.igst += Number(b.gst);
     else { const h = r2(Number(b.gst) / 2); inp.cgst += h; inp.sgst += r2(Number(b.gst) - h); }
   }
+  // phase 23 (v23 16.8): the GST on recorded expenses that can be claimed (a GSTIN and a head that allows it) is input too
+  const [exps] = await q.query(`SELECT amount, gst_amount, inter_state FROM expenses WHERE status = 'done' AND itc = 1 AND DATE_FORMAT(exp_date, '%Y-%m') = ? AND ${inScope('godown_id', scope)}`, [month])
+    .catch((e) => { if (e.code === 'ER_NO_SUCH_TABLE') return [[]]; throw e; });
+  const exIn = { taxable: 0, igst: 0, cgst: 0, sgst: 0, tax: 0 };
+  for (const x of exps) {
+    inp.taxable += Number(x.amount); exIn.taxable += Number(x.amount); exIn.tax += Number(x.gst_amount);
+    if (Number(x.inter_state)) { inp.igst += Number(x.gst_amount); exIn.igst += Number(x.gst_amount); }
+    else { const h = r2(Number(x.gst_amount) / 2); inp.cgst += h; inp.sgst += r2(Number(x.gst_amount) - h); exIn.cgst += h; exIn.sgst += r2(Number(x.gst_amount) - h); }
+  }
+  Object.keys(exIn).forEach((k) => { exIn[k] = r2(exIn[k]); });
   Object.keys(out).forEach((k) => { out[k] = r2(out[k]); }); Object.keys(inp).forEach((k) => { inp[k] = r2(inp[k]); });
   const pay = { igst: r2(out.igst - inp.igst), cgst: r2(out.cgst - inp.cgst), sgst: r2(out.sgst - inp.sgst) };
-  return { month, output: { ...out, tax: r2(out.igst + out.cgst + out.sgst) }, input: { ...inp, tax: r2(inp.igst + inp.cgst + inp.sgst), bills: bills.length }, to_pay: { ...pay, tax: r2(pay.igst + pay.cgst + pay.sgst) } };
+  // input = supplier bills + the ITC on expenses; parts splits it for the screen (GST > GSTR-1 / GSTR-3B data)
+  const billPart = { taxable: r2(inp.taxable - exIn.taxable), igst: r2(inp.igst - exIn.igst), cgst: r2(inp.cgst - exIn.cgst), sgst: r2(inp.sgst - exIn.sgst) };
+  billPart.tax = r2(billPart.igst + billPart.cgst + billPart.sgst);
+  return { month, output: { ...out, tax: r2(out.igst + out.cgst + out.sgst) }, input: { ...inp, tax: r2(inp.igst + inp.cgst + inp.sgst), bills: bills.length, expenses: exps.length, expense_tax: r2(exIn.tax),
+    parts: { bills: { ...billPart, count: bills.length }, expenses: { ...exIn, count: exps.length } } },
+    to_pay: { ...pay, tax: r2(pay.igst + pay.cgst + pay.sgst) } };
 }
 
 module.exports = {

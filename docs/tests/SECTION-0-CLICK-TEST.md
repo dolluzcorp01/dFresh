@@ -197,6 +197,10 @@ happened, and stop there.
     - "Most of an order the wallet can pay" at 500: refused (0 to 100).
     - "A waiting request expires after" 30 days, or "Days that count together" 1: waits for a second Admin.
     - "Days that count together" 5: saved at once.
+    - Money > "Credit sales allowed" (phase 23, on as delivered): switch it off. Sales > New order: the payment terms
+      offer only Pay on delivery and Paid in advance; an order sent with "On credit" is refused "Credit sales are
+      switched off". Switch it on again: it waits for a second Admin (it loosens a control).
+    - Delivery > "Invoice made at the gate" (phase 23, off as delivered): turning it on waits for a second Admin.
 
 44. Press `/` in the menu (Find a page), type "switches", press Enter: Switches opens.
     `/admin/switches#money` opens the Money group.
@@ -228,4 +232,3 @@ These v23 Foundation tests need later sections and are not part of this click te
 - Production in the role grid and production wastage requests (section 4).
 - The money rules for invoice cancel, supplier payments, expenses and petty cash (sections 10, 11 and 17).
 - The other v23 approval rules: special price, price below cost plus margin, purchase orders (sections 2 and 3).
-- "Credit sales" as a switch (section 11).

@@ -6,14 +6,14 @@ paths = the first one the user may open. "(live)" = also shown while Commerce is
 site's screens); every other entry shows only while Commerce is on. A placeholder shows the guide's texts and
 the phase that builds it (gap map build order; Website entries with no screen: phase 24, agreed 2 Nov 2026).
 
-148 menu lines = 13 groups + Online store + 23 sub-groups + 111 pages. Of the 112 entries that open something (pages and Online store), 97 open a screen and 15 the placeholder.
+148 menu lines = 13 groups + Online store + 23 sub-groups + 111 pages. Of the 112 entries that open something (pages and Online store), 101 open a screen and 11 the placeholder.
 
 | Menu page | Opens |
 |---|---|
 | Home / Dashboard | /admin/commerce/ops; /admin/ (live) |
 | Home / Approvals | /admin/approvals |
 | Home / My tasks | placeholder: Later (Foundation v7) |
-| Home / Alerts | placeholder: Not built yet - phase 23 |
+| Home / Alerts | /admin/alerts |
 | Sales / Leads / Enquiries | /admin/leads (live) |
 | Sales / Leads / Follow-ups | /admin/commerce/follow-ups |
 | Sales / Customers / Customer list | /admin/commerce/customers |
@@ -59,10 +59,10 @@ the phase that builds it (gap map build order; Website entries with no screen: p
 | Money / Payments / Supplier payments | /admin/supplier-payments |
 | Money / Payments / Refunds | /admin/refunds |
 | Money / Payments / Cheque register | /admin/cheque-register |
-| Money / Expenses / Expenses | placeholder: Not built yet - phase 23 |
-| Money / Expenses / Petty cash | placeholder: Not built yet - phase 23 |
-| Money / Accounting export / Export to accountant | /admin/commerce/reports?tab=accounting |
-| Money / Accounting export / Export history | placeholder: Not built yet - phase 23 |
+| Money / Expenses / Expenses | /admin/expenses |
+| Money / Expenses / Petty cash | /admin/petty-cash |
+| Money / Accounting export / Export to accountant | /admin/export-to-accountant |
+| Money / Accounting export / Export history | /admin/export-history |
 | GST / GSTR-1 / GSTR-3B data | /admin/gst-data |
 | GST / E-invoice | /admin/e-invoice |
 | GST / E-way bill | /admin/e-way-bill |
@@ -71,10 +71,10 @@ the phase that builds it (gap map build order; Website entries with no screen: p
 | Marketing / Coupons | /admin/coupons |
 | Marketing / Cashback rules | /admin/cashback-rules |
 | Marketing / Customer wallets | /admin/customer-wallets |
-| Reports / Sales and purchases | /admin/commerce/reports?tab=sales |
-| Reports / Stock | /admin/commerce/reports?tab=stock |
-| Reports / Money owed | /admin/commerce/reports?tab=receivables |
-| Reports / GST and delivery | /admin/commerce/reports?tab=delivery |
+| Reports / Sales and purchases | /admin/sales-and-purchases |
+| Reports / Stock | /admin/stock-report |
+| Reports / Money owed | /admin/money-owed |
+| Reports / GST and delivery | /admin/gst-and-delivery |
 | Masters / Catalogue / Products and SKUs | /admin/products (live) |
 | Masters / Catalogue / Categories | /admin/categories (live) |
 | Masters / Catalogue / Kits | /admin/kits (live) |

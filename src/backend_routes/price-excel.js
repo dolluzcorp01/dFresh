@@ -94,8 +94,9 @@ async function diffWorkbook(q, buffer, list) {
     if (p.error || p.value === null || p.value <= 0) { errors.push(`${at}price must be more than 0, with at most 2 decimals.`); continue; }
     const from = txt(r.from);
     if (!pricing.isDate(from)) { errors.push(`${at}from must be a date like ${today}.`); continue; }
+    // a row left as exported is unchanged, whatever its date (phase 23, v23 2.26: the current list copied in)
+    if (cur.typed === p.value && cur.from === from) continue;
     if (from < today) { errors.push(`${at}from ${from} is in the past. Quotes and orders already made keep their price.`); continue; }
-    if (cur.typed === p.value && cur.from === from) continue; // unchanged
     const [res] = (await pricing.checkPrices(q, [{ sku_code: code, list_key: list.key, price: p.value }], from)).values();
     const [[w]] = await q.query("SELECT request_no FROM price_requests WHERE sku_code = ? AND list_key = ? AND status = 'pending'", [code, list.key]);
     if (res.hard) { errors.push(`${at}${res.hard.charAt(0).toLowerCase()}${res.hard.slice(1)}`); continue; }

@@ -81,7 +81,8 @@ export default function Roles() {
   );
 }
 
-const emptyGrid = (meta) => Object.fromEntries(meta.sections.map((x) => [x.key, Object.fromEntries(meta.actions.map((a) => [a, false]))]));
+const extraOf = (meta, sec) => ((meta.extra || {})[sec] || []); // phase 23: rights of one row only (Returns: Inspect returns)
+const emptyGrid = (meta) => Object.fromEntries(meta.sections.map((x) => [x.key, Object.fromEntries([...meta.actions, ...extraOf(meta, x.key).map((e) => e.key)].map((a) => [a, false]))]));
 const startOf = (meta, role) => ({
   name: role ? role.name : '', description: role ? role.description || '' : '',
   grid: role ? JSON.parse(JSON.stringify(role.perms)) : emptyGrid(meta),
@@ -111,7 +112,7 @@ function RoleEditor({ meta, role, onDirty, onSaved, onWaiting }) {
 
   const tick = (sec, a, on) => setF((x) => {
     const row = { ...x.grid[sec], [a]: on };
-    if (a === 'view' && !on) meta.actions.forEach((y) => { row[y] = false; });
+    if (a === 'view' && !on) [...meta.actions, ...extraOf(meta, sec).map((e) => e.key)].forEach((y) => { row[y] = false; });
     if (a !== 'view' && on) row.view = true;
     return { ...x, grid: { ...x.grid, [sec]: row } };
   });
@@ -181,7 +182,9 @@ function RoleEditor({ meta, role, onDirty, onSaved, onWaiting }) {
           <tbody>
             {meta.sections.map((x) => (
               <tr key={x.key}>
-                <td><b>{x.label}</b>{x.commerce && <span className="a-muted"> (Commerce)</span>}<span className="a-sub-l">{x.covers}</span></td>
+                <td><b>{x.label}</b>{x.commerce && <span className="a-muted"> (Commerce)</span>}<span className="a-sub-l">{x.covers}</span>
+                  {extraOf(meta, x.key).map((e) => { const on = Boolean(f.grid[x.key] && f.grid[x.key][e.key]); const was = Boolean(start.grid[x.key] && start.grid[x.key][e.key]);
+                    return <label key={e.key} className={`a-inline${on !== was ? ' chg' : ''}`} title={e.help}><input type="checkbox" checked={on} disabled={!canEdit} aria-label={`${x.label}: ${e.label}`} onChange={(ev) => tick(x.key, e.key, ev.target.checked)} /> {e.label}</label>; })}</td>
                 {meta.actions.map((a) => {
                   const na = meta.viewOnly.includes(x.key) && a !== 'view';
                   const on = Boolean(f.grid[x.key] && f.grid[x.key][a]);

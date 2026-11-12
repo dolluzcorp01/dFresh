@@ -58,8 +58,14 @@ export const MENU = [
     label: "Alerts",
     see: "warnings - low stock, batches near expiry, overdue customers, cheques to deposit, vehicle insurance ending, packs with no cost.",
     use: "act on problems early; click an alert to open the page that fixes it, or snooze it for a while.",
-    section: null,
-    phase: 23
+    to: [
+     {
+      path: "alerts",
+      section: null,
+      action: "view",
+      commerce: true
+     }
+    ]
    }
   ]
  },
@@ -804,16 +810,28 @@ export const MENU = [
       label: "Expenses",
       see: "rent, fuel, salaries, power and other spends, with GST to claim.",
       use: "record an expense; a new payee and big amounts need approval. │",
-      section: "reports",
-      phase: 23
+      to: [
+       {
+        path: "expenses",
+        section: "expenses",
+        action: "view",
+        commerce: true
+       }
+      ]
      },
      {
       id: "money/expenses/petty-cash",
       label: "Petty cash",
       see: "the small cash box at each godown and what was spent from it.",
       use: "top it up and record small cash spends.",
-      section: "reports",
-      phase: 23
+      to: [
+       {
+        path: "petty-cash",
+        section: "expenses",
+        action: "view",
+        commerce: true
+       }
+      ]
      }
     ]
    },
@@ -828,11 +846,10 @@ export const MENU = [
       use: "send the month to the CA; that month is then locked. │",
       to: [
        {
-        path: "commerce/reports",
-        section: "reports",
+        path: "export-to-accountant",
+        section: "expenses",
         action: "view",
-        commerce: true,
-        search: "tab=accounting"
+        commerce: true
        }
       ]
      },
@@ -841,8 +858,14 @@ export const MENU = [
       label: "Export history",
       see: "every month sent, when, by whom, and changes made after it.",
       use: "see what the CA has, and send corrections.",
-      section: "reports",
-      phase: 23
+      to: [
+       {
+        path: "export-history",
+        section: "expenses",
+        action: "view",
+        commerce: true
+       }
+      ]
      }
     ]
    }
@@ -984,11 +1007,10 @@ export const MENU = [
     use: "see which products and customers make money.",
     to: [
      {
-      path: "commerce/reports",
-      section: "orders",
+      path: "sales-and-purchases",
+      section: "reports",
       action: "view",
-      commerce: true,
-      search: "tab=sales"
+      commerce: true
      }
     ]
    },
@@ -999,11 +1021,10 @@ export const MENU = [
     use: "see how much money is in stock and what is getting old.",
     to: [
      {
-      path: "commerce/reports",
-      section: "inventory",
+      path: "stock-report",
+      section: "reports",
       action: "view",
-      commerce: true,
-      search: "tab=stock"
+      commerce: true
      }
     ]
    },
@@ -1014,11 +1035,10 @@ export const MENU = [
     use: "chase overdue customers and plan supplier payments.",
     to: [
      {
-      path: "commerce/reports",
-      section: "customers",
+      path: "money-owed",
+      section: "reports",
       action: "view",
-      commerce: true,
-      search: "tab=receivables"
+      commerce: true
      }
     ]
    },
@@ -1029,11 +1049,10 @@ export const MENU = [
     use: "check tax figures and delivery performance.",
     to: [
      {
-      path: "commerce/reports",
-      section: "delivery",
+      path: "gst-and-delivery",
+      section: "reports",
       action: "view",
-      commerce: true,
-      search: "tab=delivery"
+      commerce: true
      }
     ]
    }

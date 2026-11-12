@@ -382,7 +382,11 @@ const approvalWaiting = (q, approvalId) => safely('approval', async () => {
  * an e-mail through the outbox, and a WhatsApp copy prepared in notification_log (no provider: never sent).
  * The phone is read from dAdmin (read only).
  */
+// phase 23: every admin alert is also kept for Home > Alerts (override used, someone left or back, leave for an Admin)
+const ALERT_KIND = (ref) => (/^approval /.test(ref || '') ? 'override' : /^(left|back) /.test(ref || '') ? 'staff_left' : /^leave /.test(ref || '') ? 'admin_leave' : null);
 const adminAlert = (q, { subject, body, ref = null, by = 'system' }) => safely('admin_alert', async () => {
+  const kind = ALERT_KIND(ref);
+  if (kind) await require('./alerts').record(q, { kind, title: subject, body, ref, link: kind === 'override' ? '/admin/approvals' : '/admin/staff' }, by); // eslint-disable-line global-require
   const admins = (await staffUsers(q)).filter((u) => permissions.isAdminRole(u.role_id));
   await toStaff(q, 'admin_alert', admins, () => ({ subject, body, link: link('approvals') }), { ref, by });
   const [phones] = admins.length ? await q.query(`SELECT emp_id, emp_mobile_no FROM \`${DADMIN}\`.employee WHERE emp_id IN (?)`, [admins.map((u) => u.emp_id)]) : [[]];

@@ -328,6 +328,8 @@ async function prepare(q, data, opts = {}) {
   const list = await pricing.listOfCustomer(q, customerId);
   const priceDay = opts.priceDate || pricing.istToday();
   const settings = await commerceSettings.read(q);
+  // phase 23 (v23 switch credit_sales): off, no new credit; an order already on credit keeps its terms
+  if (terms === 'credit' && settings.credit_sales === false && !(editing && editing.payment_terms === 'credit')) throw new CommerceError('Credit sales are switched off (Admin > Switches > Money): choose pay on delivery or paid in advance');
   const inclusive = list.list.typed === 'inc';
   const rates = await tax.ratesOn(q, priceDay);
   const auto = new Map();
@@ -511,6 +513,8 @@ async function prepare(q, data, opts = {}) {
   // phase 22 (v23 14.9): the wallet pays only for lines with no offer: the cap is the setting % of those lines
   const walletBase = round2(pre.lines.filter((l) => !l.is_free && !(Number(l.offer_discount) > 0)).reduce((a, l) => a + l.line_total, 0));
   const walletCap = round2((walletBase * (Number(settings.wallet_max_use_pct ?? 100) || 0)) / 100);
+  // phase 23: the wallet switch (Admin > Switches > Money); balances stay saved while it is off
+  if (wantWallet > 0 && !opts.replacement && settings.wallet_enabled === false) throw new CommerceError('Wallet not used. The customer wallet is switched off (Admin > Switches > Money)');
   if (wantWallet > 0 && !opts.replacement && walletBase <= 0.004) throw new CommerceError('Wallet not used. Every line has an offer: the wallet cannot pay for those');
   if (wantWallet > 0 && !opts.replacement) {
     walletPlan = await wallet.plan(q, customerId, wantWallet, editing ? editing.order_id : 0);
@@ -911,7 +915,8 @@ async function updateOrder(q, orderNo, data, empId, opts = {}) {
     packs_held: h.held, back: h.back, total: t.total };
 }
 
-/** cancel for good: reservations released, goods back after dispatch, invoice cancelled + credit note, coupon / wallet back */
+/** cancel for good: reservations released, packed goods back to the shelf, dispatched goods as a return to collect
+ * (phase 23, returns.fromCancel), invoice cancelled + credit note, coupon / wallet back */
 async function doCancel(q, orderId, reason, empId) {
   const [[o]] = await q.query('SELECT order_id, order_no, customer_id, status, coupon_code, wallet_used FROM orders WHERE order_id = ? FOR UPDATE', [orderId]);
   if (!o || o.status === 'cancelled' || o.status === 'delivered') return false;
@@ -919,14 +924,18 @@ async function doCancel(q, orderId, reason, empId) {
     [String(reason).slice(0, 255), empId, orderId]);
   await release(q, orderId);
   const [[gone]] = await q.query('SELECT dispatched_at, stock_out_at FROM orders WHERE order_id = ?', [orderId]);
-  if (gone.dispatched_at || gone.stock_out_at) await stock.goodsBack(q, o.order_no, empId, !gone.dispatched_at); // phase 20: packed = the packs left Good already
+  let ret = null;
+  // phase 20: packed = the packs left Good already but are still in the godown: back to the shelf now. Phase 23 (v23
+  // retFromCancel): dispatched = on the vehicle or with the courier: they come back as a return to collect and inspect
+  if (gone.dispatched_at) ret = await require('./returns').fromCancel(q, orderId, reason, empId); // eslint-disable-line global-require
+  else if (gone.stock_out_at) await stock.goodsBack(q, o.order_no, empId, true);
   const inv = await invoices.cancelForOrder(q, orderId, `Order ${o.order_no} cancelled: ${reason}`, empId);
   if (o.coupon_code) await promotions.redeem(q, orderId, o.customer_id, null, 0);
   if (Number(o.wallet_used) > 0) await wallet.giveBack(q, orderId, `Given back: ${o.order_no} cancelled`, empId);
   await withdrawHolds(q, o.order_no, 'Order cancelled');
   await history(q, orderId, o.status, 'cancelled', reason, empId);
   await refreshPayment(q, orderId);
-  await audit(q, { empId, action: 'cancel', entity: 'order', entityId: o.order_no, before: { status: o.status }, after: { status: 'cancelled', reason, invoice: inv ? inv.invoice_no : null, credit_note: inv ? inv.credit_note_no : null } });
+  await audit(q, { empId, action: 'cancel', entity: 'order', entityId: o.order_no, before: { status: o.status }, after: { status: 'cancelled', reason, invoice: inv ? inv.invoice_no : null, credit_note: inv ? inv.credit_note_no : null, return: ret ? ret.return_no : null } });
   return true;
 }
 
@@ -961,6 +970,9 @@ async function cancelOrder(q, orderNo, reason, empId) {
 async function leaveGodown(q, orderId, empId, { at = null } = {}) {
   const [[o]] = await q.query('SELECT order_id, order_no, dispatched_at, stock_out_at FROM orders WHERE order_id = ? FOR UPDATE', [orderId]);
   if (o.dispatched_at) return { invoice_no: null, batches: [], already: true };
+  // phase 23 (v23 10.1): no goods leave without an invoice; the switch "Invoice made at the gate" (Admin) makes it here
+  const [[live]] = await q.query('SELECT invoice_no FROM invoices WHERE live_order_id = ?', [o.order_id]);
+  if (!live && !(await commerceSettings.read(q)).invoice_at_gate) throw new CommerceError(`Not ready to leave. Make the invoice for ${o.order_no} first (Money > Billing > Invoices).`, 409);
   let batches;
   // phase 20 (D1): the packs left Good when the order was packed; dispatch moves no stock
   if (o.stock_out_at) batches = await stock.batchesOfOrder(q, o.order_no);

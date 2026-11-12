@@ -22,7 +22,8 @@ const LOOSEN = {
   approval_expiry_days: 'up', split_days: 'down', wallet_max_use_pct: 'up', return_window_days: 'up', eway_bill_above: 'up',
   manual_discount_allowed: 'on', returned_resell: 'on', delivery_otp: 'off', eway_bill_required: 'off',
   return_outside_window: ['refuse', 'approval'], cashback_credit_at: ['after_window', 'delivery'],
-  quarantine: 'off', freight_cost: 'off', claim_days: 'up', // phase 16 (v23 Y5: freight into the average cost off is a weakening)
+  quarantine: 'off', freight_cost: 'off', claim_days: 'up',
+  wallet_enabled: 'on', credit_sales: 'on', invoice_at_gate: 'on', // phase 23 (v23: turning the wallet on follows the switch approval rule) // phase 16 (v23 Y5: freight into the average cost off is a weakening)
 };
 // ranges that stop silly values (v23 SW_RANGE)
 // (phase 13: every number on the Switches page has one; the page shows them and the PUT enforces them)

@@ -234,6 +234,10 @@ async function inTx(fn) {
   const [[{ n }]] = await db.query('SELECT COUNT(*) AS n FROM orders');
   if (Number(n) > 0) { console.log(`${n} orders exist already: customers, orders, returns and approvals skipped`); process.exit(0); }
 
+  // phase 23: the past trips of the demo invoice at the gate, so the switch is on while it seeds and put back at the end
+  const [[gate]] = await db.query("SELECT value FROM commerce_settings WHERE setting_key = 'invoice_at_gate'").catch(() => [[null]]);
+  if (gate) await db.query("UPDATE commerce_settings SET value = '1' WHERE setting_key = 'invoice_at_gate'");
+
   // DEMO delivery setup (Commerce settings > Delivery): areas with charges, vehicles, drivers, couriers
   await db.query(`INSERT INTO delivery_areas (area_id, label, towns, charge, free_above, sort_order) VALUES
       (2, 'Chennai', 'Chennai, 600040, 600042, 600045, 603103', 150, 5000, 2),
@@ -601,6 +605,7 @@ async function inTx(fn) {
   console.log(`demo notifications: Demo Hotel Sangam mails in Tamil, Demo Distributor Vellore opted out of reminders; ${nm.n} notification(s) during the seed (muted)`);
 
   await db.query("UPDATE commerce_settings SET value = '1', updated_by = 'demo-seed', updated_at = UTC_TIMESTAMP() WHERE setting_key = 'commerce_enabled'");
+  if (gate) await db.query("UPDATE commerce_settings SET value = ? WHERE setting_key = 'invoice_at_gate'", [gate.value]);
   console.log(`demo: ${CUSTOMERS.length} customers (+ a duplicate to merge and a converted lead), ${made} orders, ${madeRet.length} returns, approvals from the returns, wallet, write-off and count; Commerce switched on`);
   process.exit(0);
 })().catch((e) => { console.error('commerce-demo-seed failed:', e.message); process.exit(1); });

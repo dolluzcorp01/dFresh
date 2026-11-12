@@ -27,7 +27,7 @@ happened, and stop there.
 
 ## Part B - Trips
 
-6. **Fulfilment > Delivery > Trips**: tabs Planned, On the road, Cash short, Closed; a banner counts packed orders
+6. **Fulfilment > Delivery > Trips**: tabs Planned, On the road, Cash short, waiting, Closed; a banner counts packed orders
    waiting for our vehicle. **New trip**: godown, date, vehicle (with its limits and any paper problem), driver (with
    any licence problem), tick the packed orders to load. Nothing ticked: "Nothing loaded".
 7. Load more than the vehicle carries (a small vehicle): "Too heavy for ...: the load would be ... it carries ...".
@@ -36,8 +36,11 @@ happened, and stop there.
 9. A planned trip: **Load an order** adds one; the arrows change the order of the stops; x takes one off. The load
    shows kg of the vehicle's kg with a meter, and boxes. **Trip sheet** prints the stops in order with boxes, phone,
    cash to collect and the total.
-10. **Start trip**: "on the road"; the tax invoices are made (one per shipment: a part shipment's balance has its own
-    invoice and stop). The stock does not move again (it went down at Packed).
+10. **Start trip** with an order that has no invoice yet: "Not ready to leave. Make the invoice for DFO-... first (Money >
+    Billing > Invoices)." (phase 23, v23; Admin > Switches > Delivery "Invoice made at the gate" off, as delivered).
+    Make the invoices, then **Start trip**: "on the road" (one invoice per shipment: a part shipment's balance has its
+    own invoice and stop). The stock does not move again (it went down at Packed). With the switch on (an Admin's
+    choice, a second Admin signs it), the invoice is made at the gate instead.
 
 ## Part C - At the stops (as the driver: My trips)
 
@@ -54,7 +57,10 @@ happened, and stop there.
 ## Part D - Close and the lists
 
 17. As the **Supervisor**: Close the trip with the cash handed in. Less than recorded without a note: asks for a note;
-    with a note: closed, the trip shows in "Cash short" with the difference. A Supervisor cannot close a trip they drive
+    with a note (phase 23, v23 rule "Cash short at trip close"): "Cash short by Rs 100.00. Plus Rs 218.00 collected less
+    than due. Needs a second person ...": the trip waits in "Cash short, waiting" with an approval card for Rs 318.
+    Approved (Home > Approvals): the trip is Closed and shows the shortfall. Rejected: back On the road, count the cash
+    again. A Supervisor cannot close a trip they drive
     themselves ("Not your own trip ...").
 18. **Cash on delivery**: per trip to collect, collected (what is left on account), handed in, short, status.
 19. **Courier and pickup**: Courier to book: Book courier (courier, AWB required, e-way bill when needed, the charge to

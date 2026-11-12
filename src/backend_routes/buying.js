@@ -253,7 +253,10 @@ async function freightBilled(q, poId, exceptBill = 0) {
   const [rows] = await q.query(`SELECT b.bill_id, b.freight, SUM(IF(g.po_id = ?, l.qty * l.rate, 0)) AS mine, SUM(l.qty * l.rate) AS allv
       FROM supplier_bills b JOIN supplier_bill_lines l ON l.bill_id = b.bill_id JOIN goods_ins g ON g.grn_id = l.grn_id
       WHERE b.status <> 'rejected' AND b.freight > 0 AND b.bill_id <> ? GROUP BY b.bill_id, b.freight HAVING mine > 0`, [Number(poId), Number(exceptBill) || 0]);
-  return r2(rows.reduce((a, r) => a + (Number(r.freight) * Number(r.mine)) / Number(r.allv), 0));
+  // phase 23 (v23 Y6): a transporter's freight bill on the PO (expense head "Freight in", recorded), without its GST
+  const [[t]] = await q.query("SELECT COALESCE(SUM(e.amount), 0) AS n FROM expenses e JOIN expense_heads h ON h.head_key = e.head_key WHERE e.po_id = ? AND e.status = 'done' AND h.for_po = 1", [Number(poId)])
+    .catch((e) => { if (e.code === 'ER_NO_SUCH_TABLE') return [[{ n: 0 }]]; throw e; });
+  return r2(rows.reduce((a, r) => a + (Number(r.freight) * Number(r.mine)) / Number(r.allv), 0) + Number(t.n));
 }
 /** is this bill the PO's last (the PO is fully received or closed, and every accepted pack is billed with it)? */
 async function poLastBill(q, p, billId, billLines) {

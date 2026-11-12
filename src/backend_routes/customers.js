@@ -22,6 +22,7 @@ const numbering = require('./numbering');
 const { checkSetting } = require('../shared/settingRules');
 const { isStateCode, stateName } = require('../shared/gstStates');
 const { indianMobile, phoneDigits } = require('../shared/customerRules');
+const { gstinCheckChar } = require('../shared/buyRules');
 const permissions = require('../shared/permissions');
 
 const STATUS = { active: 'Active', hold: 'On hold', blocked: 'Blocked' };
@@ -93,8 +94,10 @@ async function checkCore(q, raw, { partial = false, keep = null } = {}) {
   return { values, errors };
 }
 
-/** an address -> { values, errors }; billing: GSTIN of its state; shipping: contact person and delivery area */
-async function checkAddress(q, raw, kind) {
+/** an address -> { values, errors }; billing: GSTIN of its state; shipping: contact person and delivery area.
+ * keptGstin: the GSTIN already stored on this address; a GSTIN typed new or changed must also pass the check character
+ * (v23 6.9, GSTN mod-36, as suppliers), a stored one saved again unchanged is not re-judged */
+async function checkAddress(q, raw, kind, keptGstin = null) {
   const errors = {};
   const v = { kind, label: t(raw, 'label') || null, name: t(raw, 'name'), gstin: kind === 'billing' ? t(raw, 'gstin').toUpperCase() || null : null,
     contact_person: kind === 'shipping' ? t(raw, 'contact_person') || null : null, phone: t(raw, 'phone') || null, address: t(raw, 'address') || null, town: t(raw, 'town') || null,
@@ -108,7 +111,11 @@ async function checkAddress(q, raw, kind) {
   if (v.gstin) {
     const g = checkSetting('gstin', v.gstin);
     if (g.error) errors.gstin = `GSTIN: ${g.error}`;
-    else { v.gstin = g.value; if (v.gstin.slice(0, 2) !== v.state_code) errors.gstin = `GSTIN ${v.gstin} is registered in ${stateName(v.gstin.slice(0, 2))}, not ${stateName(v.state_code) || 'the state chosen'}.`; }
+    else {
+      v.gstin = g.value;
+      if (v.gstin.slice(0, 2) !== v.state_code) errors.gstin = `GSTIN ${v.gstin} is registered in ${stateName(v.gstin.slice(0, 2))}, not ${stateName(v.state_code) || 'the state chosen'}.`;
+      else if (v.gstin !== keptGstin && gstinCheckChar(v.gstin.slice(0, 14)) !== v.gstin[14]) errors.gstin = `GSTIN ${v.gstin}: the last character does not match. One character is mistyped.`;
+    }
   }
   if (v.delivery_area_id) {
     const [[a]] = await q.query('SELECT area_id FROM delivery_areas WHERE area_id = ?', [v.delivery_area_id]);
@@ -334,7 +341,7 @@ async function saveAddress(q, id, addressId, raw, empId) {
       return { address_id: addressId, removed: true };
     }
   }
-  const { values: v, errors } = await checkAddress(q, raw, before ? before.kind : kind);
+  const { values: v, errors } = await checkAddress(q, raw, before ? before.kind : kind, before ? before.gstin : null);
   if (Object.keys(errors).length) fail(errors);
   if (v.gstin) { const d = await duplicates(q, { gstins: [v.gstin] }, c.customer_id); if (d.length) throw dupError(d); }
   const makeDefault = Boolean(raw.is_default);

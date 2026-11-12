@@ -71,6 +71,10 @@ const KINDS = {
   promo_new: { label: 'New offer or coupon goes live', section: 'promotions' }, // phase 22
   promo_below_cost: { label: 'Promotion that sells below cost', section: 'promotions' },
   cashback_rule: { label: 'New cashback rule goes live', section: 'promotions' },
+  expense: { label: 'Expense above the limit', section: 'expenses' }, // phase 23
+  payee_new: { label: 'A new payee (approved once)', section: 'expenses' },
+  petty_topup: { label: 'Petty cash top-up', section: 'expenses' },
+  cash_short: { label: 'Cash short at trip close', section: 'delivery' }, // phase 23 (v23 9.7)
 };
 const handlers = {};
 const closers = {};

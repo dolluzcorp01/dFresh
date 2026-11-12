@@ -48,7 +48,8 @@
     "test:admin-menu": "node scripts/admin-check/menu-check.js",
     "test:engines": "node --test --test-force-exit \"tests/engines/*.test.js\"",
     "test:fonts-e2e": "node scripts/admin-check/fonts-e2e.js",
-    "release:pack": "node scripts/release-pack.js"
+    "release:pack": "node scripts/release-pack.js",
+    "scenarios": "node scripts/scenarios/run.js"
   },
   "eslintConfig": {
     "extends": [

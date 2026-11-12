@@ -24,6 +24,7 @@ const SECTIONS = [
   { key: 'production', label: 'Production', commerce: true, covers: 'Recipes, machines, production runs, production quality check, wastage (Approve: recipe changes and wastage; v23 section 4)' },
   { key: 'invoicing', label: 'Invoicing and GST', commerce: true, covers: 'Invoices, credit and debit notes, delivery challans, e-way bill and e-invoice, GSTR-1 and 3B data (Cancel: invoices; Export: GST data; v23 section 10)' },
   { key: 'money', label: 'Payments', commerce: true, covers: 'Receipts, cheques, refunds, bad debts, supplier payments (Approve: above the limits; v23 section 11)' },
+  { key: 'expenses', label: 'Expenses and accounting export', commerce: true, covers: 'Expenses, payees, repeating expenses, petty cash, Export to accountant and its history (Approve: above the limit, new payees, top-ups; Export: Tally and CSV; v23 section 17)' },
   { key: 'reports', label: 'Reports', commerce: true, covers: 'Sales, GST, stock, returns, wallet and customer reports' },
   { key: 'content', label: 'Content', covers: 'Banners, translations, towns, form options, brochures, languages' },
   { key: 'settings', label: 'Settings', covers: 'Site settings, Commerce settings' },
@@ -31,6 +32,12 @@ const SECTIONS = [
   { key: 'audit', label: 'Audit log', covers: 'Audit log (view only)' },
 ];
 const SECTION_KEYS = SECTIONS.map((s) => s.key);
+// phase 23: rights that belong to one row only (a column can_<key> of role_permissions; Super admin and Admin have them)
+const EXTRA = { returns: [{ key: 'inspect', label: 'Inspect returns', help: 'Decide per pack: resell, repack, damaged or scrap (v23: the Supervisor inspects)' }] };
+const actionsOf = (section) => [...ACTIONS, ...(EXTRA[section] || []).map((x) => x.key)];
+const EXTRA_KEYS = [...new Set(Object.values(EXTRA).flat().map((x) => x.key))];
+/** the columns a role_permissions SELECT reads */
+const PERM_COLS = ['section', ...[...ACTIONS, ...EXTRA_KEYS].map((a) => `can_${a}`)].join(', ');
 const VIEW_ONLY = ['audit']; // sections where only "view" means anything
 
 const ADMIN_ROLE_ID = 1;
@@ -49,15 +56,15 @@ function permsFor(roleId, rows = []) {
   const out = {};
   const fixed = isAdminRole(roleId); // Super admin and Admin: every right, always
   for (const s of SECTION_KEYS) {
-    if (fixed) out[s] = Object.fromEntries(ACTIONS.map((a) => [a, !VIEW_ONLY.includes(s) || a === 'view']));
-    else out[s] = empty();
+    if (fixed) out[s] = Object.fromEntries(actionsOf(s).map((a) => [a, !VIEW_ONLY.includes(s) || a === 'view']));
+    else out[s] = { ...empty(), ...Object.fromEntries((EXTRA[s] || []).map((x) => [x.key, false])) };
   }
   if (!fixed) {
     for (const r of rows) {
       if (!out[r.section]) continue;
-      for (const a of ACTIONS) out[r.section][a] = Boolean(Number(r[`can_${a}`]));
+      for (const a of actionsOf(r.section)) out[r.section][a] = Boolean(Number(r[`can_${a}`]));
       // every other action implies view
-      if (ACTIONS.slice(1).some((a) => out[r.section][a])) out[r.section].view = true;
+      if (actionsOf(r.section).slice(1).some((a) => out[r.section][a])) out[r.section].view = true;
     }
   }
   return out;
@@ -67,7 +74,7 @@ function permsFor(roleId, rows = []) {
 function parsePerm(perm) {
   if (perm === 'any') return { any: true };
   const [section, action] = String(perm).split(':');
-  if (!SECTION_KEYS.includes(section) || !ACTIONS.includes(action)) throw new Error(`unknown permission "${perm}"`);
+  if (!SECTION_KEYS.includes(section) || !actionsOf(section).includes(action)) throw new Error(`unknown permission "${perm}"`);
   return { section, action };
 }
 
@@ -75,4 +82,4 @@ const can = (perms, section, action = 'view') => Boolean(perms && perms[section]
 /** Super admin or Admin (every right, always; they sign anything) */
 const isAdminRole = (roleId) => Number(roleId) === SUPERADMIN_ROLE_ID || Number(roleId) === ADMIN_ROLE_ID;
 
-module.exports = { ACTIONS, SECTIONS, SECTION_KEYS, VIEW_ONLY, ADMIN_ROLE_ID, SUBADMIN_ROLE_ID, SUPERADMIN_ROLE_ID, BUILTIN, permsFor, parsePerm, can, isAdminRole };
+module.exports = { ACTIONS, EXTRA, EXTRA_KEYS, PERM_COLS, actionsOf, SECTIONS, SECTION_KEYS, VIEW_ONLY, ADMIN_ROLE_ID, SUBADMIN_ROLE_ID, SUPERADMIN_ROLE_ID, BUILTIN, permsFor, parsePerm, can, isAdminRole };

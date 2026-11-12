@@ -255,19 +255,29 @@ function register({ route, tx, db, by, InputError, canDo, commerceGate }) {
   }), G);
 
   // ============================================================================================ GST
+  // the recorded expenses of a month whose GST can be claimed (phase 23): the ITC on expenses in GSTR-3B input
+  const itcRows = async (m, sc) => {
+    const [w, wp] = godowns.where('e.godown_id', sc);
+    const [r] = await db.query(`SELECT e.expense_no, DATE_FORMAT(e.exp_date, '%Y-%m-%d') AS date, e.payee_name, e.gstin, COALESCE(h.name, e.head_key) AS head, e.amount, e.gst_rate, e.gst_amount, e.inter_state
+        FROM expenses e LEFT JOIN expense_heads h ON h.head_key = e.head_key
+        WHERE e.status = 'done' AND e.itc = 1 AND DATE_FORMAT(e.exp_date, '%Y-%m') = ? AND ${w} ORDER BY e.exp_date, e.expense_no`, [m, ...wp])
+      .catch((e) => { if (e.code === 'ER_NO_SUCH_TABLE') return [[]]; throw e; });
+    return r.map((x) => ({ ...x, amount: Number(x.amount), gst_rate: Number(x.gst_rate), gst_amount: Number(x.gst_amount), inter_state: Boolean(x.inter_state) }));
+  };
   const monthOf = (req) => { const m = String(req.query.month || pricing.istToday().slice(0, 7)); if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(m)) throw new InputError('Month: like 2026-10'); return m; };
   route('get', '/gst/month', 'invoicing:view', wrap(async (req) => {
     const m = monthOf(req);
     const sc = godowns.viewScope(req);
     const g1 = await reports.gst(db, { from: `${m}-01`, to: require('./books').lastDay(m), scope: sc }); // eslint-disable-line global-require
     const b3 = await billing.gstr3b(db, m, sc);
+    const itcExpenses = await itcRows(m, sc);
     const [[cnt]] = await db.query(`SELECT (SELECT COUNT(*) FROM invoices i JOIN orders o ON o.order_id = i.order_id WHERE DATE_FORMAT(CONVERT_TZ(i.issued_at, '+00:00', '+05:30'), '%Y-%m') = ? AND NOT (i.status = 'cancelled' AND i.cancel_kind = 'alone') AND ${godowns.where('o.godown_id', sc)[0]}) AS inv,
         (SELECT COUNT(*) FROM credit_notes cn JOIN invoices i ON i.invoice_id = cn.invoice_id JOIN orders o ON o.order_id = i.order_id WHERE cn.status = 'done' AND DATE_FORMAT(CONVERT_TZ(cn.issued_at, '+00:00', '+05:30'), '%Y-%m') = ? AND ${godowns.where('o.godown_id', sc)[0]}) AS cn,
         (SELECT COUNT(*) FROM debit_notes d WHERE d.status = 'done' AND DATE_FORMAT(CONVERT_TZ(d.issued_at, '+00:00', '+05:30'), '%Y-%m') = ? AND ${godowns.where('d.godown_id', sc)[0]}) AS dn`,
     [m, ...godowns.where('o.godown_id', sc)[1], m, ...godowns.where('o.godown_id', sc)[1], m, ...godowns.where('d.godown_id', sc)[1]]);
     const months = []; let d = new Date(`${pricing.istToday().slice(0, 7)}-01T00:00:00Z`);
     for (let i = 0; i < 7; i += 1) { months.push(d.toISOString().slice(0, 7)); d = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - 1, 1)); }
-    return { month: m, months, counts: { invoices: Number(cnt.inv), credit_notes: Number(cnt.cn), debit_notes: Number(cnt.dn) }, gstr3b: b3, tables: g1.tables.filter((t) => ['b2b', 'b2cl', 'b2cs', 'cdnr', 'cdnur', 'hsn'].includes(t.key)), checks: g1.checks, can: { export: canDo(req, 'invoicing', 'export') } };
+    return { month: m, months, counts: { invoices: Number(cnt.inv), credit_notes: Number(cnt.cn), debit_notes: Number(cnt.dn) }, gstr3b: b3, itc_expenses: itcExpenses, tables: g1.tables.filter((t) => ['b2b', 'b2cl', 'b2cs', 'cdnr', 'cdnur', 'hsn'].includes(t.key)), checks: g1.checks, can: { export: canDo(req, 'invoicing', 'export') } };
   }), G);
   route('get', '/gst/month.csv', 'invoicing:export', async (req, res) => {
     const m = monthOf(req);
@@ -284,6 +294,12 @@ function register({ route, tx, db, by, InputError, canDo, commerceGate }) {
     T('hsn').forEach((x) => rows.push(['HSN', x.hsn, '', '', '', x.rate, x.taxable, x.igst, x.cgst, x.sgst, `${x.qty} packs`]));
     rows.push(['3B output', '', '', '', '', '', b3.output.taxable, b3.output.igst, b3.output.cgst, b3.output.sgst, b3.output.tax]);
     rows.push(['3B input', `${b3.input.bills} supplier bills`, '', '', '', '', b3.input.taxable, b3.input.igst, b3.input.cgst, b3.input.sgst, b3.input.tax]);
+    // phase 23: the ITC on expenses inside 3B input, one row per expense, then the month total (none: no rows, as before)
+    for (const x of await itcRows(m, sc)) {
+      const h = x.inter_state ? 0 : Math.round((x.gst_amount / 2) * 100) / 100;
+      rows.push(['3B input ITC on expense', x.expense_no, x.date, x.gstin || '', '', x.gst_rate, x.amount, x.inter_state ? x.gst_amount : 0, h, x.inter_state ? 0 : Math.round((x.gst_amount - h) * 100) / 100, x.gst_amount]);
+    }
+    if (b3.input.parts.expenses.count) { const e = b3.input.parts.expenses; rows.push(['3B input ITC on expenses total', `${e.count} expenses`, '', '', '', '', e.taxable, e.igst, e.cgst, e.sgst, e.tax]); }
     rows.push(['3B to pay', '', '', '', '', '', '', b3.to_pay.igst, b3.to_pay.cgst, b3.to_pay.sgst, b3.to_pay.tax]);
     const { audit } = require('./audit'); // eslint-disable-line global-require
     await audit(db, { empId: by(req), action: 'export', entity: 'gst', entityId: m, after: { rows: rows.length - 1 } });

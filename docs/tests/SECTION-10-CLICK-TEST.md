@@ -16,8 +16,10 @@ happened, and stop there.
 1. **Money > Billing > Invoices**: tabs To invoice, Unpaid, Paid, Cancelled. A yellow banner says which company facts
    (GSTIN, PAN, bank) are not filled in yet. **To invoice** lists only packed orders with no invoice: order, customer,
    what is packed (with the first pack's photo), delivery and "Packed".
-2. Try to dispatch one of them without an invoice when it needs papers (step 8): "Missing before the goods leave: ...".
-   Without papers needed, leaving makes the invoice by itself, as before.
+2. Try to dispatch one of them without an invoice: "Not ready to leave. Make the invoice for DFO-... first" (phase 23,
+   v23: no goods leave without an invoice). Admin > Switches > Delivery "Invoice made at the gate" on (a second Admin
+   signs it): leaving makes the invoice by itself, and when it needs papers (step 8) it says "Missing before the goods
+   leave: ..." and nothing leaves.
 3. **Make invoice** on the customer with a GSTIN: "B2B tax invoice to ... · GSTIN ...", the number it will get, place of
    supply (CGST + SGST or IGST), due (credit days, or cash on delivery), the lines with GST, the totals. Change the
    invoice date to an earlier day: the lines follow the GST rate of that date. A date before the order or after today

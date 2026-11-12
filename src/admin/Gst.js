@@ -1,6 +1,7 @@
 // GST (phase 21, v23 viewGstr / viewEinv / viewEwb; API /gst/* in money-routes.js, figures from reports.gst and
 // billing.gstr3b). GSTR-1 / GSTR-3B data per month for the CA: the 3B summary (output = invoices - credit notes + debit
-// notes; input = the month's supplier bills; to pay = output - input, a negative is credit carried forward), then the
+// notes; input = the month's supplier bills plus the ITC on expenses (phase 23, its own rows and month total); to pay =
+// output - input, a negative is credit carried forward), then the
 // GSTR-1 registers (B2B, B2C, credit and debit notes, HSN summary) and the CSV for the CA. E-invoice: B2B invoices with
 // their IRN (typed from the portal; no live connection yet). E-way bill: invoices above the limit (alone or as the
 // day's load to one customer from one godown) with the number, valid until and the vehicle.
@@ -35,10 +36,19 @@ export function GstMonth() {
           <table className="a-table"><thead><tr><th /><th className="a-num">Taxable</th><th className="a-num">IGST</th><th className="a-num">CGST</th><th className="a-num">SGST</th><th className="a-num">Total tax</th></tr></thead>
             <tbody>
               <tr><td><b>Output (sales less credit notes)</b></td><td className="a-num">{money(d.gstr3b.output.taxable)}</td><td className="a-num">{money(d.gstr3b.output.igst)}</td><td className="a-num">{money(d.gstr3b.output.cgst)}</td><td className="a-num">{money(d.gstr3b.output.sgst)}</td><td className="a-num"><b>{tax(d.gstr3b.output)}</b></td></tr>
-              <tr><td><b>Input (supplier bills, section 3)</b></td><td className="a-num">{money(d.gstr3b.input.taxable)}</td><td className="a-num">{money(d.gstr3b.input.igst)}</td><td className="a-num">{money(d.gstr3b.input.cgst)}</td><td className="a-num">{money(d.gstr3b.input.sgst)}</td><td className="a-num"><b>{tax(d.gstr3b.input)}</b></td></tr>
+              {d.gstr3b.input.parts && <tr><td>{`Input: supplier bills (${d.gstr3b.input.parts.bills.count} bill${d.gstr3b.input.parts.bills.count === 1 ? "" : "s"})`}</td><td className="a-num">{money(d.gstr3b.input.parts.bills.taxable)}</td><td className="a-num">{money(d.gstr3b.input.parts.bills.igst)}</td><td className="a-num">{money(d.gstr3b.input.parts.bills.cgst)}</td><td className="a-num">{money(d.gstr3b.input.parts.bills.sgst)}</td><td className="a-num">{money(d.gstr3b.input.parts.bills.tax)}</td></tr>}
+              {d.gstr3b.input.parts && <tr><td>{`Input: ITC on expenses (${d.gstr3b.input.parts.expenses.count} expense${d.gstr3b.input.parts.expenses.count === 1 ? "" : "s"})`}</td><td className="a-num">{money(d.gstr3b.input.parts.expenses.taxable)}</td><td className="a-num">{money(d.gstr3b.input.parts.expenses.igst)}</td><td className="a-num">{money(d.gstr3b.input.parts.expenses.cgst)}</td><td className="a-num">{money(d.gstr3b.input.parts.expenses.sgst)}</td><td className="a-num">{money(d.gstr3b.input.parts.expenses.tax)}</td></tr>}
+              <tr><td><b>Input total</b></td><td className="a-num">{money(d.gstr3b.input.taxable)}</td><td className="a-num">{money(d.gstr3b.input.igst)}</td><td className="a-num">{money(d.gstr3b.input.cgst)}</td><td className="a-num">{money(d.gstr3b.input.sgst)}</td><td className="a-num"><b>{tax(d.gstr3b.input)}</b></td></tr>
               <tr><td><b>To pay (output less input)</b></td><td /><td className="a-num">{money(d.gstr3b.to_pay.igst)}</td><td className="a-num">{money(d.gstr3b.to_pay.cgst)}</td><td className="a-num">{money(d.gstr3b.to_pay.sgst)}</td><td className="a-num"><b>{money(d.gstr3b.to_pay.tax)}</b></td></tr>
             </tbody></table>
-          <p className="a-hint-s a-p21-pad">A negative &quot;to pay&quot; is credit carried forward. The CA sets IGST against CGST and SGST in the return. Expense GST (section 17) is not built yet.</p>
+          <p className="a-hint-s a-p21-pad">A negative &quot;to pay&quot; is credit carried forward. The CA sets IGST against CGST and SGST in the return. Input includes the GST on recorded expenses that can be claimed (a supplier GSTIN and a head that allows it), listed below.</p>
+        </div>
+        <div className="a-card a-p21-card">
+          <div className="a-p21-ch"><h2>ITC on expenses</h2><Pill tone="gray">{(d.itc_expenses || []).length}</Pill></div>
+          {(d.itc_expenses || []).length ? <table className="a-table"><thead><tr><th>Expense</th><th>Date</th><th>Payee and head</th><th>GSTIN</th><th className="a-num">Rate</th><th className="a-num">Taxable</th><th className="a-num">GST (ITC)</th></tr></thead>
+            <tbody>{d.itc_expenses.map((x) => <tr key={x.expense_no}><td className="a-mono">{x.expense_no}</td><td>{x.date}</td><td><b>{x.payee_name}</b><small className="a-muted a-p15-sub">{x.head}{x.inter_state ? ' · IGST' : ''}</small></td><td className="a-mono">{x.gstin}</td><td className="a-num">{x.gst_rate}%</td><td className="a-num">{money(x.amount)}</td><td className="a-num">{money(x.gst_amount)}</td></tr>)}</tbody>
+            <tfoot><tr><td><b>Month total</b></td><td /><td /><td /><td /><td className="a-num"><b>{money(d.gstr3b.input.parts.expenses.taxable)}</b></td><td className="a-num"><b>{money(d.gstr3b.input.parts.expenses.tax)}</b></td></tr></tfoot></table>
+            : <p className="a-hint-s a-p21-pad">No recorded expense with claimable GST this month (Money &gt; Expenses).</p>}
         </div>
         <div className="a-card a-p21-card">
           <div className="a-p21-ch"><h2>GSTR-1: B2B</h2><Pill tone="gray">{b2b.rows.length}</Pill></div>

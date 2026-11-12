@@ -49,7 +49,11 @@ happened, and stop there.
     says so, the packs are free to sell again and the salesperson gets the "Stock hold ended" message. **Hold again**
     holds what is free now.
 16. Cancel a confirmed order with no reason: "Say why the order is cancelled". With a reason: cancelled, the held packs
-    free again. Cancelling an order that has left the godown waits for approval.
+    free again. Cancelling an order that has left the godown waits for approval. When it is approved (phase 23, v23):
+    the invoice is cancelled with a credit note, and Returns > Return requests has a new return "Order cancelled after
+    dispatch" in Collecting with the packs that left (nothing goes back on a shelf while they are on the vehicle).
+    Receive them (scan) and inspect: they go to the Returned or Damaged shelf, and the return closes with no refund
+    ("Inspected and closed (the order was cancelled; no refund)"), no second credit note.
 17. As the Sales person: only orders and quotes of their own customers show.
 
 ## Part C - Back-orders and standing orders

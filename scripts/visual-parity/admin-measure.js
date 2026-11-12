@@ -65,7 +65,8 @@ const PARTS = {
     'enquiries', 'follow-ups', 'customer list', 'customer types', 'credit limits', 'customer ledger', 'quotes', 'orders', 'standing orders', 'back-orders',
     'to pick', 'packing', 'packed waiting', 'trips', 'courier and pickup', 'proof of delivery', 'failed short refused', 'cash on delivery', 'vehicles', 'couriers', 'delivery areas',
     'invoices', 'credit notes', 'debit notes', 'delivery challans', 'receipts', 'refunds', 'cheque register', 'gst data', 'e-invoice', 'e-way bill',
-    'return requests', 'inspection', 'offers', 'coupons', 'cashback rules', 'customer wallets'].map((k) => [`${k} page`, [['#page', '.a-main'], [
+    'return requests', 'inspection', 'offers', 'coupons', 'cashback rules', 'customer wallets',
+    'alerts', 'dashboard', 'expenses', 'petty cash', 'export to accountant', 'export history', 'sales and purchases', 'stock report', 'money owed', 'gst and delivery'].map((k) => [`${k} page`, [['#page', '.a-main'], [
     ['page', '#page', '.a-main'], ['crumb', '.crumb', '.a-crumb'], ['title', '.ph h1', '.a-ph h1'], ['subtitle', '.ph p', '.a-ph p'],
     ['rule chips', '.rchips', '.a-rchips'], ['rule chip', '.rchips .pill', '.a-rchips .a-pill'], ['primary button', '.ph .acts .btn.primary', '.a-ph-acts .a-btn:not(.a-btn-ghost)'],
     ['card', '#page .card', k === 'roles' ? '.a-main .a-roleedit' : '.a-main .a-listcard, .a-main .a-card'], ['th', '#page table.t th', '.a-main .a-table th'], ['td', '#page table.t tbody td', '.a-main .a-table tbody td'],
@@ -155,7 +156,10 @@ const OUR_PATH = { 'list page': 'commerce/orders', 'godowns page': 'godowns', 's
   'invoices page': 'invoices', 'credit notes page': 'credit-notes', 'debit notes page': 'debit-notes', 'delivery challans page': 'delivery-challans', 'receipts page': 'receipts',
   'refunds page': 'refunds', 'cheque register page': 'cheque-register', 'gst data page': 'gst-data', 'e-invoice page': 'e-invoice', 'e-way bill page': 'e-way-bill', // phase 21
   'return requests page': 'return-requests', 'inspection page': 'inspection', 'offers page': 'offers', 'coupons page': 'coupons', 'cashback rules page': 'cashback-rules',
-  'customer wallets page': 'customer-wallets' }; // phase 22
+  'customer wallets page': 'customer-wallets', // phase 22
+  'alerts page': 'alerts', 'dashboard page': 'commerce/ops', 'expenses page': 'expenses', 'petty cash page': 'petty-cash', 'export to accountant page': 'export-to-accountant',
+  'export history page': 'export-history', 'sales and purchases page': 'sales-and-purchases', 'stock report page': 'stock-report', 'money owed page': 'money-owed',
+  'gst and delivery page': 'gst-and-delivery' }; // phase 23
 // v23's page per part (default: the Customer list)
 const V23_PAGE = { 'godowns page': 'admin/organisation/godowns', 'staff page': 'admin/users-and-security/staff', 'roles page': 'admin/users-and-security/roles',
   'approval rules page': 'admin/users-and-security/approval-rules', 'stand-ins page': 'admin/users-and-security/stand-ins',
@@ -186,7 +190,10 @@ const V23_PAGE = { 'godowns page': 'admin/organisation/godowns', 'staff page': '
   'receipts page': 'money/payments/receipts', 'refunds page': 'money/payments/refunds', 'cheque register page': 'money/payments/cheque-register', 'gst data page': 'gst/gstr-1-gstr-3b-data',
   'e-invoice page': 'gst/e-invoice', 'e-way bill page': 'gst/e-way-bill', // phase 21
   'return requests page': 'sales/returns/return-requests', 'inspection page': 'sales/returns/inspection', 'offers page': 'marketing/offers', 'coupons page': 'marketing/coupons',
-  'cashback rules page': 'marketing/cashback-rules', 'customer wallets page': 'marketing/customer-wallets' }; // phase 22
+  'cashback rules page': 'marketing/cashback-rules', 'customer wallets page': 'marketing/customer-wallets', // phase 22
+  'alerts page': 'home/alerts', 'dashboard page': 'home/dashboard', 'expenses page': 'money/expenses/expenses', 'petty cash page': 'money/expenses/petty-cash',
+  'export to accountant page': 'money/accounting-export/export-to-accountant', 'export history page': 'money/accounting-export/export-history',
+  'sales and purchases page': 'reports/sales-and-purchases', 'stock report page': 'reports/stock', 'money owed page': 'reports/money-owed', 'gst and delivery page': 'reports/gst-and-delivery' }; // phase 23
 // ONLY=part,part limits the run (e.g. ONLY="godowns page,staff page")
 const ONLY = process.env.ONLY ? process.env.ONLY.split(',').map((x) => x.trim()) : null;
 async function ourPage(browser, w, h, part) {

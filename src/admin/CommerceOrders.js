@@ -279,7 +279,7 @@ function CancelPanel({ order, onDone }) {
   return (
     <div className="a-p16-endbox">
       <b>Cancel order</b>
-      <p className="a-muted">{after ? (order.cancelNeedsApproval ? 'The goods have left the godown: cancelling waits for approval. When approved the goods come back to stock and the invoice is cancelled with a credit note.' : 'The goods have left: they come back to stock and the invoice is cancelled with a credit note.')
+      <p className="a-muted">{after ? (order.cancelNeedsApproval ? 'The goods have left the godown: cancelling waits for approval. When approved the invoice is cancelled with a credit note and a return "To collect" is opened for the goods (Returns > Return requests): they come back on the Returned shelf when received and inspected.' : 'The goods have left: the invoice is cancelled with a credit note and a return "To collect" is opened for the goods (Returns > Return requests).')
         : 'Reserved stock is released; coupon use and wallet credit are given back.'}{Number(order.amount_paid) > 0 ? ` ${rs(order.amount_paid)} was paid: record the refund on the order afterwards.` : ''}</p>
       {act.note}
       <label className="a-field"><span>Why is it cancelled? *</span><textarea rows={2} maxLength={255} value={reason} onChange={(e) => setReason(e.target.value)} /></label>
@@ -673,11 +673,11 @@ function OrderForm({ order = null, onClose, onSaved }) {
                 {P && P.coupon && <small className="a-ok" role="status">{P.coupon.code}: {P.coupon.kind === 'free_delivery' ? `delivery charge ${rs(P.coupon.delivery_waived)} waived` : `- ${rs(P.coupon.discount)}`}
                   {P.coupon.capped ? ` (capped at ${rs(P.coupon.cap)})` : ''}{P.coupon.excluded.length ? `; not on ${P.coupon.excluded.join(', ')} (excluded)` : ''}</small>}
               </label>
-              <label className="a-field"><span>Use wallet {customer ? `(usable ${rs(P ? P.wallet.usable : customer.wallet)})` : ''}</span>
+              {(f.walletOn !== false || Number(wallet) > 0) && <label className="a-field"><span>Use wallet {customer ? `(usable ${rs(P ? P.wallet.usable : customer.wallet)})` : ''}</span>
                 <input type="number" min="0" step="1" value={wallet} aria-label="Use wallet" disabled={!customer || (P ? P.wallet.usable <= 0 : customer.wallet <= 0)} onChange={(e) => setWallet(e.target.value)} placeholder={customer ? 'Amount' : 'Choose the customer'} />
-                {P && <small className="a-muted">At most {P.wallet.max_pct}% of the order: {rs(P.wallet.cap)}. Under GST: {P.wallet.gst === 'discount' ? 'cashback and manual credit lower the taxable value; refunds count as paid' : 'the wallet counts as a payment'}.</small>}
+                {P && <small className="a-muted">At most {P.wallet.max_pct}% of the lines with no offer: {rs(P.wallet.cap)}. Under GST: {P.wallet.gst === 'discount' ? 'cashback and manual credit lower the taxable value; refunds count as paid' : 'the wallet counts as a payment'}.</small>}
                 {pv && pv.wallet_error && <small className="a-bad" role="alert">{pv.wallet_error}</small>}
-              </label>
+              </label>}
             </div>
             {f.manualDiscount && (
               <div className="a-grid2">
@@ -719,7 +719,7 @@ function OrderForm({ order = null, onClose, onSaved }) {
             <h3>Payment</h3>
             <div className="a-grid2">
               <label className="a-field"><span>Payment terms</span>
-                <select value={terms} aria-label="Payment terms" onChange={(e) => setTerms(e.target.value)}>{Object.entries(f.terms).map(([k, v]) => <option key={k} value={k}>{v}{k === 'credit' && customer ? ` (${customer.credit_days} days)` : ''}</option>)}</select>
+                <select value={terms} aria-label="Payment terms" onChange={(e) => setTerms(e.target.value)}>{Object.entries(editing && order.payment_terms === 'credit' && !f.terms.credit ? { ...f.terms, credit: 'On credit (kept: credit sales are off)' } : f.terms).map(([k, v]) => <option key={k} value={k}>{v}{k === 'credit' && customer ? ` (${customer.credit_days} days)` : ''}</option>)}</select>
               </label>
             </div>
             {!editing && (

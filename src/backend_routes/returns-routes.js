@@ -62,7 +62,7 @@ function register({ route, db, InputError, canDo, commerceGate }) {
     }
     const s = await commerceSettings.read(db);
     return { tab, tabs: TAB_LABEL, counts, rows: await rowsOf(req, TAB[tab], []), window_days: Number(s.return_window_days) || 0,
-      can: { create: canDo(req, 'returns', 'create'), edit: canDo(req, 'returns', 'edit'), inspect: canDo(req, 'inventory', 'edit') } };
+      can: { create: canDo(req, 'returns', 'create'), edit: canDo(req, 'returns', 'edit'), inspect: canDo(req, 'returns', 'inspect') } };
   }, G);
   // the delivered orders a new return can be made on (the New return picker)
   route('get', '/sales/returns/orders', 'returns:create', async (req) => {
@@ -82,11 +82,11 @@ function register({ route, db, InputError, canDo, commerceGate }) {
     const [waits] = await db.query("SELECT approval_id, summary, payload FROM approvals WHERE kind = 'restock' AND status = 'pending' ORDER BY approval_id");
     return { shelf: shelf.map((x) => ({ ...x, packs: Number(x.packs) })), on_shelf: shelf.reduce((a, x) => a + Number(x.packs), 0),
       to_inspect: await rowsOf(req, TAB.to_inspect, []), deciding: await rowsOf(req, TAB.deciding, []),
-      resell_waiting: waits.map((w) => ({ approval_id: w.approval_id, summary: w.summary })), can: { inspect: canDo(req, 'inventory', 'edit'), decide: canDo(req, 'returns', 'edit') } };
+      resell_waiting: waits.map((w) => ({ approval_id: w.approval_id, summary: w.summary })), can: { inspect: canDo(req, 'returns', 'inspect'), decide: canDo(req, 'returns', 'edit') } };
   }, G);
 
   // ============================================================================================ wallets
-  route('get', '/marketing/wallets', 'promotions:view', async (req) => {
+  async function walletRows(req) {
     const s = await commerceSettings.read(db); // the wallet has no switch of its own here: it is on with Commerce
     const sc = godowns.viewScope(req);
     const [gw, gp] = godowns.where('c.godown_id', sc);
@@ -112,10 +112,23 @@ function register({ route, db, InputError, canDo, commerceGate }) {
       const [[kept]] = await db.query("SELECT COALESCE(SUM(wallet_used), 0) AS n FROM orders WHERE customer_id = ? AND status IN ('draft', 'approval', 'new', 'packing', 'packed')", [c.customer_id]);
       rows.push({ customer_id: c.customer_id, customer_no: c.customer_no, name: c.name, usable: r2(bal), pending, expiring: r2(exp.n), first_expiry: exp.first ? new Date(exp.first).toISOString().slice(0, 10) : null, kept: r2(kept.n) });
     }
+    return { s, rows };
+  }
+  route('get', '/marketing/wallets', 'promotions:view', async (req) => {
+    const { s, rows } = await walletRows(req);
     const tot = (k) => r2(rows.reduce((a, x) => a + x[k], 0));
-    return { max_use_pct: Number(s.wallet_max_use_pct) || 0, rows,
+    return { wallet_on: s.wallet_enabled !== false, max_use_pct: Number(s.wallet_max_use_pct) || 0, rows,
       totals: { usable: tot('usable'), pending: tot('pending'), expiring: tot('expiring'), kept: tot('kept') },
-      can: { manual: canDo(req, 'promotions', 'create') && !own(req) } };
+      can: { manual: canDo(req, 'promotions', 'create') && !own(req), export: canDo(req, 'promotions', 'export') } };
+  }, G);
+  // phase 23 (v23 wExport): the wallets as a CSV for whoever has Export on Promotions
+  route('get', '/marketing/wallets.csv', 'promotions:export', async (req, res) => {
+    const { rows } = await walletRows(req);
+    const cell = (v) => (/[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
+    const body = [['Customer no', 'Customer', 'Usable', 'Pending', 'Runs out in 30 days', 'First expiry', 'Kept for open orders'],
+      ...rows.map((x) => [x.customer_no, x.name, x.usable.toFixed(2), x.pending.toFixed(2), x.expiring.toFixed(2), x.first_expiry || '', x.kept.toFixed(2)])].map((r) => r.map(cell).join(',')).join('\r\n');
+    res.set({ 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="dfresh-wallets-${pricing.istToday()}.csv"`, 'Cache-Control': 'no-store' });
+    res.send(`\ufeff${body}\r\n`);
   }, G);
   void InputError;
 }

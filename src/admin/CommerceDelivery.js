@@ -16,8 +16,9 @@ import { barcodeSvg, esc, printPage, rs } from './printKit';
 const placeLine = (x) => [x.ship_address, [x.ship_town, x.ship_pincode].filter(Boolean).join(' ')].filter(Boolean).join(', ');
 const r2 = (n) => Math.round(Number(n || 0) * 100) / 100;
 const shortTrip = (t) => t.status === 'ended' && Number(t.cash_handed) < Number(t.cash_collected) - 0.005;
-const TRIP_TONE = { planned: ['Planned', 'gray'], out: ['On the road', 'info'], cashshort: ['Cash short', 'warn'], ended: ['Closed', 'good'] };
-const tripKey = (t) => (shortTrip(t) ? 'cashshort' : t.status);
+// phase 23 (v23 tripStatus): a trip whose cash is short waits for a second person (cashwait) before it closes
+const TRIP_TONE = { planned: ['Planned', 'gray'], out: ['On the road', 'info'], cashwait: ['Cash short, waiting', 'warn'], ended: ['Closed', 'good'] };
+const tripKey = (t) => (TRIP_TONE[t.status] ? t.status : 'ended');
 const tripPill = (t) => { const [l, tone] = TRIP_TONE[tripKey(t)]; return <Pill tone={tone}>{l}</Pill>; };
 const stopKind = (s) => (s.status === 'delivered' && s.not_kept ? 'short' : s.status);
 const STOP_TONE = { pending: ['On the way', 'info'], delivered: ['Delivered', 'good'], short: ['Delivered short', 'warn'], refused: ['Refused', 'bad'], failed: ['Not delivered', 'bad'], picked_up: ['Picked up', 'good'] };
@@ -137,7 +138,8 @@ export function TripBody({ id, office = false, packed = [], onChanged, onDeleted
   const openN = d.stops.filter((s) => s.status === 'pending').length;
   const close = () => act.run(async () => {
     const r = await api.send('POST', `/commerce/trips/${id}/end`, end);
-    toast(r.difference < 0 ? 'warn' : 'good', `Trip T-${id} closed`, `Recorded ${rs(r.cash_collected)}, handed in ${rs(r.cash_handed)}${r.difference ? `; ${r.difference < 0 ? 'short' : 'over'} by ${rs(Math.abs(r.difference))} (flagged)` : ''}.`);
+    if (r.status === 'cashwait') toast('warn', `Trip T-${id}: cash short, waiting`, r.message);
+    else toast(r.difference < 0 ? 'warn' : 'good', `Trip T-${id} closed`, `Recorded ${rs(r.cash_collected)}, handed in ${rs(r.cash_handed)}${r.difference ? `; ${r.difference < 0 ? 'short' : 'over'} by ${rs(Math.abs(r.difference))} (flagged)` : ''}.`);
     reload();
   });
   const kgp = d.max_kg ? Math.round((d.load.kg / d.max_kg) * 100) : 0; const bxp = d.max_boxes ? Math.round((d.load.boxes / d.max_boxes) * 100) : 0;
@@ -153,7 +155,8 @@ export function TripBody({ id, office = false, packed = [], onChanged, onDeleted
       <dl className="a-kv"><dt>Godown</dt><dd>{d.godown}</dd><dt>Vehicle</dt><dd>{d.vehicle} · {d.vehicle_type}</dd><dt>Driver</dt><dd>{d.driver}{d.driver_phone && <> · <a href={`tel:${d.driver_phone.replace(/\s/g, '')}`}>{d.driver_phone}</a></>}</dd>
         <dt>Date</dt><dd>{d.trip_date}{d.started_at ? ` · left ${at(d.started_at)}` : ''}{d.ended_at ? ` · closed ${at(d.ended_at)}` : ''}</dd>
         <dt>Load</dt><dd>{d.load.kg}{d.max_kg !== null ? ` of ${d.max_kg}` : ''} kg {d.max_kg ? <span className="a-meter a-p20-meter"><span style={{ width: `${Math.min(100, kgp)}%` }} className={meterTone(kgp)} /></span> : null} · {d.load.boxes}{d.max_boxes !== null ? ` of ${d.max_boxes}` : ''} boxes{bxp > 100 ? ' (over)' : ''}</dd></dl>
-      {shortTrip(d) && <Alert tone="warn" title={`Cash short by ${rs(Number(d.cash_collected) - Number(d.cash_handed))}.`}>{d.end_note || 'Flagged to the office.'}</Alert>}
+      {shortTrip(d) && <Alert tone="warn" title={`Cash short by ${rs(Number(d.cash_collected) - Number(d.cash_handed))}.`}>{d.end_note || 'Approved by a second person.'}</Alert>}
+      {d.status === 'cashwait' && <Alert tone="warn" title="Cash short, waiting for a second person.">Recorded {rs(d.cash_collected)}, handed in {rs(d.cash_handed)}{d.end_note ? ` (${d.end_note})` : ''}. Home &gt; Approvals: approved, the trip closes; rejected, it goes back on the road to count the cash again.</Alert>}
       <h3 className="a-h3s">Stops</h3>
       <div className="a-scroll"><table className="a-table a-p16-dt"><thead><tr><th>#</th><th>Customer and order</th><th className="a-num">Boxes</th><th className="a-num">Cash due</th><th>Status</th><th /></tr></thead>
         <tbody>{d.stops.map((s, i) => (

@@ -4,13 +4,13 @@
 //   one. The choice is remembered per person (localStorage) and sent with every API call (adminApi setGodown, header
 //   X-Godown), which narrows every list and figure; changing it reloads the page so everything on it follows.
 // - Alerts bell: what needs a look today from the counts the admin already loads (new enquiries, approvals waiting);
-//   the full alerts list comes in phase 23.
+//   phase 23: plus the unread alerts of Home > Alerts, and "Mark all alerts read" (the Alerts page itself is the list only, as v23).
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import LIcon from './ui/LIcon';
 import { Avatar } from './ui';
 import { can } from '../shared/permissions';
-import { setGodown } from './adminApi';
+import { api, setGodown } from './adminApi';
 
 const GODOWN_KEY = 'dfresh-admin-godown:'; // + emp_id
 const savedRaw = (emp) => { try { return window.localStorage.getItem(GODOWN_KEY + emp); } catch { return null; } };
@@ -58,7 +58,7 @@ function GodownPicker({ me }) {
   );
 }
 
-export default function HeaderBar({ me, newLeads, approvals, onLogout, children }) {
+export default function HeaderBar({ me, newLeads, approvals, alertCount = 0, onCounts, onLogout, children }) {
   const bell = useDropdown();
   const who = useDropdown();
   const seesLeads = can(me.perms, 'leads', 'view');
@@ -66,8 +66,10 @@ export default function HeaderBar({ me, newLeads, approvals, onLogout, children 
   const alerts = [
     seesLeads && newLeads > 0 && { to: '/admin/leads', icon: 'inbox', text: `${newLeads} new ${newLeads === 1 ? 'enquiry' : 'enquiries'}`, sub: 'Sales / Leads / Enquiries' },
     seesApprovals && approvals > 0 && { to: '/admin/approvals', icon: 'clipboard-check', text: `${approvals} ${approvals === 1 ? 'request waits' : 'requests wait'} for your decision`, sub: 'Home / Approvals' },
+    // phase 23: Home > Alerts (worked out live; unread ones counted)
+    seesApprovals && alertCount > 0 && { to: '/admin/alerts', icon: 'bell', text: `${alertCount} unread alert${alertCount === 1 ? '' : 's'}`, sub: 'Home / Alerts' },
   ].filter(Boolean);
-  const count = (seesLeads ? newLeads : 0) + (seesApprovals ? approvals : 0);
+  const count = (seesLeads ? newLeads : 0) + (seesApprovals ? alertCount : 0);
   return (
     <header className="a-head">
       {children}
@@ -94,6 +96,11 @@ export default function HeaderBar({ me, newLeads, approvals, onLogout, children 
                 <span><b>{a.text}</b><span>{a.sub}</span></span>
               </Link>
             )) : <p className="a-menu-empty">Nothing needs a look right now.</p>}
+            {seesApprovals && alertCount > 0 && (
+              <button type="button" role="menuitem" className="a-menu-item" onClick={() => api.send('POST', '/alerts/read-all').then(() => { bell.setOpen(false); if (onCounts) onCounts(); }, () => {})}>
+                <LIcon name="check" size="sm" />Mark all alerts read
+              </button>
+            )}
           </div>
         )}
       </div>

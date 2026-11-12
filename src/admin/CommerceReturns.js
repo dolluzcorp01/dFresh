@@ -206,8 +206,8 @@ export function ReturnDrawer({ no, onClose }) {
             </dl>
             <Lines d={d} />
             {!waitingWindow && <Collection d={d} onChanged={r.reload} />}
-            {!waitingWindow && d.can.receive && ['requested', 'collecting', 'received'].includes(d.status) && <Receive d={d} onChanged={r.reload} onDone={done} />}
-            {d.can.receive && d.lines.some((l) => SENT_BACK.includes(l.resell_state) && Number(l.qty_ok) > 0) && <Reinspect d={d} onDone={done} />}
+            {!waitingWindow && (d.can.receive || d.can.inspect) && ['requested', 'collecting', 'received'].includes(d.status) && <Receive d={d} onChanged={r.reload} onDone={done} />}
+            {d.can.inspect && d.lines.some((l) => SENT_BACK.includes(l.resell_state) && Number(l.qty_ok) > 0) && <Reinspect d={d} onDone={done} />}
             {d.can.decide && d.status === 'inspected' && d.lines.some((l) => l.left > 0) && <Decide d={d} onDone={done} />}
             {(d.refunds.length > 0 || d.credit_notes.length > 0) && (
               <>
@@ -336,13 +336,14 @@ function Receive({ d, onChanged, onDone }) {
       {act.note}
       {!insp && (
         <>
-          <form onSubmit={scan} className="a-packscan">
+          {d.can.receive && <form onSubmit={scan} className="a-packscan">
             <label className="a-field"><span>Scan each pack or carton (or type the code and press Enter)</span>
               <input ref={inputRef} value={code} aria-label="Return scan" autoComplete="off" placeholder="DF001-M100, DF044-M100/WW2509, DF001-M100#C" onChange={(e) => setCode(e.target.value)} /></label>
-          </form>
+          </form>}
           {last && <div className={`a-scanmsg ${last.result === 'ok' ? 'ok' : 'bad'}`} role="alert">{last.result === 'ok' ? 'OK ' : 'NOT COUNTED: '}{last.message}</div>}
           <p className="a-packprogress"><b>{got} of {need} packs received</b></p>
-          <button type="button" className="a-btn" disabled={act.busy || !got} onClick={startInspect}>Inspect{got < need ? ` (${need - got} not received)` : ''}</button>
+          {d.can.inspect ? <button type="button" className="a-btn" disabled={act.busy || !got} onClick={startInspect}>Inspect{got < need ? ` (${need - got} not received)` : ''}</button>
+            : <p className="a-muted">Inspecting needs the right &quot;Inspect returns&quot; (the Supervisor inspects).</p>}
         </>
       )}
       {insp && (

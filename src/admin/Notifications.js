@@ -7,7 +7,8 @@
 // Every message is an e-mail through the mail outbox (CLAUDE.md rule 7); WhatsApp and SMS have no provider yet.
 // View on Settings = everything read only; edit = switches, templates, test mail, retry, run now.
 import { useLocation } from 'react-router-dom';
-import { Loading, PageHead, useLoad } from './ui';
+import { Loading, PageHead, useAdmin, useLoad } from './ui';
+import { AlertSettings } from './Alerts';
 import NotifyEvents from './NotifyEvents';
 import MessageTemplates from './MessageTemplates';
 import Outbox from './Outbox';
@@ -34,11 +35,13 @@ export default function Notifications() {
   const asked = new URLSearchParams(useLocation().search).get('tab');
   const tab = PAGES[asked] ? asked : 'events';
   const d = data.data;
+  const { me } = useAdmin();
   return (
     <section className="a-nt">
       <PageHead sub={PAGES[tab].sub} rules={PAGES[tab].rules} />
       <Loading state={data}>
         {d && tab === 'events' && <NotifyEvents d={d} reload={data.reload} />}
+        {d && tab === 'events' && me && me.is_admin && <AlertSettings />}
         {d && tab === 'templates' && <MessageTemplates d={d} reload={data.reload} />}
         {d && tab === 'log' && <Outbox d={d} />}
       </Loading>

@@ -36,6 +36,7 @@ const { InputError } = entities;
 const permissions = require('../shared/permissions');
 const approvals = require('./approvals');
 const books = require('./books');
+const alerts = require('./alerts'); // phase 23: Home > Alerts
 const secondAdmin = require('./second-admin');
 const commerceSettings = require('./commerce-settings');
 const pricing = require('./pricing');
@@ -220,7 +221,49 @@ async function attention(langs) {
 // Sidebar badge (every page change): New leads.
 route('get', '/nav-counts', 'any', async (req) => {
   const [[r]] = await db.query("SELECT COUNT(*) AS n FROM leads WHERE status = 'new'");
-  return { newLeads: canDo(req, 'leads') ? Number(r.n) : 0, approvals: await approvals.countDecidable(req.admin) };
+  return { newLeads: canDo(req, 'leads') ? Number(r.n) : 0, approvals: await approvals.countDecidable(req.admin), alerts: await alertCount(req) };
+});
+
+// ---------------------------------------------------------------------------------------------
+// Home > Alerts (phase 23, alerts.js): live business alerts and the Admins' events; read, snooze, per-role types
+// ---------------------------------------------------------------------------------------------
+const alertCache = new Map(); // emp_id -> { at, list }: the bell asks often, the list is worked out at most every 30 s
+async function alertList(req, fresh = false) {
+  const c = alertCache.get(req.admin.emp_id);
+  if (!fresh && c && Date.now() - c.at < 30e3) return c.list;
+  if (!(await commerceOn())) return [];
+  const list = await alerts.forPerson(db, req.admin, { countDecidable: approvals.countDecidable });
+  alertCache.set(req.admin.emp_id, { at: Date.now(), list });
+  return list;
+}
+async function alertCount(req) {
+  try { return (await alertList(req)).filter((a) => !a.read).length; } catch (e) { console.error('[alerts]', e.message); return 0; }
+}
+route('get', '/alerts', 'any', async (req) => {
+  const list = await alertList(req, true);
+  return { alerts: list, unread: list.filter((a) => !a.read).length, can_settings: Boolean(req.admin.is_admin) };
+});
+route('post', '/alerts/mark', 'any', async (req) => {
+  const b = req.body || {};
+  const out = await alerts.mark(db, req.admin.emp_id, b.key, { read: Boolean(b.read), snooze: Boolean(b.snooze) });
+  alertCache.delete(req.admin.emp_id);
+  return out;
+});
+route('post', '/alerts/read-all', 'any', async (req) => {
+  for (const a of (await alertList(req, true)).filter((x) => !x.read)) await alerts.mark(db, req.admin.emp_id, a.key, { read: true });
+  alertCache.delete(req.admin.emp_id);
+  return { ok: true };
+});
+route('get', '/alerts/settings', 'any', async (req) => {
+  if (!req.admin.is_admin) throw new InputError('Only an Admin sets which alerts a role gets', 403);
+  return alerts.settings(db);
+});
+route('put', '/alerts/settings', 'any', async (req) => {
+  if (!req.admin.is_admin) throw new InputError('Only an Admin sets which alerts a role gets', 403);
+  const out = await tx((q) => alerts.saveSettings(q, req.body || {}, by(req)));
+  await audit(null, { empId: by(req), action: 'alert_settings', entity: 'role', entityId: String(out.role_id), after: out });
+  alertCache.clear();
+  return out;
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -1541,6 +1584,9 @@ route('put', '/users/:empId', 'users:edit', async (req) => tx(async (q) => {
     await notifications.adminAlert(q, { subject: `${back} brought back by the Super admin`, ref: `back ${before.emp_id}`, by: by(req),
       body: `${await empName(q, by(req))} (Super admin) brought ${back} back at once, as before they left: ${now.role_name}, limit ${now.limit_kind === 'role' ? 'role default' : now.limit_kind === 'amount' ? `Rs ${Number(now.limit_amount)}` : now.limit_kind}, ${Number(now.godowns_all) ? 'every godown' : 'their godowns'}. Anything wider waits for a second Admin.` });
   }
+  if (set.is_active === 0 && !permissions.isAdminRole(before.role_id)) { // phase 23: anyone marked as left shows in Admins' alerts (the e-mail is for an Admin only, as before)
+    await alerts.record(q, { kind: 'staff_left', title: `${await empName(q, before.emp_id)} marked as left`, body: `${await empName(q, by(req))} marked ${await empName(q, before.emp_id)} (${before.role_name}) as left; their open work was handed over.`, ref: `left ${before.emp_id}`, link: '/admin/staff' }, by(req));
+  }
   if (set.is_active === 0 && permissions.isAdminRole(before.role_id)) { // every Admin is told at once
     const gone = await empName(q, before.emp_id);
     const marker = await empName(q, by(req));
@@ -1930,7 +1976,7 @@ route('get', '/commerce/order-form', 'orders:view', async (req) => {
   const cs = await commerceSettings.read(db);
   return {
     customers: customers.map((c) => ({ ...c, wallet: Number(c.wallet), outstanding: Number(c.outstanding), overdue: Number(c.overdue), credit_limit: Number(c.credit_limit) })),
-    skus, stockByGodown, coupons, terms: commerce.TERMS, lists: await pricing.lists(db), basis: await pricing.basis(db), today, states: GST_STATES,
+    skus, stockByGodown, coupons, terms: cs.credit_sales === false ? { cod: commerce.TERMS.cod, advance: commerce.TERMS.advance } : commerce.TERMS, lists: await pricing.lists(db), basis: await pricing.basis(db), today, states: GST_STATES,
     kits: (await db.query("SELECT k.kit_key, k.kit_code, COALESCE(t.name, k.kit_key) AS name FROM kits k LEFT JOIN kit_translations t ON t.kit_key = k.kit_key AND t.lang_code = 'en' WHERE k.status = 'active' ORDER BY k.sort_order"))[0],
     sellerState: cs.invoice_seller_state_code, posRule: cs.place_of_supply_rule, roundOff: Boolean(cs.invoice_round_off), canOverride: canDo(req, 'orders', 'approve'),
     methods: (await db.query('SELECT method_id, label, kind FROM delivery_methods WHERE is_active = 1 ORDER BY sort_order, method_id'))[0],
@@ -1939,7 +1985,7 @@ route('get', '/commerce/order-form', 'orders:view', async (req) => {
     deliveryGstRate: Number(cs.delivery_charge_gst_rate) || 0,
     // phase 15 (D7): a typed price below the pack's lowest allowed price waits (price_floor); the list form shows it
     approval: { floor: (await approvals.rules(db)).some((r) => r.kind === 'price_floor' && r.is_on), credit: cs.approve_credit_order !== false, stock: cs.approve_over_available !== false },
-    manualDiscount: Boolean(cs.manual_discount_allowed), walletMaxPct: Number(cs.wallet_max_use_pct), walletGst: cs.cashback_gst_treatment === 'payment' ? 'payment' : 'discount',
+    manualDiscount: Boolean(cs.manual_discount_allowed), walletOn: cs.wallet_enabled !== false, walletMaxPct: Number(cs.wallet_max_use_pct), walletGst: cs.cashback_gst_treatment === 'payment' ? 'payment' : 'discount',
     discountLimit: cs.approve_discount_on ? Number(cs.approve_discount_pct_above) : null,
   };
 });
@@ -2462,7 +2508,7 @@ route('get', '/commerce/returns/:no', 'returns:view', async (req) => {
     waiting: appr.filter((a) => a.status === 'pending').map((a) => a.kind),
     methods: returns.METHODS, modes: commerce.modesOffered(cs), modeLabels: commerce.MODES,
     refundRule: { on: Boolean(cs.approve_refund_on), above: Number(cs.approve_refund_above) }, noRefundApproval: cs.approve_no_refund !== false, resell_on: Boolean(cs.returned_resell),
-    can: { receive: canDo(req, 'inventory', 'edit'), decide: canDo(req, 'returns', 'edit'), photo: canDo(req, 'returns', 'create') || canDo(req, 'inventory', 'edit') },
+    can: { receive: canDo(req, 'inventory', 'edit'), inspect: canDo(req, 'returns', 'inspect'), decide: canDo(req, 'returns', 'edit'), photo: canDo(req, 'returns', 'create') || canDo(req, 'inventory', 'edit') },
   };
 });
 route('post', '/commerce/returns/:no/photos', 'returns:view', async (req) => {
@@ -2484,11 +2530,12 @@ route('post', '/commerce/returns/:no/courier', 'returns:edit', async (req) => {
 route('post', '/commerce/returns/:no/scan', 'inventory:edit', async (req) => {
   try { return await tx((q) => returns.receiveScan(q, req.params.no, req.body.code, by(req))); } catch (e) { throw asReturn(e); }
 });
-route('post', '/commerce/returns/:no/inspect', 'inventory:edit', async (req) => {
+// phase 23: inspecting is its own right (Returns: Inspect returns; v23 the Supervisor inspects), receiving stays Inventory edit
+route('post', '/commerce/returns/:no/inspect', 'returns:inspect', async (req) => {
   try { return await tx((q) => returns.inspect(q, req.params.no, req.body || {}, by(req))); } catch (e) { throw asReturn(e); }
 });
 // phase 22 (v23 12.8): the resell packs whose "back to Good" was rejected are inspected again
-route('post', '/commerce/returns/:no/reinspect', 'inventory:edit', async (req) => {
+route('post', '/commerce/returns/:no/reinspect', 'returns:inspect', async (req) => {
   try { return await tx((q) => returns.reinspect(q, req.params.no, req.body || {}, by(req))); } catch (e) { throw asReturn(e); }
 });
 route('post', '/commerce/returns/:no/decide', 'returns:edit', async (req) => {
@@ -2567,7 +2614,7 @@ route('get', '/commerce/reports/:key', 'any', async (req) => {
   return { key: req.params.key, label: r.label, ...p, ...(await r.run(db, p, req)) };
 }, { before: [commerceGate] });
 const GST_DATE_TEXT = new Set(['date']);
-route('get', '/commerce/reports/:key/export.xlsx', 'any', async (req, res) => {
+route('get', '/commerce/reports/:key/export.xlsx', 'reports:export', async (req, res) => { // phase 23 (v23 16.4): Export follows the Export right on Reports
   const r = reportOf(req);
   const p = await scopeReport(req, reportParams(req));
   const data = await r.run(db, p, req);
@@ -3010,7 +3057,7 @@ route('get', '/commerce/promotions', 'promotions:view', async (req) => {
     rules: rules.map((r) => ({ ...r, pct: Number(r.pct), min_order: Number(r.min_order), max_per_order: num(r.max_per_order), is_active: Number(r.is_active) === 1, shown: promotions.shownStatus(r), waiting: waitOf('rule', r.rule_id) })),
     statusLabels: promotions.STATUS_LABEL, can: { create: canDo(req, 'promotions', 'create'), edit: canDo(req, 'promotions', 'edit') },
     kinds: promotions.KINDS, offerKinds: promotions.OFFER_KINDS, ...(await promoLists(db, req)),
-    settings: { offers_with_coupon: Boolean(cs.offers_with_coupon), cashback_credit_at: cs.cashback_credit_at, return_window_days: Number(cs.return_window_days), wallet_max_use_pct: Number(cs.wallet_max_use_pct),
+    settings: { wallet_on: cs.wallet_enabled !== false, offers_with_coupon: Boolean(cs.offers_with_coupon), cashback_credit_at: cs.cashback_credit_at, return_window_days: Number(cs.return_window_days), wallet_max_use_pct: Number(cs.wallet_max_use_pct),
       expiry: { cashback: Number(cs.wallet_expiry_cashback_days), manual: Number(cs.wallet_expiry_manual_days), refund: Number(cs.wallet_expiry_refund_days) }, gst: cs.cashback_gst_treatment,
       discount_limit: cs.approve_discount_on ? Number(cs.approve_discount_pct_above) : null, manual_wallet_approval: Boolean(cs.approve_goodwill_credit) },
   };
@@ -3255,6 +3302,65 @@ require('./brand').register({ route, tx, db, by, InputError, upload }); // phase
 // phase 16: section 3 Suppliers and buying (buying.js rules, buying-routes.js screens) and Money > Payments > Supplier payments
 require('./buying-routes').register({ route, tx, db, by, InputError, canDo, commerceGate, seesCost: seesCosts });
 require('./supplier-pay').register({ route, tx, db, by, InputError, canDo, commerceGate });
+// phase 23: the v23 report pages (reports23.js): Sales and purchases, Stock, Money owed, GST and delivery. Each follows
+// the person's godowns (and the godown picked on the page), Own customers only, and See cost (RP1, RP2); CSV with Export.
+const reports23 = require('./reports23');
+const REP23_NEEDS = { sales: [], stock: ['inventory'], money: ['money'], gst: [] };
+async function rep23Ctx(req) {
+  const key = req.params.page;
+  if (!reports23.PAGES[key]) throw new InputError('No such report', 404);
+  if (!canDo(req, 'reports')) throw new InputError('Reports need View on Reports', 403);
+  for (const s of REP23_NEEDS[key]) if (!canDo(req, s)) throw new InputError(`This report needs View on ${permissions.SECTIONS.find((x) => x.key === s).label}`, 403);
+  const sc = godowns.viewScope(req);
+  const g = Number(req.query.godown) || null;
+  if (g && sc !== null && !sc.includes(g)) throw new InputError('You do not work at that godown', 403);
+  const pick = (k) => (typeof req.query[k] === 'string' ? req.query[k].slice(0, 20) : '');
+  return { key, per: pick('per') || 'month', from: pick('from'), to: pick('to'), tab: pick('tab'), godown: g, scope: sc, seesCost: seesCosts(req), ownOnly: Boolean(req.admin.ownOnly), empId: req.admin.emp_id,
+    canBuying: canDo(req, 'buying'), canExpenses: canDo(req, 'expenses') };
+}
+route('get', '/dashboard/home', 'any', async (req) => {
+  if (!(await commerceOn())) throw new InputError('Commerce is switched off (Settings > Commerce settings)', 404);
+  const ctx = { scope: godowns.viewScope(req), godown: null, seesCost: seesCosts(req), ownOnly: Boolean(req.admin.ownOnly), empId: req.admin.emp_id };
+  const out = await reports23.dashboard(db, ctx, { can: (s) => canDo(req, s), approvalsWaiting: await approvals.countDecidable(req.admin) });
+  const al = (await alertList(req)).slice(0, 5);
+  // v23 dashBiz: the website at a glance (the home page row, business kits, towns, company), for Products or Content
+  let site = null;
+  if (canDo(req, 'products') || canDo(req, 'content')) {
+    const IMG1 = '(SELECT pi.file_name FROM product_images pi WHERE pi.product_id = p.product_id ORDER BY pi.position LIMIT 1)';
+    const [loved] = await db.query(`SELECT p.product_id, p.featured_order, COALESCE(t.name, p.product_id) AS name, ${IMG1} AS image FROM products p
+        LEFT JOIN product_translations t ON t.product_id = p.product_id AND t.lang_code = 'en' WHERE p.is_featured = 1 AND p.status = 'active' ORDER BY p.featured_order, p.product_id LIMIT 5`);
+    const [kits] = await db.query(`SELECT k.kit_key, COALESCE(t.name, k.kit_key) AS name, t.tagline, (SELECT COUNT(*) FROM kit_products x WHERE x.kit_key = k.kit_key) AS parts,
+        (SELECT pi.file_name FROM product_images pi WHERE pi.product_id = k.rep_product_id ORDER BY pi.position LIMIT 1) AS image FROM kits k
+        LEFT JOIN kit_translations t ON t.kit_key = k.kit_key AND t.lang_code = 'en' WHERE k.is_active = 1 ORDER BY k.sort_order, k.kit_key`);
+    for (const k of kits) {
+      const [parts] = await db.query('SELECT kp.sku_code, kp.qty, COALESCE((SELECT SUM(m.delta) FROM stock_movements m WHERE m.sku_code = kp.sku_code AND m.stock_kind = \'good\'), 0) AS good FROM kit_parts kp WHERE kp.kit_key = ?', [k.kit_key]);
+      k.ready = parts.length ? Math.max(0, Math.floor(Math.min(...parts.map((x) => Number(x.good) / Math.max(1, Number(x.qty)))))) : 0;
+      k.parts = Number(k.parts);
+    }
+    const [towns] = await db.query("SELECT COALESCE(t.name, w.town_key) AS name, w.is_base FROM towns w LEFT JOIN town_translations t ON t.town_key = w.town_key AND t.lang_code = 'en' WHERE w.is_active = 1 ORDER BY w.sort_order, w.town_key");
+    const f = await require('./company').facts(db); // eslint-disable-line global-require
+    const [gs] = await db.query('SELECT name FROM locations WHERE is_active = 1 ORDER BY sort_order, location_id');
+    site = { loved, kits, towns: towns.map((x) => ({ name: x.name, base: Number(x.is_base) === 1 })),
+      company: { name: f.name, cin: f.cin, gstin: f.gstin, office: f.address, godowns: gs.map((x) => x.name.replace(/ godown/i, '')).join(', '), phone: f.phone } };
+  }
+  return { ...out, alerts: al, site, seesCost: ctx.seesCost };
+});
+route('get', '/reports23/:page', 'any', async (req) => {
+  if (!(await commerceOn())) throw new InputError('Commerce is switched off (Settings > Commerce settings)', 404);
+  const ctx = await rep23Ctx(req);
+  const [gs] = await db.query('SELECT location_id AS godown_id, name FROM locations WHERE is_active = 1 ORDER BY sort_order, location_id');
+  const out = await reports23.page(db, ctx.key, ctx);
+  return { ...out, godowns: gs.filter((x) => ctx.scope === null || ctx.scope.includes(Number(x.godown_id))), godown: ctx.godown, own: ctx.ownOnly, seesCost: ctx.seesCost, can: { export: canDo(req, 'reports', 'export') } };
+});
+route('get', '/reports23/:page/export.csv', 'reports:export', async (req, res) => {
+  const ctx = await rep23Ctx(req);
+  const out = await reports23.page(db, ctx.key, ctx);
+  const body = csv.stringify(reports23.csvRows(out));
+  const name = `dfresh-${ctx.key}-${out.tab}-${out.from}-to-${out.to}.csv`;
+  res.set({ 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="${name}"`, 'Cache-Control': 'no-store' });
+  res.send(`\ufeff${body}`);
+});
+require('./expenses-routes').register({ route, tx, db, by, InputError, canDo, commerceGate, upload }); // phase 23: section 17 Expenses, petty cash, export to the accountant
 // phase 17: section 4 Production (production.js rules, production-routes.js screens)
 require('./production-routes').register({ route, tx, db, by, InputError, canDo, commerceGate, seesCost: seesCosts });
 // phase 18: section 5 Inventory (inventory.js rules, inventory-routes.js screens)
@@ -3281,23 +3387,25 @@ function cleanGrid(raw) {
   const out = {};
   for (const sec of permissions.SECTION_KEYS) {
     const r = (raw && raw[sec]) || {};
-    const row = Object.fromEntries(permissions.ACTIONS.map((a) => [a, Boolean(r[a]) && (!permissions.VIEW_ONLY.includes(sec) || a === 'view')]));
-    if (permissions.ACTIONS.slice(1).some((a) => row[a])) row.view = true;
+    const acts = permissions.actionsOf(sec);
+    const row = Object.fromEntries(acts.map((a) => [a, Boolean(r[a]) && (!permissions.VIEW_ONLY.includes(sec) || a === 'view')]));
+    if (acts.slice(1).some((a) => row[a])) row.view = true;
     out[sec] = row;
   }
   return out;
 }
 async function roleGrid(q, role) {
   if (permissions.isAdminRole(role.role_id)) return permissions.permsFor(role.role_id);
-  const [rows] = await q.query('SELECT section, can_view, can_create, can_edit, can_approve, can_cancel, can_export, can_delete FROM role_permissions WHERE role_id = ?', [role.role_id]);
+  const [rows] = await q.query(`SELECT ${permissions.PERM_COLS} FROM role_permissions WHERE role_id = ?`, [role.role_id]);
   return permissions.permsFor(role.role_id, rows);
 }
 async function saveGrid(q, roleId, grid) {
   await q.query('DELETE FROM role_permissions WHERE role_id = ?', [roleId]);
   for (const [sec, g] of Object.entries(grid)) {
-    if (!permissions.ACTIONS.some((a) => g[a])) continue;
-    await q.query(`INSERT INTO role_permissions (role_id, section, ${permissions.ACTIONS.map((a) => `can_${a}`).join(', ')}) VALUES (?, ?, ${permissions.ACTIONS.map(() => '?').join(', ')})`,
-      [roleId, sec, ...permissions.ACTIONS.map((a) => (g[a] ? 1 : 0))]);
+    const acts = permissions.actionsOf(sec);
+    if (!acts.some((a) => g[a])) continue;
+    await q.query(`INSERT INTO role_permissions (role_id, section, ${acts.map((a) => `can_${a}`).join(', ')}) VALUES (?, ?, ${acts.map(() => '?').join(', ')})`,
+      [roleId, sec, ...acts.map((a) => (g[a] ? 1 : 0))]);
   }
 }
 /**
@@ -3348,7 +3456,7 @@ route('get', '/roles', 'users:view', async (req) => {
       see_cost: top || Number(r.see_cost) === 1, own_customers_only: !top && Number(r.own_customers_only) === 1, lock: lock || null,
       grid_fixed: top, waiting: wait || null }); // Super admin and Admin: fixed in code; Sub-admin and the others: rows
   }
-  return { roles: out, sections: permissions.SECTIONS, actions: permissions.ACTIONS, viewOnly: permissions.VIEW_ONLY };
+  return { roles: out, sections: permissions.SECTIONS, actions: permissions.ACTIONS, extra: permissions.EXTRA, viewOnly: permissions.VIEW_ONLY };
 });
 
 route('post', '/roles', 'users:create', async (req) => tx(async (q) => {

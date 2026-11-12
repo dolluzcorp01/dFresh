@@ -234,6 +234,7 @@ export function CashbackRules() {
           {d.can.create && <button type="button" className="a-btn" onClick={() => setForm({ ...RULE0 })}><LIcon name="plus" size="sm" />New rule</button>}</span>} />
       {act.note}
       <Loading state={data}>{d && <>
+        {!d.settings.wallet_on && <WalletOff />}
         <Alert tone="info" title="A return can take it back.">If a return takes the goods under the rule&apos;s minimum, all of that order&apos;s cashback is taken back; otherwise its share.</Alert>
         <Tabs label="Cashback rules" value={g.group} onChange={g.set} tabs={g.tabs} />
         <div className="a-listcard"><Table columns={cols} rows={g.list} rowKey={(r) => r.rule_id} label="Cashback rules" onRowClick={(r) => setForm(toForm(r))} empty={{ icon: 'wallet', title: 'Nothing here', text: 'No rule in this list.' }} /></div>
@@ -277,9 +278,15 @@ function RuleDrawer({ d, form, setForm, onDone }) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------- Customer wallets
+/** v23 wOffBox: the wallet switch is off (balances stay saved) */
+function WalletOff() {
+  return <Alert tone="warn" title="The wallet is off.">Admin &gt; Switches &gt; Money: "Customer wallet and cashback on". While it is off, orders take no wallet and no cashback is earned; the balances below stay saved.</Alert>;
+}
 export function CustomerWallets() {
   const data = useLoad('/marketing/wallets');
   const d = data.data;
+  const act = useAction();
+  const exportCsv = () => act.run(async () => { await api.download('/marketing/wallets.csv', 'dfresh-wallets.csv'); });
   const [open, setOpen] = useState(null);
   const cols = [
     { key: 'name', label: 'Customer', sort: true, render: (c) => <><b>{c.name}</b><small className="a-muted a-p15-sub">{c.customer_no}</small></> },
@@ -289,8 +296,11 @@ export function CustomerWallets() {
   ];
   return (
     <section>
-      <PageHead sub="Each customer's wallet credit" rules={['Usable: can go on an order now', 'Pending: waits for the return window', 'Wallet money is a discount, never cash']} />
+      <PageHead sub="Each customer's wallet credit" rules={['Usable: can go on an order now', 'Pending: waits for the return window', 'Wallet money is a discount, never cash']}
+        actions={d && d.can.export && <button type="button" className="a-btn a-btn-ghost" disabled={act.busy} onClick={exportCsv}><LIcon name="download" size="sm" />Export</button>} />
+      {act.note}
       <Loading state={data}>{d && <>
+        {!d.wallet_on && <WalletOff />}
         <Alert tone="info" title={`${money(d.totals.usable)} usable in all customers' wallets.`}>{money(d.totals.expiring)} runs out in the next 30 days; {money(d.totals.pending)} pending. A wallet pays at most {d.max_use_pct}% of an order, oldest expiry first.</Alert>
         <div className="a-listcard"><Table columns={cols} rows={d.rows} rowKey={(c) => c.customer_id} label="Customer wallets" onRowClick={(c) => setOpen(c)} initialSort={{ key: 'usable', dir: -1 }}
           empty={{ icon: 'wallet', title: 'No wallets yet', text: 'Customers show here once they earn cashback or get a credit.' }} /></div>

@@ -38,7 +38,9 @@ happened, and stop there.
 9. **Sales > Customers > Customer list.** Tabs Active / On hold and blocked / All. As the Sales person only their own
    customers show, and only customers of godowns they work at.
 10. New customer with the phone of an existing customer: "Already a customer: CUS-00NN ... (same phone)". A GSTIN of
-    another state than the billing address: refused with the state named. A good one is added on its type's list
+    another state than the billing address: refused with the state named. A GSTIN with a mistyped last character
+    (33AAFFH4521K1ZA; the check character is K): "the last character does not match" (phase 23; an address
+    already saved keeps its GSTIN when saved again unchanged). A good one is added on its type's list
     with the type's default days to pay.
 11. As the **Sales** person, a new customer on a type whose price list is not the standard one (e.g. Distributor): it
     is added on a standard-list type and the wanted type waits for Accounts or an Admin ("type ... to Distributor").

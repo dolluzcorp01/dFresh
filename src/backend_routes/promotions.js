@@ -198,6 +198,7 @@ async function creditCashback(q, orderId, empId) {
 /** delivered orders whose cashback is due now (setting: on delivery, or once the return window has passed) */
 async function cashbackDue(q, empId) {
   const s = await commerceSettings.read(q);
+  if (s.wallet_enabled === false) return []; // phase 23: no cashback is earned while the wallet is switched off
   const days = s.cashback_credit_at === 'delivery' ? 0 : Number(s.return_window_days) || 0;
   const [rows] = await q.query(`SELECT order_id, order_no FROM orders WHERE status = 'delivered' AND cashback_amount IS NULL
       AND DATE(CONVERT_TZ(delivered_at, '+00:00', '+05:30')) + INTERVAL ? DAY ${days ? '<' : '<='} ${IST_TODAY} ORDER BY order_id`, [days]);
