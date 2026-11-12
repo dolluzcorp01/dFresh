@@ -61,6 +61,9 @@ The approved look, copy, animations and interactions come from that preview. Mat
 6. **All SQL is parameterised** (`?` placeholders). No string-built SQL with user input.
 7. **All e-mail goes through `mailer.js` + the `mail_outbox` table** (outbox pattern). Never call SendGrid from a route.
    Every e-mail has a plain-text part. Inline CSS only.
+   **No mail from test runs.** Every server, API or script started for tests, scenarios or layout / parity checks runs
+   with `MAIL_ENABLED=false` (the outbox worker then sends nothing). No mail is sent, not even to the MAIL_TEST_TO
+   test inbox, without asking the owner first.
 8. **Every lead is saved to MySQL first**, then e-mail + Google Sheet happen from outboxes. A SendGrid or
    Google outage must never lose a lead or show the visitor an error.
 9. **Secrets live in `.env` only** (never committed). `.env.example` lists every key with a dummy value.
