@@ -269,8 +269,10 @@ async function createTrip(q, b, empId) {
   const later = istDates.addDays(today, 30);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || Number.isNaN(Date.parse(`${day}T00:00:00Z`)) || day < today || day > later) throw new DeliveryError('Trip date: today or a day in the next 30 days');
   if (b.area_id) {
-    const [[a]] = await q.query('SELECT area_id FROM delivery_areas WHERE area_id = ?', [Number(b.area_id)]);
+    const [[a]] = await q.query('SELECT area_id, label, is_active FROM delivery_areas WHERE area_id = ?', [Number(b.area_id)]);
     if (!a) throw new DeliveryError('Unknown delivery area');
+    // phase 24 follow-up: a town only on the website map (not active) gets no trips until an Admin turns it on
+    if (!Number(a.is_active)) throw new DeliveryError(`${a.label} is not an active delivery area (Masters > Delivery areas)`);
   }
   // a trip leaves from one godown: every order and pickup on it belongs there (phase 12a, D8)
   const [og] = nos.length ? await q.query('SELECT DISTINCT godown_id FROM orders WHERE order_no IN (?)', [nos]) : [[]];

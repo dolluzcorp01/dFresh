@@ -19,7 +19,11 @@ module.exports = {
     // the products Excel: download, change cells, check (dry run) or apply
     const xl = async () => { const res = await fetch(`${base}/products/export.xlsx`, { headers: { Cookie: cookie('SH') } }); const wb = new ExcelJS.Workbook(); await wb.xlsx.load(Buffer.from(await res.arrayBuffer())); return wb; };
     const cell = (wb, sku, col) => { const ws = wb.getWorksheet('SKUs'); let hr = 0; ws.eachRow((row, n) => { if (!hr && row.values.includes('sku')) hr = n; }); const h = ws.getRow(hr).values; let at = null; ws.eachRow((row, n) => { if (n > hr && row.getCell(h.indexOf('sku')).value === sku) at = row.getCell(h.indexOf(col)); }); return at; };
-    const dry = async (wb, apply = false, hash = '') => { const buf = await wb.xlsx.writeBuffer(); const fd = new FormData(); fd.append('file', new Blob([buf]), 'p.xlsx');
+    // the apply sends the very bytes that passed the dry run: ExcelJS stamps the time into the file, so writing the same
+    // workbook again a second or two later (a slow moment, e.g. scenario batches running side by side) gives another
+    // file, its hash differs from the dry run's and the server rightly refuses the apply (that made 1.31 fail once)
+    const bytes = new WeakMap();
+    const dry = async (wb, apply = false, hash = '') => { const buf = apply && bytes.has(wb) ? bytes.get(wb) : await wb.xlsx.writeBuffer(); bytes.set(wb, buf); const fd = new FormData(); fd.append('file', new Blob([buf]), 'p.xlsx');
       const res = await fetch(`${base}/products/import${apply ? `?dryRun=0&hash=${hash}` : ''}`, { method: 'POST', headers: { Cookie: cookie('SH') }, body: fd }); const j = await res.json(); return { status: res.status, ...(j.data || j) }; };
     const sku = async (code, as = 'SH') => (await api(as, 'GET', `/catalogue/skus/${code}`)).data;
 

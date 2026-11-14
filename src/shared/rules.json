@@ -1,3 +1,0 @@
-{
-  "_comment": "Phase 24: the form rules moved to the database (form_fields and site_settings lead_rate_max / lead_max_products; Website > Forms > Form rules). The API reads them in src/backend_routes/form-rules.js, the React forms through the bootstrap (data.formRules), the format checks are src/shared/formChecks.js. Nothing reads this file any more; it can be deleted."
-}

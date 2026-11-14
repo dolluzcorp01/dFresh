@@ -160,6 +160,26 @@ module.exports = {
         ok(puts.every((s) => s === 200) && t.lang === 'te' && t.ui[link.textKey] === words.nav_where && card.name === words.c_office && t.ui.e_fill === words.e_fill && t.ui.wa_general === words.wa_general
           && pages.every((p) => p.data.languages.includes('te')) && fr.values.te === words.e_fill,
           `te bootstrap: menu "${t.ui[link.textKey]}", first card "${card.name}" (address falls back: "${card.address}"), error "${t.ui.e_fill}", WhatsApp "${t.ui.wa_general}"; admin pages list languages ${pages[0].data.languages.join(',')}`); }
+      if (run('18.11')) { await fresh(); T('18.11', 'A town only on the old map stays map only: on the map, not for orders, charges or trips until an Admin turns it on (row 75)');
+        const { deliveryCharge } = require(path.join(ROOT, 'src', 'backend_routes', 'commerce'));
+        const row = await q1("SELECT area_id, label, towns, charge, days, is_active, show_on_map, map_key FROM delivery_areas WHERE map_key = 'wallajabad'");
+        const onMap = (await boot()).towns.some((t) => t.key === 'wallajabad');
+        const ship = { town: 'Wallajabad', pincode: '631605' };
+        const c0 = await deliveryCharge(ctx.pool, ship, 1000);
+        const c0id = await deliveryCharge(ctx.pool, ship, 1000, row.area_id); // even when the area is named
+        const cust = await q1("SELECT customer_id FROM customers WHERE status = 'active' ORDER BY customer_id LIMIT 1");
+        const addr = { kind: 'shipping', name: 'Wallajabad shop', address: '1 Main Road', town: 'Wallajabad', state_code: '33', pincode: '631605', delivery_area_id: row.area_id };
+        const a0 = await api('SH', 'POST', `/commerce/customers/${cust.customer_id}/addresses`, addr);
+        const t0 = await api('SH', 'POST', '/commerce/trips', { vehicle_id: 1, driver_id: 1, order_nos: ['DFO-NONE'], area_id: row.area_id });
+        const areas = (await api('SH', 'GET', '/fulfil/areas')).data.rows.find((x) => x.area_id === row.area_id);
+        // an Admin turns it on in Masters > Delivery areas (PIN code, days and charge set)
+        const on = await api('SH', 'PUT', `/fulfil/areas/${row.area_id}`, { label: 'Wallajabad', towns: 'Wallajabad, 631605', charge: '80', days: ['Wed'], godown_id: 1, show_on_map: true, is_active: true });
+        const c1 = await deliveryCharge(ctx.pool, ship, 1000);
+        const a1 = await api('SH', 'POST', `/commerce/customers/${cust.customer_id}/addresses`, addr);
+        const after = await q1('SELECT is_active, show_on_map, charge, towns FROM delivery_areas WHERE area_id = ?', [row.area_id]);
+        ok(row && Number(row.is_active) === 0 && Number(row.show_on_map) === 1 && onMap && !c0.area && !c0id.area && c0.charge === 0 && a0.status === 400 && /not an active delivery area/.test(JSON.stringify(a0.fields))
+          && t0.status === 400 && /not an active delivery area/.test(t0.msg) && areas && !areas.is_active && on.status < 300 && c1.area && c1.area.area_id === row.area_id && c1.charge === 80 && a1.status === 201,
+          `migrated row: area ${row.area_id} "${row.label}" towns "${row.towns}" charge ${row.charge} active ${row.is_active}, on map ${row.show_on_map} (site map: ${onMap}); charge for a Wallajabad 631605 order: ${c0.area ? c0.area.label : 'no area'} Rs ${c0.charge} (named area too: ${c0id.area ? c0id.area.label : 'no area'}); customer address with it: ${a0.status} ${JSON.stringify(a0.fields)}; trip with it: ${t0.status} "${t0.msg}"; Delivery areas page: active ${areas && areas.is_active}. Admin turns it on: ${on.status}; charge now ${c1.area && c1.area.label} Rs ${c1.charge}; address ${a1.status}; row active ${after.is_active}, on map ${after.show_on_map}, charge ${after.charge}`); }
     } finally {
       await site.close();
     }

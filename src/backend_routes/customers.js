@@ -98,7 +98,7 @@ async function checkCore(q, raw, { partial = false, keep = null } = {}) {
 /** an address -> { values, errors }; billing: GSTIN of its state; shipping: contact person and delivery area.
  * keptGstin: the GSTIN already stored on this address; a GSTIN typed new or changed must also pass the check character
  * (v23 6.9, GSTN mod-36, as suppliers), a stored one saved again unchanged is not re-judged */
-async function checkAddress(q, raw, kind, keptGstin = null) {
+async function checkAddress(q, raw, kind, keptGstin = null, keptArea = null) {
   const errors = {};
   const v = { kind, label: t(raw, 'label') || null, name: t(raw, 'name'), gstin: kind === 'billing' ? t(raw, 'gstin').toUpperCase() || null : null,
     contact_person: kind === 'shipping' ? t(raw, 'contact_person') || null : null, phone: t(raw, 'phone') || null, address: t(raw, 'address') || null, town: t(raw, 'town') || null,
@@ -119,8 +119,11 @@ async function checkAddress(q, raw, kind, keptGstin = null) {
     }
   }
   if (v.delivery_area_id) {
-    const [[a]] = await q.query('SELECT area_id FROM delivery_areas WHERE area_id = ?', [v.delivery_area_id]);
+    const [[a]] = await q.query('SELECT area_id, label, is_active FROM delivery_areas WHERE area_id = ?', [v.delivery_area_id]);
     if (!a) errors.delivery_area_id = 'Unknown delivery area.';
+    // phase 24 follow-up: an area that is not active (e.g. a town only on the website map) is not chosen for deliveries;
+    // an address that already has it keeps it (it can still be edited)
+    else if (!Number(a.is_active) && Number(keptArea) !== a.area_id) errors.delivery_area_id = `${a.label} is not an active delivery area (Masters > Delivery areas).`;
   }
   return { values: v, errors };
 }
@@ -342,7 +345,7 @@ async function saveAddress(q, id, addressId, raw, empId) {
       return { address_id: addressId, removed: true };
     }
   }
-  const { values: v, errors } = await checkAddress(q, raw, before ? before.kind : kind, before ? before.gstin : null);
+  const { values: v, errors } = await checkAddress(q, raw, before ? before.kind : kind, before ? before.gstin : null, before ? before.delivery_area_id : null);
   if (Object.keys(errors).length) fail(errors);
   if (v.gstin) { const d = await duplicates(q, { gstins: [v.gstin] }, c.customer_id); if (d.length) throw dupError(d); }
   const makeDefault = Boolean(raw.is_default);
