@@ -36,7 +36,8 @@ class SalesError extends Error {
 }
 const round2 = (n) => Math.round(n * 100) / 100;
 const today = () => pricing.istToday();
-const addDays = (d, n) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 86400e3).toISOString().slice(0, 10);
+const istDates = require('../shared/istDate'); // India dates in one place (src/shared/istDate.js)
+const { addDays } = istDates;
 const fail = (fields) => { throw new SalesError(Object.values(fields)[0], 400, fields); };
 const QT_STATUS = { draft: 'Draft', approval: 'Waiting for approval', sent: 'Sent', won: 'Won', lost: 'Lost', expired: 'Expired' };
 const QT_LOST = ['Price too high', 'Bought elsewhere', 'No reply', 'Delivery too far or slow', 'Plan dropped', 'Other'];

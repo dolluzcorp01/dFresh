@@ -12,8 +12,9 @@ const { audit } = require('./audit');
 const HSN_RE = /^(\d{4}|\d{6}|\d{8})$/;
 const FIRST_DAY = '2026-04-01'; // a new code may start on 1 April of this year
 const r2 = (n) => Math.round(n * 100) / 100;
-const ymd = (v) => (v instanceof Date ? v.toISOString().slice(0, 10) : String(v).slice(0, 10));
-const istToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+const istDates = require('../shared/istDate'); // India dates in one place (src/shared/istDate.js)
+const { ymd } = istDates;
+const istToday = () => istDates.istToday();
 
 class TaxError extends Error {
   constructor(message, status = 400, fields = null) { super(message); this.status = status; this.fields = fields; }

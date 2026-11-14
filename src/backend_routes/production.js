@@ -35,9 +35,10 @@ const { SKU_NAME, SKU_JOIN } = require('./catalogue');
 const r2 = (n) => Math.round(Number(n) * 100) / 100;
 const r6 = (n) => Math.round(Number(n) * 1e6) / 1e6;
 const today = () => pricing.istToday();
-const addDays = (d, n) => { const x = new Date(`${d}T00:00:00Z`); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
+const istDates = require('../shared/istDate'); // India dates in one place (src/shared/istDate.js)
+const { addDays } = istDates;
 const addMonths = (d, n) => { const x = new Date(`${d}T00:00:00Z`); x.setUTCMonth(x.getUTCMonth() + n); return x.toISOString().slice(0, 10); };
-const ymd = (v) => (v ? (v instanceof Date ? v.toISOString().slice(0, 10) : String(v).slice(0, 10)) : null);
+const { ymd } = istDates;
 const rs = (n) => `Rs ${Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 const SHIFTS = ['Day', 'Night'];

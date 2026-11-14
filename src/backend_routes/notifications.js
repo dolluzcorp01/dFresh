@@ -24,12 +24,13 @@ const permissions = require('../shared/permissions');
 const { DADMIN } = require('./auth');
 
 const db = getDBConnection(process.env.DB_NAME || 'dfresh').promise();
-const IST_TODAY = "DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+05:30'))";
+const istDates = require('../shared/istDate'); // India dates in one place (src/shared/istDate.js)
+const IST_TODAY = istDates.IST_TODAY_SQL;
 const EMAIL = /^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]{2,}$/;
 const round2 = (n) => Math.round(n * 100) / 100;
 const money = (v) => Number(v || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const day = (d) => (d ? new Date(`${String(d).slice(0, 10)}T00:00:00Z`).toLocaleDateString('en-IN', { timeZone: 'UTC', day: 'numeric', month: 'short', year: 'numeric' }) : '');
-const istToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
+const istToday = () => istDates.istToday();
 const link = (p) => `${siteBase()}/admin/${p}`;
 
 // to: order (the order contact) | invoice (the invoice contacts) | customer (the customer's e-mail) | staff
@@ -438,7 +439,7 @@ async function jobOverdue(q) {
   for (const r of rows) {
     // reminders (and opt-out skips) since the oldest overdue invoice fell due
     const [[h]] = await q.query(`SELECT COALESCE(SUM(status <> 'skipped'), 0) AS n, DATEDIFF(${IST_TODAY}, MAX(DATE(CONVERT_TZ(created_at, '+00:00', '+05:30')))) AS ago
-        FROM notification_log WHERE event_key = 'overdue' AND customer_id = ? AND is_test = 0 AND created_at >= ?`, [r.customer_id, r.since]);
+        FROM notification_log WHERE event_key = 'overdue' AND customer_id = ? AND is_test = 0 AND DATE(CONVERT_TZ(created_at, '+00:00', '+05:30')) >= ?`, [r.customer_id, istDates.ymd(r.since)]);
     if (h.ago !== null && Number(h.ago) < every) continue;
     if (Number(h.n) >= max) continue;
     const [[o]] = await q.query(`SELECT COALESCE(SUM(amount_due), 0) AS owed FROM orders WHERE customer_id = ? AND status <> 'cancelled' AND amount_due > 0.005`, [r.customer_id]);
@@ -518,7 +519,7 @@ async function jobDailySummary(q) {
       (SELECT COUNT(*) FROM approvals WHERE status = 'pending') AS approvals,
       (SELECT COUNT(*) FROM orders WHERE status IN ('new', 'packing')) AS to_pack, (SELECT COUNT(*) FROM orders WHERE status = 'packed') AS to_dispatch,
       (SELECT COALESCE(SUM(o.amount_due), 0) FROM invoices i JOIN orders o ON o.order_id = i.order_id WHERE ${OVERDUE}) AS overdue`);
-  const yday = new Date(Date.now() + 5.5 * 3600e3 - 86400e3).toISOString().slice(0, 10);
+  const yday = istDates.addDays(istDates.istToday(), -1);
   const summary = [
     `- Orders: ${s.orders} (Rs ${money(s.order_value)})`, `- Invoiced: ${s.invoices} invoice(s), Rs ${money(s.invoiced)}`, `- Payments received: Rs ${money(s.paid)}`,
     `- Delivered: ${s.delivered}, failed: ${s.failed}`, `- New returns: ${s.returns_new}`,

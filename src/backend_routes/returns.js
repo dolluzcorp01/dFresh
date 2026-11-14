@@ -36,7 +36,8 @@ const STATUS_LABEL = { requested: 'Requested', collecting: 'Collecting', receive
 const COLLECTION = { bring: 'Customer brings it', trip: 'Pickup on a delivery trip', courier: 'Courier reverse pickup' };
 const METHODS = { wallet: 'Refund to the wallet', original: 'Refund to the original payment', balance: 'Less to pay (unpaid order)' };
 const round2 = (n) => Math.round(n * 100) / 100;
-const IST_TODAY = "DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+05:30'))";
+const istDates = require('../shared/istDate'); // India dates in one place (src/shared/istDate.js)
+const IST_TODAY = istDates.IST_TODAY_SQL;
 
 class ReturnError extends Error {
   constructor(message, status = 400) { super(message); this.status = status; }

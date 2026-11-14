@@ -33,8 +33,9 @@ const mayEase = (admin) => Boolean(admin && (admin.is_admin || permissions.can(a
 const ACTIVITY = { call: 'Call', whatsapp: 'WhatsApp', visit: 'Visit', mail: 'Mail', note: 'Note' };
 const EMAIL = /^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]{2,}$/;
 const round2 = (n) => Math.round(n * 100) / 100;
-const IST_TODAY = "DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+05:30'))";
-const istToday = () => new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10);
+const istDates = require('../shared/istDate'); // India dates in one place (src/shared/istDate.js)
+const IST_TODAY = istDates.IST_TODAY_SQL;
+const istToday = () => istDates.istToday();
 const t = (raw, k) => String((raw || {})[k] ?? '').trim();
 
 class CustomerError extends Error {
@@ -425,7 +426,7 @@ async function updateFollowUp(q, fid, b, empId) {
   if (b.action === 'snooze') {
     const days = Number(b.days);
     if (![1, 2, 3, 7, 14, 30].includes(days)) throw new CustomerError('Snooze: 1, 2, 3, 7, 14 or 30 days');
-    const due = new Date(Date.now() + 5.5 * 3600e3 + days * 86400e3).toISOString().slice(0, 10);
+    const due = istDates.addDays(istDates.istToday(), days);
     await q.query('UPDATE follow_ups SET due_on = ?, snoozes = snoozes + 1 WHERE follow_up_id = ?', [due, fid]);
     await audit(q, { empId, action: 'snooze', entity: 'follow_up', entityId: String(fid), before: { due_on: f.due_on }, after: { due_on: due, customer: f.customer_no } });
     return { due_on: due };

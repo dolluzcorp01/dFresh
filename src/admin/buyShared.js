@@ -7,14 +7,16 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from './adminApi';
 import { mediaUrl } from '../utils/api';
 import { Alert, LIcon, money } from './ui';
+import { addDays, fmtIstDateTime, istToday } from '../shared/istDate';
 
 /** a cost or value: "hidden" when the API sent null for this role */
 export const bm = (v) => (v === null || v === undefined ? <span className="a-muted">hidden</span> : money(v));
 /** Rs with Indian grouping, no decimals (limits and PO values) */
 export const rs0 = (v) => `Rs ${Math.round(Number(v) || 0).toLocaleString('en-IN')}`;
-export const today = () => new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
-export const addDays = (d, n) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 864e5).toISOString().slice(0, 10);
-export const at = (v) => (v ? new Date(v).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' }) : '');
+// India dates from src/shared/istDate.js (one place for the API and the admin)
+export const today = () => istToday();
+export { addDays };
+export const at = (v) => fmtIstDateTime(v);
 
 export function ViewOnlyB({ me, what }) {
   return <Alert tone="info" title="View only.">{me && me.role_name ? `${me.role_name} can` : 'Your role can'} see {what} but not change it. Rights come from the role in Foundation.</Alert>;

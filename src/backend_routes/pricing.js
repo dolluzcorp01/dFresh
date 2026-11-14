@@ -28,9 +28,10 @@ class PricingError extends Error {
 }
 
 /** today in India, YYYY-MM-DD */
-const istToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+const istDates = require('../shared/istDate'); // India dates in one place (src/shared/istDate.js)
+const istToday = () => istDates.istToday();
 const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(Date.parse(`${s}T00:00:00Z`)) && new Date(`${s}T00:00:00Z`).toISOString().slice(0, 10) === s;
-const ymd = (v) => (v instanceof Date ? v.toISOString().slice(0, 10) : String(v).slice(0, 10));
+const { ymd } = istDates;
 
 /** a price typed by someone -> number with at most 2 decimals, null for empty, or a PricingError message */
 function parsePrice(raw) {

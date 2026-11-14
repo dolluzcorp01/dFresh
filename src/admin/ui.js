@@ -10,6 +10,7 @@ import { AdminContext, useAdmin } from './ui/context';
 import { Alert } from './ui/blocks';
 import { useToast } from './ui/Toast';
 import LIcon from './ui/LIcon';
+import { fmtIstDateTime } from '../shared/istDate';
 
 export { AdminContext, useAdmin };
 export { Alert, Empty, PageHead, Pill, RuleChips, Stat, Tabs, Tag, costText, money } from './ui/blocks';
@@ -510,7 +511,7 @@ export function useHashScroll(ready) {
 }
 
 // Every time in the admin in India time, whatever zone the viewer's PC is in (the API sends UTC instants).
-export const fmtDate = (v) => (v ? new Date(v).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' }) : '');
+export const fmtDate = (v) => fmtIstDateTime(v); // India time, from src/shared/istDate.js
 
 /** A page the role cannot open: said in the app (the API answers 403 anyway). */
 export function NoAccess({ section }) {

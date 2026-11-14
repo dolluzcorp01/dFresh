@@ -28,8 +28,9 @@ const wallet = require('./wallet');
 const KINDS = { percent: 'Percent off', fixed: 'Fixed amount off', free_delivery: 'Free delivery' };
 const OFFER_KINDS = { slab: 'Quantity slab', bxgy: 'Buy X get Y free' };
 const round2 = (n) => Math.round(n * 100) / 100;
-const IST_TODAY = "DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+05:30'))";
-const istToday = () => new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10);
+const istDates = require('../shared/istDate'); // India dates in one place (src/shared/istDate.js)
+const IST_TODAY = istDates.IST_TODAY_SQL;
+const istToday = () => istDates.istToday();
 const rs = (n) => `Rs ${Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 class PromoError extends Error {

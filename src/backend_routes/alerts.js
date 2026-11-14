@@ -72,7 +72,7 @@ async function forPerson(q, admin, { countDecidable } = {}) {
   }
   const half = Math.max(1, Math.floor((Number(cs.approval_expiry_days) || 7) / 2));
   if (admin.is_admin || permissions.SECTION_KEYS.some((s) => permissions.can(admin.perms, s, 'approve'))) {
-    const [old] = await q.query(`SELECT approval_id, summary, godown_id, DATEDIFF(UTC_TIMESTAMP(), requested_at) AS days FROM approvals WHERE status = 'pending' AND requested_at < UTC_TIMESTAMP() - INTERVAL ? DAY ORDER BY approval_id`, [half]);
+    const [old] = await q.query(`SELECT approval_id, summary, godown_id, DATEDIFF(DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+05:30')), DATE(CONVERT_TZ(requested_at, '+00:00', '+05:30'))) AS days FROM approvals WHERE status = 'pending' AND requested_at < UTC_TIMESTAMP() - INTERVAL ? DAY ORDER BY approval_id`, [half]);
     for (const a of old.filter((x) => inG(x.godown_id))) add('approval_old', a.approval_id, `Request #${a.approval_id} waits ${a.days} days`, a.summary, '/admin/approvals', { tone: 'warn' });
   }
   // stock

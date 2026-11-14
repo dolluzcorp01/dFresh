@@ -18,6 +18,7 @@
 const { audit } = require('./audit');
 const approvals = require('./approvals');
 const books = require('./books');
+const istDates = require('../shared/istDate'); // India dates in one place (src/shared/istDate.js)
 const buying = require('./buying');
 const numbering = require('./numbering');
 const pricing = require('./pricing');
@@ -206,12 +207,12 @@ async function save(q, b, empId, { scope = 'ALL', expenseId = null, photo = null
 async function post(q, expenseId, empId) {
   const [[e]] = await q.query("SELECT expense_id, expense_no, exp_date, godown_id, mode, total, po_id, status FROM expenses WHERE expense_id = ? FOR UPDATE", [expenseId]);
   if (!e || e.status === 'done') return;
-  await books.assertOpen(q, e.exp_date);
+  await books.assertOpen(q, istDates.ymd(e.exp_date));
   await q.query("UPDATE expenses SET status = 'done', done_at = UTC_TIMESTAMP(), done_by = ? WHERE expense_id = ?", [empId, expenseId]);
   if (e.mode === 'petty') {
     await q.query("INSERT INTO petty_moves (godown_id, move_date, kind, amount, ref, expense_id, emp_id) VALUES (?, ?, 'spend', ?, ?, ?, ?)", [e.godown_id, e.exp_date, -Number(e.total), e.expense_no, e.expense_id, empId]);
   }
-  if (e.po_id) await freightTrueUp(q, e.po_id, { type: 'expense', id: e.expense_id, godown: e.godown_id, date: new Date(e.exp_date).toISOString().slice(0, 10) }, empId);
+  if (e.po_id) await freightTrueUp(q, e.po_id, { type: 'expense', id: e.expense_id, godown: e.godown_id, date: istDates.ymd(e.exp_date) }, empId);
   await audit(q, { empId, action: 'post', entity: 'expense', entityId: e.expense_no, after: { total: Number(e.total), mode: e.mode } });
 }
 
@@ -238,7 +239,7 @@ async function cancel(q, expenseId, reason, empId) {
   const [[e]] = await q.query("SELECT expense_id, expense_no, exp_date, godown_id, mode, total, po_id, status FROM expenses WHERE expense_id = ? FOR UPDATE", [Number(expenseId)]);
   if (!e) throw new ExpenseError('No such expense', 404);
   if (e.status !== 'done') throw new ExpenseError(`${e.expense_no} is ${STATUS[e.status]}: only a recorded expense is cancelled`, 409);
-  const d = new Date(e.exp_date).toISOString().slice(0, 10);
+  const d = istDates.ymd(e.exp_date);
   await books.guardRecord(q, { date: d, key: `expense:${e.expense_no}`, label: `Cancel expense ${e.expense_no}`, godownId: e.godown_id }, empId);
   await q.query("UPDATE expenses SET status = 'cancelled', cancel_reason = ? WHERE expense_id = ?", [why, e.expense_id]);
   if (e.mode === 'petty') await q.query("INSERT INTO petty_moves (godown_id, move_date, kind, amount, ref, expense_id, emp_id) VALUES (?, ?, 'spend', ?, ?, ?, ?)", [e.godown_id, pricing.istToday(), Number(e.total), `${e.expense_no} cancelled`, e.expense_id, empId]);
@@ -274,7 +275,7 @@ approvals.onRecheck('expense', async (q, p) => {
   const [[e]] = await q.query('SELECT godown_id, mode, total, exp_date FROM expenses WHERE expense_id = ?', [p.expense_id]);
   if (!e) return 'the expense is gone';
   if (e.mode === 'petty') { const free = await pettyFree(q, e.godown_id, p.expense_id); if (Number(e.total) > free + 0.004) return `Petty cash has only ${rs(free)} free now, not ${rs(e.total)}. Top it up first.`; }
-  return books.lockWhy(q, new Date(e.exp_date).toISOString().slice(0, 10));
+  return books.lockWhy(q, istDates.ymd(e.exp_date));
 });
 
 // ---------------------------------------------------------------- repeating expenses

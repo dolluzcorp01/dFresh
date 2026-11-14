@@ -19,11 +19,12 @@ class BooksError extends Error {
 
 const monthOf = (d) => String(d || '').slice(0, 7);
 const isMonth = (m) => /^\d{4}-(0[1-9]|1[0-2])$/.test(String(m || ''));
-const lastDay = (m) => new Date(Date.UTC(Number(m.slice(0, 4)), Number(m.slice(5, 7)), 0)).toISOString().slice(0, 10);
+const istDates = require('../shared/istDate'); // India dates in one place (src/shared/istDate.js)
+const lastDay = (m) => istDates.lastDayOf(m);
 
 /** why nothing may be dated `date` ('' = it may); key: a record allowed to change after all (record_unlocks) */
 async function lockWhy(q, date, key = null) {
-  const d = String(date || pricing.istToday()).slice(0, 10);
+  const d = istDates.ymd(date) || pricing.istToday(); // a Date read from a DATE column, or 'YYYY-MM-DD'
   const [[bc]] = await q.query("SELECT value FROM commerce_settings WHERE setting_key = 'books_closed_to'"); // read on every stock move: one row only
   const closed = String((bc && bc.value) || '').trim();
   if (closed && d <= closed) return `The books are closed up to ${closed}: nothing can be dated ${d}. Use a date after it.`;
@@ -91,7 +92,7 @@ async function exportChecks(q, month) {
   const out = [];
   const today = pricing.istToday();
   if (month >= monthOf(today)) out.push(`${month} is still running. A month is exported after it ends; exporting locks it for everybody.`);
-  const [[done]] = await q.query("SELECT DATE_FORMAT(exported_at, '%Y-%m-%d') AS d, exported_by FROM month_exports WHERE month = ?", [month]);
+  const [[done]] = await q.query("SELECT DATE_FORMAT(CONVERT_TZ(exported_at, '+00:00', '+05:30'), '%Y-%m-%d') AS d, exported_by FROM month_exports WHERE month = ?", [month]);
   if (done) out.push(`${month} was exported on ${done.d} by ${done.exported_by}.`);
   const [wait] = await q.query("SELECT kind, summary FROM approvals WHERE status = 'pending' AND DATE_FORMAT(record_date, '%Y-%m') = ? ORDER BY approval_id", [month]);
   if (wait.length) out.push(`${wait.length} request${wait.length === 1 ? '' : 's'} dated in ${month} still waiting: ${wait.slice(0, 4).map((w) => w.summary).join('; ')}${wait.length > 4 ? ' ...' : ''}. Decide them first.`);
@@ -112,7 +113,7 @@ async function exportMonth(q, month, empId, journal) {
 
 /** Export history: every month sent and what changed after it */
 async function history(q) {
-  const [months] = await q.query("SELECT month, DATE_FORMAT(exported_at, '%Y-%m-%d %H:%i') AS exported_at, exported_by, file_name, `lines` FROM month_exports ORDER BY month DESC");
+  const [months] = await q.query("SELECT month, DATE_FORMAT(CONVERT_TZ(exported_at, '+00:00', '+05:30'), '%Y-%m-%d %H:%i') AS exported_at, exported_by, file_name, `lines` FROM month_exports ORDER BY month DESC");
   const [events] = await q.query("SELECT event_id, month, kind, record_key, label, emp_id, DATE_FORMAT(`at`, '%Y-%m-%d %H:%i') AS at FROM export_events ORDER BY event_id DESC LIMIT 500");
   const cs = await commerceSettings.read(q);
   return { months, events, books_closed_to: String(cs.books_closed_to || '').trim() || null };

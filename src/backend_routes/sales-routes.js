@@ -228,7 +228,7 @@ function register({ route, tx, db, by, InputError, canDo, commerceGate }) {
   route('get', '/sales/back-orders', 'orders:view', wrap(async (req) => {
     await tx((q) => commerce.sweepHolds(q));
     const [cw, cp] = custScope(req);
-    const [rows] = await db.query(`SELECT i.line_id, i.sku_code, i.back_qty, i.kit_key, o.order_no, o.order_id, o.status, o.godown_id, g.name AS godown, DATE_FORMAT(o.confirmed_at, '%Y-%m-%d %H:%i') AS confirmed_at, c.name AS customer,
+    const [rows] = await db.query(`SELECT i.line_id, i.sku_code, i.back_qty, i.kit_key, o.order_no, o.order_id, o.status, o.godown_id, g.name AS godown, DATE_FORMAT(CONVERT_TZ(o.confirmed_at, '+00:00', '+05:30'), '%Y-%m-%d %H:%i') AS confirmed_at, c.name AS customer,
         ${SKU_NAME} AS name, ${IMG} AS image
         FROM order_items i JOIN orders o ON o.order_id = i.order_id JOIN customers c ON c.customer_id = o.customer_id JOIN locations g ON g.location_id = o.godown_id
         JOIN skus s ON s.sku_code = i.sku_code ${SKU_JOIN}

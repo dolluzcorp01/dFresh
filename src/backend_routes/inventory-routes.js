@@ -12,6 +12,7 @@ const approvals = require('./approvals');
 const secondAdmin = require('./second-admin');
 const auth = require('./auth');
 const { audit } = require('./audit');
+const istDates = require('../shared/istDate'); // India dates in one place (src/shared/istDate.js)
 
 const r3 = stock.round3;
 const csvCell = (c) => { const s = c === null || c === undefined ? '' : String(c); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
@@ -298,7 +299,7 @@ function register({ route, tx, db, by, InputError, canDo, commerceGate, seesCost
     const ist = (d) => new Date(new Date(d).getTime() + 5.5 * 3600e3).toISOString().slice(0, 16).replace('T', ' ');
     const lines = [head, ...r.rows.map((m) => [ist(m.at), m.who, m.emp_id, m.sku_code, m.godown, m.shelf_label, m.batch_no, m.qty, m.what, m.doc, ...(see ? [m.unit_cost] : [])])];
     await audit(db, { empId: by(req), action: 'export', entity: 'stock', entityId: 'ledger', after: { moves: r.rows.length } });
-    res.set({ 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="dfresh-stock-ledger-${new Date().toISOString().slice(0, 10)}.csv"` });
+    res.set({ 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="dfresh-stock-ledger-${istDates.istToday()}.csv"` });
     res.send(`﻿${lines.map((l) => l.map(csvCell).join(',')).join('\n')}\n`);
     return undefined;
   }), G);

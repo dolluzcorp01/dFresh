@@ -68,7 +68,7 @@ async function issue(q, orderId, empId, { at = null } = {}) {
     const [[t]] = await q.query('SELECT taxable, delivery_gst, cgst, sgst, igst, round_off, total FROM orders WHERE order_id = ?', [orderId]);
     Object.assign(o, t);
   }
-  await books.assertOpen(q, new Date(when.getTime() + 5.5 * 3600e3).toISOString().slice(0, 10)); // phase 12b month lock
+  await books.assertOpen(q, numbering.istParts(when).ymd); // phase 12b month lock (the India day of the invoice)
   const fy = numbering.fyOf(when);
   const g = await numbering.godownSegment(q, o.godown_id);
   const seq = await numbering.next(q, `${cs.invoice_prefix}-${g.key}${fy.fy}`, g.key ? 1 : cs.invoice_start_no || 1);

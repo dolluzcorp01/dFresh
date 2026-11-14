@@ -15,10 +15,12 @@ const expenses = require('./expenses');
 const { inScope } = require('./scope-sql');
 
 const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
-const today = () => new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10);
+const istDates = require('../shared/istDate'); // India dates in one place (src/shared/istDate.js)
+const today = () => istDates.istToday();
+const IST_TODAY = istDates.IST_TODAY_SQL; // never CURDATE(): the session is UTC
 const monthName = (m) => `${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][Number(m.slice(5, 7)) - 1]} ${m.slice(2, 4)}`;
 const fyStart = (d) => { const y = Number(d.slice(0, 4)); const m = Number(d.slice(5, 7)); return `${m >= 4 ? y : y - 1}-04-01`; };
-const monthEnd = (m) => new Date(Date.UTC(Number(m.slice(0, 4)), Number(m.slice(5, 7)), 0)).toISOString().slice(0, 10);
+const monthEnd = (m) => istDates.lastDayOf(m);
 const prevMonth = (m) => new Date(Date.UTC(Number(m.slice(0, 4)), Number(m.slice(5, 7)) - 2, 1)).toISOString().slice(0, 7);
 const PERIODS = { month: 'This month', last: 'Last month', quarter: 'This quarter', year: 'This year (from April)', custom: 'Choose dates' };
 /** the v23 period -> [from, to] */
@@ -176,7 +178,7 @@ async function stockPage(q, ctx) {
   const gn = await godownNames(q);
   const tab = STOCK_TABS[ctx.tab] ? ctx.tab : (ctx.seesCost ? 'value' : 'ageing');
   const known = r2(R.reduce((a, r) => a + (r.val || 0), 0)); const unk = R.filter((r) => r.val === null).reduce((a, r) => a + r.qty, 0);
-  const [[ex]] = await q.query(`SELECT COALESCE(SUM(IF(b.expiry_date < CURDATE(), m.delta, 0)), 0) AS expired, COALESCE(SUM(IF(b.expiry_date >= CURDATE() AND b.expiry_date <= CURDATE() + INTERVAL 60 DAY, m.delta, 0)), 0) AS near
+  const [[ex]] = await q.query(`SELECT COALESCE(SUM(IF(b.expiry_date < ${IST_TODAY}, m.delta, 0)), 0) AS expired, COALESCE(SUM(IF(b.expiry_date >= ${IST_TODAY} AND b.expiry_date <= ${IST_TODAY} + INTERVAL 60 DAY, m.delta, 0)), 0) AS near
       FROM stock_movements m JOIN batches b ON b.batch_id = m.batch_id WHERE m.stock_kind = 'good' AND ${inScope('m.location_id', ctx.scope)}`);
   const out = { stats: { value: ctx.seesCost ? known : null, no_cost: r2(unk), near: Number(ex.near), expired: Number(ex.expired) }, tabs: STOCK_TABS, tab, notes: [], chart: null, costHidden: !ctx.seesCost };
   if (tab === 'value') {
@@ -192,7 +194,7 @@ async function stockPage(q, ctx) {
     out.chart = cr.slice(0, 10).map((c) => ({ l: `${gn.get(c.g) || c.g} ${c.cat}`, v: c.val }));
   }
   if (tab === 'ageing') {
-    const [rows] = await q.query(`SELECT m.sku_code, DATEDIFF(CURDATE(), b.mfg_date) AS age, SUM(m.delta) AS qty FROM stock_movements m LEFT JOIN batches b ON b.batch_id = m.batch_id
+    const [rows] = await q.query(`SELECT m.sku_code, DATEDIFF(${IST_TODAY}, b.mfg_date) AS age, SUM(m.delta) AS qty FROM stock_movements m LEFT JOIN batches b ON b.batch_id = m.batch_id
         WHERE m.stock_kind = 'good' AND ${inScope('m.location_id', ctx.scope)}${ctx.godown ? ` AND m.location_id = ${Number(ctx.godown)}` : ''} GROUP BY m.sku_code, age HAVING qty > 0.0001`);
     const skus = await skuMap(q);
     const B = [['0-30 days', 0, 30], ['31-60 days', 31, 60], ['61-90 days', 61, 90], ['Over 90 days', 91, 1e9]];
@@ -202,8 +204,8 @@ async function stockPage(q, ctx) {
     out.table = { title: 'Stock ageing', cols: [col('Age (from making)'), col('Packs or units', 'num'), col('Value at cost', 'cost')], rows: o.map((x) => [x.l, r2(x.packs), x.val]) };
   }
   if (tab === 'expiry') {
-    const [rows] = await q.query(`SELECT m.sku_code, m.location_id AS g, b.batch_no, DATE_FORMAT(b.expiry_date, '%Y-%m-%d') AS exp, SUM(m.delta) AS qty, b.expiry_date < CURDATE() AS expired FROM stock_movements m JOIN batches b ON b.batch_id = m.batch_id
-        WHERE m.stock_kind = 'good' AND b.expiry_date <= CURDATE() + INTERVAL 60 DAY AND ${inScope('m.location_id', ctx.scope)}${ctx.godown ? ` AND m.location_id = ${Number(ctx.godown)}` : ''}
+    const [rows] = await q.query(`SELECT m.sku_code, m.location_id AS g, b.batch_no, DATE_FORMAT(b.expiry_date, '%Y-%m-%d') AS exp, SUM(m.delta) AS qty, b.expiry_date < ${IST_TODAY} AS expired FROM stock_movements m JOIN batches b ON b.batch_id = m.batch_id
+        WHERE m.stock_kind = 'good' AND b.expiry_date <= ${IST_TODAY} + INTERVAL 60 DAY AND ${inScope('m.location_id', ctx.scope)}${ctx.godown ? ` AND m.location_id = ${Number(ctx.godown)}` : ''}
         GROUP BY m.sku_code, m.location_id, b.batch_no, b.expiry_date HAVING qty > 0 ORDER BY b.expiry_date`);
     const skus = await skuMap(q);
     out.table = { title: 'Expiry', cols: [col('Pack'), col('Godown'), col('Batch'), col('Expires'), col('Packs', 'num'), col('State')],
@@ -250,7 +252,7 @@ async function moneyPage(q, ctx) {
   }
   if (tab === 'suppliers') {
     const [rows] = await q.query(`SELECT b.bill_no, b.supplier_bill_no, s.name, s.msme_type, DATE_FORMAT(b.bill_date, '%Y-%m-%d') AS bill_date, DATE_FORMAT(b.due_date, '%Y-%m-%d') AS due, b.total - b.paid AS left_amt,
-        DATEDIFF(CURDATE(), b.due_date) AS late, DATEDIFF(CURDATE(), b.bill_date) AS age FROM supplier_bills b JOIN suppliers s ON s.supplier_id = b.supplier_id
+        DATEDIFF(${IST_TODAY}, b.due_date) AS late, DATEDIFF(${IST_TODAY}, b.bill_date) AS age FROM supplier_bills b JOIN suppliers s ON s.supplier_id = b.supplier_id
         WHERE b.status IN ('unpaid', 'part') AND b.total - b.paid > 0.004 AND ${inScope('b.godown_id', ctx.scope)}${ctx.godown ? ` AND b.godown_id = ${Number(ctx.godown)}` : ''} ORDER BY late DESC`);
     const msme = rows.filter((r) => r.msme_type && ['micro', 'small'].includes(String(r.msme_type).toLowerCase()) && Number(r.age) > 45);
     if (msme.length) out.notes.push(`MSME 45 days passed: ${msme.map((r) => `${r.bill_no} ${r.name} (${r.age} days)`).join(', ')}. Interest is due by law.`);

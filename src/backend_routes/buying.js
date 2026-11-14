@@ -30,10 +30,11 @@ const { GST_STATES } = require('../shared/gstStates');
 const r2 = (n) => Math.round(Number(n) * 100) / 100;
 const STATE_CODE = Object.fromEntries(GST_STATES.map(([c, n]) => [n, c]));
 const today = () => pricing.istToday();
-const addDays = (d, n) => { const x = new Date(`${d}T00:00:00Z`); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
+const istDates = require('../shared/istDate'); // India dates in one place (src/shared/istDate.js)
+const { addDays } = istDates;
 const addMonths = (d, n) => { const x = new Date(`${d}T00:00:00Z`); x.setUTCMonth(x.getUTCMonth() + n); return x.toISOString().slice(0, 10); };
 const dayDiff = (a, b) => Math.round((new Date(`${b}T00:00:00Z`) - new Date(`${a}T00:00:00Z`)) / 86400e3);
-const ymd = (v) => (v ? (v instanceof Date ? v.toISOString().slice(0, 10) : String(v).slice(0, 10)) : null);
+const { ymd } = istDates;
 const rs = (n) => `Rs ${Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const rs0 = (n) => `Rs ${Math.round(Number(n)).toLocaleString('en-IN')}`;
 

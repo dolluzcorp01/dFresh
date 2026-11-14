@@ -17,7 +17,8 @@ const notifications = require('./notifications');
 const SOURCES = { cashback: 'Cashback', refund: 'Refund', manual: 'Manual', used: 'Used on an order', expired: 'Expired', reversed: 'Cashback taken back' };
 const CREDITS = ['cashback', 'refund', 'manual'];
 const round2 = (n) => Math.round(n * 100) / 100;
-const IST_TODAY = "DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+05:30'))";
+const istDates = require('../shared/istDate'); // India dates in one place (src/shared/istDate.js)
+const IST_TODAY = istDates.IST_TODAY_SQL;
 
 async function balance(q, customerId) {
   const [[r]] = await q.query('SELECT COALESCE(SUM(amount), 0) AS bal FROM wallet_entries WHERE customer_id = ? FOR SHARE', [customerId]);
@@ -54,7 +55,7 @@ async function expiryFor(q, source) {
   const s = await commerceSettings.read(q);
   const days = Number(s[`wallet_expiry_${source}_days`]) || 0;
   if (!days) return null;
-  return new Date(Date.now() + 5.5 * 3600e3 + days * 86400e3).toISOString().slice(0, 10);
+  return istDates.addDays(istDates.istToday(), days);
 }
 
 /** a credit: cashback | refund | manual -> entry_id */

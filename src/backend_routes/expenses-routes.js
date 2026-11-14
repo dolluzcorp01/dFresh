@@ -55,7 +55,7 @@ function register({ route, tx, db, by, InputError, canDo, commerceGate, upload }
     const [gs] = await db.query('SELECT location_id AS godown_id, name, state FROM locations WHERE is_active = 1 ORDER BY sort_order, location_id');
     const mine = gs.filter((g) => sc === 'ALL' || sc.includes(Number(g.godown_id)));
     for (const g of mine) g.petty = await expenses.pettyFree(db, g.godown_id);
-    const [pos] = await db.query("SELECT po_no, s.name AS supplier, DATE_FORMAT(p.created_at, '%Y-%m-%d') AS d FROM purchase_orders p JOIN suppliers s ON s.supplier_id = p.supplier_id WHERE p.status NOT IN ('draft', 'cancelled', 'rejected') AND p.po_no IS NOT NULL ORDER BY p.po_id DESC LIMIT 60");
+    const [pos] = await db.query("SELECT po_no, s.name AS supplier, DATE_FORMAT(CONVERT_TZ(p.created_at, '+00:00', '+05:30'), '%Y-%m-%d') AS d FROM purchase_orders p JOIN suppliers s ON s.supplier_id = p.supplier_id WHERE p.status NOT IN ('draft', 'cancelled', 'rejected') AND p.po_no IS NOT NULL ORDER BY p.po_id DESC LIMIT 60");
     const [[rule]] = await db.query("SELECT is_on, limit_value FROM approval_rules WHERE kind = 'expense'");
     return { today: pricing.istToday(), godowns: mine, payees: (await expenses.payeeList(db)).map((p) => ({ name: p.name, pan: p.pan, gstin: p.gstin })), pos,
       rule: rule && Number(rule.is_on) ? Number(rule.limit_value) : null };

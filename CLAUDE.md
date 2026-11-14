@@ -81,6 +81,9 @@ The approved look, copy, animations and interactions come from that preview. Mat
 18. **File safety.** Never create links/junctions to project folders, and never run delete commands on paths
     outside a folder you created in this session. Never touch node_modules, .git, .env, media or private
     except through npm or git commands.
+19. **Dates:** a picked date is plain 'YYYY-MM-DD' text, never a moment. 'Today' and every date shown or compared use
+    src/shared/istDate.js (IST). Never toISOString().slice(0,10), CURDATE() or toLocaleDateString() without it.
+    DATETIME stays UTC in the DB.
 
 ## Commands (after Phase 0)
 - `npm run dev` - API (nodemon server.js) + React dev server together (React always on 3000, never moves)

@@ -144,6 +144,11 @@ Step by step, env checklist and every `<DOMAIN>` placeholder: `deploy/DEPLOY.md`
 `deploy/ecosystem.config.js`, `deploy/backup.sh`).
 Times: every DATETIME is stored in UTC (each DB connection sets its session to UTC, mysql2 `timezone: 'Z'`, config/db.js)
 and shown in Asia/Kolkata everywhere (admin, e-mails, sheet, Excel, CSV), whatever zone the server or PC is in.
+India dates live in one file, `src/shared/istDate.js` (API and admin): `istToday()` (pricing.istToday uses it), `istDate()`
+for the India day of an instant, `ymd()` for a DATE (mysql2 reads it as midnight UTC: never shift it), `addDays`,
+`lastDayOf`, `inIstDateRange`, `fmtYmd`, `fmtIstDateTime` (the admin's fmtDate) and, for SQL, `IST_TODAY_SQL` and
+`istDateSql(col)`: the session is UTC, so never `CURDATE()`, and `DATE(col)` / `DATE_FORMAT(col)` of a DATETIME only
+through `CONVERT_TZ(col, '+00:00', '+05:30')`. No `dateStrings`, no local getters, no process time zone.
 nginx -> `server.js` (serves API + React build) under pm2 as `dfresh-api` (https://dfresh.us, deploy/DEPLOY.md). React is built on the
 PC (`npm run release:pack`), never on the 1 GB droplet; the server runs node 22 at /opt/node22 (system node v18 stays). `media/` and `private/brochures/` live outside git on the server
 (upload via admin), originals backed up.

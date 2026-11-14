@@ -45,7 +45,8 @@ const WRITE_OFF_NEXT = { damaged: 'We absorb the cost. Nothing to claim.', arriv
 const SALE_OUT = ['out', 'transfer', 'prod_issue']; // phase 17: material issued to a run is never from an expired lot
 const round2 = (n) => Math.round(n * 100) / 100;
 const round3 = (n) => Math.round(n * 1000) / 1000; // phase 17: quantities in kg have up to 3 decimals
-const IST_TODAY = "DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+05:30'))";
+const istDates = require('../shared/istDate'); // India dates in one place (src/shared/istDate.js)
+const IST_TODAY = istDates.IST_TODAY_SQL;
 
 class StockError extends Error {
   constructor(message, status = 400) { super(message); this.status = status; }
@@ -157,7 +158,7 @@ async function moveStock(q, { sku, godown, shelf = 'good', qty, batch = null, st
   // packs are whole (every caller checks it); a raw material counted in kg moves with decimals (phase 17)
   if (!Number.isFinite(n) || n === 0) throw new StockError('Quantity: a whole number of packs');
   if (!what) throw new Error('stock: what moves the stock (move type) is required');
-  await books.assertOpen(q, at ? new Date(new Date(at).getTime() + 5.5 * 3600e3).toISOString().slice(0, 10) : pricing.istToday()); // phase 12b month lock
+  await books.assertOpen(q, at ? istDates.istDate(at) : pricing.istToday()); // phase 12b month lock
   // phase 18: a stock take freezes the Good shelf it counts: nothing comes in or goes out until it is submitted or cancelled
   if (shelf === 'good' && what !== 'count' && !at) {
     const f = await frozenBy(q, g, sku);
@@ -263,7 +264,7 @@ async function stockIn(q, data, empId, opts = {}) {
   const day = String(data.received_on || today);
   if (!isDate(day) || day > today) throw new StockError('Date: today or earlier');
   await books.assertOpen(q, day);
-  if (!opts.allowPast && day < new Date(Date.now() + 5.5 * 3600e3 - 60 * 86400e3).toISOString().slice(0, 10)) throw new StockError('Date: at most 60 days back');
+  if (!opts.allowPast && day < istDates.addDays(istDates.istToday(), -60)) throw new StockError('Date: at most 60 days back');
   const reference = String(data.reference || '').trim().slice(0, 60) || null;
   if (kind === 'purchase' && !reference) throw new StockError("Reference: the supplier's bill number");
   const raw = Array.isArray(data.lines) ? data.lines : [];

@@ -18,6 +18,7 @@
 // A stop is keyed by its order no. (delivery) or its return no. (pickup).
 const { audit } = require('./audit');
 const approvals = require('./approvals');
+const istDates = require('../shared/istDate'); // India dates in one place (src/shared/istDate.js)
 const commerce = require('./commerce');
 const commerceSettings = require('./commerce-settings');
 const notifications = require('./notifications');
@@ -263,9 +264,9 @@ async function createTrip(q, b, empId) {
   if (!v) throw new DeliveryError('Choose the vehicle');
   const [[d]] = await q.query('SELECT driver_id FROM drivers WHERE driver_id = ? AND is_active = 1', [Number(b.driver_id)]);
   if (!d) throw new DeliveryError('Choose the driver');
-  const today = new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10);
+  const today = istDates.istToday();
   const day = String(b.trip_date || today);
-  const later = new Date(Date.now() + 5.5 * 3600e3 + 30 * 86400e3).toISOString().slice(0, 10);
+  const later = istDates.addDays(today, 30);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || Number.isNaN(Date.parse(`${day}T00:00:00Z`)) || day < today || day > later) throw new DeliveryError('Trip date: today or a day in the next 30 days');
   if (b.area_id) {
     const [[a]] = await q.query('SELECT area_id FROM delivery_areas WHERE area_id = ?', [Number(b.area_id)]);
@@ -309,7 +310,7 @@ async function checkLoad(q, tripId) {
 async function papersProblem(q, tripId) {
   const [[t]] = await q.query(`SELECT v.number, v.is_active AS v_on, DATE_FORMAT(v.insurance_until, '%Y-%m-%d') AS ins, DATE_FORMAT(v.fitness_until, '%Y-%m-%d') AS fc, d.name AS driver,
       d.licence_no, DATE_FORMAT(d.licence_until, '%Y-%m-%d') AS lic FROM delivery_trips t JOIN vehicles v ON v.vehicle_id = t.vehicle_id JOIN drivers d ON d.driver_id = t.driver_id WHERE t.trip_id = ?`, [tripId]);
-  const day = new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10);
+  const day = istDates.istToday();
   const vp = [];
   if (!Number(t.v_on)) vp.push('not in use');
   if (t.ins && t.ins < day) vp.push(`insurance ended ${t.ins}`);

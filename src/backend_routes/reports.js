@@ -20,8 +20,9 @@ const { stateName } = require('../shared/gstStates');
 const { inScope, ordersIn, customersIn } = require('./scope-sql');
 
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
-const IST_TODAY = "DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+05:30'))";
-const istToday = () => new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10);
+const istDates = require('../shared/istDate'); // India dates in one place (src/shared/istDate.js)
+const IST_TODAY = istDates.IST_TODAY_SQL;
+const istToday = () => istDates.istToday();
 const istDate = (col) => `DATE(CONVERT_TZ(${col}, '+00:00', '+05:30'))`;
 const IN = (col) => `${col} >= CONVERT_TZ(?, '+05:30', '+00:00') AND ${col} < CONVERT_TZ(DATE_ADD(?, INTERVAL 1 DAY), '+05:30', '+00:00')`;
 const span = (p) => [`${p.from} 00:00:00`, p.to];
@@ -32,7 +33,7 @@ const SKU_JOIN = `JOIN products p ON p.product_id = s.product_id
 const col = (key, label, type = 'text') => ({ key, label, type });
 const sumRows = (rows, keys) => Object.fromEntries(keys.map((k) => [k, round2(rows.reduce((a, r) => a + (Number(r[k]) || 0), 0))]));
 const daysBetween = (a, b) => Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86400e3);
-const addDays = (d, n) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 86400e3).toISOString().slice(0, 10);
+const { addDays } = istDates;
 
 /** the previous period of the same length, just before */
 function previous(p) {
