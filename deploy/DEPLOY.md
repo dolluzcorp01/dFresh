@@ -386,8 +386,8 @@ GOOGLE_SERVICE_ACCOUNT_JSON=./private/google-service-account.json
 # --- security ---
 IP_HASH_SALT=<fill by hand: openssl rand -hex 32>
 BROCHURE_TOKEN_TTL_MIN=15
-LEAD_RATE_LIMIT_PER_10MIN=5
 ```
+(Phase 24: `LEAD_RATE_LIMIT_PER_10MIN` is gone; the spam limit is set on Website > Forms > Form rules. An old line in `.env` is ignored and can be deleted.)
 | Key | Live value | Why |
 |---|---|---|
 | `NODE_ENV` | `production` | Secure + httpOnly + SameSite=Strict admin cookies (auth.js), serves the build, refuses non-https URLs |

@@ -7,6 +7,7 @@
 // deleted, so the site falls back to the default language (an empty string would show as blank instead).
 const { getDBConnection } = require('../../config/db');
 const { STAFF_GROUP, RETIRED_KEYS } = require('./text-groups');
+const { isDay, ymd } = require('../shared/istDate');
 
 const db = getDBConnection(process.env.DB_NAME || 'dfresh').promise();
 
@@ -61,8 +62,11 @@ const ENTITIES = {
       cta_action: { type: 'enum', values: ['products', 'products_home', 'products_category', 'section', 'form'] },
       cta_target: TEXT(60, { nullable: true }), desktop_file: { ...TEXT(150), readOnly: true },
       mobile_file: { ...TEXT(150), readOnly: true }, is_active: { type: 'bool' }, note: TEXT(255, { nullable: true }),
+      // phase 24: the banner shows from / until these India days (empty = no limit)
+      show_from: { type: 'date', nullable: true }, show_until: { type: 'date', nullable: true },
     },
-    tr: { table: 'banner_translations', cols: { headline: TEXT(200, { required: true }), cta_label: TEXT(80, { required: true }) } },
+    // alt_text (phase 24): the photo description per language, read by screen readers and Google (empty = decorative)
+    tr: { table: 'banner_translations', cols: { headline: TEXT(200, { required: true }), cta_label: TEXT(80, { required: true }), alt_text: TEXT(255) } },
   },
   kits: {
     table: 'kits', keys: ['kit_key'], order: 'b.sort_order, b.kit_key',
@@ -70,18 +74,7 @@ const ENTITIES = {
     tr: { table: 'kit_translations', cols: { name: TEXT(100, { required: true }), tagline: TEXT(255, { required: true }) } },
     links: { table: 'kit_products', item: 'product_id', field: 'products' },
   },
-  towns: {
-    table: 'towns', keys: ['town_key'], order: 'b.sort_order, b.town_key',
-    cols: {
-      town_key: KEY(40), sort_order: { type: 'int' }, is_base: { type: 'bool' },
-      map_x: { type: 'int', nullable: true }, map_y: { type: 'int', nullable: true },
-      // town name next to its pin: offset in map units and which end of the text sits there (DB defaults when not sent)
-      label_dx: { type: 'int', default: 0 }, label_dy: { type: 'int', default: -20 },
-      label_anchor: { type: 'enum', values: ['start', 'middle', 'end'], default: 'middle' },
-      lat:{ type: 'decimal', nullable: true }, lng: { type: 'decimal', nullable: true }, is_active: { type: 'bool' },
-    },
-    tr: { table: 'town_translations', cols: { name: TEXT(80, { required: true }) } },
-  },
+  // towns: gone in phase 24 (one town list: the map is on Masters > Delivery areas, website-routes.js /website/map)
   'form-options': {
     table: 'form_options', keys: ['list_key', 'option_value'], order: 'b.list_key, b.sort_order, b.option_value',
     cols: { list_key: KEY(40), option_value: KEY(80), sort_order: { type: 'int' }, is_active: { type: 'bool' } },
@@ -152,6 +145,9 @@ function coerce(name, def, raw) {
     case 'enum':
       if (!def.values.includes(s)) throw new InputError(`${name}: one of ${def.values.join(', ')}`);
       return s;
+    case 'date': // a picked day 'YYYY-MM-DD' (plain text, never a moment: CLAUDE.md rule 19)
+      if (!isDay(String(s))) throw new InputError(`${name}: a date like 2026-12-31`);
+      return String(s);
     case 'hex':
       if (!/^#[0-9A-Fa-f]{6}$/.test(String(s))) throw new InputError(`${name}: colour like #A1B2C3`);
       return String(s).toUpperCase();
@@ -181,6 +177,7 @@ async function load(name, keyValues = null, q = db) {
     for (const [c, def] of Object.entries(e.cols)) {
       if (def.type === 'bool') r[c] = Number(r[c]);
       if (def.type === 'decimal' && r[c] !== null) r[c] = Number(r[c]);
+      if (def.type === 'date') r[c] = ymd(r[c]); // a DATE as the plain day 'YYYY-MM-DD' (rule 19), null when empty
     }
     if (e.tr) r.tr = {};
     if (e.links) r[e.links.field] = [];

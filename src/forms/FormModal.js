@@ -178,7 +178,7 @@ export default function FormModal({ type, prefill: opened, source, onClose }) {
   const [prefill] = useState(() => usablePrefill(opened, data.products));
   const openLegal = useOpenLegal();
   const uid = useId();
-  const cfg = useMemo(() => formConfig(type), [type]);
+  const cfg = useMemo(() => formConfig(type, data.formRules), [type, data.formRules]);
   const base = useMemo(() => baseValues(cfg, prefill), [cfg, prefill]);
   const [values, setValues] = useState(() => initialValues(type, cfg, prefill));
   const [confirming, setConfirming] = useState(false);

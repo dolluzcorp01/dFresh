@@ -1,21 +1,18 @@
-// Browser-side field checks from src/shared/rules.json (the API runs the same rules in validation.js).
+// Browser-side field checks: the format checks of src/shared/formChecks.js and the field's own rules (required, from
+// the form rules in the bootstrap). The API runs the same checks in validation.js.
 // Returns a ui_text error key, or '' when the value is fine.
-import rules from '../shared/rules.json';
-
-const PATTERNS = Object.fromEntries(
-  Object.entries(rules.patterns).map(([k, p]) => [k, new RegExp(p.source, p.flags)])
-);
+import { ERRORS, PATTERNS } from '../shared/formChecks';
 
 export function checkField(field, value, options) {
   if (field.type === 'pick') {
-    return field.required && !(value && value.length) ? rules.errors.requiredPick : '';
+    return field.required && !(value && value.length) ? ERRORS.requiredPick : '';
   }
   const v = typeof value === 'string' ? value.trim() : '';
   if (!v) {
     if (!field.required) return '';
-    return field.type === 'select' ? rules.errors.requiredChoice : rules.errors.required;
+    return field.type === 'select' ? ERRORS.requiredChoice : ERRORS.required;
   }
-  if (field.type === 'select') return options && options.some((o) => o.value === v) ? '' : rules.errors.requiredChoice;
-  if (PATTERNS[field.type] && !PATTERNS[field.type].test(v)) return rules.errors[field.type];
+  if (field.type === 'select') return options && options.some((o) => o.value === v) ? '' : ERRORS.requiredChoice;
+  if (PATTERNS[field.type] && !PATTERNS[field.type].test(v)) return ERRORS[field.type];
   return '';
 }

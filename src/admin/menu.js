@@ -1329,11 +1329,10 @@ export const MENU = [
       use: "change their pictures and text (live). │",
       to: [
        {
-        path: "settings",
-        section: "settings",
+        path: "home-doors",
+        section: "content",
         action: "view",
-        commerce: false,
-        hash: "cs-s-home-page"
+        commerce: false
        }
       ]
      },
@@ -1344,11 +1343,10 @@ export const MENU = [
       use: "choose and reorder them (live). │",
       to: [
        {
-        path: "products",
-        section: "products",
+        path: "most-loved",
+        section: "content",
         action: "view",
-        commerce: false,
-        hash: "most-loved"
+        commerce: false
        }
       ]
      },
@@ -1454,8 +1452,14 @@ export const MENU = [
       label: "Form rules",
       see: "which fields are required, checks, and the spam limit.",
       use: "tighten or relax the forms.",
-      section: "content",
-      phase: 24
+      to: [
+       {
+        path: "form-rules",
+        section: "content",
+        action: "view",
+        commerce: false
+       }
+      ]
      }
     ]
    },
@@ -1466,7 +1470,7 @@ export const MENU = [
     use: "choose which areas appear (live).",
     to: [
      {
-      path: "towns",
+      path: "where-we-deliver-map",
       section: "content",
       action: "view",
       commerce: false
@@ -1496,16 +1500,28 @@ export const MENU = [
       label: "Menu links",
       see: "the top menu items and their order.",
       use: "add, remove or reorder menu items. │",
-      section: "content",
-      phase: 24
+      to: [
+       {
+        path: "menu-links",
+        section: "content",
+        action: "view",
+        commerce: false
+       }
+      ]
      },
      {
       id: "website/brand-and-layout/visit-cards",
       label: "Visit cards",
       see: "office and godown addresses shown on the site.",
       use: "change addresses or add a new one.",
-      section: "content",
-      phase: 24
+      to: [
+       {
+        path: "visit-cards",
+        section: "content",
+        action: "view",
+        commerce: false
+       }
+      ]
      }
     ]
    },
@@ -1516,11 +1532,10 @@ export const MENU = [
     use: "set how pages appear in Google and in shares (live).",
     to: [
      {
-      path: "settings",
+      path: "google-and-sharing",
       section: "settings",
       action: "view",
-      commerce: false,
-      hash: "cs-s-sharing-and-seo"
+      commerce: false
      }
     ]
    },
@@ -1531,7 +1546,7 @@ export const MENU = [
     use: "keep those details correct (live).",
     to: [
      {
-      path: "settings",
+      path: "site-settings",
       section: "settings",
       action: "view",
       commerce: false

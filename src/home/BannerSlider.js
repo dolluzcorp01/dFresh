@@ -138,7 +138,7 @@ export default function BannerSlider() {
                   <source media="(max-width: 700px)" srcSet={mediaUrl(b.mobile)} width="1080" height="1350" />
                   <img
                     src={mediaUrl(b.desktop)}
-                    alt=""
+                    alt={b.alt || ''}
                     width="1920"
                     height="800"
                     draggable="false"

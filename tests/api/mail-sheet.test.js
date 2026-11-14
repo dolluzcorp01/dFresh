@@ -25,7 +25,7 @@ after(async () => {
   await db.end();
 });
 
-// Worst case allowed by rules.json: 2000-char message of characters that esc() expands, 40 products, long names.
+// Worst case allowed by the form rules (Website > Forms > Form rules): 2000-char message of characters that esc() expands, 40 products, long names.
 const ui = new Proxy({}, { get: (t, k) => `${'&'.repeat(200)} ${String(k)} {name} {ref}` });
 // Staff texts: the real ones from the DB (Translations "Staff e-mails"), loaded before the templates render.
 let worst;

@@ -1,7 +1,7 @@
 // The five forms (spec D): title / subtitle / button keys and, per field, its label key, whether it spans both
-// columns and its autocomplete hint. Field names, types, required flags and lengths come from
-// src/shared/rules.json (the same file the API validates with), in the order listed there.
-import rules from '../shared/rules.json';
+// columns and its autocomplete hint. Field names, types, required flags and lengths are the form rules (phase 24:
+// Website > Forms > Form rules, the database), sent in the bootstrap (data.formRules); the API validates with the
+// same rows. In their order.
 
 const LAYOUT = {
   brochure: {
@@ -54,22 +54,22 @@ const LAYOUT = {
 // the quote form in "free sample" mode (form_type sample), with its own title (Translations m_sample)
 LAYOUT.sample = { ...LAYOUT.quote, title: 'm_sample' };
 
-const ruleFields = (type) => {
+const ruleFields = (rules, type) => {
   const def = rules.forms[type];
   return typeof def === 'string' ? rules.forms[def] : def;
 };
 
 export const FORM_TYPES = Object.keys(LAYOUT);
 
-/** { title, sub, button, fields: [{ name, type, required, max, list, label, full, autoComplete }] } */
-export function formConfig(type) {
+/** { title, sub, button, fields: [{ name, type, required, max, list, label, full, autoComplete }] }; rules = data.formRules */
+export function formConfig(type, rules) {
   const l = LAYOUT[type];
   if (!l) return null;
   return {
     title: l.title,
     sub: l.sub,
     button: l.button,
-    fields: ruleFields(type).map((f) => {
+    fields: ruleFields(rules, type).filter((f) => l.fields[f.name]).map((f) => {
       const [label, full, autoComplete] = l.fields[f.name];
       return { ...f, label, full, autoComplete };
     }),

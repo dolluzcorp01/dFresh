@@ -45,7 +45,8 @@ dfresh/
     styles/      tokens.css  base.css  (+ one css per component folder)
     i18n/        I18nProvider.js  useT.js  langRoutes.js
     utils/       api.js  track.js  protect.js  useReducedMotion.js  useInView.js
-    shared/      rules.json      # validation regexes + limits, used by BOTH React and Express
+    shared/      formChecks.js siteTargets.js istDate.js  # form checks, link targets, India dates: used by BOTH React and Express
+                 # (phase 24: which fields are required and the limits live in the DB, form_fields + site_settings)
     components/  Header, Footer, LanguageSwitch, MobileMenu, WhatsAppFab, Modal, FlipCard,
                  ProductCarousel, Swatches, SpecTable, FilterChips, SearchBox, SectionHead, Reveal ...
     sections/    Hero (TissueSheet, Petals, SpringLetters), Stats, BannerSlider, Doors, RangeRing,
@@ -70,7 +71,7 @@ dfresh/
       gsheet.js                 # Google Sheets append
       content-cache.js          # in-memory cache per language, versioned, busted by admin writes
       i18n-sql.js               # helpers that build "translation with English fallback" queries
-      validation.js             # uses src/shared/rules.json
+      validation.js             # uses src/shared/formChecks.js + the DB rules (form-rules.js)
       seo.js                    # per-route <title>, meta, hreflang, JSON-LD, sitemap.xml, robots.txt
   docs/ ...
 ```

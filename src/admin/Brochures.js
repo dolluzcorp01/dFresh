@@ -1,6 +1,7 @@
 // Brochures (spec F 9): one PDF per language (<= 5 MB, checked as a real PDF), replace, download, delete.
 // A language without its own brochure gets the default language's.
 import { api } from './adminApi';
+import { BrochureSwitch } from './Website';
 import { Loading, PageHead, Table, UploadButton, fmtDate, useAction, useAdmin, useCan, useConfirm, useLoad, useUpload } from './ui';
 
 export default function Brochures() {
@@ -19,9 +20,12 @@ export default function Brochures() {
     act.run(async () => { await api.send('DELETE', `/brochures/${lang}`); list.reload(); }, 'Deleted');
   };
 
+  const canSwitch = useCan('settings', 'view'); // the switch is a site setting (its own rights)
   return (
     <section>
-      <PageHead sub="The PDF brochure visitors download, one per language." />
+      <PageHead sub="PDF brochures, one per language" />
+      {/* phase 24 (field map row 32): the download switch moved here from Settings */}
+      {canSwitch && <BrochureSwitch />}
       {act.note}
       <Loading state={list}>
         <Table label="Brochures" rows={languages} rowKey={(l) => l.lang_code} columns={[

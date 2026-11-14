@@ -8,7 +8,7 @@ Public endpoints never return internal columns (`spec_status`, `staff_notes`, `i
 |---|---|---|
 | GET | `/health` | `{ db: 'ok', counts: { products, variants, languages }, version }` (no secrets) |
 | GET | `/languages` | `{ languages: [{ code, nativeName, switchLabel, htmlLang, dir, fontFamily, isDefault }], default }` (active only, ordered by sort_order; `default` is the default language code) |
-| GET | `/bootstrap?lang=xx` | ONE payload for the site in that language (English fallback applied): `{ lang, ui: {key: value}, settings: {public keys}, categories[], products[] (cards with variants[], images[]), banners[], kits[], towns[], formOptions: {list_key: [{value,label}]}, sizePicker[], places: {office, godown}, stats: {products, categories, towns, languages}, contentVersion }`. `ui` has {products} / {towns_word} ... already filled in from `stats` (src/shared/countText.js) and never holds the "Staff e-mails" group; `places` = the default language's office / godown address (Google Maps search) |
+| GET | `/bootstrap?lang=xx` | ONE payload for the site in that language (English fallback applied): `{ lang, ui: {key: value}, settings: {public keys}, categories[], products[] (cards with variants[], images[]), banners[], kits[], towns[], formOptions: {list_key: [{value,label}]}, sizePicker[], menuLinks[], visitCards[], formRules, stats: {products, categories, towns, languages}, contentVersion }` (phase 24: banners only on their show dates (India day) with `alt` when set; towns = the delivery areas ticked Show on map; `menuLinks` `{ key, textKey, page | hash, header, phone, footer }` (active links only); `visitCards` `{ key, name, address, hours?, phone?, query }` (active cards only); `formRules` = which fields each form requires + the most products in one quote; `places` replaced by visitCards). `ui` has {products} / {towns_word} ... already filled in from `stats` (src/shared/countText.js) and never holds the "Staff e-mails" group |
 | GET | `/legal/:page?lang=xx` | `{ title, html, isEnglishFallback }` for `privacy` / `terms` |
 
 Town shape: `{ key, isBase, mapX, mapY, label: { dx, dy, anchor }, lat, lng, name }` (label = where the name sits
@@ -48,7 +48,7 @@ Field names per form_type:
 - distributor: `full_name, firm_name, gst_no?, areas, godown_vehicles (yes/no), brands?, monthly_sales, phone, email`
 - contact: `full_name, phone, email, message`
 Status codes: 400 validation (with `fields: {name: errorKey}`; `consent` appears there too), 429 rate limit
-(`errorKey: 'e_rate'`; 5 per 10 min per `ip_hash`, from `rules.json`, env `LEAD_RATE_LIMIT_PER_10MIN` overrides),
+(`errorKey: 'e_rate'`; per `ip_hash` in 10 minutes, the limit from `site_settings.lead_rate_max` (default 5, 1 to 20, Website > Forms > Form rules; phase 24)),
 500 never leaks details. Honeypot filled: 200 `{ lead_ref: null }`, nothing saved.
 Queued with the lead (mail_outbox): staff alert; visitor brochure copy (brochure, when a PDF exists) or visitor
 confirmation `lead_ack` with the lead_ref (quote, sample, distributor, contact), in the visitor's language.
@@ -75,12 +75,12 @@ The client IP is `req.ip` with `trust proxy = loopback` (nginx on the same host 
 | POST | `/admin/products/import?dryRun=1` (multipart xlsx) then `?dryRun=0` | admin |
 | GET/PUT | `/admin/ui-text`, `/admin/ui-text/:key/:lang` (`{value}`; empty = delete, falls back) | viewer read / editor write |
 | GET / POST | `/admin/ui-text/export.csv`, `/admin/ui-text/export.xlsx` (branded, for reading; the import stays CSV), `/admin/ui-text/import?dryRun=1` then `?dryRun=0` (multipart csv) | editor+ |
-| CRUD | `/admin/banners`, `/admin/kits`, `/admin/towns`, `/admin/categories`, `/admin/size-picker`, `/admin/form-options` (+ `POST /admin/<section>/reorder {order:[ids]}`; composite ids joined with `~`) | viewer read / editor write |
+| CRUD | `/admin/banners` (phase 24: `show_from` / `show_until` 'YYYY-MM-DD' or null, `tr.<lang>.alt_text`), `/admin/kits`, `/admin/categories`, `/admin/size-picker`, `/admin/form-options` (+ `POST /admin/<section>/reorder {order:[ids]}`; composite ids joined with `~`) | viewer read / editor write |
 | POST | `/admin/banners/:id/image?kind=desktop\|mobile` (multipart; cropped to 1920x800 / 1080x1350 WebP) | editor+ |
 | CRUD | `/admin/languages` (GET includes completeness % per language) | viewer read / admin write |
 | GET/POST/DELETE | `/admin/brochures`, `/admin/brochures/:lang` (multipart pdf), `GET /admin/brochures/:lang/file` | viewer read / editor write |
-| GET / PUT | `/admin/settings`, `/admin/settings/:key` (`{value}`; is_public is not editable; `share_image` / `about_image` accept only `""` = remove; `door_home_product` / `door_biz_product` must name a product card) | admin |
-| POST | `/admin/settings/two-step-login/off` (the page asks first); `/admin/settings/two-step-login/on` e-mails a code to the signed-in admin (503 and still off when the mail fails); `/admin/settings/two-step-login/on/confirm` (`{code}`) switches it on. `PUT /admin/settings/two_step_login` is refused | admin |
+| GET / PUT | `/admin/settings`, `/admin/settings/:key` (`{value}`; is_public is not editable; `share_image` / `about_image` accept only `""` = remove; `door_home_product` / `door_biz_product` must name a product card; phase 24: `lead_email` and `gsheet_spreadsheet_id` wait for a second Admin and answer `{ waiting, approval_id, message }`; GET adds `waiting: { approval_id, value, by }` to a row with a change waiting) | admin |
+| POST | `/admin/settings/two-step-login/off` (the page asks first; phase 24: it waits for a second Admin, `{ waiting, approval_id, message }`); `/admin/settings/two-step-login/on` e-mails a code to the signed-in admin (503 and still off when the mail fails); `/admin/settings/two-step-login/on/confirm` (`{code}`) switches it on. `PUT /admin/settings/two_step_login` is refused | admin |
 | POST | `/admin/settings/:key/image` (multipart `file`, <= 8 MB): `share_image` = JPG / PNG of 1200x630 or larger in that shape -> `share/share-<hash>.jpg` + `.webp`; `about_image` = JPG / PNG / WebP -> `about/about-<hash>.webp` (1920x800, <= 250 KB) + `about/960/`. The previous generated file is deleted | admin |
 | GET / POST / PUT | `/admin/users`, `/admin/users/:empId` (role, is_active; never your own admin access) | admin |
 | GET | `/admin/audit?entity&emp&id&action&page` | admin |
@@ -294,6 +294,18 @@ File names are generated by the server (`<product_id>_<pos>-<hash>.webp`, `<bann
 | POST | `/admin/commerce/orders/:no/cancel` (after dispatch, once approved) | the invoice is cancelled with a credit note and the packs that left come back as a return (reason "Order cancelled after dispatch", status collecting, migration 23_05) instead of straight to the Good shelf; after receive + inspect it closes with no refund |
 | POST | `/admin/commerce/trips/:id/start`, `/admin/commerce/orders/:no/courier`, `/admin/commerce/orders/:no/picked-up` | an order with no invoice: 409 "Not ready to leave. Make the invoice for DFO-... first" unless the switch `invoice_at_gate` (Delivery, off as delivered; on is a loosening) is on, which makes it at the gate as before (migration 23_06) |
 | POST | `/admin/commerce/trips/:id/end` | cash short (handed in below recorded, plus stops that collected below what was due, `trip_stops.cash_due`) under the rule `cash_short` (on, above Rs 0): `{ status: 'cashwait', short, less, approval_id, message }`; approved -> ended, rejected -> back to `out`. `/admin/fulfil/cod` lists `cashwait` trips too |
+
+### Website pages (phase 24, website-routes.js; rights: the Content row; every save clears the content cache)
+| Method | Path | Notes |
+|---|---|---|
+| GET / PUT | `/admin/website/doors`, `/admin/website/doors/:which` (`home` / `biz`; `{ product?, action?, target? }`, action and target from src/shared/siteTargets.js) | the doors' products, targets, categories, choices and their Translations texts |
+| GET / PUT | `/admin/website/most-loved`, PUT `{ ids: [product ids in order] }` (every other card unticked; no limit) | |
+| GET | `/admin/website/form-rules` | fields per form (required, locked, longest text), limits, the read-only checks, the error texts |
+| PUT | `/admin/website/form-rules/field` `{ form_type, field_name, required }` (409 for Phone); `/admin/website/form-rules/limits` `{ rate_max 1-20, max_products 1-100 }` | |
+| GET / PUT / POST | `/admin/website/map`, `/admin/website/map/:area_id` (`names`, `show_on_map`, `map_x/y`, `label_dx/dy/anchor`, `is_base`, `lat/lng`), POST = a town for the map only (inactive area); PUT `/admin/website/map-order` `{ ids }` | Delivery areas = one town list |
+| GET / POST / PUT / DELETE | `/admin/website/menu-links`, `/admin/website/menu-links/:key` (`names`, `target_kind` page / section, `target`, `in_header/in_phone/in_footer`, `is_active`); PUT `/admin/website/menu-links-order` `{ keys }`; DELETE only an added link | |
+| GET / POST / PUT / DELETE | `/admin/website/visit-cards`, `/admin/website/visit-cards/:id` (`names`, `addresses`, `hours` per language, `map_query`, `phone`, `godown_id`, `is_active`); PUT `/admin/website/visit-cards-order` `{ ids }`; DELETE only an added card; GET lists the godowns to fill from | |
+| GET | `/admin/website/facts` (company facts from Admin > Company, the site address from the server), `/admin/website/senders` (verified SendGrid senders, read only) | read only |
 
 ### Logo and brand images (phase 15, brand.js; rights: the Content row)
 | Method | Path | Notes |

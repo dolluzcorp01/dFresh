@@ -96,4 +96,4 @@ async function resolve(q, req, raw) {
   return id;
 }
 
-module.exports = { DAYS, hoursText, GodownError, list, byId, scopeOf, covers, picked, viewScope, where, assertSees, assertWorks, defaultFor, resolve };
+module.exports = { DAYS, hoursText, offDays, GodownError, list, byId, scopeOf, covers, picked, viewScope, where, assertSees, assertWorks, defaultFor, resolve };

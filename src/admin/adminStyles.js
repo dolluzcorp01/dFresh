@@ -1488,6 +1488,32 @@ td.a-pending { background: #fff8e1; box-shadow: inset 3px 0 0 #e3b44f; }
   .a-p21-line { grid-template-columns: minmax(0, 1fr) 96px; }
   .a-p21-card { overflow-x: auto; }
 }
+/* phase 24: section 18 Website pages (Website.js) */
+.a-wtexts h2, .a-wdoor h2, .a-wforms h2 { font-size: 16px; margin: 0 0 6px; }
+.a-wtexts-t { table-layout: fixed; }
+.a-wtexts-t td { vertical-align: top; }
+.a-wtexts-t input, .a-wtexts-t textarea { width: 100%; box-sizing: border-box; }
+.a-wtexts-t .a-changed { background: #fff8e1; border-color: #e3b44f; }
+.a-wtexts-b { margin-top: 12px; gap: 8px; }
+.a-wdoors { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--gap); }
+.a-wdoor { display: grid; gap: 12px; margin-bottom: 0; }
+.a-wdoor.a-pending, .a-card.a-pending { box-shadow: inset 3px 0 0 #e3b44f, var(--shadow); }
+.a-wdoors + .a-wtexts { margin-top: var(--gap); }
+.a-wforms { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--gap); margin-bottom: var(--gap); }
+.a-wforms .a-card { margin-bottom: 0; overflow-x: auto; }
+.a-wforms td .a-hint { display: block; max-width: 220px; }
+.a-wmap { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 20px; align-items: start; }
+.a-wmap .a-townmap { margin: 0; }
+.a-wcardmap { width: 100%; height: 260px; border: 1px solid var(--line); border-radius: var(--r); }
+.a-waitline { display: block; margin-top: 6px; }
+.a-field.a-ro input { background: var(--bg, #f6f6f4); }
+.a-wfilled { align-self: end; margin: 0 0 8px; }
+.a-twostep-card { margin-top: var(--gap); padding: 16px 20px; }
+.a-twostep-card h2 { font-size: 16px; margin: 0 0 4px; }
+.a-ml { margin-left: 6px; }
+@media (max-width: 1199px) { .a-wmap { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 899px) { .a-wdoors, .a-wforms { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 599px) { .a-wtexts-t { table-layout: auto; min-width: 560px; } }
 @media print {
   body:has(#printArea) * { visibility: hidden; }
   body:has(#printArea) #printArea, body:has(#printArea) #printArea * { visibility: visible; }

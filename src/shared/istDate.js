@@ -42,6 +42,13 @@ function ymd(v) {
   return /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) : null;
 }
 
+/** is s a real calendar day written 'YYYY-MM-DD' (a picked date)? */
+function isDay(s) {
+  if (!YMD.test(String(s))) return false;
+  const ms = Date.parse(`${s}T00:00:00Z`);
+  return !Number.isNaN(ms) && new Date(ms).toISOString().slice(0, 10) === String(s);
+}
+
 /** 'YYYY-MM-DD' plus n days (n may be negative) */
 const addDays = (d, n) => new Date(Date.parse(`${ymd(d)}T00:00:00Z`) + n * DAY_MS).toISOString().slice(0, 10);
 
@@ -76,4 +83,4 @@ function fmtIstDateTime(v) {
 const IST_TODAY_SQL = "DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+05:30'))";
 const istDateSql = (col) => `DATE(CONVERT_TZ(${col}, '+00:00', '+05:30'))`;
 
-module.exports = { IST_OFFSET_MS, istDate, istToday, ymd, addDays, lastDayOf, inIstDateRange, fmtYmd, fmtIstDateTime, IST_TODAY_SQL, istDateSql };
+module.exports = { IST_OFFSET_MS, istDate, istToday, ymd, isDay, addDays, lastDayOf, inIstDateRange, fmtYmd, fmtIstDateTime, IST_TODAY_SQL, istDateSql };

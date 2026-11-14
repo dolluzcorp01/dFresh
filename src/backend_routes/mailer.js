@@ -17,7 +17,7 @@
 // - Log: logMail() prints one "[mail] #id purpose from .. to .. -> outcome" line per mail and outcome (the
 //   outbox worker calls it); the subject and body are never printed, so a sign-in code never reaches the log.
 // - Size: Gmail clips html over 102 KB. Rendered templates stay far below MAX_HTML_BYTES (60 KB) because every
-//   field is length-capped by rules.json; shared style strings keep the markup small. SendGrid click tracking
+//   field is length-capped by the form rules; shared style strings keep the markup small. SendGrid click tracking
 //   is off: it rewrites every link into a long redirect (and would route the brochure token through it).
 const fs = require('fs');
 const path = require('path');

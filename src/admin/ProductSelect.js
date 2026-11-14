@@ -166,7 +166,8 @@ export function RepPreview({ product }) {
 
 // A kit's products: "Selected (in order)" (drag, up / down, remove) above "Products (in order)", the list to tick
 // from (colour versions under their main product, filter). value = product IDs in order (kit_products.sort_order).
-export function KitProducts({ all, value, onChange, disabled }) {
+// hint / emptyText: the words under the headings (default: a kit's; Website > Most loved passes its own)
+export function KitProducts({ all, value, onChange, disabled, hint, emptyText }) {
   const [filter, setFilter] = useState('');
   const [drag, setDrag] = useState(null);
   const byId = new Map(all.map((p) => [p.product_id, p]));
@@ -212,13 +213,12 @@ export function KitProducts({ all, value, onChange, disabled }) {
               })}
             </ol>
           </>
-        ) : <p className="a-muted a-pick-note">No products yet. Tick products below.</p>}
+        ) : <p className="a-muted a-pick-note">{emptyText || 'No products yet. Tick products below.'}</p>}
       </section>
       <section className="a-dsec" aria-labelledby="kit-all-h">
         <h3 id="kit-all-h">Products (in order)</h3>
         <p className="a-muted a-kitpick-hint">
-          Shown as chips on this kit&apos;s card in the For Business section, in the Request a kit WhatsApp message, and
-          pre-selected in the free sample form opened from this kit.
+          {hint || "Shown as chips on this kit's card in the For Business section, in the Request a kit WhatsApp message, and pre-selected in the free sample form opened from this kit."}
         </p>
         <input type="search" placeholder="Filter by ID or name" aria-label="Filter products" value={filter} onChange={(e) => setFilter(e.target.value)} />
         <div className="a-pick-list" role="group" aria-label="Products to include">

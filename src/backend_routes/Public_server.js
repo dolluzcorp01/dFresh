@@ -9,6 +9,8 @@ const { translatedSelect } = require('./i18n-sql');
 const cache = require('./content-cache');
 const { numberWords, fillCounts } = require('../shared/countText');
 const { STAFF_GROUP, LABEL_GROUP } = require('./text-groups');
+const istDates = require('../shared/istDate');
+const formRules = require('./form-rules');
 
 const router = express.Router();
 const db = getDBConnection(process.env.DB_NAME || 'dfresh').promise();
@@ -105,10 +107,10 @@ async function query(spec, lang, fallback) {
   return rows;
 }
 
-async function buildBootstrap(lang, fallback, activeLanguages) {
+async function buildBootstrap(lang, fallback, activeLanguages, today) {
   const q = (spec) => query(spec, lang, fallback);
   const [uiRows, productRows, imageRows, categoryRows, bannerRows, kitRows, kitProductRows,
-    townRows, optionRows, sizeRows, settingRows] = await Promise.all([
+    townRows, optionRows, sizeRows, settingRows, linkRows, cardRows, rules] = await Promise.all([
     q({
       base: 'ui_text_keys', tr: 'ui_text', keys: ['text_key'],
       baseCols: ['text_key', 'allows_html'], trCols: [{ col: 'value' }],
@@ -145,8 +147,10 @@ async function buildBootstrap(lang, fallback, activeLanguages) {
     q({
       base: 'banners', tr: 'banner_translations', keys: ['banner_key'],
       baseCols: ['banner_key', 'theme', 'cta_action', 'cta_target', 'desktop_file', 'mobile_file'],
-      trCols: [{ col: 'headline' }, { col: 'cta_label' }],
-      where: 'b.is_active = 1', orderBy: 'b.sort_order, b.banner_key',
+      trCols: [{ col: 'headline' }, { col: 'cta_label' }, { col: 'alt_text' }],
+      // phase 24: a banner shows from / until its dates (India days; empty = no limit)
+      where: 'b.is_active = 1 AND (b.show_from IS NULL OR b.show_from <= ?) AND (b.show_until IS NULL OR b.show_until >= ?)',
+      whereParams: [today, today], orderBy: 'b.sort_order, b.banner_key',
     }),
     q({
       base: 'kits', tr: 'kit_translations', keys: ['kit_key'],
@@ -156,10 +160,10 @@ async function buildBootstrap(lang, fallback, activeLanguages) {
     db.query('SELECT kit_key, product_id FROM kit_products ORDER BY kit_key, sort_order, product_id')
       .then(([r]) => r),
     q({
-      base: 'towns', tr: 'town_translations', keys: ['town_key'],
-      baseCols: ['town_key', 'is_base', 'map_x', 'map_y', 'label_dx', 'label_dy', 'label_anchor', 'lat', 'lng'],
+      base: 'delivery_areas', tr: 'delivery_area_translations', keys: ['area_id'],
+      baseCols: ['area_id', 'map_key', 'label', 'is_base', 'map_x', 'map_y', 'label_dx', 'label_dy', 'label_anchor', 'lat', 'lng'],
       trCols: [{ col: 'name' }],
-      where: 'b.is_active = 1', orderBy: 'b.sort_order, b.town_key',
+      where: 'b.show_on_map = 1', orderBy: 'b.map_sort, b.area_id',
     }),
     q({
       base: 'form_options', tr: 'form_option_translations', keys: ['list_key', 'option_value'],
@@ -170,6 +174,11 @@ async function buildBootstrap(lang, fallback, activeLanguages) {
       .then(([r]) => r),
     db.query('SELECT setting_key, setting_value FROM site_settings WHERE is_public = 1 ORDER BY setting_key')
       .then(([r]) => r),
+    db.query('SELECT link_key, text_key, target_kind, target, in_header, in_phone, in_footer FROM menu_links WHERE is_active = 1 ORDER BY sort_order, link_key')
+      .then(([r]) => r),
+    db.query('SELECT card_id, name_key, address_key, hours_key, map_query, phone FROM visit_cards WHERE is_active = 1 ORDER BY sort_order, card_id')
+      .then(([r]) => r),
+    formRules.load(db),
   ]);
 
   const ui = {};
@@ -241,6 +250,7 @@ async function buildBootstrap(lang, fallback, activeLanguages) {
     mobile: `/media/banners/mobile/${encodeURIComponent(r.mobile_file)}`,
     headline: r.headline,
     ctaLabel: r.cta_label,
+    ...(r.alt_text ? { alt: r.alt_text } : {}), // the photo description (empty: the photo is decorative, as before)
   }));
 
   const kitProducts = new Map();
@@ -259,14 +269,14 @@ async function buildBootstrap(lang, fallback, activeLanguages) {
   }));
 
   const towns = townRows.map((r) => ({
-    key: r.town_key,
+    key: r.map_key || `area-${r.area_id}`,
     isBase: bool(r.is_base),
     mapX: num(r.map_x),
     mapY: num(r.map_y),
     label: { dx: Number(r.label_dx), dy: Number(r.label_dy), anchor: r.label_anchor },
     lat: num(r.lat),
     lng: num(r.lng),
-    name: r.name,
+    name: r.name || r.label,
   }));
 
   const formOptions = {};
@@ -287,6 +297,12 @@ async function buildBootstrap(lang, fallback, activeLanguages) {
   const settings = {};
   for (const r of settingRows) settings[r.setting_key] = r.setting_value;
 
+  // phase 24: the menus (header, phone menu, footer) from Website > Brand and layout > Menu links; names are Translations texts
+  const menuLinks = linkRows.map((r) => ({
+    key: r.link_key, textKey: r.text_key, ...(r.target_kind === 'page' ? { page: r.target } : { hash: r.target }),
+    header: bool(r.in_header), phone: bool(r.in_phone), footer: bool(r.in_footer),
+  }));
+
   const stats = {
     products: products.length,
     categories: categories.length,
@@ -302,12 +318,13 @@ async function buildBootstrap(lang, fallback, activeLanguages) {
     b.ctaLabel = fillCounts(String(b.ctaLabel || '').replace(/\{count\}/g, '{products}'), stats, words);
   }
 
-  // The office / godown address is one text per language (Translations c_office_a / c_godown_a, the only copy);
-  // the Google Maps search always uses the default language's, so the map finds the same place in every language.
-  const [placeRows] = await db.query(
-    "SELECT text_key, value FROM ui_text WHERE lang_code = ? AND text_key IN ('c_office_a', 'c_godown_a')", [fallback]
-  );
-  const place = Object.fromEntries(placeRows.map((r) => [r.text_key, r.value]));
+  // phase 24: visit cards (Website > Brand and layout > Visit cards). Name, address and hours are Translations texts
+  // in the page's language (the ui map); the Google map searches the card's own map location (today's: the default
+  // language's address), so the map finds the same place in every language.
+  const visitCards = cardRows.map((r) => ({
+    key: String(r.card_id), name: ui[r.name_key] || '', address: ui[r.address_key] || '',
+    ...(r.hours_key && ui[r.hours_key] ? { hours: ui[r.hours_key] } : {}), ...(r.phone ? { phone: r.phone } : {}), query: r.map_query || '',
+  }));
 
   return {
     lang,
@@ -320,7 +337,9 @@ async function buildBootstrap(lang, fallback, activeLanguages) {
     towns,
     formOptions,
     sizePicker,
-    places: { office: place.c_office_a || '', godown: place.c_godown_a || '' },
+    visitCards,
+    menuLinks,
+    formRules: rules.public,
     stats,
     contentVersion: cache.getContentVersion(),
   };
@@ -328,7 +347,9 @@ async function buildBootstrap(lang, fallback, activeLanguages) {
 
 async function getBootstrap(requested) {
   const { lang, fallback, activeCount } = await resolveLang(requested);
-  return cache.getOrBuild(`bootstrap:${lang}`, () => buildBootstrap(lang, fallback, activeCount));
+  // per India day: a dated banner starts and stops at midnight India time (phase 24)
+  const today = istDates.istToday();
+  return cache.getOrBuild(`bootstrap:${lang}:${today}`, () => buildBootstrap(lang, fallback, activeCount, today));
 }
 
 // ---------------------------------------------------------------------------------------------

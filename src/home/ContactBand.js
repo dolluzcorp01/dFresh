@@ -1,7 +1,8 @@
 // Contact band (spec B10): big headline over a soft breathing yellow blob, buttons (free sample = quote form
-// in sample mode, WhatsApp, brochure, message), the numbers line, and two visit cards with a lazy Google map
-// (the map_load text sits underneath until it paints) and an "Open in Google Maps" link, both from the default
-// language's address texts (bootstrap places; Translations c_office_a / c_godown_a, the only copy). On hover
+// in sample mode, WhatsApp, brochure, message), the numbers line, and the visit cards (phase 24: Website > Brand and
+// layout > Visit cards, bootstrap visitCards: name, address and hours are Translations texts, a phone, and the card's
+// map location) with a lazy Google map (the map_load text sits underneath until it paints) and an "Open in Google
+// Maps" link, both searching the card's map location. On hover
 // devices the sample and WhatsApp buttons throw a little paper confetti (at most every 1.5 s each), as in the preview.
 import { useEffect, useRef, useState } from 'react';
 import { useI18n } from '../i18n/useT';
@@ -45,7 +46,7 @@ function useFrameFocus() {
   return [ref, focused];
 }
 
-function Visit({ name, address, query }) {
+function Visit({ name, address, query, phone, hours }) {
   const { t } = useI18n();
   const [frameRef, frameFocused] = useFrameFocus();
   return (
@@ -57,6 +58,8 @@ function Visit({ name, address, query }) {
       <div className="vb">
         <b>{name}</b>
         <p>{address}</p>
+        {phone && <p>{t('c_phone_l')} · <a href={tel(phone)}>{phone}</a></p>}
+        {hours && <p>{hours}</p>}
         {query && <a className="btn b-ink b-sm" href={mapsUrl(query)} target="_blank" rel="noopener noreferrer"><span>{t('c_map')}</span> →</a>}
       </div>
     </Reveal>
@@ -88,8 +91,7 @@ export default function ContactBand() {
           <span><a href={`mailto:${settings.public_email}`}><b>{settings.public_email}</b></a></span>
         </div>
         <div className="visit">
-          <Visit name={t('c_office')} address={t('c_office_a')} query={data.places.office} />
-          <Visit name={t('c_godown')} address={t('c_godown_a')} query={data.places.godown} />
+          {(data.visitCards || []).map((c) => <Visit key={c.key} name={c.name} address={c.address} query={c.query} phone={c.phone} hours={c.hours} />)}
         </div>
       </div>
     </section>

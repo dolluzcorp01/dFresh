@@ -5,13 +5,14 @@
 // other form -> a confirmation with the lead_ref (lead_ack). Both in the visitor's language, English fallback.
 // Brochure with the download off: the lead, staff alert and sheet row as usual, nothing to the visitor, no token;
 // the answer says brochure_delivery 'off' and the site shows bro_off.
-// Order: form type -> honeypot (fake success, nothing saved) -> validation (rules.json) -> transaction:
+// Order: form type -> honeypot (fake success, nothing saved) -> validation (the form rules, form-rules.js) -> transaction:
 //   bump the year's lead_counters row (row lock: unique lead_ref, and it serialises the rate-limit count)
 //   -> rate limit by ip_hash -> leads + lead_products -> outbox rows -> commit.
 const crypto = require('crypto');
 const express = require('express');
 const { getDBConnection } = require('../../config/db');
-const { rules, isFormType, validateLead } = require('./validation');
+const { isFormType, validateLead } = require('./validation');
+const formRules = require('./form-rules');
 const mailer = require('./mailer');
 const { brochure } = require('./Brochure_server');
 const { apiBase } = require('../../config/urls');
@@ -19,8 +20,7 @@ const { apiBase } = require('../../config/urls');
 const router = express.Router();
 const db = getDBConnection(process.env.DB_NAME || 'dfresh').promise();
 
-const RATE_MAX = Number(process.env.LEAD_RATE_LIMIT_PER_10MIN) || rules.rateLimit.max;
-const RATE_WINDOW_MIN = rules.rateLimit.windowMinutes;
+// the spam limit (enquiries per 10 minutes from one visitor) is Website > Forms > Form rules (lead_rate_max, 1 to 20)
 const MAIL_LINK_TTL = '7d';
 const TZ = 'Asia/Kolkata';
 
@@ -155,8 +155,8 @@ router.post('/leads', async (req, res) => {
 
   let conn;
   try {
-    const [lookups, langs] = await Promise.all([loadLookups(), loadLanguages()]);
-    const checked = validateLead(formType, body, lookups);
+    const [lookups, langs, rules] = await Promise.all([loadLookups(), loadLanguages(), formRules.load(db)]);
+    const checked = validateLead(formType, body, lookups, rules);
     if (!checked.ok) return res.status(400).json({ success: false, message: 'Please check the form', fields: checked.fields });
     const v = checked.values;
     const lang = langs.rows.some((r) => r.lang_code === body.lang) ? body.lang : langs.def;
@@ -181,9 +181,9 @@ router.post('/leads', async (req, res) => {
     const hash = ipHash(req.ip);
     const [[recent]] = await conn.query(
       'SELECT COUNT(*) AS n FROM leads WHERE ip_hash = ? AND created_at > NOW() - INTERVAL ? MINUTE',
-      [hash, RATE_WINDOW_MIN]
+      [hash, rules.rateWindowMinutes]
     );
-    if (Number(recent.n) >= RATE_MAX) throw new RateLimited();
+    if (Number(recent.n) >= rules.rateMax) throw new RateLimited();
 
     const ctx = await mailContext(conn, {
       lang,

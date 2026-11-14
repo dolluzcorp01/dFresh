@@ -1,7 +1,7 @@
-// Banners, Kits, Towns, Categories, Size picker, Form options (spec F 6-7): one list + editor per section,
+// Banners, Kits, Categories, Size picker, Form options (spec F 6-7): one list + editor per section,
 // driven by the definitions below (they mirror backend admin-entities.js). Banners also take desktop / mobile
 // photo uploads and drag-and-drop order; kits take their product list (tick in a list, drag to order); "Photo from
-// product" shows that product's main photo as soon as it is picked; towns show a live map preview (pin + name).
+// product" shows that product's main photo as soon as it is picked. (Towns moved to Website > Where we deliver map, phase 24.)
 import { isValidElement, useEffect, useMemo, useRef, useState } from 'react';
 import { api, rowId } from './adminApi';
 import { mediaUrl } from '../utils/api';
@@ -9,7 +9,8 @@ import { KitProducts, ProductField, RepPreview, Thumb, productName } from './Pro
 import useOrderDraft from './useOrderDraft';
 import { Drawer, Field, InfoTip, Loading, MissingBadges, PageHead, TrEditor, UploadButton, missingTexts, nextOrder, useAction, useAdmin, useCan, useConfirm, useLoad, useUpload } from './ui';
 import { fontVar, loadFont } from '../i18n/fonts';
-import { LAND, MAP_H, MAP_W } from '../shared/mapShape';
+import { ACTIONS, FORMS as FORM_TARGETS, SECTIONS as SECTION_TARGETS } from '../shared/siteTargets';
+import { fmtYmd, istToday } from '../shared/istDate';
 
 const NEW_ORDER_HINT = 'New items go to the end. Drag in the list to move.';
 const KEY_HINT = 'Internal name (a-z, 0-9, -). Used in photo names, analytics and lead source.';
@@ -22,24 +23,30 @@ const POSITION = { name: 'sort_order', label: 'Position', type: 'readonly', help
 const SECTIONS = {
   banners: {
     title: 'Banners', keys: ['banner_key'], reorder: true,
+    hint: 'Sliding photos on the home page',
     fields: [
       { name: 'banner_key', label: 'Key', required: true, keyField: true, help: KEY_HINT, info: KEY_INFO }, POSITION,
       { name: 'theme', label: 'Theme', type: 'select', options: ['light', 'dark'], allowEmpty: false, help: 'dark = gold button on a dark photo' },
-      { name: 'cta_action', label: 'Button action', type: 'select', options: ['products', 'products_home', 'products_category', 'section', 'form'], allowEmpty: false },
+      { name: 'cta_action', label: 'Button action', type: 'select', options: ACTIONS, allowEmpty: false },
       { name: 'cta_target', label: 'Button target' }, // a dropdown that follows Button action (BannerTarget)
       { name: 'note', label: 'Internal note' }, ACTIVE,
+      // phase 24 (field map row 10): a festival banner starts and stops by itself (India days; empty = no limit)
+      { name: 'show_from', label: 'Show from', type: 'date', help: 'Empty = from now.', info: 'The first India day the banner shows on the site (it must also be Active).' },
+      { name: 'show_until', label: 'Show until', type: 'date', help: 'Empty = no end.', info: 'The last India day the banner shows; the next day it goes by itself.' },
     ],
     layout: 'banners', // drawer rows (Editor)
     rename: { field: 'banner_key', note: RENAME_NOTE_BANNER },
     tr: [
       { name: 'headline', label: 'Headline', required: true, long: true, help: '{count} = number of active products', info: '{count} becomes the number of active products on the site: main products only, not colour versions ({products} works too).' },
       { name: 'cta_label', label: 'Button label', required: true },
+      // phase 24 (row 11): the photo description, read by screen readers and Google (empty = a decorative photo)
+      { name: 'alt_text', label: 'Photo description', help: 'What the photo shows, for screen readers and Google.', info: 'Empty = the photo is treated as decoration. A language left empty uses no description (the headline is read anyway).' },
     ],
     list: (r) => [
       <BannerThumb r={r} kind="desktop" />, <BannerThumb r={r} kind="mobile" />,
-      r.banner_key, r.tr?.en?.headline ?? '', r.theme, `${r.cta_action ?? ''}${r.cta_target ? `: ${r.cta_target}` : ''}`,
+      r.banner_key, r.tr?.en?.headline ?? '', r.theme, `${r.cta_action ?? ''}${r.cta_target ? `: ${r.cta_target}` : ''}`, <BannerDates r={r} />,
     ],
-    head: ['Desktop', 'Mobile', 'Key', 'Headline (EN)', 'Theme', 'Button'],
+    head: ['Desktop', 'Mobile', 'Key', 'Headline (EN)', 'Theme', 'Button', 'Shows'],
     nameCol: 3, // the cell that carries the "TA missing" badges
     defaults: { theme: 'light', cta_action: 'products', is_active: 0 },
   },
@@ -57,32 +64,6 @@ const SECTIONS = {
     head: ['Key', 'Name (EN)', 'Business type', 'Products'],
     defaults: { is_active: 1, products: [] },
   },
-  towns: {
-    title: 'Towns', keys: ['town_key'], reorder: true, layout: 'towns',
-    rename: { field: 'town_key', note: "The town's names per language and its history move to the new key. Leads keep the town the visitor typed." },
-    fields: [
-      { name: 'town_key', label: 'Key', required: true, keyField: true, help: 'Internal name (a-z, 0-9, -). Not shown on the site.',
-        info: "2 to 30 characters: lowercase a-z, digits 0-9 and hyphens. It ties the town's names per language and its history together. Leads keep the town name the visitor typed, never this key." },
-      { name: 'sort_order', label: 'Order', type: 'readonly', help: 'Drag the rows in the list to change it.', info: 'The order of the town names under the map on the home page. A new town goes to the end.' },
-      { name: 'map_x', label: 'Map x', type: 'number', step: '1', help: '0-600, left to right. Or drag the pin.' },
-      { name: 'map_y', label: 'Map y', type: 'number', step: '1', help: '0-360, top to bottom. Or drag the pin.' },
-      { name: 'label_dx', label: 'Name offset across', type: 'number', step: '1', help: '+ right, - left. Or drag the name.', info: 'Map units from the pin to the point the name is placed at.' },
-      { name: 'label_dy', label: 'Name offset down', type: 'number', step: '1', help: '+ down, - up; -20 = just above.', info: 'Map units from the pin to the point the name is placed at. -20 puts the name just above the pin.' },
-      { name: 'label_anchor', label: 'Name alignment', type: 'select', allowEmpty: false, help: 'Which part of the name sits at that point.', options: [
-        { value: 'start', label: 'start (runs to the right)' }, { value: 'middle', label: 'middle (centred)' },
-        { value: 'end', label: 'end (runs to the left)' },
-      ] },
-      { name: 'lat', label: 'Latitude', type: 'number', help: 'For Google: base town only.', info: "Only the godown base town's latitude and longitude are used: they go into the site's structured data for Google (LocalBusiness, geo). Other towns' values are not used anywhere yet." },
-      { name: 'lng', label: 'Longitude', type: 'number', help: 'For Google: base town only.', info: "Only the godown base town's latitude and longitude are used (Google structured data)." },
-      { name: 'is_base', label: 'Godown base', type: 'bool', info: 'The town the goods ship from: the dark pin with a star. One town only; ticking it here unticks the other.' },
-      { name: 'is_active', label: 'Active (shown on the map)', type: 'bool' },
-    ],
-    tr: [{ name: 'name', label: 'Name', required: true }],
-    list: (r) => [r.town_key, r.tr?.en?.name ?? '', r.is_base ? 'base' : '', r.map_x != null ? `${r.map_x}, ${r.map_y}` : ''],
-    nameCol: 1,
-    head: ['Key', 'Name (EN)', 'Base', 'Map'],
-    defaults: { is_active: 1, label_dx: 0, label_dy: -20, label_anchor: 'middle' },
-  },
   categories: {
     title: 'Categories', keys: ['category_key'], reorder: true,
     fields: [{ name: 'category_key', label: 'Key', required: true, keyField: true }, POSITION, { name: 'rep_product_id', label: 'Photo from product', type: 'select', lookup: 'products' }, ACTIVE],
@@ -94,7 +75,7 @@ const SECTIONS = {
   },
   'size-picker': {
     title: 'Size picker', keys: ['size_id'], reorder: true,
-    hint: "Controls the 'Pick a size' napkin card in the For Business section. The 'Roll it out' card has no settings here.",
+    hint: "Napkin sizes; 'Roll it out' is fixed",
     fields: [
       { name: 'sort_order', label: 'Position', type: 'readonly', help: 'Drag the rows in the list to change it.' },
       { name: 'product_id', label: 'Product', type: 'select', lookup: 'products', allowEmpty: false, required: true },
@@ -120,6 +101,7 @@ const SECTIONS = {
   },
   'form-options': {
     title: 'Form options', keys: ['list_key', 'option_value'], reorder: true, groupBy: 'list_key', layout: 'options',
+    hint: "Dropdown choices in the site's forms",
     rename: { field: 'option_value', note: 'Kits that use it follow. Only possible while no lead uses it.' },
     fields: [
       { name: 'list_key', label: 'List', type: 'select', allowEmpty: false, keyField: true, help: 'Which dropdown on the site this option belongs to.' },
@@ -280,11 +262,6 @@ function Editor({ name, cfg, id, lookups, products, rows, listRows, lists, cats,
   const confirm = useConfirm();
   const save = async () => {
     setTried(true);
-    // towns: latitude / longitude inside India, or nothing is sent
-    if (name === 'towns' && Number(row.is_base) === 1) {
-      const bad = geoErrors(row);
-      if (bad.lat || bad.lng) { act.setMsg({ kind: 'error', text: [bad.lat, bad.lng].filter(Boolean).join(' ') }); return undefined; }
-    }
     if (keyChanged && !(await confirm({ title: `Rename "${loaded.data[rn]}" to "${String(row[rn]).trim()}"?`, message: `Renaming updates all references. ${cfg.rename.note}`, action: 'Rename' }))) return undefined;
     return act.run(async () => {
       const saved = creating ? await api.send('POST', `/${name}`, row) : await api.send('PUT', `/${name}/${id}`, row);
@@ -360,21 +337,8 @@ function Editor({ name, cfg, id, lookups, products, rows, listRows, lists, cats,
               <div className="a-banote">{fld('note')}</div>
               {hasTarget && fld('cta_target')}
             </div>
+            <div className="a-prow a-prow-2">{fld('show_from')}{fld('show_until', { error: row.show_from && row.show_until && row.show_until < row.show_from ? 'On or after Show from' : undefined })}</div>
             <div className="a-prow a-pchecks">{fld('is_active')}</div>
-          </>
-        );
-      })() : cfg.layout === 'towns' ? (() => {
-        // Key | Order, Latitude | Longitude, then the two checkboxes; the map fields sit next to the map (below)
-        const fld = (n, extra) => renderField({ ...cfg.fields.find((x) => x.name === n), ...extra });
-        const bad = geoErrors(row);
-        return (
-          <>
-            <div className="a-prow a-prow-2">{fld('town_key', { keyField: false })}{fld('sort_order')}</div>
-            {keyChanged && <p className="a-replace-note">Renaming updates all references. {cfg.rename.note}</p>}
-            <div className="a-prow a-pchecks">{fld('is_base')}{fld('is_active')}</div>
-            <BaseNote row={row} rows={rows} />
-            {/* only the godown base's latitude / longitude are used (Google); others keep theirs, hidden */}
-            {Number(row.is_base) === 1 && <div className="a-prow a-prow-2">{fld('lat', { error: bad.lat })}{fld('lng', { error: bad.lng })}</div>}
           </>
         );
       })() : cfg.layout === 'options' ? (() => {
@@ -419,20 +383,6 @@ function Editor({ name, cfg, id, lookups, products, rows, listRows, lists, cats,
       )}
       {cfg.links && (
         <KitProducts all={products} value={row.products || []} disabled={!canEdit} onChange={(v) => set('products', v)} />
-      )}
-      {name === 'towns' && (
-        <div className="a-dsec">
-          <h3>Map preview</h3>
-          <div className="a-townmapsec">
-            <TownPreview rows={rows} town={row} selfKey={loaded.data ? loaded.data.town_key : null} disabled={!canEdit} onMove={(patch) => setDraft({ ...row, ...patch })} />
-            {/* next to the map (below it in a narrower drawer); live-linked to dragging the pin and the name */}
-            <div className="a-townside">
-              <div className="a-prow a-prow-2">{renderField(cfg.fields.find((x) => x.name === 'map_x'))}{renderField(cfg.fields.find((x) => x.name === 'map_y'))}</div>
-              <div className="a-prow a-prow-2">{renderField(cfg.fields.find((x) => x.name === 'label_dx'))}{renderField(cfg.fields.find((x) => x.name === 'label_dy'))}</div>
-              <div className="a-prow">{renderField(cfg.fields.find((x) => x.name === 'label_anchor'))}</div>
-            </div>
-          </div>
-        </div>
       )}
       {name === 'banners' && !creating && (
         <>
@@ -542,7 +492,7 @@ function BannerPreview({ row, start, count, ui, onClose }) {
   );
 }
 
-// Form option lists: which form field shows each list (src/forms/formConfig.js + shared/rules.json), and where on the
+// Form option lists: which form field shows each list (src/forms/formConfig.js + the form rules), and where on the
 // site each form opens (every openForm() call: header menu, sections, product cards, footer, banners). The click paths
 // are built from the live English site texts (Translations), so they follow any wording change.
 const OPTION_LISTS = {
@@ -593,29 +543,8 @@ function PlacesList({ places, listKey }) {
 }
 
 // Towns: latitude 6-37 and longitude 68-98 (India); empty is allowed. Same limits in the API (Admin_server.js).
-const GEO = { lat: [6, 37, 'Latitude'], lng: [68, 98, 'Longitude'] };
-function geoErrors(row) {
-  const out = {};
-  for (const [k, [min, max, label]] of Object.entries(GEO)) {
-    const v = row[k];
-    if (v === null || v === undefined || String(v).trim() === '') continue;
-    const n = Number(v);
-    if (!Number.isFinite(n) || n < min || n > max) out[k] = `${label} must be a number from ${min} to ${max} (India).`;
-  }
-  return out;
-}
-
-// Towns: ticking Godown base here replaces the town that has it now (the server unticks that one).
-function BaseNote({ row, rows }) {
-  if (!Number(row.is_base)) return null;
-  const other = rows.find((r) => Number(r.is_base) === 1 && r.town_key !== row.town_key);
-  if (!other) return null;
-  return <p className="a-replace-note">This replaces {other.tr?.en?.name || other.town_key} as the godown base.</p>;
-}
-
-// Banners: what Button target can be for each Button action (validated again by the API, Admin_server.js).
-const SECTION_TARGETS = ['business', 'where', 'about', 'contact', 'products'];
-const FORM_TARGETS = ['sample', 'quote', 'distributor'];
+// Banners: what Button target can be for each Button action: the shared list (src/shared/siteTargets.js), checked again
+// by the API (Admin_server.js); the home doors pick from the same list.
 function targetChoices(action, cats) {
   if (action === 'products_category') return cats.map((c) => ({ value: c.category_key, label: `${c.tr?.en?.name ?? c.category_key}${c.is_active ? '' : ' (not active)'}` }));
   if (action === 'section') return SECTION_TARGETS.map((s) => ({ value: s, label: s }));
@@ -684,62 +613,12 @@ function DefaultNote({ row, rows }) {
   return <p className="a-replace-note">This replaces {other.size_label} as the first selected size.</p>;
 }
 
-// Towns: the site's map (same land, pins and name sizes as src/home/WhereMap.js) with the town being edited drawn from
-// the unsaved values: drag its pin to set Map x / y, drag its name to set the name offsets (the fields follow live).
-// Other active towns are shown faded. Nothing is saved until Save.
-function TownPreview({ rows, town, selfKey, onMove, disabled }) {
-  const svgRef = useRef(null);
-  const [dragging, setDragging] = useState(null); // 'pin' | 'name'
-  const name = (t) => (t.tr && t.tr.en && t.tr.en.name) || t.town_key || '';
-  const placed = (t) => t.map_x !== null && t.map_x !== undefined && t.map_x !== '' && t.map_y !== null && t.map_y !== undefined && t.map_y !== '';
-  const others = rows.filter((t) => t.town_key !== (selfKey || town.town_key) && t.is_active && placed(t)); // saved key: a typed new key must not show the town twice
-  const at = (e) => {
-    const svg = svgRef.current;
-    const pt = svg.createSVGPoint();
-    pt.x = e.clientX; pt.y = e.clientY;
-    const p = pt.matrixTransform(svg.getScreenCTM().inverse());
-    return { x: Math.round(Math.min(MAP_W, Math.max(0, p.x))), y: Math.round(Math.min(MAP_H, Math.max(0, p.y))) };
-  };
-  const start = (what) => (e) => {
-    if (disabled) return;
-    e.preventDefault();
-    svgRef.current.setPointerCapture(e.pointerId);
-    setDragging(what);
-  };
-  const move = (e) => {
-    if (!dragging) return;
-    const p = at(e);
-    if (dragging === 'pin') onMove({ map_x: p.x, map_y: p.y });
-    else onMove({ label_dx: p.x - Number(town.map_x), label_dy: p.y - Number(town.map_y) });
-  };
-  const pin = (t, current) => {
-    const x = Number(t.map_x);
-    const y = Number(t.map_y);
-    const base = Number(t.is_base) === 1;
-    return (
-      <g key={t.town_key || 'new'} opacity={current ? 1 : 0.35} className={current && !disabled ? 'a-tp-cur' : undefined}>
-        <circle cx={x} cy={y} r={base ? 11 : 7} fill={base ? '#121214' : '#E5BF24'} stroke="#fff" strokeWidth="3"
-          {...(current ? { onPointerDown: start('pin'), 'data-drag': 'pin' } : {})} />
-        <text x={x + Number(t.label_dx || 0)} y={y + Number(t.label_dy || 0)} textAnchor={t.label_anchor || 'middle'}
-          fontFamily="Saira, sans-serif" fontWeight="700" fontSize="18" fill="#121214"
-          {...(current ? { onPointerDown: start('name'), 'data-drag': 'name' } : {})}>{name(t)}{base ? ' ★' : ''}</text>
-      </g>
-    );
-  };
-  return (
-    <figure className="a-townmap">
-      <svg ref={svgRef} viewBox={`0 0 ${MAP_W} ${MAP_H}`} role="img" aria-label="Preview of the delivery map"
-        onPointerMove={move} onPointerUp={() => setDragging(null)} onPointerCancel={() => setDragging(null)}
-        className={dragging ? 'a-tp-dragging' : undefined}>
-        <path d={LAND} fill="#FFF3CF" stroke="#EEE4C8" strokeWidth="2" />
-        {others.map((t) => pin(t, false))}
-        {placed(town) ? pin(town, true) : null}
-      </svg>
-      <figcaption className="a-muted">
-        {placed(town)
-          ? `${disabled ? '' : 'Drag the pin or the name to move them. '}This town in full colour, the others faded. Not saved until you press Save.`
-          : 'Enter Map x and Map y to place this town.'}
-      </figcaption>
-    </figure>
-  );
+// Banners list: the India days the banner shows (phase 24), and whether it shows today
+function BannerDates({ r }) {
+  const from = r.show_from ? String(r.show_from).slice(0, 10) : '';
+  const until = r.show_until ? String(r.show_until).slice(0, 10) : '';
+  if (!from && !until) return <span className="a-muted">Always</span>;
+  const today = istToday();
+  const state = from && today < from ? 'Not yet' : until && today > until ? 'Ended' : 'Showing';
+  return <span>{from ? fmtYmd(from) : 'now'} - {until ? fmtYmd(until) : 'no end'}<br /><small className="a-muted">{state}</small></span>;
 }

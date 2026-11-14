@@ -14,6 +14,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from './adminApi';
 import { Link } from 'react-router-dom';
+import { TwoStepSetting } from './Website';
 import { Avatar, Drawer, Field, LIcon, Loading, Notice, PageHead, Pill, Table, fmtDate, useAction, useAdmin, useCan, useConfirm, useLoad, useToast } from './ui';
 
 const WAIT_TITLE = 'Waiting for a second Admin';
@@ -37,6 +38,7 @@ export default function Users() {
   const canAdd = useCan('users', 'create');
   const act = useAction();
   const reload = () => { list.reload(); staffData.reload(); };
+  const canSeeSettings = useCan('settings', 'view'); // two-step sign-in (field map row 101)
   const rows = list.data || [];
   const userOf = (emp) => rows.find((u) => u.emp_id === emp);
 
@@ -78,6 +80,13 @@ export default function Users() {
       {open && open !== 'add' && staffOf(open) && staffData.data && (
         <StaffDrawer key={open} person={staffOf(open)} user={userOf(open)} meta={staffData.data} roles={roles}
           onClose={() => setOpen(null)} onSaved={(text) => { setOpen(null); act.setMsg({ kind: 'ok', text }); reload(); }} onChanged={reload} />
+      )}
+      {canSeeSettings && (
+        <div className="a-listcard a-twostep-card">
+          <h2>Two-step sign-in</h2>
+          <p className="a-muted">Admin sign-in security (moved here from Site settings, phase 24). Turning it on needs the code e-mailed to you; turning it off waits for a second Admin.</p>
+          <TwoStepSetting />
+        </div>
       )}
     </section>
   );

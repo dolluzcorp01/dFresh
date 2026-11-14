@@ -15,7 +15,7 @@ const LISTS = {
   categories: { table: 'categories', key: 'category_key' },
   kits: { table: 'kits', key: 'kit_key' },
   banners: { table: 'banners', key: 'banner_key' },
-  towns: { table: 'towns', key: 'town_key' },
+  // towns: gone in phase 24 (the map order is delivery_areas.map_sort, website-routes.js)
   'size-picker': { table: 'size_picker', key: 'size_id' },
 };
 const has = (name) => Boolean(LISTS[name]);

@@ -67,10 +67,10 @@ function liveEntries() {
 }
 const SCREENS = liveEntries();
 // the page title when it is not the menu entry's name; API list to compare the first row with ([endpoint, keys])
-const TITLE = { '/admin/settings': 'Settings', '/admin/commerce-settings': 'Commerce settings' };
+const TITLE = { '/admin/commerce-settings': 'Commerce settings' };
 // phase 14: Categories shows each category's English name (Masters > Catalogue, v23); Kits is a card grid (no table row to compare)
 const FIRST_ROW = { '/admin/categories': ['/catalogue/categories', ['name.en']], '/admin/size-picker': ['/size-picker', ['size_label']],
-  '/admin/banners': ['/banners', ['banner_key']], '/admin/towns': ['/towns', ['town_key']], '/admin/form-options': ['/form-options', ['option_value']] };
+  '/admin/banners': ['/banners', ['banner_key']], '/admin/where-we-deliver-map': ['/website/map', ['label']], '/admin/form-options': ['/form-options', ['option_value']] };
 const titleOf = (s) => TITLE[s.href.split('#')[0]] || s.label;
 const linkSel = (s) => `#a-nav a[href="${s.href}"]`;
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -186,7 +186,7 @@ async function main() {
     const firstRow = {};
     for (const [href, [api, keys]] of Object.entries(FIRST_ROW)) {
       const rows = await apiCall(page, api);
-      const list = Array.isArray(rows) ? rows : (rows && rows.rows) || null; // phase 14: { rows } answers too
+      const list = Array.isArray(rows) ? rows : (rows && (rows.rows || rows.areas)) || null; // phase 14: { rows } answers too; phase 24: { areas }
       firstRow[href] = list && list.length ? keys.map((k) => String(k.split('.').reduce((o, x) => (o ? o[x] : undefined), list[0]))) : null;
     }
     // every group and sub-group open, then read the menu
@@ -344,7 +344,7 @@ async function main() {
     const panel = await page.waitForSelector('.a-main .a-crash', { timeout: 10000 }).then(() => true, () => false);
     const logged = errors.some((e) => /screen could not load/.test(e));
     errors.length = 0;
-    const towns = SCREENS.find((s) => s.href === '/admin/towns');
+    const towns = SCREENS.find((s) => s.href === '/admin/where-we-deliver-map');
     await go(page, towns);
     await check(page, SCREENS.indexOf(towns), 'after a crashed screen, menu to Where we deliver map', firstRow);
     if (!panel) fail('boundary: a crashing screen did not show the "could not load" panel');

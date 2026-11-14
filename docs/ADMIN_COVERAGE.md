@@ -229,7 +229,7 @@ The free sample form is the quote form in "sample" mode, so it has the quote for
 | Field labels | Yes | Translations > `first_name`, `last_name`, `email`, `mobile`, `fl_name`, `fl_biz`, `fl_type`, `fl_town`, `fl_phone`, `fl_prod`, `fl_qty`, `fl_msg`, `fl_firm`, `fl_gst`, `fl_area`, `fl_gd`, `fl_brands`, `fl_sales`; "(optional)": `optional`; "Choose...": `choose` |
 | Dropdown choices (business type, monthly sales, yes / no) | Yes | Form options: Label per language, Order, Active, Add. (Never change a Stored value once used.) |
 | Product tick list in the quote form | Yes | The active products from Products. |
-| Which fields a form has, their order, required or optional, maximum length | No | One shared rules file used by the site AND the server (`src/shared/rules.json`) plus the lead columns in the database. A form builder: large. Making one existing field optional / required from the admin: medium. |
+| Which fields a form has, their order, required or optional, maximum length | Partly (phase 24) | Website > Forms > Form rules: required or optional per form and field (Phone locked), the spam limit and the most products in one quote. The fields, their order and the longest text stay fixed (database columns). |
 | Example text inside the boxes (98765 43210, name@company.com) | Yes | Translations > `ph_tel`, `ph_email` |
 | Error messages | Yes | Translations > `e_fill`, `e_choose`, `e_pick`, `e_email`, `e_tel`, `e_gst`, `e_net`, `e_rate` |
 | Phone / e-mail / GST checks (Indian 10-digit mobile only) | No | Rules in code. Medium. |

@@ -34,7 +34,8 @@ module.exports = {
       const raja = v.drivers.find((x) => x.name === 'Raja K');
       const area = (l) => ar.find((a) => a.label === l);
       ok(v1 && v1.fc_soon && !v1.problems.length && v2 && v2.problems.some((p) => /insurance ended 2026-10-25/.test(p)) && v3 && raja && raja.licence_until === '2027-08-31' && cs.some((c) => /Professional/.test(c.name) && Number(c.per_kg) === 42) && cs.some((c) => c.name === 'DTDC' && Number(c.per_kg) === 48)
-        && ar.length === 5 && Number(area('Vellore and Arakkonam').charge) === 300 && Number(area('Ambur').charge) === 250 && Number(area('Kanchipuram town').charge) === 0,
+        // phase 24 (one town list, field map row 75): the map town Wallajabad is a 6th area, map only (not active, no charge)
+        && ar.length === 6 && area('Wallajabad') && !Number(area('Wallajabad').is_active) && Number(area('Vellore and Arakkonam').charge) === 300 && Number(area('Ambur').charge) === 250 && Number(area('Kanchipuram town').charge) === 0,
         `${v.vehicles.map((x) => `${x.number} ${x.max_kg} kg ${x.max_boxes} boxes ${x.godown || ''}${x.fc_soon ? ' fitness Soon' : ''}: ${x.problems.length ? `Cannot go out (${x.problems.join(', ')})` : 'Ready'}`).join(' | ')}; drivers ${v.drivers.map((x) => `${x.name} ${x.licence_until || '-'}`).join(', ')}; couriers ${cs.map((c) => `${c.name} ${c.per_kg}/kg min ${c.min_charge}`).join(', ')}; areas ${ar.map((a) => `${a.label} ${a.pins.join(' ')} ${a.days.join(',')} ${Number(a.charge) ? a.charge : 'free'} map ${a.show_on_map ? 'on' : 'off'}`).join(' | ')}`);
       say('v23 has 2 couriers; the dev data keeps a third (DEMO South Parcel Service).'); }
 

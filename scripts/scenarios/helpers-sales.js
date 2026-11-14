@@ -110,7 +110,10 @@ module.exports = (ctx) => {
     await q('UPDATE delivery_areas SET godown_id = 1 WHERE area_id IN (1, 3, 4)');
     await q('UPDATE delivery_areas SET godown_id = 2 WHERE area_id = 2');
     await q("UPDATE delivery_areas SET charge = 300, days = 'Tue,Fri' WHERE area_id = 4");
-    await q("INSERT INTO delivery_areas (label, godown_id, towns, charge, free_above, days, show_on_map, sort_order, is_active) VALUES ('Ambur', 1, 'Ambur, 635802', 250, NULL, 'Wed', 0, 5, 1)");
+    // phase 24 (one town list): the map town Ambur is already a (map only, inactive) delivery area; it becomes the real one
+    const amb = await q1("SELECT area_id FROM delivery_areas WHERE LOWER(label) = 'ambur'");
+    if (amb) await q("UPDATE delivery_areas SET godown_id = 1, towns = 'Ambur, 635802', charge = 250, free_above = NULL, days = 'Wed', sort_order = 5, is_active = 1 WHERE area_id = ?", [amb.area_id]);
+    else await q("INSERT INTO delivery_areas (label, godown_id, towns, charge, free_above, days, show_on_map, sort_order, is_active) VALUES ('Ambur', 1, 'Ambur, 635802', 250, NULL, 'Wed', 0, 5, 1)");
     return { dtdc: (await q1("SELECT courier_id FROM couriers WHERE name = 'DTDC'")).courier_id };
   }
 

@@ -9,7 +9,7 @@ import { mediaUrl } from '../utils/api';
 import { DownloadIcon } from './Icons';
 import LanguageSwitch from './LanguageSwitch';
 import MobileMenu from './MobileMenu';
-import { MAIN_LINKS } from './navLinks';
+import { menuLinks } from './navLinks';
 import NavLink from './NavLink';
 import './Header.css';
 
@@ -31,7 +31,7 @@ function overflowSpan(wrap) {
 }
 
 export default function Header({ overHero }) {
-  const { lang, t } = useI18n();
+  const { lang, t, data } = useI18n();
   const openForm = useOpenForm();
   const location = useLocation();
   const navigate = useNavigate();
@@ -131,8 +131,8 @@ export default function Header({ overHero }) {
             <img src={mediaUrl('/media/logo/dfresh-logo-on-light.webp')} alt="" width="900" height="498" />
           </Link>
           <nav className="nav" aria-label={t('menu')}>
-            {MAIN_LINKS.map((l) => (
-              <NavLink key={l.key} link={l}>{t(l.key)}</NavLink>
+            {menuLinks(data, 'header').map((l) => (
+              <NavLink key={l.key} link={l}>{t(l.textKey)}</NavLink>
             ))}
           </nav>
           <LanguageSwitch />

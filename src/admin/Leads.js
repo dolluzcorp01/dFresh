@@ -5,16 +5,12 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { api } from './adminApi';
 import { Alert, Drawer, Loading, PageHead, fmtDate, useAction, useAdmin, useCan, useConfirm, useLoad } from './ui';
-import rules from '../shared/rules.json';
 import { CallDrawer } from './FollowUps';
 
-// Lead drawer: every field of the lead's form, in the form's own order (src/shared/rules.json, the same file the site
-// and the API use), always shown, so leads of one form type line up when compared; an empty one is the label with a
-// blank value. [label, value] per form field; phone also gets its WhatsApp line.
-const formFields = (type) => {
-  const def = rules.forms[type];
-  return (typeof def === 'string' ? rules.forms[def] : def || []).map((x) => x.name);
-};
+// Lead drawer: every field of the lead's form, in the form's own order (the form rules, Website > Forms > Form rules:
+// the same rows the site and the API use; the API sends them as form_fields), always shown, so leads of one form type
+// line up when compared; an empty one is the label with a blank value. [label, value] per form field; phone also gets
+// its WhatsApp line.
 function fieldRows(name, l, details) {
   const d = (k) => details[k] ?? null;
   switch (name) {
@@ -261,7 +257,7 @@ function LeadDrawer({ id, convertFirst = false, onClose, onChanged }) {
   const details = l && l.details_json ? (typeof l.details_json === 'string' ? JSON.parse(l.details_json) : l.details_json) : {};
   const rows = l ? [
     ['Form', l.form_type], ['Received', fmtDate(l.created_at)],
-    ...formFields(l.form_type).flatMap((name) => fieldRows(name, l, details)),
+    ...(l.form_fields || []).flatMap((name) => fieldRows(name, l, details)),
     ...(l.form_type === 'brochure' ? [['Brochure', brochureStatus(details)]] : []),
     ['Language', l.lang_code], ['Page', l.source_page], ['Opened from', l.source_ref], ['Consent', l.consent_given ? `Yes, ${fmtDate(l.consent_at)}: "${l.consent_text}"` : 'No'],
     ['Sheet synced', fmtDate(l.sheet_synced_at)],

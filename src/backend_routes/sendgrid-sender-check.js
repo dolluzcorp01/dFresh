@@ -60,4 +60,17 @@ async function check(address, { timeoutMs = TIMEOUT_MS } = {}) {
   return { state: 'unknown', reason: (!senderList ? senders.reason : domains.reason) || 'unexpected answer from SendGrid' };
 }
 
-module.exports = { check, setFetch };
+/**
+ * the verified Single Senders (phase 24: Site settings picks the mail sender from this list, never a typed address)
+ * -> { ok: true, senders: [{ email, name }] } or { ok: false, reason, senders: [] }. Read only, never throws.
+ */
+async function senders({ timeoutMs = TIMEOUT_MS } = {}) {
+  const key = process.env.SENDGRID_API_KEY || '';
+  if (!KEY.test(key)) return { ok: false, reason: 'SENDGRID_API_KEY is missing or a placeholder', senders: [] };
+  const r = await read('/verified_senders?limit=100', key, timeoutMs);
+  const list = r.ok && Array.isArray(r.body && r.body.results) ? r.body.results : null;
+  if (!list) return { ok: false, reason: r.reason || 'unexpected answer from SendGrid', senders: [] };
+  return { ok: true, senders: list.filter((s) => s && s.verified === true && s.from_email).map((s) => ({ email: String(s.from_email).trim().toLowerCase(), name: s.from_name || '' })) };
+}
+
+module.exports = { check, senders, setFetch };

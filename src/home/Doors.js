@@ -1,10 +1,10 @@
-// Who it's for - two doors (spec B3): For Home -> products with the "For Home" filter (photo DZIND-DF028),
-// For Business -> #business (photo DZIND-DF037).
+// Who it's for - two doors (spec B3). Phase 24: where each door goes is Website > Home page > Home doors, picked from
+// the banner button list (Settings door_home_action / _target, door_biz_action / _target; these defaults are today's:
+// For Home -> products with the "For Home" filter, For Business -> #business). Photos: DZIND-DF028 / DZIND-DF037.
 import { Link } from 'react-router-dom';
 import { useI18n } from '../i18n/useT';
 import Kicker from '../components/Kicker';
-import { useOpenProducts } from '../products/useOpenProducts';
-import { linkTarget } from '../components/navLinks';
+import { actionTo, useRunAction } from '../components/siteAction';
 import { mediaSrcSet, mediaUrl } from '../utils/api';
 import Reveal from '../components/Reveal';
 import { productImage } from './productImage';
@@ -36,12 +36,14 @@ function Art({ img }) {
 
 export default function Doors() {
   const { t, lang, data, settings } = useI18n();
-  const openProducts = useOpenProducts();
-
-  const onHome = (e) => {
-    e.preventDefault();
-    openProducts({ filter: 'home' }, e.currentTarget);
+  const run = useRunAction();
+  const door = (which, action, target) => {
+    const a = settings[`door_${which}_action`] || action;
+    const tg = settings[`door_${which}_action`] ? settings[`door_${which}_target`] || '' : target;
+    return { to: actionTo(lang, a, tg), onClick: (e) => run(e, a, tg, `door_${which}`) };
   };
+  const home = door('home', 'products_home', '');
+  const biz = door('biz', 'section', 'business');
 
   return (
     <section className="sec doors" aria-labelledby="doors-h">
@@ -51,7 +53,7 @@ export default function Doors() {
           <h2 id="doors-h">{t('doors_h')}</h2>
         </div>
         <div className="grid">
-          <Reveal as={Link} className="door home" to={`/${lang}/products?cat=home`} onClick={onHome}>
+          <Reveal as={Link} className="door home" to={home.to} onClick={home.onClick}>
             <div>
               <span className="k">{t('for_home')}</span>
               <h3>{t('dh_h')}</h3>
@@ -60,7 +62,7 @@ export default function Doors() {
             <span className="go"><span>{t('dh_go')}</span><i aria-hidden="true">→</i></span>
             <Art img={productImage(data.products, settings.door_home_product || HOME_ART)} />
           </Reveal>
-          <Reveal as={Link} className="door biz" to={linkTarget(lang, { hash: 'business' })}>
+          <Reveal as={Link} className="door biz" to={biz.to} onClick={biz.onClick}>
             <div>
               <span className="k">{t('for_business')}</span>
               <h3>{t('db_h')}</h3>

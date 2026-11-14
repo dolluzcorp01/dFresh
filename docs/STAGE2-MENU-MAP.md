@@ -6,7 +6,7 @@ paths = the first one the user may open. "(live)" = also shown while Commerce is
 site's screens); every other entry shows only while Commerce is on. A placeholder shows the guide's texts and
 the phase that builds it (gap map build order; Website entries with no screen: phase 24, agreed 2 Nov 2026).
 
-148 menu lines = 13 groups + Online store + 23 sub-groups + 111 pages. Of the 112 entries that open something (pages and Online store), 101 open a screen and 11 the placeholder.
+148 menu lines = 13 groups + Online store + 23 sub-groups + 111 pages. Of the 112 entries that open something (pages and Online store), 104 open a screen and 8 the placeholder.
 
 | Menu page | Opens |
 |---|---|
@@ -90,21 +90,21 @@ the phase that builds it (gap map build order; Website entries with no screen: p
 | Masters / Tax and units / HSN and GST rates | /admin/hsn-rates |
 | Masters / Tax and units / Delivery areas | /admin/delivery-areas |
 | Website / Home page / Banners | /admin/banners (live) |
-| Website / Home page / Home doors | /admin/settings#cs-s-home-page (live) |
-| Website / Home page / Most loved | /admin/products#most-loved (live) |
+| Website / Home page / Home doors | /admin/home-doors (live) |
+| Website / Home page / Most loved | /admin/most-loved (live) |
 | Website / Home page / Size picker | /admin/size-picker (live) |
 | Website / Home page / Kits on the site | /admin/kits#on-site (live) |
 | Website / Words and languages / Translations | /admin/translations (live) |
 | Website / Words and languages / Languages | /admin/languages (live) |
 | Website / Brochures | /admin/brochures (live) |
 | Website / Forms / Form options | /admin/form-options (live) |
-| Website / Forms / Form rules | placeholder: Not built yet - phase 24 |
-| Website / Where we deliver map | /admin/towns (live) |
+| Website / Forms / Form rules | /admin/form-rules (live) |
+| Website / Where we deliver map | /admin/where-we-deliver-map (live) |
 | Website / Brand and layout / Logo and brand images | /admin/brand (live) |
-| Website / Brand and layout / Menu links | placeholder: Not built yet - phase 24 |
-| Website / Brand and layout / Visit cards | placeholder: Not built yet - phase 24 |
-| Website / Google and sharing | /admin/settings#cs-s-sharing-and-seo (live) |
-| Website / Site settings | /admin/settings (live) |
+| Website / Brand and layout / Menu links | /admin/menu-links (live) |
+| Website / Brand and layout / Visit cards | /admin/visit-cards (live) |
+| Website / Google and sharing | /admin/google-and-sharing (live) |
+| Website / Site settings | /admin/site-settings (live) |
 | Admin / Organisation / Company | /admin/company (live) |
 | Admin / Organisation / Godowns | /admin/godowns |
 | Admin / Organisation / Numbering | /admin/numbering |

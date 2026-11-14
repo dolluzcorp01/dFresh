@@ -430,7 +430,9 @@ route('get', '/leads/:id', 'leads:view', async (req) => {
   if (!lead) throw new InputError('Lead not found', 404);
   const own = leadOwn(req);
   if (own && lead.assigned_to !== own && !(lead.assigned_to === null && lead.status === 'new')) throw new InputError('This enquiry is given to someone else', 403);
-  return lead;
+  // the form's fields in its own order (phase 24: Website > Forms > Form rules, the same rows the site and the API use)
+  const fr = require('./form-rules'); // eslint-disable-line global-require
+  return { ...lead, form_fields: (fr.fieldsOf(await fr.load(db), lead.form_type) || []).map((f) => f.name) };
 });
 
 route('patch', '/leads/:id', 'leads:edit', async (req) => {
@@ -614,12 +616,12 @@ route('post', '/banners/:id/image', 'content:edit', async (req) => {
 }, { content: true, before: [upload(8)] });
 
 // ---------------------------------------------------------------------------------------------
-// Generic content sections (products, categories, banners, kits, towns, form-options, size-picker)
+// Generic content sections (products, categories, banners, kits, form-options, size-picker)
 // ---------------------------------------------------------------------------------------------
 // Button target per Button action (the admin offers the same choices, EntityPage.js): products / products_home have
 // none (stored empty), products_category = a category key, section = a home section, form = a lead form.
-const BANNER_SECTIONS = ['business', 'where', 'about', 'contact', 'products'];
-const BANNER_FORMS = ['sample', 'quote', 'distributor'];
+// banner buttons: the shared list (src/shared/siteTargets.js; the home doors use the same)
+const siteTargets = require('../shared/siteTargets');
 // Banner key: what it is used for (so a rename knows what to move):
 //   - banners row + banner_translations (foreign key ON UPDATE CASCADE: follows by itself)
 //   - leads.source_ref of leads sent from this banner's form button (BannerSlider passes it as the form's ref)
@@ -645,39 +647,7 @@ async function renameBanner(q, from, to, empId) {
   return k;
 }
 
-// Town key: what uses it: the towns row + town_translations (ON UPDATE CASCADE) and the audit history. Leads keep the
-// town the visitor typed (text), never the key; the site uses the key only inside the page (map pins).
-const TOWN_KEY = /^[a-z0-9-]{2,30}$/;
-async function townKeyCheck(q, key, self) {
-  const k = String(key || '').trim();
-  if (!k) throw new InputError('Key is required');
-  if (!TOWN_KEY.test(k)) throw new InputError('Key: 2 to 30 characters, only lowercase letters a-z, digits 0-9 and hyphens (-). No spaces.');
-  const [[taken]] = await q.query('SELECT town_key FROM towns WHERE town_key = ? AND town_key <> ?', [k, self || '']);
-  if (taken) throw new InputError(`Key '${k}' is already used by another town. Pick another one.`);
-  return k;
-}
-async function renameTown(q, from, to, empId) {
-  const k = await townKeyCheck(q, to, from);
-  await q.query('UPDATE towns SET town_key = ? WHERE town_key = ?', [k, from]); // translations cascade
-  await q.query("UPDATE audit_log SET entity_id = ? WHERE entity_type = 'town' AND entity_id = ?", [k, from]);
-  await audit(q, { empId, action: 'rename', entity: 'town', entityId: k, before: { town_key: from }, after: { town_key: k } });
-  return k;
-}
-// Latitude / longitude: inside India (the admin checks the same, EntityPage.js GEO); empty is allowed.
-function townGeoCheck(body) {
-  for (const [k, min, max, label] of [['lat', 6, 37, 'Latitude'], ['lng', 68, 98, 'Longitude']]) {
-    if (!(k in body)) continue;
-    const v = body[k];
-    if (v === null || v === undefined || String(v).trim() === '') continue;
-    const n = Number(v);
-    if (!Number.isFinite(n) || n < min || n > max) throw new InputError(`${label} must be a number from ${min} to ${max} (India).`);
-  }
-}
-
-// Godown base: one town only; saving one as the base unticks the others.
-async function oneBaseTown(q, row) {
-  if (Number(row.is_base) === 1) await q.query('UPDATE towns SET is_base = 0 WHERE town_key <> ? AND is_base = 1', [row.town_key]);
-}
+// (phase 24: the town helpers went with the towns table; the map is on Delivery areas, website-routes.js)
 
 // Form options: where each stored value is used. Leads keep the stored value (business_type column; monthly_sales and
 // godown_vehicles (yes_no) inside details_json); kits keep a business_type. A value used by a lead never changes (old
@@ -735,21 +705,20 @@ async function bannerGuard(q, body, current) {
   const mobile = current ? current.mobile_file : '';
   const active = 'is_active' in body ? Number(entities.coerce('is_active', { type: 'bool' }, body.is_active)) : (current ? current.is_active : 0);
   if (active && (!desktop || !mobile)) throw new InputError('Upload the desktop and the mobile photo before switching the banner on');
+  // phase 24: show from / until (India days): until is on or after from
+  const from = 'show_from' in body ? body.show_from : current && current.show_from;
+  const until = 'show_until' in body ? body.show_until : current && current.show_until;
+  const day = (v) => (v ? require('../shared/istDate').ymd(v) : ''); // eslint-disable-line global-require
+  if (day(from) && day(until) && day(until) < day(from)) throw new InputError('Show until: on or after Show from');
   if (!('cta_action' in body) && !('cta_target' in body)) return;
   const action = 'cta_action' in body ? body.cta_action : current && current.cta_action;
   const target = 'cta_target' in body ? body.cta_target : current && current.cta_target;
   const t = target === null || target === undefined ? '' : String(target).trim();
   if (action === 'products' || action === 'products_home') { body.cta_target = null; return; }
-  if (action === 'products_category') {
-    const [[cat]] = await q.query('SELECT category_key FROM categories WHERE category_key = ?', [t]);
-    if (!cat) throw new InputError('Button target: pick one of the categories');
-  } else if (action === 'section') {
-    if (!BANNER_SECTIONS.includes(t)) throw new InputError(`Button target: one of ${BANNER_SECTIONS.join(', ')}`);
-  } else if (action === 'form') {
-    if (!BANNER_FORMS.includes(t)) throw new InputError(`Button target: one of ${BANNER_FORMS.join(', ')}`);
-  } else {
-    throw new InputError('Button action: one of products, products_home, products_category, section, form');
-  }
+  if (!siteTargets.ACTIONS.includes(action)) throw new InputError(`Button action: one of ${siteTargets.ACTIONS.join(', ')}`);
+  const [cats] = await q.query('SELECT category_key FROM categories');
+  const why = siteTargets.actionProblem(action, t, cats.map((c) => c.category_key));
+  if (why) throw new InputError(`Button target: ${why}`);
   body.cta_target = t;
 }
 
@@ -774,7 +743,7 @@ async function categorySeoTexts(q, cat, empId) {
 }
 
 const AUDIT_LABEL = {
-  products: 'product', categories: 'category', banners: 'banner', kits: 'kit', towns: 'town',
+  products: 'product', categories: 'category', banners: 'banner', kits: 'kit',
   'form-options': 'form_option', 'size-picker': 'size_picker',
 };
 
@@ -830,7 +799,6 @@ for (const name of Object.keys(entities.ENTITIES)) {
   route('post', `/${name}`, entityPerm(name, 'create'), async (req) => tx(async (q) => {
     if (name === 'products') throw new InputError('Create products in Masters > Catalogue > Products and SKUs (they start as a Draft).', 410); // phase 14
     if (name === 'banners') await bannerGuard(q, req.body, null);
-    if (name === 'towns') { req.body.town_key = await townKeyCheck(q, req.body.town_key, null); townGeoCheck(req.body); }
     if (name === 'form-options') {
       await optionGuard(q, req.body, null);
       // the end of its list (the number the form showed is only a preview)
@@ -841,7 +809,6 @@ for (const name of Object.keys(entities.ENTITIES)) {
     const keyValues = await entities.create(q, name, req.body || {}, by(req));
     const after = await entities.load(name, keyValues, q);
     if (name === 'size-picker') await oneSelectedFirst(q, after);
-    if (name === 'towns') await oneBaseTown(q, after);
     if (name === 'categories') await categorySeoTexts(q, after, by(req));
     await audit(q, { empId: by(req), action: 'create', entity: label, entityId: entities.idOf(e, after), after });
     return after;
@@ -855,10 +822,6 @@ for (const name of Object.keys(entities.ENTITIES)) {
     if (name === 'banners' && req.body && req.body.banner_key !== undefined && String(req.body.banner_key).trim() !== before.banner_key) {
       keyValues = [await renameBanner(q, before.banner_key, req.body.banner_key, by(req))];
     }
-    if (name === 'towns') townGeoCheck(req.body || {});
-    if (name === 'towns' && req.body && req.body.town_key !== undefined && String(req.body.town_key).trim() !== before.town_key) {
-      keyValues = [await renameTown(q, before.town_key, req.body.town_key, by(req))];
-    }
     if (name === 'form-options' && req.body && req.body.option_value !== undefined && String(req.body.option_value).trim() !== before.option_value) {
       keyValues = await renameOption(q, before, req.body.option_value, by(req));
     }
@@ -868,7 +831,6 @@ for (const name of Object.keys(entities.ENTITIES)) {
     await positions.tidyUp(q, name, tidy);
     const after = await entities.load(name, keyValues, q);
     if (name === 'size-picker') await oneSelectedFirst(q, after);
-    if (name === 'towns') await oneBaseTown(q, after);
     if (name === 'form-options') after.used = await optionUse(q, after.list_key, after.option_value);
     await audit(q, { empId: by(req), action: 'update', entity: label, entityId: entities.idOf(e, after), before, after });
     return after;
@@ -1164,10 +1126,37 @@ route('delete', '/brochures/:lang', 'content:delete', async (req) => {
 const SEO_NOINDEX_FROM = 'Set on the server by the developer (SEO_NOINDEX): this server is never indexed';
 route('get', '/settings', 'settings:view', async () => {
   const [rows] = await db.query('SELECT setting_key, setting_value, is_public, description, updated_by, updated_at FROM site_settings ORDER BY setting_key');
+  // phase 24: a change waiting for a second Admin (leads e-mail, lead sheet, two-step sign-in off)
+  const [waits] = await db.query("SELECT approval_id, JSON_UNQUOTE(JSON_EXTRACT(payload, '$.key')) AS k, JSON_UNQUOTE(JSON_EXTRACT(payload, '$.value')) AS v, requested_by FROM approvals WHERE kind = 'rule_change' AND status = 'pending' AND JSON_UNQUOTE(JSON_EXTRACT(payload, '$.t')) = 'site_setting'");
+  const waiting = Object.fromEntries(waits.map((w) => [w.k, { approval_id: w.approval_id, value: w.v, by: w.requested_by }]));
   // SEO_NOINDEX=true (a staging server) keeps the site out of search engines whatever the switch says (seo.js)
-  return rows.map((r) => (r.setting_key === 'site_indexing' && process.env.SEO_NOINDEX === 'true'
-    ? { ...r, setting_value: 'off', fixed_from: SEO_NOINDEX_FROM } : r));
+  return rows.map((r) => ({ ...(r.setting_key === 'site_indexing' && process.env.SEO_NOINDEX === 'true'
+    ? { ...r, setting_value: 'off', fixed_from: SEO_NOINDEX_FROM } : r), ...(waiting[r.setting_key] ? { waiting: waiting[r.setting_key] } : {}) }));
 });
+
+// phase 24: settings a second Admin signs (owner's notes, rows 97, 100, 101): where every lead goes, the lead sheet,
+// and two-step sign-in off. The change waits as a "rule_change" request (second-admin.js) and is made when approved.
+const SECOND_ADMIN_SETTINGS = { lead_email: 'Where enquiry e-mails go', gsheet_spreadsheet_id: 'Google sheet for leads', two_step_login: 'Two-step sign-in' };
+secondAdmin.on('site_setting', {
+  async apply(q, p, empId) {
+    const [[row]] = await q.query('SELECT setting_value FROM site_settings WHERE setting_key = ? FOR UPDATE', [p.key]);
+    if (!row) return;
+    await q.query('UPDATE site_settings SET setting_value = ?, updated_by = ? WHERE setting_key = ?', [p.value, empId, p.key]);
+    await audit(q, { empId, action: 'update', entity: 'setting', entityId: p.key, before: { value: row.setting_value }, after: { value: p.value, approved: true } });
+  },
+});
+async function askSetting(req, key, value) {
+  return tx(async (q) => {
+    const [[before]] = await q.query('SELECT setting_value FROM site_settings WHERE setting_key = ?', [key]);
+    if (!before) throw new InputError('Unknown setting', 404);
+    if (before.setting_value === value) return { setting_key: key, setting_value: value, unchanged: true };
+    const shown = (v) => (key === 'gsheet_spreadsheet_id' ? (v ? `sheet ${String(v).slice(0, 8)}...` : 'none') : v || 'empty');
+    return { setting_key: key, ...(await secondAdmin.ask(q, { t: 'site_setting', dk: `setting:${key}`, summary: `${SECOND_ADMIN_SETTINGS[key]}: ${shown(before.setting_value)} to ${shown(value)}`, payload: { key, value } }, by(req))) };
+  });
+}
+
+// phase 24: the verified SendGrid senders the mail sender is picked from (Site settings; read only, never throws)
+route('get', '/website/senders', 'settings:view', async () => senderCheck.senders());
 
 // Settings holding a picture (uploaded below; typed values are refused) and settings naming a product.
 const IMAGE_SETTINGS = { share_image: media.saveShareImage, about_image: media.saveAboutImage };
@@ -1219,6 +1208,7 @@ route('put', '/settings/:key', 'settings:edit', async (req) => {
       throw err;
     }
   }
+  if (SECOND_ADMIN_SETTINGS[req.params.key]) return askSetting(req, req.params.key, value); // waits for a second Admin
   const saved = await tx(async (q) => {
     const [[before]] = await q.query('SELECT setting_key, setting_value FROM site_settings WHERE setting_key = ?', [req.params.key]);
     if (!before) throw new InputError('Unknown setting', 404);
@@ -1256,7 +1246,8 @@ async function setTwoStep(req, value, how) {
   return { setting_key: 'two_step_login', setting_value: value };
 }
 
-route('post', '/settings/two-step-login/off', 'settings:edit', async (req) => setTwoStep(req, 'off', 'turned off after the warning was confirmed'));
+// phase 24 (owner's note, row 101): turning two-step sign-in off waits for a second Admin; turning it on keeps its code check
+route('post', '/settings/two-step-login/off', 'settings:edit', async (req) => askSetting(req, 'two_step_login', 'off'));
 
 route('post', '/settings/two-step-login/on', 'settings:edit', async (req) => {
   const sent = await loginServer.sendSwitchCode(req.admin.emp_id);
@@ -3337,7 +3328,8 @@ route('get', '/dashboard/home', 'any', async (req) => {
       k.ready = parts.length ? Math.max(0, Math.floor(Math.min(...parts.map((x) => Number(x.good) / Math.max(1, Number(x.qty)))))) : 0;
       k.parts = Number(k.parts);
     }
-    const [towns] = await db.query("SELECT COALESCE(t.name, w.town_key) AS name, w.is_base FROM towns w LEFT JOIN town_translations t ON t.town_key = w.town_key AND t.lang_code = 'en' WHERE w.is_active = 1 ORDER BY w.sort_order, w.town_key");
+    // phase 24: one town list: the map towns are the Delivery areas ticked Show on map
+    const [towns] = await db.query("SELECT COALESCE(t.name, w.label) AS name, w.is_base FROM delivery_areas w LEFT JOIN delivery_area_translations t ON t.area_id = w.area_id AND t.lang_code = 'en' WHERE w.show_on_map = 1 ORDER BY w.map_sort, w.area_id");
     const f = await require('./company').facts(db); // eslint-disable-line global-require
     const [gs] = await db.query('SELECT name FROM locations WHERE is_active = 1 ORDER BY sort_order, location_id');
     site = { loved, kits, towns: towns.map((x) => ({ name: x.name, base: Number(x.is_base) === 1 })),
@@ -3361,6 +3353,7 @@ route('get', '/reports23/:page/export.csv', 'reports:export', async (req, res) =
   res.send(`\ufeff${body}`);
 });
 require('./expenses-routes').register({ route, tx, db, by, InputError, canDo, commerceGate, upload }); // phase 23: section 17 Expenses, petty cash, export to the accountant
+require('./website-routes').register({ route, tx, db, by, InputError, setUiText, languages: () => entities.languages() }); // phase 24: section 18 Website pages
 // phase 17: section 4 Production (production.js rules, production-routes.js screens)
 require('./production-routes').register({ route, tx, db, by, InputError, canDo, commerceGate, seesCost: seesCosts });
 // phase 18: section 5 Inventory (inventory.js rules, inventory-routes.js screens)

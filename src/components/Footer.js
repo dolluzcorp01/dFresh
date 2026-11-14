@@ -5,12 +5,11 @@ import { useI18n } from '../i18n/useT';
 import { useOpenForm } from '../forms/FormsProvider';
 import { mediaUrl } from '../utils/api';
 import { trackWhatsApp, waHref } from '../utils/whatsapp';
-import { MAIN_LINKS } from './navLinks';
+import { menuLinks } from './navLinks';
 import NavLink from './NavLink';
 import useSpringField from '../utils/useSpringField';
 import './Footer.css';
 
-const SHOP_LINKS = [...MAIN_LINKS.slice(0, 3), { key: 'f_range', hash: 'range' }, MAIN_LINKS[3]];
 const WORK_FORMS = [
   { key: 'request_quote', form: 'quote' },
   { key: 'become_distributor', form: 'distributor' },
@@ -20,7 +19,9 @@ const WORDMARK = 'dFresh'; // decorative artwork (aria-hidden), like the logo im
 const SPRING = { lift: 0.12, reach: 0.55, k: 140, c: 13, tilt: 4 }; // preview bigF()
 
 export default function Footer() {
-  const { lang, t, settings } = useI18n();
+  const { lang, t, settings, data } = useI18n();
+  // phase 24: the Shop column is the footer's menu links; the visit line names the visit cards (Website > Brand and layout)
+  const cards = (data.visitCards || []).map((c) => c.name);
   const openForm = useOpenForm();
   const bigRef = useRef(null);
   useSpringField(bigRef, 'span', SPRING, []);
@@ -42,8 +43,8 @@ export default function Footer() {
         <div>
           <h3>{t('f_shop')}</h3>
           <ul>
-            {SHOP_LINKS.map((l) => (
-              <li key={l.key}><NavLink link={l}>{t(l.key)}</NavLink></li>
+            {menuLinks(data, 'footer').map((l) => (
+              <li key={l.key}><NavLink link={l}>{t(l.textKey)}</NavLink></li>
             ))}
           </ul>
         </div>
@@ -67,7 +68,7 @@ export default function Footer() {
             </li>
             <li>{t('lbl_office')}: <a href={`tel:${String(settings.office_phone).replace(/[^\d+]/g, '')}`}>{settings.office_phone}</a></li>
             <li><a href={`mailto:${settings.public_email}`}>{settings.public_email}</a></li>
-            <li>{t('c_office')} · {t('c_godown')}</li>
+            {cards.length > 0 && <li>{cards.flatMap((n, i) => (i ? [' · ', n] : [n]))}</li>}
           </ul>
         </div>
         <div className="legal">

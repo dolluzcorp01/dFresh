@@ -208,7 +208,8 @@ Rules:
 Common to all forms:
 - Logo, title, subtitle, fields, consent checkbox (`consent` + `lg_priv_s` link that opens the Privacy policy
   ON TOP of the form without losing the typed data), hidden honeypot field, submit button.
-- Validation on blur and on submit using `src/shared/rules.json` (same file the server uses):
+- Validation on blur and on submit using `src/shared/formChecks.js` and the form rules from the database (`form_fields`,
+  Website > Forms > Form rules; the same rules the server uses, phase 24):
   e-mail `^[^\s@]+@[^\s@]+\.[^\s@]{2,}$`; Indian mobile `^(\+?91[\s-]?)?[6-9]\d{4}\s?\d{5}$`
   (stored normalised as 10 digits); GST `^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$` (case-insensitive, stored upper);
   required text; at least one product where required. Messages: `e_fill e_choose e_email e_tel e_gst e_pick`.
@@ -245,7 +246,7 @@ Common to all forms:
 - GA4 `brochure_download`.
 
 ### D2. What happens to a lead (server)
-1. Validate (rules.json), reject honeypot silently (respond success, save nothing), rate-limit by `ip_hash`
+1. Validate (formChecks.js + the DB form rules), reject honeypot silently (respond success, save nothing), rate-limit by `ip_hash`
    (e.g. 5 submissions / 10 min / IP) -> 429 with `e_` style message.
 2. Normalise: trim, phone to 10 digits, GST upper, e-mail lower.
 3. In ONE transaction: insert `leads` (+ `lead_products`), generate `lead_ref`, enqueue `mail_outbox`

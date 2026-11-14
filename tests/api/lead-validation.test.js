@@ -1,8 +1,26 @@
-// Unit tests for the shared lead rules (src/shared/rules.json via validation.js). No DB.
+// Unit tests for the lead validation (validation.js with the format checks of src/shared/formChecks.js). No DB: the
+// form rules are given as the database holds them after migration 20261114_stage2_24_01 (the values rules.json had).
 // Run: npm run test:api
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { validateLead, isFormType } = require('../../src/backend_routes/validation');
+const { validateLead: validate, isFormType } = require('../../src/backend_routes/validation');
+
+const F = (name, type, required, max, list) => ({ name, type, ...(list ? { list } : {}), required, ...(max ? { max } : {}) });
+const RULES = {
+  maxProducts: 40,
+  forms: {
+    brochure: [F('first_name', 'text', true, 60), F('last_name', 'text', true, 60), F('email', 'email', true, 150), F('phone', 'tel', true, 20)],
+    quote: [F('full_name', 'text', true, 120), F('business_name', 'text', true, 150), F('business_type', 'select', true, 80, 'business_type'),
+      F('town', 'text', true, 120), F('phone', 'tel', true, 20), F('email', 'email', true, 150), F('products', 'pick', true),
+      F('monthly_quantity', 'text', false, 150), F('message', 'textarea', false, 2000)],
+    sample: 'quote',
+    distributor: [F('full_name', 'text', true, 120), F('firm_name', 'text', true, 150), F('gst_no', 'gst', false, 15), F('areas', 'text', true, 255),
+      F('godown_vehicles', 'select', true, 80, 'yes_no'), F('brands', 'text', false, 255), F('monthly_sales', 'select', true, 80, 'monthly_sales'),
+      F('phone', 'tel', true, 20), F('email', 'email', true, 150)],
+    contact: [F('full_name', 'text', true, 120), F('phone', 'tel', true, 20), F('email', 'email', true, 150), F('message', 'textarea', true, 2000)],
+  },
+};
+const validateLead = (type, body, lookups) => validate(type, body, lookups, RULES);
 
 const lookups = {
   options: { business_type: new Set(['hotel']), yes_no: new Set(['yes', 'no']), monthly_sales: new Set(['under_50k']) },

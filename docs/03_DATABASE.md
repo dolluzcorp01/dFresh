@@ -31,7 +31,11 @@ Put this pattern in ONE helper (`src/backend_routes/i18n-sql.js`) and reuse it. 
 | `size_picker` | "Pick a size" napkin widget: `size_id` key, `sort_order` (dragged, 1..n), size label (not translated), drawing scale 0.1-1, `is_default` (one row at most; none = first active), `is_active` | 5 sizes, 30x30 is default |
 | `banners` / `banner_translations` | 11 "dFresh moods" slides | text-free images; headline + CTA translated; `cta_action` + `cta_target`; funky/neon/rainbow seeded inactive, all 11 active since the Director approved them (13 Oct 2026, migration `20261013_all_banners_active.sql`) |
 | `kits` / `kit_translations` / `kit_products` | 4 business kits | `business_type` prefills the quote form |
-| `towns` / `town_translations` | 6 delivery towns | `is_base` = Kanchipuram; `map_x/map_y` for the illustrated map, `label_dx/label_dy/label_anchor` place the name; lat/lng for later real maps |
+| `towns` / `town_translations` | (dropped in phase 24) | merged into `delivery_areas` (one town list, owner); see below |
+| `delivery_areas` (map columns) / `delivery_area_translations` | Masters > Delivery areas, also the "Where we deliver" map (phase 24) | `show_on_map` = on the map; `map_key` (old town key, or `area-<id>`), `map_sort`, `is_base` (one at most), `map_x/map_y`, `label_dx/label_dy/label_anchor`, `lat/lng` (base only, Google); the map name per language in `delivery_area_translations` (empty = the area label). A town only on the old map became an inactive area (no delivery charge change) |
+| `form_fields` | Form rules (phase 24): one row per form and field | `form_type` + `field_name`, `field_type`, `list_key`, `max_len` (the column's length, read only), `is_required` (Admin edits), `locked` = Phone (always required); the API and the React forms (bootstrap `formRules`) read it. Limits: `site_settings.lead_rate_max` (1 to 20 per 10 min, not public), `lead_max_products` (public) |
+| `menu_links` | Header, phone menu and footer links (phase 24) | `link_key`, `text_key` (its name per language = a ui_text key; added links `nav_l<n>`), `target_kind` page / section + `target` (src/shared/siteTargets.js lists only), `sort_order`, `in_header/in_phone/in_footer`, `is_active` |
+| `visit_cards` | The Contact band cards, footer visit line and Google address (phase 24) | `name_key`, `address_key`, `hours_key` (ui_text keys; added cards `vc_<id>_n/_a/_h`), `map_query` (map search text or a lat,lng pin), `phone`, `godown_id` (filled from, copy only), `sort_order`, `is_active` |
 | `form_options` / `form_option_translations` | Drop-downs (business type, monthly sales, yes/no) | leads store the English `option_value` |
 | `site_settings` | Phones, e-mails, company, CIN, GSTIN (footer company line), GA4 id, sheet id, About photo (`about_image`) and share picture (`share_image`, both uploaded in Settings), home door photos (`door_home_product` / `door_biz_product`). Addresses are NOT here: Translations `c_office_a` / `c_godown_a` are the only copy (13 Oct 2026) | `is_public = 1` rows only go to the browser |
 | `brochures` | One PDF per language | file at `private/brochures/<lang_code>/<file_name>`; English fallback |
@@ -82,5 +86,11 @@ submits in Phase 6: 20 unique, consecutive refs.
   review, open item 9). After it (local DB, counted 2026-10-12): 194 UI keys (EN 194 rows, TA 192, HI 192).
   `20261012_tissue_pickup_text.sql` (data: new texts for `touch` and `sheet_label` in EN/TA/HI, only where the seeded
   text was unchanged; TA/HI drafts for native review, open item 9). UI key count unchanged.
+  `20261114_stage2_24_01_website_pages.sql` (phase 24, **schema + data**: banners `show_from` / `show_until` DATE and
+  `banner_translations.alt_text`; home door targets `door_home_action/_target`, `door_biz_action/_target`; `form_fields`
+  seeded from the old rules.json (26 rows, Phone locked) + `lead_rate_max` 5, `lead_max_products` 40; delivery areas get the
+  map columns and `delivery_area_translations`, the towns are merged into them (a town on both lists becomes one; a town
+  only on the map becomes an inactive area) and `towns` / `town_translations` are dropped; `menu_links` (the 5 links of the
+  old navLinks.js + `range` in the footer) and `visit_cards` (Office and Godown, from `c_office`/`c_godown` texts); 1 key `c_phone_l`).
 - `01_schema.sql` is for a fresh database only (it adds one FK with ALTER at the end).
 - The dAdmin database (`dadmin`) is read-only from dFresh except `login_otp` rows for app_key `dFresh`.

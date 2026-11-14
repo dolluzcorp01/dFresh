@@ -1,17 +1,18 @@
-// Settings (spec F 10, admin; menu: Website > Site settings / Google and sharing / Home page > Home doors, and
-// Admin > Organisation > Company until phase 13): every site_settings row with its description, in sections; the public flag is shown as
-// a badge, not editable here (a secret must never become public by a click). Typed values are pending until Save
-// (Save / Cancel on the row), checked with the API's own rules (shared/settingRules.js); whatsapp_number follows
-// whatsapp_display. The lead sheet ID gets "Open sheet" and a read-only "Test connection". share_image / about_image: preview + Upload /
-// Remove (typed values are refused by the server); door_home_product / door_biz_product: the photo product picker.
-// mail_logo_url also gets a live preview on the e-mail's ink header (the typed URL, or the built-in logo when
-// empty), the server's last check of the saved URL, and "Send test mail" (MAIL_TEST_TO locally, the signed-in
-// admin's own e-mail in production). Saving a URL is refused by the server unless it passes the check.
-import { useState } from 'react';
+// Site settings rows (spec F 10, admin). Phase 24 (the owner's field map) split the old Settings page into the Website
+// pages that use them: SettingsTable shows a chosen set of site_settings rows (Home doors, Google and sharing, Site
+// settings, Brochures) with their description; the public flag is a badge, not editable here (a secret must never become
+// public by a click). Typed values are pending until Save (Save / Cancel on the row), checked with the API's own rules
+// (shared/settingRules.js). The lead sheet ID gets "Open sheet" and a read-only "Test connection". share_image /
+// about_image: preview + Upload / Remove (typed values are refused by the server). mail_logo_url also gets a live
+// preview on the e-mail's ink header, the server's last check of the saved URL, and "Send test mail".
+// Phase 24: the leads e-mail and the lead sheet wait for a second Admin (the row shows what waits); the mail sender is
+// picked from the verified SendGrid senders, never typed; indexing off asks first; two-step sign-in is switched on
+// Admin > Users and security (TwoStepSwitch) and shown read only elsewhere.
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from './adminApi';
 import { API_BASE, mediaUrl } from '../utils/api';
-import { InfoCard, Loading, PageHead, Pill, UploadButton, fmtDate, useAction, useConfirm, useHashScroll, useLeaveGuard, useLoad, useUpload } from './ui';
+import { Loading, Pill, UploadButton, fmtDate, useAction, useConfirm, useHashScroll, useLeaveGuard, useLoad, useUpload } from './ui';
 import { ProductSelect } from './ProductSelect';
 import { DERIVED, checkSetting, whatsappNumber } from '../shared/settingRules';
 import { ABOUT, DEFAULT_FOCUS, formatFocus, parseFocus, visibleWindow } from '../shared/photoFocus';
@@ -25,27 +26,19 @@ const PICTURES = {
   about_image: { accept: 'image/jpeg,image/png,image/webp', button: 'Upload JPG / PNG / WebP', width: 240, height: 100, empty: null, emptyText: 'Empty: the About section shows no photo.' },
 };
 const PRODUCT_PICKERS = ['door_home_product', 'door_biz_product'];
+// phase 24: changes that wait for a second Admin (Admin_server.js SECOND_ADMIN_SETTINGS)
+const SECOND_ADMIN = ['lead_email', 'gsheet_spreadsheet_id', 'two_step_login'];
 
-// Sections, in this order; a setting not listed here shows under "Other".
-// Phase 13: the company facts the site shows (legal name, CIN, GSTIN, phone, e-mail, WhatsApp) are changed on the
-// Company page (Admin > Organisation > Company), which writes these same rows: one source for the site and the invoices.
-const ON_COMPANY = ['company_name', 'cin', 'gstin', 'office_phone', 'public_email', 'whatsapp_display', 'whatsapp_number'];
-const SECTIONS = [
-  ['Home page', ['about_image', 'door_home_product', 'door_biz_product']],
-  ['Sharing and SEO', ['site_indexing', 'share_image', 'ga4_measurement_id']],
-  ['E-mail', ['mail_logo_url', 'lead_email', 'mail_from', 'mail_from_name']],
-  ['Integrations', ['gsheet_spreadsheet_id']],
-  ['Brochure', ['brochure_download_enabled']],
-  ['Security', ['two_step_login']],
-];
-
-export default function Settings() {
+/**
+ * The given site_settings rows in sections: sections = [[title, [keys]]]. A row the server does not have is left out.
+ * twoStep: 'switch' (Users and security) or 'show' (read only, with a link there).
+ */
+export function SettingsTable({ sections: wanted, twoStep = 'show' }) {
   const list = useLoad('/settings');
-  const products = useLoad('/products');
+  const products = useLoad(wanted.some(([, keys]) => keys.some((k) => PRODUCT_PICKERS.includes(k))) ? '/products' : null);
   const act = useAction();
   const cards = (products.data || []).filter((p) => !p.variant_of);
-  // #setting-<key> (dashboard links) and #cs-s-<section> (menu entries: Company, Home doors, Google and sharing):
-  // scroll there once the list is there
+  // #setting-<key> (dashboard links): scroll there once the list is there
   useHashScroll(Boolean(list.data));
   // typed values are pending (row highlighted, Save / Cancel on the row) until saved; leaving the page asks first
   const [pending, setPending] = useState({}); // key -> typed value
@@ -62,37 +55,29 @@ export default function Settings() {
   const save = (s) => {
     const { value } = checkSetting(s.setting_key, pending[s.setting_key]);
     return act.run(async () => {
+      let r;
       try {
-        await api.send('PUT', `/settings/${s.setting_key}`, { value });
+        r = await api.send('PUT', `/settings/${s.setting_key}`, { value });
       } catch (err) {
         if (!(err.data && err.data.code === 'sender_unchecked')) throw err;
         const yes = await confirm({ title: 'Save an unchecked sender?', message: err.message, action: 'Save anyway', danger: true });
         if (!yes) return; // still pending, nothing saved
-        await api.send('PUT', `/settings/${s.setting_key}`, { value, confirmUnverified: true });
+        r = await api.send('PUT', `/settings/${s.setting_key}`, { value, confirmUnverified: true });
       }
       drop(s.setting_key);
       list.reload();
-      act.setMsg({ kind: 'ok', text: `${s.setting_key} saved` });
+      if (r && r.waiting) act.setMsg({ kind: 'info', text: r.message });
+      else act.setMsg({ kind: 'ok', text: `${s.setting_key} saved` });
     });
   };
 
   const rows = list.data || [];
   const byKey = new Map(rows.map((r) => [r.setting_key, r]));
-  const listed = new Set([...SECTIONS.flatMap(([, keys]) => keys), ...Object.values(FOCUS_OF), ...ON_COMPANY]); // focus rows live in their photo's row
-  const sections = [...SECTIONS.map(([title, keys]) => [title, keys.map((k) => byKey.get(k)).filter(Boolean)]),
-    ['Other', rows.filter((r) => !listed.has(r.setting_key))]].filter(([, items]) => items.length);
+  const sections = wanted.map(([title, keys]) => [title, keys.map((k) => byKey.get(k)).filter(Boolean)]).filter(([, items]) => items.length);
   const valueOf = (key) => (key in pending ? pending[key] : ((byKey.get(key) || {}).setting_value || ''));
 
   return (
-    <section>
-      <PageHead title="Settings" sub="Company details, contact, home page pictures, sharing, e-mail and security of the site." />
-      <InfoCard title="Addresses are not set here">
-        <ul>
-          <li>Office and godown names and addresses: Translations, group Contact details (<code>c_office</code>, <code>c_office_a</code>, <code>c_godown</code>, <code>c_godown_a</code>), one text per language.</li>
-          <li>That one copy is used in the contact section, the footer, the Google Maps search and Google business data.</li>
-          <li>The company name, CIN, GSTIN, phone, e-mail and WhatsApp the site shows are changed in <Link to="/admin/company">Admin &gt; Company</Link> (the same values go on the invoices).</li>
-        </ul>
-      </InfoCard>
+    <>
       {act.note}
       <Loading state={list}>
         <div className="a-scroll">
@@ -101,9 +86,9 @@ export default function Settings() {
             <thead><tr><th>Setting</th><th>Value</th><th>Visibility</th><th /></tr></thead>
             {sections.map(([title, items]) => (
               <tbody key={title} id={`cs-s-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`}>
-                <tr className="a-group"><th colSpan={4}>{title}</th></tr>
+                {sections.length > 1 && <tr className="a-group"><th colSpan={4}>{title}</th></tr>}
                 {items.map((s) => (
-                  <Row key={s.setting_key} s={s} act={act} cards={cards} onSaved={list.reload}
+                  <Row key={s.setting_key} s={s} act={act} cards={cards} onSaved={list.reload} twoStep={twoStep}
                     focus={FOCUS_OF[s.setting_key] && byKey.get(FOCUS_OF[s.setting_key]) ? {
                       value: valueOf(FOCUS_OF[s.setting_key]), pending: FOCUS_OF[s.setting_key] in pending,
                       onChange: (v) => setValue(byKey.get(FOCUS_OF[s.setting_key]), v),
@@ -118,11 +103,11 @@ export default function Settings() {
           </table>
         </div>
       </Loading>
-    </section>
+    </>
   );
 }
 
-function Row({ s, act, cards, onSaved, value: v, pending, derivedFrom, onChange: setV, onSave, onCancel, focus }) {
+function Row({ s, act, cards, onSaved, value: v, pending, derivedFrom, onChange: setV, onSave, onCancel, focus, twoStep }) {
   const picture = PICTURES[s.setting_key];
   const derived = DERIVED[s.setting_key];
   const { error } = checkSetting(s.setting_key, v);
@@ -130,11 +115,20 @@ function Row({ s, act, cards, onSaved, value: v, pending, derivedFrom, onChange:
   if (picture) {
     control = <Picture s={s} cfg={picture} act={act} onSaved={onSaved} focus={focus} />;
   } else if (s.setting_key === 'two_step_login') {
-    control = <TwoStepSwitch s={s} act={act} onSaved={onSaved} />;
+    control = twoStep === 'switch' ? <TwoStepSwitch s={s} act={act} onSaved={onSaved} /> : (
+      <span className="a-switch-row">
+        <strong>{String(s.setting_value || 'on').trim().toLowerCase() !== 'off' ? 'On' : 'Off'}</strong>
+        <small className="a-muted">Read only here. Switched on <Link to="/admin/users#two-step">Admin &gt; Users and security</Link>; turning it off waits for a second Admin.</small>
+      </span>
+    );
   } else if (s.setting_key === 'brochure_download_enabled') {
     control = <OnOffSwitch s={s} act={act} onSaved={onSaved} label="Brochure download" />;
   } else if (s.setting_key === 'site_indexing') {
-    control = <OnOffSwitch s={s} act={act} onSaved={onSaved} label="Search engine indexing" />;
+    // owner's note (field map row 91): a warning when turning it off
+    control = <OnOffSwitch s={s} act={act} onSaved={onSaved} label="Show in Google (indexing)"
+      offWarning={{ title: 'Hide the site from Google?', message: 'Google and other search engines are asked not to list dfresh.us. Pages already listed drop out over the next days, and new visitors cannot find the site by searching until you turn it back on.', action: 'Hide from Google' }} />;
+  } else if (s.setting_key === 'mail_from') {
+    control = <SenderPick value={v} saved={s.setting_value || ''} onChange={setV} />;
   } else if (derived) {
     // computed from the WhatsApp display number (live while that one is being edited)
     const next = whatsappNumber(derivedFrom);
@@ -164,6 +158,11 @@ function Row({ s, act, cards, onSaved, value: v, pending, derivedFrom, onChange:
         {control}
         {pending && error && <small className="a-bad" role="alert">{error}</small>}
         {s.updated_by && !pending && <small className="a-muted">Changed {fmtDate(s.updated_at)} by {s.updated_by}</small>}
+        {s.waiting && (
+          <small className="a-waitline"><Pill tone="warn">Waiting for a second Admin</Pill>{' '}
+            {s.setting_key === 'two_step_login' ? `Turn ${s.waiting.value}` : `New value: ${s.waiting.value || 'empty'}`} (asked by {s.waiting.by}). <Link to="/admin/approvals">Approvals</Link></small>
+        )}
+        {!s.waiting && SECOND_ADMIN.includes(s.setting_key) && s.setting_key !== 'two_step_login' && <small className="a-muted">A change waits for a second Admin before it is made.</small>}
         {s.setting_key === 'mail_logo_url' && <LogoHowTo />}
         {s.setting_key === 'mail_logo_url' && <MailLogo value={v} act={act} />}
         {s.setting_key === 'gsheet_spreadsheet_id' && <SheetCheck value={v} />}
@@ -182,9 +181,14 @@ function Row({ s, act, cards, onSaved, value: v, pending, derivedFrom, onChange:
 }
 
 // A plain on / off setting: one click saves (PUT, admin only, audited by the server).
-function OnOffSwitch({ s, act, onSaved, label }) {
+export function OnOffSwitch({ s, act, onSaved, label, offWarning }) {
+  const confirm = useConfirm();
   const on = String(s.setting_value || 'on').trim().toLowerCase() !== 'off';
-  const flip = () => act.run(async () => {
+  const flip = async () => {
+    if (on && offWarning && !(await confirm({ ...offWarning, cancel: 'Cancel', danger: true }))) return;
+    run();
+  };
+  const run = () => act.run(async () => {
     await api.send('PUT', `/settings/${s.setting_key}`, { value: on ? 'off' : 'on' });
     onSaved();
     act.setMsg({ kind: 'ok', text: `${label} is ${on ? 'off' : 'on'}.` });
@@ -203,7 +207,7 @@ function OnOffSwitch({ s, act, onSaved, label }) {
 // two_step_login: a switch, never a typed value. Off: asks first (danger), then saves. On: the server e-mails a code
 // to the signed-in admin and the setting only changes once that code is typed here (Turn on); Cancel or no code =
 // it stays off. The server reads the setting at the next sign-in; open sessions are not affected.
-function TwoStepSwitch({ s, act, onSaved }) {
+export function TwoStepSwitch({ s, act, onSaved }) {
   const confirm = useConfirm();
   const on = String(s.setting_value || 'on').trim().toLowerCase() !== 'off';
   const [sent, setSent] = useState(null); // { sentTo, minutes } while a code is waiting
@@ -213,14 +217,16 @@ function TwoStepSwitch({ s, act, onSaved }) {
   const turnOff = async () => {
     const yes = await confirm({
       title: 'Turn off two-step sign-in?',
-      message: 'Sign in will need only the password. Anyone with a password can get into leads and settings.',
-      action: 'Turn off', cancel: 'Cancel', danger: true,
+      message: 'Sign in will need only the password. Anyone with a password can get into leads and settings. A second Admin must approve it before it goes off.',
+      action: 'Ask to turn off', cancel: 'Cancel', danger: true,
     });
     if (!yes) return;
     act.run(async () => {
-      await api.send('POST', '/settings/two-step-login/off');
+      const r = await api.send('POST', '/settings/two-step-login/off');
       onSaved();
-      act.setMsg({ kind: 'ok', text: 'Two-step sign-in is off: the next sign-in needs only the password.' });
+      // phase 24 (field map row 101): turning it off waits for a second Admin
+      if (r && r.waiting) act.setMsg({ kind: 'info', text: r.message });
+      else act.setMsg({ kind: 'ok', text: 'Two-step sign-in is off: the next sign-in needs only the password.' });
     });
   };
   const askCode = () => act.run(async () => {
@@ -249,11 +255,12 @@ function TwoStepSwitch({ s, act, onSaved }) {
     <div className="a-twostep">
       <span className="a-switch-row">
         <button type="button" role="switch" aria-checked={on} aria-label="Two-step sign-in" className="a-switch"
-          onClick={on ? turnOff : askCode} disabled={act.busy || Boolean(sent)}>
+          onClick={on ? turnOff : askCode} disabled={act.busy || Boolean(sent) || Boolean(s.waiting)}>
           <span className="a-switch-knob" aria-hidden="true" />
         </button>
         <strong>{on ? 'On' : 'Off'}</strong>
       </span>
+      {s.waiting && <small className="a-waitline"><Pill tone="warn">Waiting for a second Admin</Pill> Turn {s.waiting.value} (asked by {s.waiting.by}). <Link to="/admin/approvals">Approvals</Link></small>}
       {sent && (
         <form className="a-twostep-code" onSubmit={turnOn}>
           <label htmlFor="two-step-code">We e-mailed a code to {sent.sentTo} (valid {sent.minutes} minutes). Type it to turn two-step sign-in on.</label>
@@ -420,5 +427,27 @@ function MailLogo({ value, act }) {
       </small>
       <button type="button" className="a-btn a-btn-sm" onClick={test} disabled={act.busy}>Send test mail</button>
     </div>
+  );
+}
+
+// mail_from (owner's note, field map row 98): picked only from the senders verified in SendGrid, never typed. When the
+// list cannot be read, the saved sender stays and nothing else can be picked.
+function SenderPick({ value, saved, onChange }) {
+  const [st, setSt] = useState(null); // { ok, reason, senders }
+  useEffect(() => { api.get('/website/senders').then(setSt, (e) => setSt({ ok: false, reason: e.message, senders: [] })); }, []);
+  const list = (st && st.senders) || [];
+  const known = list.some((x) => x.email === value);
+  return (
+    <>
+      <select value={value} onChange={(e) => onChange(e.target.value)} aria-label="mail_from" disabled={!st || !list.length}>
+        {!known && <option value={value}>{value || '(none)'}{value === saved ? ' (saved)' : ''}</option>}
+        {list.map((x) => <option key={x.email} value={x.email}>{x.email}{x.name ? ` (${x.name})` : ''}</option>)}
+      </select>
+      <small className="a-muted">
+        {!st ? 'Reading the verified senders from SendGrid...'
+          : st.ok ? `${list.length} verified sender(s) in SendGrid. Add one there (Settings > Sender authentication) to pick it here.`
+            : `Could not read the verified senders (${st.reason}): the saved sender stays.`}
+      </small>
+    </>
   );
 }

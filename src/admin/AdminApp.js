@@ -87,7 +87,7 @@ import { EInvoice, EwayBill, GstMonth } from './Gst';
 import { PackedWaiting, PackingPage, ToPick } from './Packing';
 import Trips, { CashOnDelivery, CourierPickup, FailedShort, MyTrips, ProofOfDelivery } from './CommerceDelivery';
 import { Couriers, DeliveryAreas, Vehicles } from './DeliveryMasters';
-import Settings from './Settings';
+import { FormRules, GoogleSharing, HomeDoors, MenuLinks, MostLoved, SiteSettings, VisitCards, WhereMap } from './Website'; // phase 24: section 18
 import Users from './Users';
 import AuditLog from './AuditLog';
 import css from './adminStyles';
@@ -206,7 +206,16 @@ export default function AdminApp() {
             <Route path="translations" element={<Need section="content"><Translations /></Need>} />
             <Route path="banners" element={<Need section="content"><EntityPage key="banners" name="banners" /></Need>} />
             <Route path="kits" element={<Need section="products"><Kits /></Need>} />
-            <Route path="towns" element={<Need section="content"><EntityPage key="towns" name="towns" /></Need>} />
+            {/* phase 24: section 18 Website pages (docs/claude-tasks/done/phase-24-field-map.md) */}
+            <Route path="home-doors" element={<Need section="content"><HomeDoors /></Need>} />
+            <Route path="most-loved" element={<Need section="content"><MostLoved /></Need>} />
+            <Route path="form-rules" element={<Need section="content"><FormRules /></Need>} />
+            <Route path="where-we-deliver-map" element={<Need section="content"><WhereMap /></Need>} />
+            <Route path="towns" element={<Navigate to="/admin/where-we-deliver-map" replace />} />
+            <Route path="menu-links" element={<Need section="content"><MenuLinks /></Need>} />
+            <Route path="visit-cards" element={<Need section="content"><VisitCards /></Need>} />
+            <Route path="google-and-sharing" element={<Need section="settings"><GoogleSharing /></Need>} />
+            <Route path="site-settings" element={<Need section="settings"><SiteSettings /></Need>} />
             <Route path="categories" element={<Need section="products"><Categories /></Need>} />
             <Route path="units" element={<Need section="products"><Units /></Need>} />
             <Route path="raw-materials" element={<Need section="products"><RawMaterials /></Need>} />
@@ -299,7 +308,7 @@ export default function AdminApp() {
             <Route path="commerce/packing" element={<OldLink to={{ pick: 'to-pick', packing: 'packing', packed: 'packed-waiting' }} fallback="to-pick" />} />
             <Route path="commerce/delivery" element={<OldLink to={{ ready: 'trips', trips: 'trips', other: 'courier-and-pickup', failed: 'failed-deliveries' }} fallback="trips" />} />
             <Route path="commerce/my-trips" element={<Need section="delivery" commerce><MyTrips /></Need>} />
-            <Route path="settings" element={<Need section="settings"><Settings /></Need>} />
+            <Route path="settings" element={<SettingsMoved />} />
             <Route path="commerce-settings" element={<Need section="settings"><CommerceSettings /></Need>} />
             <Route path="numbering" element={<Need section="settings" commerce><Numbering /></Need>} />
             <Route path="switches" element={<Need section="settings"><Switches /></Need>} />
@@ -338,4 +347,14 @@ function OldLink({ to, fallback }) {
   const tab = p.get('tab'); p.delete('tab');
   const rest = p.toString();
   return <Navigate replace to={`/admin/${to[tab] || fallback}${rest ? `?${rest}` : ''}`} />;
+}
+
+/** phase 24: the old Settings page became the Website pages; an old link (#setting-<key>) opens the page that has it */
+const SETTING_PAGE = { site_indexing: 'google-and-sharing', share_image: 'google-and-sharing', ga4_measurement_id: 'google-and-sharing',
+  door_home_product: 'home-doors', door_biz_product: 'home-doors', brochure_download_enabled: 'brochures', two_step_login: 'users' };
+function SettingsMoved() {
+  const loc = useLocation();
+  const key = (/^#setting-(.+)$/.exec(loc.hash) || [])[1];
+  const hashPage = { '#cs-s-home-page': 'home-doors', '#cs-s-sharing-and-seo': 'google-and-sharing' }[loc.hash];
+  return <Navigate replace to={`/admin/${SETTING_PAGE[key] || hashPage || 'site-settings'}${key && !SETTING_PAGE[key] ? loc.hash : ''}`} />;
 }

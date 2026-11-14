@@ -23,7 +23,7 @@ function attentionLines(d, isAdmin) {
     out.push({ key: 'failed', kind: 'bad', to: '/admin/leads?outbox=failed', text: `${names(parts)} failed to send (${plural(a.failed.leads, 'lead', 'leads')}): retry them from the lead` });
   }
   if (isAdmin && d.mailLogo && d.mailLogo.state === 'failing') {
-    out.push({ key: 'logo', kind: 'bad', to: '/admin/settings#setting-mail_logo_url', text: `E-mail logo URL is not reachable - mails use the built-in logo${d.mailLogo.reason ? ` (${d.mailLogo.reason})` : ''}` });
+    out.push({ key: 'logo', kind: 'bad', to: '/admin/site-settings#setting-mail_logo_url', text: `E-mail logo URL is not reachable - mails use the built-in logo${d.mailLogo.reason ? ` (${d.mailLogo.reason})` : ''}` });
   }
   for (const f of (d.fonts || []).filter((x) => x.status === 'full')) {
     out.push({ key: `font-${f.family}`, kind: 'warn', to: '/admin/languages', text: `The ${f.script} font could not be rebuilt - the full font is used for now (it retries by itself)` });
@@ -39,7 +39,7 @@ function attentionLines(d, isAdmin) {
   if (isAdmin) {
     const empty = (a.emptySettings || []);
     if (empty.includes('gstin')) out.push({ key: 'gstin', kind: 'info', to: '/admin/company#tax', text: 'GSTIN is still empty - the footer leaves it out until it is filled' });
-    if (empty.includes('ga4_measurement_id')) out.push({ key: 'ga4', kind: 'info', to: '/admin/settings#setting-ga4_measurement_id', text: 'Google Analytics (GA4) id is still empty - no visits are counted' });
+    if (empty.includes('ga4_measurement_id')) out.push({ key: 'ga4', kind: 'info', to: '/admin/google-and-sharing#setting-ga4_measurement_id', text: 'Google Analytics (GA4) id is still empty - no visits are counted' });
   }
   const missing = a.noBrochure || [];
   if (missing.length) {
